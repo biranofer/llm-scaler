@@ -2033,6 +2033,22 @@ var _ = Describe("computeLocalDemand", func() {
 		total := computeLocalDemand([]domain.ReplicaMetrics{replicaAt(0.5)}, shape, nanModel)
 		Expect(total).To(Equal(0.0))
 	})
+
+	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
+		noCapacity := replicaAt(0.5)
+		noCapacity.TotalKvCapacityTokens = 0
+		total := computeLocalDemand([]domain.ReplicaMetrics{noCapacity}, shape, model)
+		Expect(total).To(Equal(0.0))
+	})
+
+	It("skips a replica whose model produces a finite non-positive ITL", func() {
+		// B negative enough that A*k+B <= 0 at k=0.5 without A or B being NaN/Inf —
+		// distinct from the existing NaN-ITL case, which uses a NaN model coefficient.
+		negativeITLModel := ITLModel{A: 0.01, B: -0.1}
+		Expect(negativeITLModel.ITLAt(0.5)).To(BeNumerically("<=", 0), "fixture sanity check")
+		total := computeLocalDemand([]domain.ReplicaMetrics{replicaAt(0.5)}, shape, negativeITLModel)
+		Expect(total).To(Equal(0.0))
+	})
 })
 
 var _ = Describe("aggregateRoleDemand", func() {
