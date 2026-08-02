@@ -555,6 +555,31 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(ok).To(BeFalse())
 			Expect(reason).To(Equal(itlReasonT2Failed))
 		})
+
+		It("resolveITLModel returns T2-failed when the computed fit is rejected by validITLModel", func() {
+			// AvgITL below the pinned baseline (DefaultBaselineITLSec = 0.006) at k=0.5 produces
+			// numerator = (0.001 - 0.006) * 0.5 = -0.0025, sumK2 = 0.25 → A = -0.01 (negative,
+			// inverted slope) — a real Tier-2 fit is computed (n=1, sumK2>0) but validITLModel
+			// rejects it, unlike the existing "all idle" test which never reaches the fit at all.
+			belowBaseline := domain.ReplicaMetrics{
+				VariantName: "v1", KvUsageInstant: 0.5, KvCacheUsage: 0.5,
+				AvgITL: 0.001, AvgInputTokens: 5000, AvgOutputTokens: 200,
+				PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000,
+			}
+			analyzer.Observe(ctx, time.Now(), modelID, namespace, []domain.ReplicaMetrics{belowBaseline})
+
+			_, reason, ok := analyzer.resolveITLModel(ctx,
+				func() *variantState {
+					analyzer.mu.Lock()
+					defer analyzer.mu.Unlock()
+					return analyzer.variantStates[variantKey(namespace, modelID, "v1")]
+				}(),
+				[]domain.ReplicaMetrics{belowBaseline},
+				namespace, modelID, "v1",
+			)
+			Expect(ok).To(BeFalse())
+			Expect(reason).To(Equal(itlReasonT2Failed))
+		})
 	})
 
 	Describe("Analyze — idle replicas produce no signal", func() {
