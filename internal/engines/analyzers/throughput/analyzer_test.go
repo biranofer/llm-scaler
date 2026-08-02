@@ -2127,3 +2127,28 @@ var _ = Describe("aggregateRoleDemand", func() {
 		Expect(got["prefill"]).To(Equal(0.0))
 	})
 })
+
+var _ = Describe("computeVariantSupply", func() {
+	shape := WorkloadShape{KVreq: 1024}
+	const itlSat = 0.05
+
+	replicaWithCap := func(capTokens int64) domain.ReplicaMetrics {
+		return domain.ReplicaMetrics{TotalKvCapacityTokens: capTokens}
+	}
+
+	It("aggregates supply across KV-capable replicas", func() {
+		total, perReplica, nKV := computeVariantSupply(
+			[]domain.ReplicaMetrics{replicaWithCap(65536)}, shape, itlSat)
+		Expect(nKV).To(Equal(1))
+		Expect(total).To(BeNumerically(">", 0))
+		Expect(perReplica).To(BeNumerically("~", total, 1e-9)) // single replica → mean == total
+	})
+
+	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
+		total, perReplica, nKV := computeVariantSupply(
+			[]domain.ReplicaMetrics{replicaWithCap(0)}, shape, itlSat)
+		Expect(nKV).To(Equal(0))
+		Expect(total).To(Equal(0.0))
+		Expect(perReplica).To(Equal(0.0))
+	})
+})
