@@ -42,6 +42,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/external"
 	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
@@ -347,6 +348,89 @@ func (e *Engine) analyzerRunEntries() []analyzerEntry {
 	return entries
 }
 
+// reconcileExternalAnalyzers rebuilds the runtime external-analyzer registry from
+// the current catalog (Config.ExternalAnalyzerCatalog, which the ConfigMap
+// reconciler refreshes when wva-analyzers changes). Called once per optimize
+// cycle, so a catalog edit takes effect without a restart. A catalog label that
+// collides with a built-in analyzer is skipped (built-in wins name resolution); a
+// definition that fails to build (bad threshold, empty query) is skipped and
+// logged, never fatal.
+func (e *Engine) reconcileExternalAnalyzers(ctx context.Context) {
+	src := e.metricsRegistry.Get("prometheus")
+	if src == nil {
+		return
+	}
+	logger := ctrl.LoggerFrom(ctx)
+	catalog := e.Config.ExternalAnalyzerCatalog()
+
+	builtin := make(map[string]struct{}, len(e.analyzersSnapshot))
+	for _, en := range e.analyzersSnapshot {
+		builtin[en.name] = struct{}{}
+	}
+
+	desired := make(map[string]struct{}, len(catalog))
+	for label, def := range catalog {
+		if _, isBuiltin := builtin[label]; isBuiltin {
+			logger.V(logging.DEBUG).Info("Skipping external analyzer: name collides with a built-in", "label", label)
+			continue
+		}
+		d, err := toExternalDefinition(label, def)
+		if err != nil {
+			logger.Info("Skipping malformed external analyzer definition", "label", label, "error", err)
+			continue
+		}
+		a, err := external.New(d, src)
+		if err != nil {
+			logger.Info("Skipping invalid external analyzer definition", "label", label, "error", err)
+			continue
+		}
+		e.UpsertExternalAnalyzer(label, a)
+		desired[label] = struct{}{}
+	}
+
+	// Retire external analyzers no longer present (or no longer valid) in the catalog.
+	for _, name := range e.externalAnalyzerNames() {
+		if _, ok := desired[name]; !ok {
+			e.RemoveExternalAnalyzer(name)
+		}
+	}
+}
+
+// externalAnalyzerNames returns the names of the currently registered runtime
+// external analyzers.
+func (e *Engine) externalAnalyzerNames() []string {
+	e.externalMu.RLock()
+	defer e.externalMu.RUnlock()
+	names := make([]string, 0, len(e.externalAnalyzers))
+	for name := range e.externalAnalyzers {
+		names = append(names, name)
+	}
+	return names
+}
+
+// toExternalDefinition converts a catalog entry to an external.Definition,
+// parsing the KEDA-style string thresholds to float64. When the entry has no
+// engines map it is treated as a single engine-agnostic body.
+func toExternalDefinition(label string, def config.ExternalAnalyzerDef) (external.Definition, error) {
+	bodies := make(map[string]external.Body)
+	if len(def.Engines) > 0 {
+		for engine, body := range def.Engines {
+			th, err := strconv.ParseFloat(body.Threshold, 64)
+			if err != nil {
+				return external.Definition{}, fmt.Errorf("engine %q: threshold %q: %w", engine, body.Threshold, err)
+			}
+			bodies[engine] = external.Body{Query: body.Query, Threshold: th}
+		}
+	} else {
+		th, err := strconv.ParseFloat(def.Threshold, 64)
+		if err != nil {
+			return external.Definition{}, fmt.Errorf("threshold %q: %w", def.Threshold, err)
+		}
+		bodies[""] = external.Body{Query: def.Query, Threshold: th}
+	}
+	return external.Definition{Label: label, Bodies: bodies}, nil
+}
+
 // StartOptimizeLoop starts the optimization loop for the saturation engine.
 // It runs until the context is cancelled.
 //
@@ -460,8 +544,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	}()
 
 	logger := ctrl.LoggerFrom(ctx)
-	e.refreshLimiter(ctx)          // rebuild the GPU limiter if the ConfigMap changed its type/entries
-	e.recordDefaultConfigMetrics() // record as soon as possible to reflect any changes in configuration
+	e.refreshLimiter(ctx)             // rebuild the GPU limiter if the ConfigMap changed its type/entries
+	e.reconcileExternalAnalyzers(ctx) // sync the runtime external-analyzer registry with the catalog
+	e.recordDefaultConfigMetrics()    // record as soon as possible to reflect any changes in configuration
 
 	if e.Config.ScaleToZeroEnabled() {
 		logger.Info("Scaling to zero is enabled")

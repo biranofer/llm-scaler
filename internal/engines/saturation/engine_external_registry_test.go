@@ -6,6 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
@@ -83,5 +85,81 @@ var _ = Describe("external analyzer runtime registry", func() {
 			}
 		}
 		Expect(count).To(Equal(1))
+	})
+})
+
+var _ = Describe("toExternalDefinition", func() {
+	It("builds per-engine bodies with parsed thresholds", func() {
+		d, err := toExternalDefinition("ttft", config.ExternalAnalyzerDef{
+			Engines: map[string]config.ExternalAnalyzerBody{
+				"vllm":   {Query: "qv", Threshold: "0.5"},
+				"sglang": {Query: "qs", Threshold: "0.4"},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.Label).To(Equal("ttft"))
+		Expect(d.Bodies["vllm"].Query).To(Equal("qv"))
+		Expect(d.Bodies["vllm"].Threshold).To(Equal(0.5))
+		Expect(d.Bodies["sglang"].Threshold).To(Equal(0.4))
+	})
+
+	It("builds an engine-agnostic body from top-level query/threshold", func() {
+		d, err := toExternalDefinition("pool", config.ExternalAnalyzerDef{Query: "q", Threshold: "1.0"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(d.Bodies).To(HaveKey(""))
+		Expect(d.Bodies[""].Threshold).To(Equal(1.0))
+	})
+
+	It("errors on an unparseable threshold", func() {
+		_, err := toExternalDefinition("bad", config.ExternalAnalyzerDef{Query: "q", Threshold: "not-a-number"})
+		Expect(err).To(HaveOccurred())
+	})
+})
+
+var _ = Describe("reconcileExternalAnalyzers", func() {
+	var (
+		e   *Engine
+		cfg *config.Config
+	)
+
+	BeforeEach(func() {
+		reg := source.NewSourceRegistry()
+		Expect(reg.Register("prometheus", prometheus.NewPrometheusSource(context.Background(), nil, prometheus.DefaultPrometheusSourceConfig()))).To(Succeed())
+		cfg = config.NewTestConfig()
+		sat := &fakeAnalyzerWithResult{analyzerName: domain.SaturationAnalyzerName, result: &domain.AnalyzerResult{}}
+		e = &Engine{
+			Config:            cfg,
+			metricsRegistry:   reg,
+			analyzersSnapshot: []analyzerEntry{{name: domain.SaturationAnalyzerName, analyzer: sat}},
+			externalAnalyzers: make(map[string]domain.Analyzer),
+		}
+	})
+
+	It("registers a catalog analyzer and retires it when it leaves the catalog", func() {
+		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
+			"ttft-slo": {Query: "q", Threshold: "0.5"},
+		})
+		e.reconcileExternalAnalyzers(context.Background())
+		Expect(e.externalAnalyzerNames()).To(ContainElement("ttft-slo"))
+
+		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{})
+		e.reconcileExternalAnalyzers(context.Background())
+		Expect(e.externalAnalyzerNames()).NotTo(ContainElement("ttft-slo"))
+	})
+
+	It("skips a catalog label that collides with a built-in", func() {
+		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
+			domain.SaturationAnalyzerName: {Query: "q", Threshold: "0.5"},
+		})
+		e.reconcileExternalAnalyzers(context.Background())
+		Expect(e.externalAnalyzerNames()).NotTo(ContainElement(domain.SaturationAnalyzerName))
+	})
+
+	It("skips a malformed definition (unparseable threshold)", func() {
+		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
+			"bad": {Query: "q", Threshold: "nope"},
+		})
+		e.reconcileExternalAnalyzers(context.Background())
+		Expect(e.externalAnalyzerNames()).NotTo(ContainElement("bad"))
 	})
 })
