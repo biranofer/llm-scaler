@@ -49,7 +49,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/saturationv1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -62,28 +61,6 @@ type analyzerEntry struct {
 	name     string
 	analyzer domain.Analyzer
 }
-
-// v1Analyzer is the minimal surface of *saturationv1.Analyzer that optimizeV1
-// depends on. Defined here so tests can substitute a stub via Engine's
-// v1AnalyzerFactory field without exposing a public interface.
-type v1Analyzer interface {
-	AnalyzeModelSaturation(
-		ctx context.Context,
-		modelID, namespace string,
-		replicaMetrics []domain.ReplicaMetrics,
-		config config.SaturationScalingConfig,
-	) (*domain.ModelSaturationAnalysis, error)
-	CalculateSaturationTargets(
-		ctx context.Context,
-		saturationAnalysis *domain.ModelSaturationAnalysis,
-		variantStates []domain.VariantReplicaState,
-	) map[string]int
-}
-
-// defaultV1AnalyzerFactory returns a fresh production V1 saturation analyzer.
-// NewEngine wires this into Engine.v1AnalyzerFactory; tests can swap the
-// factory per-instance without touching shared state.
-func defaultV1AnalyzerFactory() v1Analyzer { return saturationv1.NewAnalyzer() }
 
 // safetyNetEmitter reports a per-role analysis failure to the saturation
 // engine's safety-net metrics path. Extracted as a function type so the
@@ -220,10 +197,6 @@ type Engine struct {
 	optimizer pipeline.ScalingOptimizer
 
 	metricsEmitter *metrics.MetricsEmitter
-	// v1AnalyzerFactory produces a fresh V1 saturation analyzer for each
-	// role group in optimizeV1. NewEngine sets defaultV1AnalyzerFactory;
-	// tests can replace this per-instance to inject stubs or spies.
-	v1AnalyzerFactory func() v1Analyzer
 }
 
 // NewEngine creates a new instance of the saturation engine.
@@ -275,7 +248,6 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		lastGoodAnalysis:        make(map[string]map[string]time.Time),
 		optimizer:               scalingOptimizer,
 		metricsEmitter:          metrics.NewMetricsEmitter(),
-		v1AnalyzerFactory:       defaultV1AnalyzerFactory,
 		analyzers: []analyzerEntry{
 			{name: domain.SaturationAnalyzerName, analyzer: satV2},
 		},
@@ -508,34 +480,22 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	}
 
 	// Select optimizer based on enableLimiter flag (both are stateless, safe to swap).
-	// Applies to the V2 path, which uses the optimizer pipeline.
-	if analyzerName == domain.SaturationAnalyzerName {
-		savedOptimizer := e.optimizer
-		if enableLimiter {
-			e.optimizer = pipeline.NewGreedyByScoreOptimizer()
-		} else {
-			e.optimizer = pipeline.NewCostAwareOptimizer()
-		}
-		if savedOptimizer != e.optimizer {
-			e.recordActiveOptimizer() // optimizer has changed, record active optimizer
-		}
-		logger.V(logging.DEBUG).Info("Optimizer selected", "analyzer", analyzerName, "optimizer", e.optimizer.Name(), "enableLimiter", enableLimiter)
+	// V2 (saturation-token-based) is the sole analysis path and always uses the
+	// optimizer pipeline.
+	savedOptimizer := e.optimizer
+	if enableLimiter {
+		e.optimizer = pipeline.NewGreedyByScoreOptimizer()
+	} else {
+		e.optimizer = pipeline.NewCostAwareOptimizer()
 	}
+	if savedOptimizer != e.optimizer {
+		e.recordActiveOptimizer() // optimizer has changed, record active optimizer
+	}
+	logger.V(logging.DEBUG).Info("Optimizer selected", "analyzer", analyzerName, "optimizer", e.optimizer.Name(), "enableLimiter", enableLimiter)
 
-	var allDecisions []domain.VariantDecision
-
-	// Each analyzer has a separate optimize path because they use fundamentally
-	// different analysis types and target-building flows:
-	//   - V1: saturationv1.Analyzer → ModelSaturationAnalysis → CalculateSaturationTargets → Enforcer → Limiter
-	//   - V2 (saturation): saturation_v2.Analyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge
-	// V1 is deprecated in favor of V2; see issue #1441 for the staged removal plan.
+	// V2 (saturation): saturation_v2.Analyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge.
 	mode := modeLabelForAnalyzer(analyzerName)
-	switch analyzerName {
-	case domain.SaturationAnalyzerName:
-		allDecisions = e.optimizeV2(ctx, modelGroups, currentAllocations)
-	default:
-		allDecisions = e.optimizeV1(ctx, modelGroups, currentAllocations)
-	}
+	allDecisions := e.optimizeV2(ctx, modelGroups, currentAllocations)
 
 	// STEP 3: Apply decisions and update VA status
 	// Always call applySaturationDecisions, even with empty decisions.
@@ -559,7 +519,8 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 // modeLabelForAnalyzer returns the human-readable mode label for the given
 // analyzer name, used in the "Optimization completed successfully" log entry.
-// It mirrors the analyzer selection in optimize's switch statement.
+// V2 is the sole analysis path; the label distinguishes a config that named the
+// saturation analyzer from one that left it unset.
 func modeLabelForAnalyzer(analyzerName string) string {
 	switch analyzerName {
 	case domain.SaturationAnalyzerName:
@@ -637,204 +598,6 @@ func (e *Engine) resolveSaturationConfig(
 	modelID, namespace string,
 ) config.SaturationScalingConfig {
 	return resolveSaturationConfig(configMap, modelID, namespace)
-}
-
-// optimizeV1 runs the V1 percentage-based saturation analysis path (saturation-percentage-based).
-// Processes each model independently: analyze → enforce → convert → limiter.
-//
-// For P/D disaggregation: within each model, variants are sub-grouped by role
-// (prefill, decode, both). Each role group gets its own saturation analysis,
-// transition blocking, and scale-up/down decisions. This ensures that a prefill
-// variant transitioning doesn't block decode scaling, and that spare-capacity
-// averaging doesn't mix semantically different workload stages.
-func (e *Engine) optimizeV1(
-	ctx context.Context,
-	modelGroups map[string][]llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	currentAllocations map[string]*domain.Allocation,
-) []domain.VariantDecision {
-	logger := ctrl.LoggerFrom(ctx)
-	var allDecisions []domain.VariantDecision
-
-	for groupKey, modelVAs := range modelGroups {
-		modelID := modelVAs[0].Spec.ModelID
-		namespace := modelVAs[0].Namespace
-		logger.Info("Processing model (V1)",
-			"modelID", modelID,
-			"namespace", namespace,
-			"variantCount", len(modelVAs),
-			"groupKey", groupKey)
-
-		// Get namespace-aware saturation config (namespace-local > global)
-		saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
-		if len(saturationConfigMap) == 0 {
-			logger.Info("Saturation scaling config not loaded yet for namespace, skipping model",
-				"namespace", namespace,
-				"modelID", modelID)
-			continue
-		}
-
-		saturationConfig := e.resolveSaturationConfig(saturationConfigMap, modelID, namespace)
-
-		// Prepare model data once per model (single metrics collection pass).
-		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
-
-		if err != nil {
-			msg := "Saturation data preparation failed"
-			logger.Error(err, msg, "modelID", modelID)
-			e.recordOptimizationFailedEvent(modelVAs, msg)
-			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, nil)
-			continue
-		}
-		if data == nil {
-			e.recordOptimizationFailedEvent(modelVAs, "No saturation metrics available for model")
-			logger.Info("No saturation metrics available for model, skipping analysis",
-				"modelID", modelID, "namespace", namespace)
-			e.emitSafetyNetMetrics(ctx, modelVAs, currentAllocations, nil)
-			continue
-		}
-
-		// Per-role saturation analysis: each role group gets independent
-		// analysis, transition blocking, and scale-up/down decisions.
-		modelDecisions := e.analyzeRoleGroups(
-			ctx, modelID, namespace, saturationConfig,
-			data, modelVAs, currentAllocations,
-			e.emitSafetyNetMetrics,
-		)
-
-		// Scale-to-zero enforcement is applied per MODEL (all roles together),
-		// not per role group. In P/D deployments, scaling prefill to zero while
-		// keeping decode (or vice versa) makes the model non-functional — both
-		// stages must scale together.
-		e.applyScaleToZeroEnforcement(
-			ctx, modelID, namespace, "v1-saturation",
-			modelDecisions, data.scaleTargets, data.variantStates,
-		)
-
-		allDecisions = append(allDecisions, modelDecisions...)
-	}
-
-	// Apply GPU limiter if enabled
-	// Note: Limiter uses global saturation config since it's applied globally to all decisions
-	globalSaturationConfigMap := e.Config.SaturationConfig()
-	var globalSaturationConfig config.SaturationScalingConfig
-	if len(globalSaturationConfigMap) > 0 {
-		if cfg, ok := globalSaturationConfigMap["default"]; ok {
-			globalSaturationConfig = cfg
-		}
-	}
-	if globalSaturationConfig.EnableLimiter && len(allDecisions) > 0 {
-		logger.Info("Applying GPU limiter to scaling decisions",
-			"decisionCount", len(allDecisions))
-
-		decisionPtrs := make([]*domain.VariantDecision, len(allDecisions))
-		for i := range allDecisions {
-			decisionPtrs[i] = &allDecisions[i]
-		}
-
-		if err := e.currentGPULimiter().Limit(ctx, decisionPtrs); err != nil {
-			// skip record K8S events since there's no VA
-			logger.Error(err, "GPU limiter failed, proceeding with original decisions")
-		} else {
-			for _, d := range decisionPtrs {
-				if d.WasLimited {
-					logger.Info("Decision was limited by GPU availability",
-						"variant", d.VariantName,
-						"originalTarget", d.OriginalTargetReplicas,
-						"limitedTarget", d.TargetReplicas,
-						"limitedBy", d.LimitedBy)
-				}
-			}
-		}
-	}
-
-	return allDecisions
-}
-
-// analyzeRoleGroups runs the per-role saturation analysis loop for one model.
-// It sub-groups variants by role (prefill/decode/both), runs an independent
-// saturation analysis per role group, converts each group's targets to
-// VariantDecisions, and returns the merged set for model-level scale-to-zero
-// enforcement.
-//
-// A fresh analyzer is created per group via e.v1AnalyzerFactory
-// (overridable in tests). On per-role analysis failure, emitSafetyNet is
-// invoked with that role's VAs only so the failure does not poison sibling
-// role groups.
-func (e *Engine) analyzeRoleGroups(
-	ctx context.Context,
-	modelID, namespace string,
-	saturationConfig config.SaturationScalingConfig,
-	data *modelData,
-	modelVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	currentAllocations map[string]*domain.Allocation,
-	emitSafetyNet safetyNetEmitter,
-) []domain.VariantDecision {
-	logger := ctrl.LoggerFrom(ctx)
-
-	// Sub-group variants by role for P/D-aware analysis.
-	// Each role group gets its own saturation analysis and transition blocking
-	// so prefill and decode pipelines scale independently.
-	roleGroups := groupByRole(data.variantStates)
-	sortedRoles := sortedRoleKeys(roleGroups)
-
-	var modelDecisions []domain.VariantDecision
-	for _, role := range sortedRoles {
-		roleStates := roleGroups[role]
-		roleMetrics := filterReplicaMetricsByVariants(data.replicaMetrics, roleStates)
-
-		if len(roleMetrics) == 0 {
-			// A role group with states but no metrics is a new partial case
-			// introduced by P/D grouping (prefill has metrics, decode does
-			// not, or vice versa). Emit safety-net signals for this role's
-			// VAs so HPA/KEDA doesn't go dark while we wait for metrics to
-			// appear; model-level scale-to-zero still sees sibling-group
-			// decisions unchanged.
-			logger.Info("No metrics for role group, emitting safety-net signals",
-				"modelID", modelID, "role", role,
-				"variants", variantNames(roleStates))
-			roleVAs := filterVAsByVariantStates(modelVAs, roleStates)
-			emitSafetyNet(ctx, roleVAs, currentAllocations, data.scaleTargets)
-			continue
-		}
-
-		// A new analyzer instance is cheap (stateless struct); avoids shared
-		// state between role groups.
-		roleAnalyzer := e.v1AnalyzerFactory()
-		saturationAnalysis, err := roleAnalyzer.AnalyzeModelSaturation(
-			ctx, modelID, namespace, roleMetrics, saturationConfig)
-		if err != nil {
-			logger.Error(err, "Saturation analysis failed for role group",
-				"modelID", modelID, "role", role)
-			// Scope safety-net emission to this role group's variants only so
-			// a failure in one stage does not trigger fallback metrics for a
-			// healthy sibling stage.
-			roleVAs := filterVAsByVariantStates(modelVAs, roleStates)
-			emitSafetyNet(ctx, roleVAs, currentAllocations, data.scaleTargets)
-			continue
-		}
-
-		logger.Info("Saturation analysis completed",
-			"modelID", modelID,
-			"role", role,
-			"totalReplicas", saturationAnalysis.TotalReplicas,
-			"nonSaturated", saturationAnalysis.NonSaturatedCount,
-			"avgSpareKv", saturationAnalysis.AvgSpareKvCapacity,
-			"avgSpareQueue", saturationAnalysis.AvgSpareQueueLength,
-			"shouldScaleUp", saturationAnalysis.ShouldScaleUp,
-			"scaleUpReason", saturationAnalysis.ScaleUpReason,
-			"scaleDownSafe", saturationAnalysis.ScaleDownSafe)
-
-		// Calculate targets and convert to decisions (transition blocking is per role group)
-		saturationTargets := roleAnalyzer.CalculateSaturationTargets(ctx, saturationAnalysis, roleStates)
-		roleDecisions := e.convertSaturationTargetsToDecisions(ctx, saturationTargets, saturationAnalysis, roleStates)
-
-		logger.Info("Saturation-only decisions made for role group",
-			"modelID", modelID, "role", role,
-			"decisionCount", len(roleDecisions))
-		modelDecisions = append(modelDecisions, roleDecisions...)
-	}
-
-	return modelDecisions
 }
 
 // selectV2Optimizer chooses the optimizer and GPU constraints for a V2
@@ -1064,87 +827,6 @@ func (e *Engine) BuildVariantStates(
 // this wrapper is retained for in-package callers and tests.
 func getRoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
 	return discovery.RoleFromScaleTarget(scaleTarget)
-}
-
-// convertSaturationTargetsToDecisions converts saturation-only targets to VariantDecisions.
-// Used when model-based optimizer is disabled (saturation-only mode).
-func (e *Engine) convertSaturationTargetsToDecisions(
-	ctx context.Context,
-	saturationTargets map[string]int,
-	saturationAnalysis *domain.ModelSaturationAnalysis,
-	variantStates []domain.VariantReplicaState,
-) []domain.VariantDecision {
-	logger := ctrl.LoggerFrom(ctx)
-	decisions := make([]domain.VariantDecision, 0, len(saturationTargets))
-
-	// Build variant analysis map for quick lookup
-	vaMap := make(map[string]*domain.VariantSaturationAnalysis)
-	for i := range saturationAnalysis.VariantAnalyses {
-		va := &saturationAnalysis.VariantAnalyses[i]
-		vaMap[va.VariantName] = va
-	}
-
-	// Build state map for quick lookup
-	stateMap := make(map[string]domain.VariantReplicaState)
-	for _, state := range variantStates {
-		stateMap[state.VariantName] = state
-	}
-
-	for variantName, targetReplicas := range saturationTargets {
-		state := stateMap[variantName]
-		va := vaMap[variantName]
-
-		var action domain.SaturationAction
-		switch {
-		case targetReplicas > state.CurrentReplicas:
-			action = domain.ActionScaleUp
-		case targetReplicas < state.CurrentReplicas:
-			action = domain.ActionScaleDown
-		default:
-			action = domain.ActionNoChange
-		}
-
-		// Use GPUsPerReplica from variant state (extracted from scale target)
-		gpusPerReplica := state.GPUsPerReplica
-		if gpusPerReplica <= 0 {
-			gpusPerReplica = 1 // Fallback default
-		}
-
-		decision := domain.VariantDecision{
-			VariantName:            variantName,
-			Namespace:              saturationAnalysis.Namespace,
-			ModelID:                saturationAnalysis.ModelID,
-			Role:                   state.Role,
-			CurrentReplicas:        state.CurrentReplicas,
-			TargetReplicas:         targetReplicas,
-			OriginalTargetReplicas: targetReplicas, // Store original before limiter modifies it
-			DesiredReplicas:        state.DesiredReplicas,
-			SaturationBased:        true,
-			SaturationOnly:         true,
-			ModelBasedDecision:     false,
-			SafetyOverride:         false,
-			GPUsPerReplica:         gpusPerReplica,
-			MinReplicas:            state.MinReplicas,
-			MaxReplicas:            state.MaxReplicas,
-		}
-		decision.SetDecisionReason(action, domain.DecisionReasonSaturationOnly, fmt.Sprintf("%s: %s", string(domain.DecisionReasonSaturationOnly), string(action)))
-
-		if va != nil {
-			decision.AcceleratorName = va.AcceleratorName
-			decision.Cost = va.Cost
-			// Use average spare KV capacity as the SpareCapacity indicator for limiter prioritization
-			decision.SpareCapacity = va.AvgSpareKvCapacity
-			// V1 Utilization: mean of per-replica KvCacheUsage fractions
-			decision.Utilization = va.AvgKvCacheUsage
-		} else {
-			logger.Info("No variant analysis found for decision (metrics may be unavailable)",
-				"variant", variantName)
-		}
-
-		decisions = append(decisions, decision)
-	}
-
-	return decisions
 }
 
 // enrichDecisionsWithKvTokenData sets KvCacheTokensUsed, KvCacheTokensCapacity, and

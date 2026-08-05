@@ -17,7 +17,6 @@ limitations under the License.
 package saturation
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -238,67 +237,6 @@ var _ = Describe("Saturation Engine", func() {
 			// proves the variants were discovered and fed through the saturation pipeline.
 			Expect(mockPromAPI.QueryCallCounts).NotTo(BeEmpty(),
 				"engine should have queried Prometheus for at least one discovered variant")
-		})
-	})
-
-	Context("convertSaturationTargetsToDecisions", func() {
-		BeforeEach(func() {
-			logging.NewTestLogger()
-		})
-
-		It("should include ActionNoChange decisions in the result", func() {
-			By("Creating test data where target equals current replicas")
-			saturationTargets := map[string]int{
-				"variant-a": 3,
-				"variant-b": 5,
-				"variant-c": 2,
-			}
-
-			saturationAnalysis := &domain.ModelSaturationAnalysis{
-				ModelID:   "test-model",
-				Namespace: "test-ns",
-				VariantAnalyses: []domain.VariantSaturationAnalysis{
-					{VariantName: "variant-a", AcceleratorName: "A100", Cost: 10.0},
-					{VariantName: "variant-b", AcceleratorName: "A100", Cost: 10.0},
-					{VariantName: "variant-c", AcceleratorName: "A100", Cost: 10.0},
-				},
-			}
-
-			// Populate Role to verify it propagates to VariantDecision in the
-			// P/D-aware path (empty, prefill, decode cover the common cases).
-			variantStates := []domain.VariantReplicaState{
-				{VariantName: "variant-a", CurrentReplicas: 3, DesiredReplicas: 3, Role: ""},
-				{VariantName: "variant-b", CurrentReplicas: 3, DesiredReplicas: 3, Role: "prefill"},
-				{VariantName: "variant-c", CurrentReplicas: 2, DesiredReplicas: 2, Role: "decode"},
-			}
-
-			By("Converting saturation targets to decisions")
-			sourceRegistry := source.NewSourceRegistry()
-			sourceRegistry.Register("prometheus", source.NewNoOpSource()) // nolint:errcheck
-			// Create minimal test config
-			testConfig := config.NewTestConfig()
-			fakeRecorder := record.NewFakeRecorder(100)
-			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig, pipeline.NewNoOpLimiter("test"))
-			decisions := engine.convertSaturationTargetsToDecisions(context.Background(), saturationTargets, saturationAnalysis, variantStates)
-
-			By("Verifying all variants are included in decisions")
-			Expect(decisions).To(HaveLen(3), "All 3 variants should have decisions including ActionNoChange")
-
-			By("Verifying ActionNoChange decisions are present")
-			decisionMap := make(map[string]domain.VariantDecision)
-			for _, d := range decisions {
-				decisionMap[d.VariantName] = d
-			}
-
-			Expect(decisionMap).To(HaveKey("variant-a"))
-			Expect(decisionMap["variant-a"].Action).To(Equal(domain.ActionNoChange))
-			Expect(decisionMap["variant-b"].Action).To(Equal(domain.ActionScaleUp))
-			Expect(decisionMap["variant-c"].Action).To(Equal(domain.ActionNoChange))
-
-			By("Verifying Role propagates from VariantReplicaState to VariantDecision")
-			Expect(decisionMap["variant-a"].Role).To(Equal(""), "empty role must pass through unchanged")
-			Expect(decisionMap["variant-b"].Role).To(Equal("prefill"))
-			Expect(decisionMap["variant-c"].Role).To(Equal("decode"))
 		})
 	})
 

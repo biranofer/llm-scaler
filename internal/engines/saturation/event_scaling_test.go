@@ -357,7 +357,7 @@ func TestOptimizationFailedEvent(t *testing.T) {
 
 	reason := "Saturation data preparation failed"
 
-	// Simulate the event recording logic from optimizeV1/optimizeV2 error paths
+	// Simulate the event recording logic from optimizeV2 error paths
 	if fakeRecorder != nil {
 		for _, va := range variantAutoscalings {
 			fakeRecorder.Eventf(&va, corev1.EventTypeWarning, constants.K8SEventOptimizationFailed, reason)
