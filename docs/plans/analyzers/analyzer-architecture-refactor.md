@@ -209,6 +209,12 @@ cluster `wva-analyzers` ConfigMap; a policy entry's `name` resolves **built-in r
 
 ## 4. Data-model changes (summary)
 
+> **Status:** this table is the **target end-state**. As built, only the top three rows landed —
+> `VariantMetadata` (new, with `Engine`), `VariantReplicaState` gaining `Cost`/`AcceleratorName`/`Engine`,
+> and the analyzer no longer *emitting* `Cost`/`AcceleratorName`. The rest is **deferred** (see §5
+> Phase 3): `AnalyzerResult`/`VariantCapacity` are unchanged, `ReplicaMetrics` still *has* the `Cost`/
+> `AcceleratorName` fields (the analyzer just stopped reading them), and `saturationEntry` still exists.
+
 | Type | Change |
 |---|---|
 | **`VariantMetadata`** (new) | authoritative per-variant identity+state; discovery output |
@@ -243,27 +249,32 @@ identity that came from discovery, not the analyzer's copies. **Behavior-preserv
 today); no-op on paths that don't run discovery. `saturationEntry` deletion is deferred to Phase 3
 (it is still the variant-list/P source until analyzers emit pure `(D, P)`).
 
-**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`.**
-`saturation_v2` and `throughput` stop emitting identity/engine fields; move
-`RequiredCapacity`/`SpareCapacity` computation fully into the engine post-step. Replace
-`AnalyzerResult`/`VariantCapacity` with the trimmed types + `VariantTarget`. The optimizer's
-variant list + P come from discovery (`req.Variants`) + each analyzer's targets, so `saturationEntry`
-and the Phase-2 overlay both go away. Remove the throughput special-case. This is the largest single
-diff (touches both analyzers + the optimizer + ~10 test files) but is now pure mechanical
-shape-change on a green base.
+**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`. ⚠️ PARTIAL — increment 1 done, the rest DEFERRED.**
+*Done (increment 1):* `saturation_v2` stopped laundering per-pod `Cost`/`AcceleratorName` onto its
+output — identity now comes from discovery via the builder overlay. *Deferred (not implemented — the
+code stopped here):* moving `RequiredCapacity`/`SpareCapacity` off the analyzer contract, replacing
+`AnalyzerResult`/`VariantCapacity` with the trimmed `VariantTarget`/`RoleDemand`, and deleting
+`saturationEntry` (it still exists at `analyzer_helpers.go:91` and remains the per-variant metadata
+keeper) + the Phase-2 overlay. §3.2/§3.3/§4 describe this **target end-state**, not the current code.
 
-**Phase 4 — `wva_analyzer_*` metrics.** Emit demand/target from the `(D, P)` outputs. Additive.
+**Phase 4 — `wva_analyzer_*` metrics. ⬜ DEFERRED — not implemented.** No `wva_analyzer_demand`/
+`wva_analyzer_target` series exist yet; the goal in §2 / §3.4 remains a plan.
 
-**Phase 5 — External-analyzer wrapper (#1455).** Wrapper + `wva-analyzers` catalog ConfigMap + policy
-name resolution (built-in → catalog) + `QueryList.Upsert` registration. Unit tests (templating,
-reduction, fallbacks, three-state) + re-run the KEDA external-scaler kind e2e.
+**Phase 5 — External-analyzer wrapper (#1455). ✅ DONE.** Delivered as §10 describes (catalog CM +
+per-engine bodies + runtime registry + per-cycle reconcile + built-in→catalog name resolution). Unit
++ envtest coverage at every layer. Still pending: re-running the KEDA external-scaler **kind e2e**.
 
 ---
 
-## 6. Removal of V1 + queueing-model (precondition detail)
+## 6. Removal of V1 + queueing-model (precondition detail) — ✅ DONE
 
-Out of scope to *migrate*, but their removal intersects this work at exactly one shared dependency
-and several `engine.go` sites (flagged so the removal track and this track don't collide):
+Completed this session: V1 (`internal/saturationv1` + `optimizeV1` + helpers) and the queueing-model
+analyzer (`internal/engines/analyzers/queueingmodel` + `engine_queueing_model.go`) are removed, V2 is
+the sole analysis path, `DefaultVariantCost` was relocated to `internal/domain`, the dead
+`internal/queueing` math package and the queueing-model *config* plumbing (`Config.QMAnalyzer*`,
+`domain.QueueingModelScalingConfig`, the reconciler QM handlers) are removed;
+`RegisterQueueingModelQueries` is retained (shared with the throughput analyzer). The `engine.go` line
+references below are from the pre-removal plan and no longer resolve.
 
 - **`saturationv1.DefaultVariantCost`** is used outside V1 — `engine.go:1505` and
   `collector/replica_metrics.go:998`. Removing `internal/saturationv1/` must **relocate this constant**
