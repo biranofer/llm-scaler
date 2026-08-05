@@ -84,7 +84,7 @@ func TestDetectDemandLiveness_HealthyNoWarn(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 	e := demandLivenessEngine(informativeSat(), throughputAnalyzer(1000))
 
-	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, 0)
+	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 
 	assert.True(t, namedByName(results)[throughput.AnalyzerName].Live, "fresh throughput supply must be live")
@@ -107,7 +107,7 @@ func TestDetectDemandLiveness_SupplyLiveDemandStaleWarns(t *testing.T) {
 		modelKey: {demandKey: time.Now().Add(-95 * time.Second)},
 	}
 
-	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, 0)
+	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 
 	warns := demandWarnings(logs)
@@ -125,7 +125,7 @@ func TestDetectDemandLiveness_ColdStartNoWarn(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 	e := demandLivenessEngine(informativeSat(), throughputAnalyzer(0)) // fresh engine, no pre-seed
 
-	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, 0)
+	results, err := e.runAnalyzersAndScore(ctx, "m", "ns", nil, enabledThroughputCfg, nil, nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 
 	assert.Empty(t, demandWarnings(logs), "cold start (demand absent one cycle) must not warn")

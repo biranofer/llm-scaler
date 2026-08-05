@@ -381,7 +381,7 @@ var _ = Describe("runAnalyzersAndScore call ordering", func() {
 			},
 		}
 
-		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		// saturation + throughput + slo all appended
 		Expect(results).To(HaveLen(3))
@@ -418,7 +418,7 @@ var _ = Describe("runAnalyzersAndScore disabled-analyzer gate", func() {
 			},
 		}
 
-		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, 0)
+		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(results).To(HaveLen(1), "only saturation entry — disabled spy must not be appended")
 		Expect(results[0].Name).To(Equal(domain.SaturationAnalyzerName))
