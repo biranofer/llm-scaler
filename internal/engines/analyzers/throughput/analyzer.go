@@ -437,6 +437,8 @@ func (a *ThroughputAnalyzer) Analyze(
 	_ = anyEPP
 	_ = anyGPSMismatch
 
+	roleCapacities := aggregateRoleCapacities(variantCapacities, arrivalDemandByRole, queueDemandByRole)
+
 	return &domain.AnalyzerResult{
 		AnalyzerName:           AnalyzerName,
 		ModelID:                input.ModelID,
@@ -447,7 +449,8 @@ func (a *ThroughputAnalyzer) Analyze(
 		TotalAnticipatedSupply: totalAnticipatedSupply,
 		TotalDemand:            totalDemand,
 		Utilization:            safeDivide(totalDemand, totalSupply),
-		RoleCapacities:         aggregateRoleCapacities(variantCapacities, arrivalDemandByRole, queueDemandByRole),
+		RoleCapacities:         roleCapacities,
+		RoleDemand:             aggregation.RoleDemands(roleCapacities),
 	}, nil
 }
 

@@ -57,6 +57,21 @@ func SumTotalAnticipatedSupply(vcs []domain.VariantCapacity) float64 {
 	return total
 }
 
+// RoleDemands extracts the per-role demand from a RoleCapacity map (nil when the
+// map is empty). It lets an analyzer expose its per-role demand attribution — the
+// demand half of the (D, P) contract — so the capacity builder can pair it with
+// per-role supply. Transitional: analyzers will compute RoleDemand directly.
+func RoleDemands(rc map[string]domain.RoleCapacity) map[string]float64 {
+	if len(rc) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(rc))
+	for role, c := range rc {
+		out[role] = c.TotalDemand
+	}
+	return out
+}
+
 // SumTotalDemand returns Σ_v vc.TotalDemand.
 func SumTotalDemand(vcs []domain.VariantCapacity) float64 {
 	var total float64

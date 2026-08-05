@@ -126,7 +126,16 @@ type AnalyzerResult struct {
 
 	// RoleCapacities holds per-role capacity aggregation for P/D disaggregated models.
 	// nil when no disaggregation is active (all variants are role "both").
+	// Assembled by the engine's capacity-build step from RoleDemand + per-variant
+	// supply; analyzers do not populate it directly.
 	RoleCapacities map[string]RoleCapacity
+
+	// RoleDemand is the analyzer's per-role demand D for P/D disaggregated models
+	// (nil when non-disaggregated). It is the demand half of the contract — the
+	// analyzer owns demand attribution (e.g. saturation charges waiting per role,
+	// throughput charges arrival+queue per role); the capacity builder pairs it
+	// with per-role supply to assemble RoleCapacities.
+	RoleDemand map[string]float64
 }
 
 // VariantCapacity holds per-variant capacity data in analyzer-specific units.

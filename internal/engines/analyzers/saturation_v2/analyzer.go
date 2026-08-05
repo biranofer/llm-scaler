@@ -134,6 +134,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		TotalAnticipatedSupply: totalAnticipatedSupply,
 		Utilization:            utilization,
 		RoleCapacities:         roleCapacities,
+		RoleDemand:             aggregation.RoleDemands(roleCapacities),
 	}
 
 	return result, nil

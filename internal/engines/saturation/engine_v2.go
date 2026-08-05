@@ -11,6 +11,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
@@ -668,6 +669,7 @@ func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]dom
 	if result == nil {
 		return
 	}
+	// (1) Join authoritative discovery identity onto the per-variant capacities.
 	if len(metaByVariant) > 0 {
 		for i := range result.VariantCapacities {
 			if m, ok := metaByVariant[result.VariantCapacities[i].VariantName]; ok {
@@ -677,7 +679,37 @@ func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]dom
 			}
 		}
 	}
+	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P).
+	result.TotalSupply = aggregation.SumTotalSupply(result.VariantCapacities)
+	result.TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)
+	// (3) Assemble per-role capacities: supply grouped by role, demand from the
+	// analyzer's per-role attribution (RoleDemand).
+	result.RoleCapacities = buildRoleCapacities(result.VariantCapacities, result.RoleDemand)
+	// (4) Engine-owned scaling signals (RC/SC) from demand vs supply.
 	applyUniversalThreshold(result, scaleUp, scaleDown)
+}
+
+// buildRoleCapacities pairs per-role supply (grouped from the variant capacities)
+// with the analyzer's per-role demand to produce the RoleCapacities the optimizer
+// consumes for P/D-disaggregated models. Returns nil when the analyzer emitted no
+// per-role demand (non-disaggregated). RequiredCapacity/SpareCapacity are left
+// zero here — the universal threshold post-step fills them.
+func buildRoleCapacities(vcs []domain.VariantCapacity, roleDemand map[string]float64) map[string]domain.RoleCapacity {
+	if len(roleDemand) == 0 {
+		return nil
+	}
+	totals := aggregation.AggregateByRole(vcs)
+	out := make(map[string]domain.RoleCapacity, len(roleDemand))
+	for role, demand := range roleDemand {
+		t := totals[role]
+		out[role] = domain.RoleCapacity{
+			Role:                   role,
+			TotalSupply:            t.TotalSupply,
+			TotalDemand:            demand,
+			TotalAnticipatedSupply: t.TotalAnticipatedSupply,
+		}
+	}
+	return out
 }
 
 // logAnalyzerResult emits one INFO "analyzer-result" line for a single named
