@@ -216,7 +216,7 @@ cluster `wva-analyzers` ConfigMap; a policy entry's `name` resolves **built-in r
 | `domain.AnalyzerResult` | trimmed to `{TotalDemand, RoleDemand, Targets, Reason}` |
 | `domain.VariantCapacity` | replaced by `VariantTarget{VariantName, Role, PerReplicaCapacity}`; identity/engine fields removed |
 | `domain.RoleCapacity` / `RoleCapacities` | replaced by `RoleDemand map[string]float64` (demand) + engine-side per-role RC/SC on `NamedAnalyzerResult` |
-| `domain.ReplicaMetrics` | keeps per-pod capacity signals; `Cost`/variant-`AcceleratorName` sourced from discovery (per-pod accel may stay for capacity keying) |
+| `domain.ReplicaMetrics` | **loses `Cost` and `AcceleratorName`** — both are variant-level facts, resolved once per variant (`replica_metrics.go:983-1003`) and laundered onto every pod; discovery owns them. `ReplicaMetrics` becomes purely per-pod *signal* (KV usage, tokens, rates) + attribution keys (`PodName`/`VariantName`/`ModelID`/`Namespace`). Capacity-store keying already resolves accelerator directly (`engine_v2.go:48`), not from `ReplicaMetrics`. |
 | `NamedAnalyzerResult` (`optimizer_interfaces.go`) | gains the engine-owned `RequiredCapacity`/`SpareCapacity`/anticipated-supply (already has `Remaining`/`Spare`) |
 | `saturationEntry` | **deleted** |
 
@@ -306,5 +306,9 @@ and several `engine.go` sites (flagged so the removal track and this track don't
   `[]VariantMetadata`, so analyzers/optimizer import a type, not the engine.)
 - **`VariantReplicaState` vs new `VariantMetadata`:** extend the former in place, or introduce the
   latter and deprecate? (Leaning: introduce `VariantMetadata`, alias/embed during transition.)
-- **Per-pod `AcceleratorName` on `ReplicaMetrics`:** keep for capacity-store keying, or derive from
-  discovery at the point of use? (Leaning: keep per-pod; discovery owns the *variant-level* value.)
+- ~~**Per-pod `AcceleratorName` on `ReplicaMetrics`:**~~ **Resolved** — drop `AcceleratorName` *and*
+  `Cost` from `ReplicaMetrics`. Both are variant-level facts resolved once per variant
+  (`replica_metrics.go:983-1003`) and stamped identically onto every pod; no consumer needs them
+  per-pod (capacity keying already uses `GetAcceleratorNameFromScaleTarget` directly at
+  `engine_v2.go:48`). Discovery owns them; `ReplicaMetrics` keeps only per-pod signal + attribution
+  keys.
