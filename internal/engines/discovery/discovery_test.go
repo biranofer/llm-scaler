@@ -96,9 +96,9 @@ var _ = Describe("Discover", func() {
 		badMetas := discovery.Discover(ctx, []llmdvariant.VariantAutoscaling{bad}, targets("dep2", d), nil)
 
 		Expect(emptyMetas).To(HaveLen(1))
-		Expect(emptyMetas[0].Cost).To(Equal(discovery.DefaultVariantCost))
+		Expect(emptyMetas[0].Cost).To(Equal(domain.DefaultVariantCost))
 		Expect(badMetas).To(HaveLen(1))
-		Expect(badMetas[0].Cost).To(Equal(discovery.DefaultVariantCost))
+		Expect(badMetas[0].Cost).To(Equal(domain.DefaultVariantCost))
 	})
 
 	It("falls back to spec replicas when status replicas is zero", func() {

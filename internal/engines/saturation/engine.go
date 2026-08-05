@@ -1416,7 +1416,7 @@ func (e *Engine) prepareModelData(
 			continue
 		}
 
-		cost := saturationv1.DefaultVariantCost
+		cost := domain.DefaultVariantCost
 		if va.Spec.VariantCost != "" {
 			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
 				cost = parsedCost

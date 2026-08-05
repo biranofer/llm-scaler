@@ -31,10 +31,6 @@ import (
 // role "both".
 const RoleLabel = "llm-d.ai/role"
 
-// DefaultVariantCost is the per-replica cost assumed when a variant declares no
-// cost (the llm-d.ai/variant-cost annotation is absent or unparseable).
-const DefaultVariantCost = 10.0
-
 // Discover resolves the domain.VariantMetadata for each VariantAutoscaling. It prefers a
 // scale target from the provided map (populated earlier in the cycle) and falls
 // back to a live fetch; a VA whose scale target cannot be resolved is skipped
@@ -135,7 +131,7 @@ func resolveScaleTarget(
 // DefaultVariantCost when unset or unparseable. Mirrors the previous engine-side
 // cost resolution.
 func costFromVA(ctx context.Context, va *llmdvariant.VariantAutoscaling) float64 {
-	cost := DefaultVariantCost
+	cost := domain.DefaultVariantCost
 	if va.Spec.VariantCost != "" {
 		if parsed, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
 			cost = parsed

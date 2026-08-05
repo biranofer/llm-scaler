@@ -1,5 +1,11 @@
 package domain
 
+// DefaultVariantCost is the per-replica cost assumed when a variant declares no
+// cost (the llm-d.ai/variant-cost annotation is absent or unparseable). It lives
+// here, next to the variant metadata it belongs to, so every consumer
+// (discovery, collector, optimizer) shares one definition.
+const DefaultVariantCost = 10.0
+
 // VariantMetadata is the authoritative per-variant identity and replica/GPU
 // state for one optimization cycle. It carries everything the optimizer and the
 // analyzers need to know about a variant that is *not* a measured signal:

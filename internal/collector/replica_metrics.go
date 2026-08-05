@@ -65,7 +65,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/saturationv1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -995,7 +994,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 
 		// Look up cost by VariantAutoscaling namespace/name
-		cost := saturationv1.DefaultVariantCost
+		cost := domain.DefaultVariantCost
 		if variantCosts != nil {
 			if c, ok := variantCosts[variantKey]; ok {
 				cost = c
