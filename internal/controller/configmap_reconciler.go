@@ -94,8 +94,6 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
 	case config.DefaultScaleToZeroConfigMapName:
 		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
-	case config.QMAnalyzerConfigMapName():
-		r.handleQMAnalyzerConfigMap(ctx, cm, namespace, isGlobal)
 	case config.AnalyzerCatalogConfigMapName():
 		r.handleAnalyzerCatalogConfigMap(ctx, cm, isGlobal)
 	default:
@@ -136,9 +134,6 @@ func (r *ConfigMapReconciler) handleConfigMapDeletion(ctx context.Context, name,
 	case config.DefaultScaleToZeroConfigMapName:
 		r.Config.RemoveNamespaceConfig(namespace)
 		logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
-	case config.QMAnalyzerConfigMapName():
-		r.Config.RemoveNamespaceConfig(namespace)
-		logger.Info("Removed namespace-local queueing model config on ConfigMap deletion", "namespace", namespace)
 	}
 }
 
@@ -268,22 +263,4 @@ func (r *ConfigMapReconciler) handleAnalyzerCatalogConfigMap(ctx context.Context
 	catalog := config.ParseAnalyzerCatalogConfigMap(cm.Data)
 	r.Config.UpdateExternalAnalyzerCatalog(catalog)
 	logger.Info("Updated external-analyzer catalog from ConfigMap", "entries", len(catalog))
-}
-
-// handleQMAnalyzerConfigMap handles updates to the queueing model ConfigMap.
-// Supports both global and namespace-local ConfigMaps.
-func (r *ConfigMapReconciler) handleQMAnalyzerConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
-	logger := log.FromContext(ctx)
-
-	// Parse queue model based scaling config entries
-	configs, count := parseQMAnalyzerConfig(cm.Data, logger)
-
-	// Update global or namespace-local config
-	if isGlobal {
-		r.Config.UpdateQMAnalyzerConfig(configs)
-		logger.Info("Updated global queueing model config from ConfigMap", "entries", count)
-	} else {
-		r.Config.UpdateQMAnalyzerConfigForNamespace(namespace, configs)
-		logger.Info("Updated namespace-local queueing model config from ConfigMap", "namespace", namespace, "entries", count)
-	}
 }

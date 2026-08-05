@@ -26,7 +26,6 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 )
 
@@ -66,32 +65,6 @@ func parseSaturationConfig(cmData map[string]string, logger logr.Logger) (config
 				"the GPU limiter is selected only from the \"default\" entry", "key", key)
 		}
 		configs[key] = satConfig
-		count++
-	}
-	return configs, count
-}
-
-// parseQMAnalyzerConfig parses queueing model configuration from ConfigMap data.
-// Returns the parsed configs and count of successfully parsed entries.
-// Invalid or unparseable entries are skipped with an error log.
-func parseQMAnalyzerConfig(cmData map[string]string, logger logr.Logger) (config.QMAnalyzerConfigPerModel, int) {
-	configs := make(config.QMAnalyzerConfigPerModel)
-	count := 0
-	for key, yamlStr := range cmData {
-		var qmConfig domain.QueueingModelScalingConfig
-		if err := yaml.Unmarshal([]byte(yamlStr), &qmConfig); err != nil {
-			errorType := "Failed to parse queueing model config entry"
-			logger.Error(err, errorType, "key", key)
-			metrics.RecordError(constants.ComponentController, errorType)
-			continue
-		}
-		if err := qmConfig.Validate(); err != nil {
-			errorType := "Invalid queueing model config entry"
-			logger.Error(err, errorType, "key", key)
-			metrics.RecordError(constants.ComponentController, errorType)
-			continue
-		}
-		configs[key] = qmConfig
 		count++
 	}
 	return configs, count

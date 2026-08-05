@@ -38,7 +38,6 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 	}{
 		{name: config.SaturationConfigMapName(), namespace: systemNamespace, isGlobal: true},
 		{name: config.DefaultScaleToZeroConfigMapName, namespace: systemNamespace, isGlobal: true},
-		{name: config.QMAnalyzerConfigMapName(), namespace: systemNamespace, isGlobal: true},
 	}
 
 	// Determine which namespaces to scan for namespace-local ConfigMaps
@@ -97,11 +96,6 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 				namespace string
 				isGlobal  bool
 			}{name: config.DefaultScaleToZeroConfigMapName, namespace: ns, isGlobal: false},
-			struct {
-				name      string
-				namespace string
-				isGlobal  bool
-			}{name: config.QMAnalyzerConfigMapName(), namespace: ns, isGlobal: false},
 		)
 	}
 
@@ -134,8 +128,6 @@ func (r *ConfigMapReconciler) bootstrapConfigMap(ctx context.Context, name, name
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
 	case config.DefaultScaleToZeroConfigMapName:
 		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
-	case config.QMAnalyzerConfigMapName():
-		r.handleQMAnalyzerConfigMap(ctx, cm, namespace, isGlobal)
 	default:
 		logger.V(1).Info("Ignoring unrecognized bootstrap ConfigMap", "name", name, "namespace", namespace)
 	}
