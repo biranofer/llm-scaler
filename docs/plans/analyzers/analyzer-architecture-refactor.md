@@ -318,3 +318,49 @@ and several `engine.go` sites (flagged so the removal track and this track don't
   per-pod (capacity keying already uses `GetAcceleratorNameFromScaleTarget` directly at
   `engine_v2.go:48`). Discovery owns them; `ReplicaMetrics` keeps only per-pod signal + attribution
   keys.
+
+---
+
+## 10. #1455 external analyzers — as built
+
+The external-analyzer wrapper is wired through the **ScalingPolicy configuration system**, split
+across ConfigMaps exactly as §7.6 of the KEDA-external-scaler proposal describes — not collapsed into
+a single policy entry:
+
+- **Catalog** (cluster CM **`wva-analyzers`**) — external analyzer *definitions*: `label →
+  {engines: {vllm:{query,threshold}, sglang:{…}} | query,threshold}` (per-engine bodies, mirroring
+  the collector's `registerForEngine`; an engine-agnostic body has no `engines:` map). Parsed by
+  `config.ParseAnalyzerCatalogConfigMap`, stored on `Config`, refreshed by the ConfigMap reconciler.
+- **Policy** (tier CM) — *selects/weights* by name (`analyzers: [{name, enabled, score}]`). A policy
+  entry's `name` resolves **built-in registry first, then catalog**; because a plain `{name: ttft-slo}`
+  entry has `EffectiveType() == Name`, the existing `effectiveEnabled`/`scoreForAnalyzer`/
+  `resolveThresholds` matching needed no change — resolution is just "construct from the catalog when
+  the name is not a built-in".
+- **Wrapper** — `internal/engines/analyzers/external`: emits pure `(D, P)` (`desired = ceil(D/P)`),
+  selects the query body by the variant's `Engine` (a discovery field via `inferenceengine.Detect`),
+  and returns a nil result (not-defined → skipped) when no body matches.
+- **Runtime add/remove** — the engine holds a lock-guarded, name-keyed external registry
+  (`UpsertExternalAnalyzer`/`RemoveExternalAnalyzer`) separate from the frozen built-in snapshot, and
+  `reconcileExternalAnalyzers` syncs it with the catalog **each optimize cycle**, so a `wva-analyzers`
+  edit takes effect **without a restart**.
+
+## 11. Security — PromQL trust model
+
+The catalog introduces a raw-PromQL config surface. The posture matches KEDA's Prometheus scaler,
+with one addition we already have:
+
+- **The query body is trusted config.** Like KEDA's ScaledObject `query`, the catalog PromQL is run
+  as-is — WVA does **not** semantically sanitize or whitelist it (infeasible, and KEDA doesn't). The
+  trust boundary is **RBAC on the `wva-analyzers` ConfigMap**: editing it is a privileged operation.
+- **Interpolated identity is escaped.** Unlike KEDA, WVA interpolates `{{.modelID}}`/`{{.namespace}}`
+  (from a less-trusted ScaledObject annotation) into the query — and `PrometheusSource.executeQuery`
+  runs both through `EscapePromQLValue` before substitution (`prometheus_source.go:121-123`), so a
+  crafted `modelID` cannot break out of a label matcher. This is the genuine injection defense.
+- **Bounded cost + fail-safe.** Each query has a 10s timeout (`prometheus_source.go:35,140`); a
+  failed/empty/malformed query yields **0 demand → no scaling action**, so a bad definition cannot
+  drive runaway scaling — it simply contributes nothing. Heavy expressions should be precomputed as
+  Prometheus recording rules.
+- **Load-time validation is deliberately minimal** — `external.New` rejects an empty query or a
+  non-positive threshold (bad def skipped, logged); we do **not** pull in the full
+  `github.com/prometheus/prometheus` PromQL parser just to syntax-check, since the timeout + fail-safe
+  already contain a bad query's blast radius.
