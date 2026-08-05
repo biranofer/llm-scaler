@@ -25,6 +25,7 @@ type Config struct {
 	qmAnalyzer  qmAnalyzerConfig  // namespace-aware
 	scaleToZero scaleToZeroConfig // namespace-aware
 	coordinator coordinatorConfig
+	catalog     catalogConfig // cluster-scoped external-analyzer catalog
 }
 
 // coordinatorConfig holds Coordinator loop configuration. Plugin
