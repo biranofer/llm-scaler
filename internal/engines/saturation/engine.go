@@ -44,6 +44,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	queueingmodel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/queueingmodel"
 	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
@@ -1067,114 +1068,26 @@ func (e *Engine) BuildVariantStates(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
 ) []domain.VariantReplicaState {
-	states := make([]domain.VariantReplicaState, 0, len(vas))
-
-	for _, va := range vas {
-		// Get current replicas using ScaleTargetRef
-		var scaleTarget scaletarget.ScaleTargetAccessor
-		var found bool
-
-		// Try to look up in provided map first (optimization)
-		if scaleTargets != nil {
-			scaleTarget, found = scaleTargets[utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())]
-		}
-
-		if !found {
-			// Fallback to API call
-			var fetchedScaleTarget scaletarget.ScaleTargetAccessor
-			var err error
-			if fetchedScaleTarget, err = scaletarget.FetchScaleTarget(ctx, k8sClient, va.Name, va.Spec.ScaleTargetRef.Kind, va.GetScaleTargetName(), va.Namespace); err != nil {
-				ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not get scale target for VA, skipping",
-					"variant", va.Name,
-					"error", err)
-				continue
-			}
-			scaleTarget = fetchedScaleTarget
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("BuildVariantStates fallback lookup", "variant", va.Name, "scaleTargetName", va.GetScaleTargetName(), "specReplicas", scaleTarget.GetReplicas(), "statusReplicas", scaleTarget.GetStatusReplicas(), "readyReplicas", scaleTarget.GetStatusReadyReplicas())
-		} else {
-			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("BuildVariantStates map lookup", "variant", va.Name, "scaleTargetName", va.GetScaleTargetName(), "specReplicas", scaleTarget.GetReplicas(), "statusReplicas", scaleTarget.GetStatusReplicas(), "readyReplicas", scaleTarget.GetStatusReadyReplicas())
-		}
-
-		currentReplicas := int(scaleTarget.GetStatusReplicas())
-		if currentReplicas == 0 && scaleTarget.GetReplicas() != nil {
-			currentReplicas = int(*scaleTarget.GetReplicas())
-		}
-
-		// Calculate pending replicas (not yet ready)
-		readyReplicas := int(scaleTarget.GetStatusReadyReplicas())
-		pendingReplicas := currentReplicas - readyReplicas
-		if pendingReplicas < 0 {
-			// This indicates an unexpected state where readyReplicas exceeds currentReplicas.
-			// Log at Info level since this inconsistency should be visible to operators.
-			ctrl.LoggerFrom(ctx).Info("Unexpected state: readyReplicas exceeds currentReplicas, clamping pendingReplicas to 0",
-				"variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas)
-			pendingReplicas = 0
-		}
-
-		// Extract GPUs per replica from scale target's pod template
-		gpusPerReplica := scaleTarget.GetTotalGPUsPerReplica()
-
-		// Extract P/D role from scale target labels
-		role := getRoleFromScaleTarget(scaleTarget)
-
-		// Read min/max replica bounds from VA spec fields
-		var minReplicas *int
-		if va.Spec.MinReplicas != nil {
-			v := int(*va.Spec.MinReplicas)
-			minReplicas = &v
-		}
-		var maxReplicas *int
-		if va.Spec.MaxReplicas > 0 {
-			v := int(va.Spec.MaxReplicas)
-			maxReplicas = &v
-		}
-
-		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("BuildVariantStates result", "variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas, "pendingReplicas", pendingReplicas, "gpusPerReplica", gpusPerReplica, "role", role, "minReplicas", minReplicas, "maxReplicas", maxReplicas)
-
-		desiredReplicas := 0
-		if va.Status.DesiredOptimizedAlloc.NumReplicas != nil {
-			desiredReplicas = int(*va.Status.DesiredOptimizedAlloc.NumReplicas)
-		}
-		states = append(states, domain.VariantReplicaState{
-			VariantName:     va.Name,
-			CurrentReplicas: currentReplicas,
-			DesiredReplicas: desiredReplicas,
-			PendingReplicas: pendingReplicas,
-			GPUsPerReplica:  gpusPerReplica,
-			Role:            role,
-			MinReplicas:     minReplicas,
-			MaxReplicas:     maxReplicas,
-		})
+	// Variant identity + replica/GPU state is resolved by the discovery step,
+	// the single producer of per-variant metadata. BuildVariantStates projects
+	// that onto the legacy VariantReplicaState the analyzers consume today; the
+	// identity fields discovery additionally resolves (Cost, AcceleratorName,
+	// ModelID, ...) are read directly from VariantMetadata by the consumers that
+	// need them.
+	metas := discovery.Discover(ctx, vas, scaleTargets, k8sClient)
+	states := make([]domain.VariantReplicaState, 0, len(metas))
+	for _, m := range metas {
+		states = append(states, m.ToReplicaState())
 	}
-
 	return states
 }
 
 // getRoleFromScaleTarget extracts the P/D role from a scale target's pod template labels.
 // Returns "prefill", "decode", or "both" (default when no role label is present).
+// The resolution now lives in the discovery package (the owner of variant metadata);
+// this wrapper is retained for in-package callers and tests.
 func getRoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
-	if scaleTarget == nil {
-		return domain.RoleBoth
-	}
-	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
-	if podTemplateSpec == nil {
-		return domain.RoleBoth
-	}
-	labels := podTemplateSpec.Labels
-	if labels == nil {
-		return domain.RoleBoth
-	}
-	if val, ok := labels["llm-d.ai/role"]; ok {
-		switch val {
-		case "prefill":
-			return "prefill"
-		case "decode":
-			return "decode"
-		default:
-			return domain.RoleBoth
-		}
-	}
-	return domain.RoleBoth
+	return discovery.RoleFromScaleTarget(scaleTarget)
 }
 
 // convertSaturationTargetsToDecisions converts saturation-only targets to VariantDecisions.

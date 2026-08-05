@@ -1,0 +1,219 @@
+// Package discovery resolves the authoritative per-variant metadata for one
+// optimization cycle: variant identity (name, model, namespace, role,
+// accelerator, cost) together with replica and GPU state, sourced from the
+// managed scale targets and their synthesized VariantAutoscaling records.
+//
+// It is intended to be the single source of this metadata for both the analyzers
+// and the optimizer, replacing the previous scheme in which the saturation
+// analyzer laundered identity onto its per-variant capacity output (and cost and
+// accelerator name were stamped onto every pod's ReplicaMetrics). Analyzers can
+// then reduce to pure (demand, per-replica-capacity) producers.
+package discovery
+
+import (
+	"context"
+	"strconv"
+
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
+	llmdvariant "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
+)
+
+// RoleLabel is the pod-template label carrying a variant's P/D disaggregation
+// role. Its presence and value ("prefill"/"decode") is the only signal WVA uses
+// to distinguish roles; any other value (or absence) means the non-disaggregated
+// role "both".
+const RoleLabel = "llm-d.ai/role"
+
+// DefaultVariantCost is the per-replica cost assumed when a variant declares no
+// cost (the llm-d.ai/variant-cost annotation is absent or unparseable).
+const DefaultVariantCost = 10.0
+
+// VariantMetadata is the authoritative per-variant identity and replica/GPU
+// state for one optimization cycle. It carries everything the optimizer and the
+// analyzers need to know about a variant that is *not* a measured signal:
+// identity (VariantName, ModelID, Namespace, Role, AcceleratorName), economics
+// (Cost), and current fleet state (replica counts, GPUsPerReplica, bounds).
+type VariantMetadata struct {
+	VariantName string
+	ModelID     string
+	Namespace   string
+	// Role is the P/D disaggregation role: "prefill", "decode", or "both".
+	Role string
+	// Cost is the per-replica cost used for cost-aware variant selection.
+	Cost float64
+	// AcceleratorName is the GPU product the variant runs on, resolved from the
+	// scale target's pod-template nodeSelector/nodeAffinity (identical for every
+	// pod of the variant — a variant-level fact, not a per-pod one).
+	AcceleratorName string
+	GPUsPerReplica  int
+	CurrentReplicas int
+	// DesiredReplicas is the last optimizer decision recorded on the VA status,
+	// 0 if none yet.
+	DesiredReplicas int
+	ReadyReplicas   int
+	PendingReplicas int
+	// MinReplicas/MaxReplicas are the scaling bounds; nil means unset.
+	MinReplicas *int
+	MaxReplicas *int
+}
+
+// ToReplicaState projects the metadata onto the domain.VariantReplicaState the
+// analyzers consume today. Identity/economics fields that VariantReplicaState
+// has no home for (ModelID, Namespace, Cost, AcceleratorName, ReadyReplicas) are
+// dropped here; consumers that need them read the VariantMetadata directly.
+//
+// This projection keeps BuildVariantStates behavior-identical while discovery
+// becomes the single producer — the transitional step before analyzers and the
+// optimizer switch to reading VariantMetadata.
+func (m VariantMetadata) ToReplicaState() domain.VariantReplicaState {
+	return domain.VariantReplicaState{
+		VariantName:     m.VariantName,
+		CurrentReplicas: m.CurrentReplicas,
+		DesiredReplicas: m.DesiredReplicas,
+		PendingReplicas: m.PendingReplicas,
+		GPUsPerReplica:  m.GPUsPerReplica,
+		Role:            m.Role,
+		MinReplicas:     m.MinReplicas,
+		MaxReplicas:     m.MaxReplicas,
+	}
+}
+
+// Discover resolves the VariantMetadata for each VariantAutoscaling. It prefers a
+// scale target from the provided map (populated earlier in the cycle) and falls
+// back to a live fetch; a VA whose scale target cannot be resolved is skipped
+// (logged at DEBUG), matching the previous BuildVariantStates behavior.
+func Discover(
+	ctx context.Context,
+	vas []llmdvariant.VariantAutoscaling,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+	k8sClient client.Client,
+) []VariantMetadata {
+	logger := ctrl.LoggerFrom(ctx)
+	metas := make([]VariantMetadata, 0, len(vas))
+
+	for i := range vas {
+		va := &vas[i]
+
+		scaleTarget, ok := resolveScaleTarget(ctx, va, scaleTargets, k8sClient)
+		if !ok {
+			continue
+		}
+
+		currentReplicas := int(scaleTarget.GetStatusReplicas())
+		if currentReplicas == 0 && scaleTarget.GetReplicas() != nil {
+			currentReplicas = int(*scaleTarget.GetReplicas())
+		}
+
+		readyReplicas := int(scaleTarget.GetStatusReadyReplicas())
+		pendingReplicas := currentReplicas - readyReplicas
+		if pendingReplicas < 0 {
+			// readyReplicas exceeding currentReplicas is an unexpected state;
+			// surface it and clamp so downstream sizing is not skewed.
+			logger.Info("Unexpected state: readyReplicas exceeds currentReplicas, clamping pendingReplicas to 0",
+				"variant", va.Name, "currentReplicas", currentReplicas, "readyReplicas", readyReplicas)
+			pendingReplicas = 0
+		}
+
+		desiredReplicas := 0
+		if va.Status.DesiredOptimizedAlloc.NumReplicas != nil {
+			desiredReplicas = int(*va.Status.DesiredOptimizedAlloc.NumReplicas)
+		}
+
+		var minReplicas *int
+		if va.Spec.MinReplicas != nil {
+			v := int(*va.Spec.MinReplicas)
+			minReplicas = &v
+		}
+		var maxReplicas *int
+		if va.Spec.MaxReplicas > 0 {
+			v := int(va.Spec.MaxReplicas)
+			maxReplicas = &v
+		}
+
+		metas = append(metas, VariantMetadata{
+			VariantName:     va.Name,
+			ModelID:         va.Spec.ModelID,
+			Namespace:       va.Namespace,
+			Role:            RoleFromScaleTarget(scaleTarget),
+			Cost:            costFromVA(ctx, va),
+			AcceleratorName: accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget),
+			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
+			CurrentReplicas: currentReplicas,
+			DesiredReplicas: desiredReplicas,
+			ReadyReplicas:   readyReplicas,
+			PendingReplicas: pendingReplicas,
+			MinReplicas:     minReplicas,
+			MaxReplicas:     maxReplicas,
+		})
+	}
+
+	return metas
+}
+
+// resolveScaleTarget returns the scale target for va, preferring the pre-populated
+// map and falling back to a live fetch. Returns ok=false (VA skipped) when no
+// scale target can be resolved.
+func resolveScaleTarget(
+	ctx context.Context,
+	va *llmdvariant.VariantAutoscaling,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+	k8sClient client.Client,
+) (scaletarget.ScaleTargetAccessor, bool) {
+	if scaleTargets != nil {
+		if st, found := scaleTargets[utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())]; found {
+			return st, true
+		}
+	}
+
+	st, err := scaletarget.FetchScaleTarget(ctx, k8sClient, va.Name, va.Spec.ScaleTargetRef.Kind, va.GetScaleTargetName(), va.Namespace)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Could not get scale target for VA, skipping",
+			"variant", va.Name, "error", err)
+		return nil, false
+	}
+	return st, true
+}
+
+// costFromVA parses the variant's per-replica cost from its spec, falling back to
+// DefaultVariantCost when unset or unparseable. Mirrors the previous engine-side
+// cost resolution.
+func costFromVA(ctx context.Context, va *llmdvariant.VariantAutoscaling) float64 {
+	cost := DefaultVariantCost
+	if va.Spec.VariantCost != "" {
+		if parsed, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
+			cost = parsed
+		} else {
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info("Failed to parse variant cost, using default",
+				"variant", va.Name, "variantCost", va.Spec.VariantCost, "default", cost, "error", err)
+		}
+	}
+	return cost
+}
+
+// RoleFromScaleTarget extracts the P/D role from a scale target's leader
+// pod-template labels. Returns "prefill", "decode", or "both" (the default when
+// no role label is present or the value is unrecognized).
+func RoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
+	if scaleTarget == nil {
+		return domain.RoleBoth
+	}
+	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
+	if podTemplateSpec == nil || podTemplateSpec.Labels == nil {
+		return domain.RoleBoth
+	}
+	switch podTemplateSpec.Labels[RoleLabel] {
+	case domain.RolePrefill:
+		return domain.RolePrefill
+	case domain.RoleDecode:
+		return domain.RoleDecode
+	default:
+		return domain.RoleBoth
+	}
+}
