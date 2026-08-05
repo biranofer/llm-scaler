@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"time"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -162,43 +161,6 @@ type ReplicaMetricsMetadata struct {
 	Age time.Duration
 	// FreshnessStatus indicates freshness: "fresh", "stale", "unavailable"
 	FreshnessStatus string
-}
-
-// ModelSaturationAnalysis holds saturation analysis results for a model (across all variants)
-type ModelSaturationAnalysis struct {
-	ModelID    string
-	Namespace  string
-	AnalyzedAt time.Time // Timestamp when analysis was performed
-
-	// Aggregated metrics across all variants of this model
-	TotalReplicas       int
-	NonSaturatedCount   int // Replicas below saturation thresholds
-	AvgSpareKvCapacity  float64
-	AvgSpareQueueLength float64
-
-	// Scale decision recommendations
-	ShouldScaleUp bool
-
-	ScaleUpReason string
-	ScaleDownSafe bool // Indicates if scale-down simulation passed
-
-	// Detailed variant breakdown
-	VariantAnalyses []VariantSaturationAnalysis
-}
-
-// VariantSaturationAnalysis holds saturation analysis for a single variant
-type VariantSaturationAnalysis struct {
-	VariantName         string
-	AcceleratorName     string
-	Cost                float64 // Cost per replica for this variant
-	ReplicaCount        int
-	NonSaturatedCount   int
-	MaxKvCacheUsage     float64
-	AvgKvCacheUsage     float64 // Mean KV cache utilization across all replicas (for V1 Utilization)
-	MaxQueueLength      int
-	AvgSpareKvCapacity  float64
-	AvgSpareQueueLength float64
-	SaturatedReplicas   []string // Pod names of saturated replicas
 }
 
 // DecisionStep represents a single step in the decision pipeline.
@@ -407,28 +369,4 @@ type VariantReplicaState struct {
 	// MaxReplicas is the maximum number of replicas for this variant (from VA spec field).
 	// nil means not set (default: 0, no cap).
 	MaxReplicas *int
-}
-
-// SaturationAnalyzer analyzes replica saturation metrics and recommends scaling decisions
-type SaturationAnalyzer interface {
-	// AnalyzeModelSaturation analyzes saturation for all variants of a model
-	// Returns saturation analysis with scale-up/scale-down recommendations
-	AnalyzeModelSaturation(
-		ctx context.Context,
-		modelID string,
-		namespace string,
-		replicaMetrics []ReplicaMetrics,
-		config AnalyzerConfig,
-	) (*ModelSaturationAnalysis, error)
-
-	// CalculateSaturationTargets determines target replicas per variant based on saturation analysis.
-	// Step 1: Pure saturation-based target calculation
-	// - Uses ready replica count (those with metrics) to avoid excessive scale-up
-	// - Preserves desired replicas when desired ≠ current (from previous optimizer run)
-	// - Uses cost-based selection (cheapest for scale-up, most expensive for scale-down)
-	// Returns: map[variantName]targetReplicas
-	CalculateSaturationTargets(
-		saturationAnalysis *ModelSaturationAnalysis,
-		variantStates []VariantReplicaState,
-	) map[string]int
 }
