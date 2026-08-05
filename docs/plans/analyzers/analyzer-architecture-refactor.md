@@ -234,17 +234,23 @@ Introduce `VariantMetadata` and a `DiscoverVariants(ctx) ([]VariantMetadata, err
 *alongside* the current path; log/assert it matches the identity the analyzer copies today. **No
 behavior change.** De-risks by proving the consolidated source equals the laundered one.
 
-**Phase 2 — Repoint optimizer to discovery; delete `saturationEntry`.**
-Optimizer + `analyzer_helpers` read `Cost`/`Accelerator`/`Role`/replicas from the discovery map
-(keyed by `VariantName`) instead of `saturationEntry`/`VariantCapacity`. Analyzers still *emit* those
-fields (ignored) to keep this diff small. **Behavior-preserving** (same values, different source).
+**Phase 2 — Thread discovery metadata into the optimizer; make it the source of truth. ✅ DONE.**
+Promote `VariantMetadata` to `domain`; thread the discovery output into
+`ModelScalingRequest.Variants`. The engine runs discovery once per model, projects it to
+`VariantReplicaState` for the analyzers, and *overlays* the authoritative `Cost`/`Accelerator`/`Role`
+onto the analyzers' `VariantCapacity` output before the optimizer runs — so the optimizer reads
+identity that came from discovery, not the analyzer's copies. **Behavior-preserving** (values equal
+today); no-op on paths that don't run discovery. `saturationEntry` deletion is deferred to Phase 3
+(it is still the variant-list/P source until analyzers emit pure `(D, P)`).
 
-**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`.**
+**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`.**
 `saturation_v2` and `throughput` stop emitting identity/engine fields; move
 `RequiredCapacity`/`SpareCapacity` computation fully into the engine post-step. Replace
-`AnalyzerResult`/`VariantCapacity` with the trimmed types + `VariantTarget`. Remove the throughput
-special-case. This is the largest single diff (touches both analyzers + the optimizer + ~10 test
-files) but is now pure mechanical shape-change on a green base.
+`AnalyzerResult`/`VariantCapacity` with the trimmed types + `VariantTarget`. The optimizer's
+variant list + P come from discovery (`req.Variants`) + each analyzer's targets, so `saturationEntry`
+and the Phase-2 overlay both go away. Remove the throughput special-case. This is the largest single
+diff (touches both analyzers + the optimizer + ~10 test files) but is now pure mechanical
+shape-change on a green base.
 
 **Phase 4 — `wva_analyzer_*` metrics.** Emit demand/target from the `(D, P)` outputs. Additive.
 
