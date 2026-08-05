@@ -146,7 +146,7 @@ func (e *Engine) runAnalyzersAndScore(
 		ScaleUpThreshold:  satUp,
 		ScaleDownBoundary: satDown,
 	}}
-	for _, entry := range e.analyzersSnapshot {
+	for _, entry := range e.analyzerRunEntries() {
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
 		}

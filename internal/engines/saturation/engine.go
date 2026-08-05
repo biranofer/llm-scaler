@@ -62,16 +62,6 @@ type analyzerEntry struct {
 	analyzer domain.Analyzer
 }
 
-// safetyNetEmitter reports a per-role analysis failure to the saturation
-// engine's safety-net metrics path. Extracted as a function type so the
-// per-role loop can be unit-tested with a spy.
-type safetyNetEmitter func(
-	ctx context.Context,
-	roleVAs []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	currentAllocations map[string]*domain.Allocation,
-	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
-)
-
 // resolveSaturationConfig resolves config for a model.
 // Starts from the "default" entry (or zero-value), then merges the model-specific
 // override "{modelID}#{namespace}" on top (if present). This allows per-model
@@ -191,6 +181,16 @@ type Engine struct {
 	// rather than just documented.
 	started bool
 
+	// externalMu guards externalAnalyzers, which — unlike the frozen built-in
+	// registry above — may change while the optimize goroutine runs.
+	externalMu sync.RWMutex
+	// externalAnalyzers holds config-driven external analyzers keyed by name.
+	// It is mutated at runtime (UpsertExternalAnalyzer/RemoveExternalAnalyzer)
+	// when the analyzer catalog changes, and read under RLock each cycle. This is
+	// the "analyzers can be added at run-time" path; the built-in snapshot stays
+	// frozen and lock-free.
+	externalAnalyzers map[string]domain.Analyzer
+
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
 	// AnalyzerResults. Selected per-cycle based on enableLimiter config:
 	// CostAwareOptimizer (unlimited) or GreedyByScoreOptimizer (limited).
@@ -251,6 +251,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		analyzers: []analyzerEntry{
 			{name: domain.SaturationAnalyzerName, analyzer: satV2},
 		},
+		externalAnalyzers: make(map[string]domain.Analyzer),
 	}
 
 	engine.executor = executor.NewPollingExecutor(executor.PollingConfig{
@@ -295,6 +296,55 @@ func (e *Engine) RegisterAnalyzer(name string, a domain.Analyzer) error {
 	}
 	e.analyzers = append(e.analyzers, analyzerEntry{name: name, analyzer: a})
 	return nil
+}
+
+// UpsertExternalAnalyzer registers or replaces a config-driven external analyzer
+// by name. Unlike RegisterAnalyzer it is safe to call while the optimize loop is
+// running (the analyzer participates from the next cycle), so the analyzer
+// catalog can change without a restart. A name that collides with a built-in
+// analyzer is still stored here but never runs — the built-in wins in
+// analyzerRunEntries.
+func (e *Engine) UpsertExternalAnalyzer(name string, a domain.Analyzer) {
+	e.externalMu.Lock()
+	defer e.externalMu.Unlock()
+	e.externalAnalyzers[name] = a
+}
+
+// RemoveExternalAnalyzer retires a runtime external analyzer. Idempotent.
+func (e *Engine) RemoveExternalAnalyzer(name string) {
+	e.externalMu.Lock()
+	defer e.externalMu.Unlock()
+	delete(e.externalAnalyzers, name)
+}
+
+// analyzerRunEntries returns the analyzers to run this cycle: the frozen built-in
+// snapshot followed by the runtime external analyzers (sorted by name for a
+// deterministic order). An external analyzer whose name collides with a built-in
+// is skipped — the built-in registry wins name resolution.
+func (e *Engine) analyzerRunEntries() []analyzerEntry {
+	builtinNames := make(map[string]struct{}, len(e.analyzersSnapshot))
+	for _, en := range e.analyzersSnapshot {
+		builtinNames[en.name] = struct{}{}
+	}
+
+	e.externalMu.RLock()
+	defer e.externalMu.RUnlock()
+
+	names := make([]string, 0, len(e.externalAnalyzers))
+	for name := range e.externalAnalyzers {
+		if _, dup := builtinNames[name]; dup {
+			continue // built-in wins name resolution
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	entries := make([]analyzerEntry, 0, len(e.analyzersSnapshot)+len(names))
+	entries = append(entries, e.analyzersSnapshot...)
+	for _, name := range names {
+		entries = append(entries, analyzerEntry{name: name, analyzer: e.externalAnalyzers[name]})
+	}
+	return entries
 }
 
 // StartOptimizeLoop starts the optimization loop for the saturation engine.
@@ -966,20 +1016,6 @@ func groupByRole(states []domain.VariantReplicaState) map[string][]domain.Varian
 		groups[key] = append(groups[key], s)
 	}
 	return groups
-}
-
-// sortedRoleKeys returns the keys of a role group map in sorted order so that
-// role processing order is deterministic across cycles (stable log output,
-// easier debugging). The caller is expected to pass a map whose keys were
-// produced by groupByRole, which has already canonicalized empty roles to
-// "both"; the resulting lexicographic order is then "both" < "decode" < "prefill".
-func sortedRoleKeys(groups map[string][]domain.VariantReplicaState) []string {
-	keys := make([]string, 0, len(groups))
-	for k := range groups {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // filterReplicaMetricsByVariants returns only the replica metrics whose VariantName
