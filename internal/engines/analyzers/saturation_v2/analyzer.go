@@ -349,16 +349,6 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 		byVariant[rc.VariantName] = append(byVariant[rc.VariantName], rc)
 	}
 
-	// Build cost and accelerator lookup from input metrics
-	variantCost := make(map[string]float64)
-	variantAccel := make(map[string]string)
-	for _, rm := range inputMetrics {
-		if _, ok := variantCost[rm.VariantName]; !ok {
-			variantCost[rm.VariantName] = rm.Cost
-			variantAccel[rm.VariantName] = rm.AcceleratorName
-		}
-	}
-
 	// Compute model-level workload averages from live replica metrics.
 	// Used for capacity estimation of zero-replica variants with deployment-derived params.
 	modelAvgInput, modelAvgOutput, _ := computeModelWorkloadAverages(inputMetrics)
@@ -369,8 +359,10 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 
 		var perReplicaCapacity float64
 		var totalDemand float64
-		accelerator := variantAccel[vs.VariantName]
-		cost := variantCost[vs.VariantName]
+		// accelerator is an analyzer input (discovery-resolved, on VariantReplicaState),
+		// used below for cross-variant capacity lookup. It is NOT emitted on the output;
+		// the capacity builder fills per-variant identity from discovery.
+		accelerator := vs.AcceleratorName
 
 		readyCount := vs.CurrentReplicas - vs.PendingReplicas
 		if readyCount < 0 {
@@ -414,9 +406,6 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 					pendingCount = vs.PendingReplicas * instancesPerUnit
 				}
 			}
-			if accelerator == "" {
-				accelerator = replicas[0].AcceleratorName
-			}
 			capacityLabel = k2SourceLabel(replicas)
 		} else if rec := a.capacityStore.Get(namespace, modelID, vs.VariantName); rec != nil && rec.EffectiveCapacity > 0 {
 			// No ready replicas — use stored capacity, enhanced with k2 derivation
@@ -438,10 +427,11 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 			utilization = totalDemand / totalCapacity
 		}
 
+		// Per-variant identity (Cost, AcceleratorName) is intentionally not set here:
+		// the capacity builder fills it from the discovery step, so the analyzer's
+		// output is the measured capacity signal, not laundered identity.
 		result = append(result, domain.VariantCapacity{
 			VariantName:        vs.VariantName,
-			AcceleratorName:    accelerator,
-			Cost:               cost,
 			Role:               vs.Role,
 			ReplicaCount:       replicaCount,
 			PendingReplicas:    pendingCount,

@@ -56,6 +56,7 @@ func (m VariantMetadata) ToReplicaState() VariantReplicaState {
 		PendingReplicas: m.PendingReplicas,
 		GPUsPerReplica:  m.GPUsPerReplica,
 		Role:            m.Role,
+		AcceleratorName: m.AcceleratorName,
 		MinReplicas:     m.MinReplicas,
 		MaxReplicas:     m.MaxReplicas,
 	}

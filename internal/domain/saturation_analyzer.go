@@ -363,6 +363,11 @@ type VariantReplicaState struct {
 	GPUsPerReplica int
 	// Role is the P/D disaggregation role: "prefill", "decode", or "both" (default).
 	Role string
+	// AcceleratorName is the GPU product the variant runs on, resolved by the
+	// discovery step. It is an analyzer *input* (used e.g. for cross-variant
+	// capacity lookup); the per-variant identity on the analyzer's *output* is
+	// filled by the capacity builder from discovery, not laundered per-pod.
+	AcceleratorName string
 	// MinReplicas is the minimum number of replicas for this variant (from VA spec field).
 	// nil means not set (default: 0, allows scale to zero).
 	MinReplicas *int
