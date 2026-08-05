@@ -31,6 +31,7 @@ spec:
           - --config-file=/etc/wva/config.yaml
           - --metrics-bind-address=:8443
           - --metrics-secure=true
+          - --external-scaler-bind-address=:9090
         image: controller:latest
         imagePullPolicy: IfNotPresent
         env:
@@ -51,6 +52,9 @@ spec:
             protocol: TCP
           - name: https
             containerPort: 8443
+            protocol: TCP
+          - name: ext-scaler
+            containerPort: 9090
             protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false

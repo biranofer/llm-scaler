@@ -6,6 +6,7 @@ import (
 
 	llmdOptv1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -64,6 +65,12 @@ func (a *Actuator) EmitMetrics(ctx context.Context, variantAutoscaling *llmdOptv
 	}
 
 	desiredReplicas := *variantAutoscaling.Status.DesiredOptimizedAlloc.NumReplicas
+
+	// Publish the decision for the KEDA external scaler (internal/scaler) to read,
+	// keyed by the scale-target name (scaleTargetRef.Name). This mirrors the value
+	// emitted to the wva_desired_replicas gauge; the external scaler serves it to
+	// KEDA directly, without a Prometheus round-trip.
+	decision.Set(variantAutoscaling.Namespace, variantAutoscaling.GetScaleTargetName(), desiredReplicas)
 
 	// Get real current replicas from Deployment (not stale variantAutoscaling status)
 	currentReplicas, err := a.GetCurrentScaleTargetReplicasFromVA(ctx, variantAutoscaling)

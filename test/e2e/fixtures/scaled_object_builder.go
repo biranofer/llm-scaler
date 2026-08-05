@@ -79,6 +79,25 @@ func WithScaledObjectWVAAnnotations(modelID, cost string) ScaledObjectOption {
 	}
 }
 
+// WithExternalScalerTrigger replaces the ScaledObject's triggers with a single
+// KEDA external trigger pointing at WVA's external-scaler gRPC service, so KEDA
+// receives WVA's decision directly (over gRPC) instead of reading the
+// wva_desired_replicas gauge from Prometheus. scalerAddress is host:port, e.g.
+// "wva-external-scaler.<wva-namespace>.svc.cluster.local:9090".
+func WithExternalScalerTrigger(scalerAddress string) ScaledObjectOption {
+	return func(so *kedav1alpha1.ScaledObject) {
+		so.Spec.Triggers = []kedav1alpha1.ScaleTriggers{
+			{
+				Type: "external",
+				Name: "wva-external-scaler",
+				Metadata: map[string]string{
+					"scalerAddress": scalerAddress,
+				},
+			},
+		}
+	}
+}
+
 // CreateScaledObject creates a KEDA ScaledObject for WVA. Fails if it already exists.
 func CreateScaledObject(
 	ctx context.Context,

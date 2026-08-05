@@ -66,6 +66,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	prometheusutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/scaler"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/crd"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -121,6 +122,10 @@ func main() {
 	flag.String("metrics-cert-key", "tls.key", "The name of the metrics key file.")
 	flag.String("watch-namespace", "",
 		"Namespace to watch for updates. If unspecified, all namespaces are watched.")
+
+	externalScalerBindAddress := flag.String("external-scaler-bind-address", ":9090",
+		"The address the KEDA external scaler gRPC service binds to. "+
+			"KEDA ScaledObjects reference this via an external trigger's scalerAddress.")
 
 	// Leader election timeout configuration flags
 	// These can be overridden in manager.yaml to tune for different environments
@@ -533,6 +538,14 @@ func main() {
 
 	if err != nil {
 		setupLog.Error(err, "unable to add optimization engine loop to manager")
+		os.Exit(1)
+	}
+
+	// Register the KEDA external scaler gRPC server. Leader-gated (a plain
+	// manager.Runnable) so it is co-located with the optimize loop that feeds the
+	// in-memory decision store it serves.
+	if err := mgr.Add(&scaler.Server{Addr: *externalScalerBindAddress, Client: mgr.GetClient()}); err != nil {
+		setupLog.Error(err, "unable to add KEDA external scaler to manager")
 		os.Exit(1)
 	}
 
