@@ -1009,7 +1009,7 @@ func (e *Engine) optimizeV2(
 		}
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
-			data.replicaMetrics, saturationConfig, data.variantStates,
+			data.replicaMetrics, saturationConfig, data.variantStates, data.variantMetadata,
 			data.scaleTargets, data.variantAutoscalings, data.schedulerQueue, data.arrivalRate)
 		if err != nil {
 			msg := "V2 analysis failed"
@@ -1379,6 +1379,7 @@ type modelData struct {
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling
 	variantCosts        map[string]float64
 	variantStates       []domain.VariantReplicaState
+	variantMetadata     []domain.VariantMetadata
 	schedulerQueue      *domain.SchedulerQueueMetrics
 	arrivalRate         float64
 }
@@ -1453,7 +1454,15 @@ func (e *Engine) prepareModelData(
 		return nil, nil // nil modelData signals skip
 	}
 
-	variantStates := e.BuildVariantStates(ctx, modelVAs, scaleTargets, k8sClient)
+	// Discover the authoritative per-variant metadata once, then project it onto
+	// the VariantReplicaState the analyzers consume. The full metadata is also
+	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
+	// of truth for variant identity/cost/accelerator.
+	variantMetadata := discovery.Discover(ctx, modelVAs, scaleTargets, k8sClient)
+	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))
+	for _, m := range variantMetadata {
+		variantStates = append(variantStates, m.ToReplicaState())
+	}
 	schedulerQueue := e.ReplicaMetricsCollector.CollectSchedulerQueueMetrics(ctx, modelID)
 	arrivalRate := e.ReplicaMetricsCollector.CollectModelArrivalRate(ctx, modelID, namespace)
 
@@ -1465,6 +1474,7 @@ func (e *Engine) prepareModelData(
 		variantAutoscalings: variantAutoscalings,
 		variantCosts:        variantCosts,
 		variantStates:       variantStates,
+		variantMetadata:     variantMetadata,
 		schedulerQueue:      schedulerQueue,
 		arrivalRate:         arrivalRate,
 	}, nil

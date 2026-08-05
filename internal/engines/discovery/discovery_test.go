@@ -13,6 +13,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -161,7 +162,7 @@ var _ = Describe("RoleFromScaleTarget", func() {
 
 var _ = Describe("VariantMetadata.ToReplicaState", func() {
 	It("projects the replica-state fields and drops identity/economics", func() {
-		m := discovery.VariantMetadata{
+		m := domain.VariantMetadata{
 			VariantName:     "v1",
 			ModelID:         "m1",
 			Namespace:       "ns",

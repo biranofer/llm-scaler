@@ -584,6 +584,7 @@ func (e *Engine) collectV2ModelRequest(
 	replicaMetrics []domain.ReplicaMetrics,
 	config config.SaturationScalingConfig,
 	variantStates []domain.VariantReplicaState,
+	variantMetadata []domain.VariantMetadata,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	schedulerQueue *domain.SchedulerQueueMetrics,
@@ -594,6 +595,12 @@ func (e *Engine) collectV2ModelRequest(
 	if err != nil {
 		return nil, fmt.Errorf("collecting V2 model request for %s/%s: %w", namespace, modelID, err)
 	}
+
+	// Make the discovery step the source of truth for per-variant identity: the
+	// optimizer reads cost/accelerator/role from these values, so overwrite the
+	// copies the analyzers laundered onto their VariantCapacity output with the
+	// authoritative discovery metadata.
+	overlayVariantMetadata(namedResults, variantMetadata)
 
 	// Detect P/D disaggregation: true when any variant has role != domain.RoleBoth
 	disaggregated := false
@@ -609,9 +616,39 @@ func (e *Engine) collectV2ModelRequest(
 		Namespace:       namespace,
 		AnalyzerResults: namedResults,
 		VariantStates:   variantStates,
+		Variants:        variantMetadata,
 		Priority:        config.Priority,
 		Disaggregated:   disaggregated,
 	}, nil
+}
+
+// overlayVariantMetadata makes the discovery step the source of truth for
+// per-variant identity by overwriting the cost, accelerator, and role fields the
+// analyzers copied onto their VariantCapacity output with the authoritative
+// values from discovery. It is a no-op when variantMetadata is empty (paths that
+// do not run discovery keep the analyzer-supplied values). Transitional: once
+// analyzers emit pure (demand, per-replica-capacity), these identity fields
+// leave VariantCapacity and this overlay is removed.
+func overlayVariantMetadata(results []pipeline.NamedAnalyzerResult, variantMetadata []domain.VariantMetadata) {
+	if len(variantMetadata) == 0 {
+		return
+	}
+	byName := make(map[string]domain.VariantMetadata, len(variantMetadata))
+	for _, m := range variantMetadata {
+		byName[m.VariantName] = m
+	}
+	for _, nr := range results {
+		if nr.Result == nil {
+			continue
+		}
+		for i := range nr.Result.VariantCapacities {
+			if m, ok := byName[nr.Result.VariantCapacities[i].VariantName]; ok {
+				nr.Result.VariantCapacities[i].Cost = m.Cost
+				nr.Result.VariantCapacities[i].AcceleratorName = m.AcceleratorName
+				nr.Result.VariantCapacities[i].Role = m.Role
+			}
+		}
+	}
 }
 
 // logAnalyzerResult emits one INFO "analyzer-result" line for a single named

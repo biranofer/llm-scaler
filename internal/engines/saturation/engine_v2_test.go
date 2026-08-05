@@ -449,7 +449,7 @@ var _ = Describe("collectV2ModelRequest Disaggregated flag", func() {
 			{VariantName: "decode-v1", Role: "decode"},
 		}
 
-		req, err := e.collectV2ModelRequest(context.Background(), "m", "ns", nil, cfg, variantStates, nil, nil, nil, 0)
+		req, err := e.collectV2ModelRequest(context.Background(), "m", "ns", nil, cfg, variantStates, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Disaggregated).To(BeTrue())
 	})
@@ -475,7 +475,7 @@ var _ = Describe("collectV2ModelRequest Disaggregated flag", func() {
 			{VariantName: "v2", Role: ""},
 		}
 
-		req, err := e.collectV2ModelRequest(context.Background(), "m", "ns", nil, cfg, variantStates, nil, nil, nil, 0)
+		req, err := e.collectV2ModelRequest(context.Background(), "m", "ns", nil, cfg, variantStates, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(req.Disaggregated).To(BeFalse())
 	})

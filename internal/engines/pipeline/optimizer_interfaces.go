@@ -43,8 +43,15 @@ type ModelScalingRequest struct {
 	Namespace       string
 	AnalyzerResults []NamedAnalyzerResult // per-analyzer slice; saturation entry is always first
 	VariantStates   []domain.VariantReplicaState
-	Priority        float64 // Model priority (default 1.0)
-	Disaggregated   bool    // true when model has prefill+decode variants
+	// Variants is the authoritative per-variant metadata (identity, cost,
+	// accelerator, replica state) from the discovery step. When populated it is
+	// the source of truth for variant metadata, superseding the copies the
+	// saturation analyzer laundered onto its VariantCapacity output. May be nil
+	// on non-primary paths (e.g. tests), in which case the optimizer falls back
+	// to the analyzer-supplied metadata.
+	Variants      []domain.VariantMetadata
+	Priority      float64 // Model priority (default 1.0)
+	Disaggregated bool    // true when model has prefill+decode variants
 }
 
 // ScalingOptimizer makes final scaling decisions for all models.

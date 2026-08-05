@@ -35,57 +35,7 @@ const RoleLabel = "llm-d.ai/role"
 // cost (the llm-d.ai/variant-cost annotation is absent or unparseable).
 const DefaultVariantCost = 10.0
 
-// VariantMetadata is the authoritative per-variant identity and replica/GPU
-// state for one optimization cycle. It carries everything the optimizer and the
-// analyzers need to know about a variant that is *not* a measured signal:
-// identity (VariantName, ModelID, Namespace, Role, AcceleratorName), economics
-// (Cost), and current fleet state (replica counts, GPUsPerReplica, bounds).
-type VariantMetadata struct {
-	VariantName string
-	ModelID     string
-	Namespace   string
-	// Role is the P/D disaggregation role: "prefill", "decode", or "both".
-	Role string
-	// Cost is the per-replica cost used for cost-aware variant selection.
-	Cost float64
-	// AcceleratorName is the GPU product the variant runs on, resolved from the
-	// scale target's pod-template nodeSelector/nodeAffinity (identical for every
-	// pod of the variant — a variant-level fact, not a per-pod one).
-	AcceleratorName string
-	GPUsPerReplica  int
-	CurrentReplicas int
-	// DesiredReplicas is the last optimizer decision recorded on the VA status,
-	// 0 if none yet.
-	DesiredReplicas int
-	ReadyReplicas   int
-	PendingReplicas int
-	// MinReplicas/MaxReplicas are the scaling bounds; nil means unset.
-	MinReplicas *int
-	MaxReplicas *int
-}
-
-// ToReplicaState projects the metadata onto the domain.VariantReplicaState the
-// analyzers consume today. Identity/economics fields that VariantReplicaState
-// has no home for (ModelID, Namespace, Cost, AcceleratorName, ReadyReplicas) are
-// dropped here; consumers that need them read the VariantMetadata directly.
-//
-// This projection keeps BuildVariantStates behavior-identical while discovery
-// becomes the single producer — the transitional step before analyzers and the
-// optimizer switch to reading VariantMetadata.
-func (m VariantMetadata) ToReplicaState() domain.VariantReplicaState {
-	return domain.VariantReplicaState{
-		VariantName:     m.VariantName,
-		CurrentReplicas: m.CurrentReplicas,
-		DesiredReplicas: m.DesiredReplicas,
-		PendingReplicas: m.PendingReplicas,
-		GPUsPerReplica:  m.GPUsPerReplica,
-		Role:            m.Role,
-		MinReplicas:     m.MinReplicas,
-		MaxReplicas:     m.MaxReplicas,
-	}
-}
-
-// Discover resolves the VariantMetadata for each VariantAutoscaling. It prefers a
+// Discover resolves the domain.VariantMetadata for each VariantAutoscaling. It prefers a
 // scale target from the provided map (populated earlier in the cycle) and falls
 // back to a live fetch; a VA whose scale target cannot be resolved is skipped
 // (logged at DEBUG), matching the previous BuildVariantStates behavior.
@@ -94,9 +44,9 @@ func Discover(
 	vas []llmdvariant.VariantAutoscaling,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
-) []VariantMetadata {
+) []domain.VariantMetadata {
 	logger := ctrl.LoggerFrom(ctx)
-	metas := make([]VariantMetadata, 0, len(vas))
+	metas := make([]domain.VariantMetadata, 0, len(vas))
 
 	for i := range vas {
 		va := &vas[i]
@@ -137,7 +87,7 @@ func Discover(
 			maxReplicas = &v
 		}
 
-		metas = append(metas, VariantMetadata{
+		metas = append(metas, domain.VariantMetadata{
 			VariantName:     va.Name,
 			ModelID:         va.Spec.ModelID,
 			Namespace:       va.Namespace,
