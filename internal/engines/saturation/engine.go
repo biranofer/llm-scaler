@@ -42,7 +42,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	queueingmodel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/queueingmodel"
 	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
@@ -177,10 +176,6 @@ type Engine struct {
 	// Typed as domain.Analyzer to allow injection in tests.
 	saturationV2Analyzer domain.Analyzer
 
-	// queueingModelAnalyzer is the queueing model-based analyzer (initialized once).
-	// Selected via analyzerName: "queueing-model" in SaturationScalingConfig.
-	queueingModelAnalyzer *queueingmodel.QueueingModelAnalyzer
-
 	// capacityStore is shared with the V2 analyzer for caching capacity knowledge.
 	capacityStore *saturation_v2.CapacityKnowledgeStore
 
@@ -276,7 +271,6 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		GPULimiter:              gpuLimiter,
 		metricsRegistry:         metricsRegistry,
 		saturationV2Analyzer:    satV2,
-		queueingModelAnalyzer:   queueingmodel.NewQueueingModelAnalyzer(),
 		capacityStore:           capacityStore,
 		lastGoodAnalysis:        make(map[string]map[string]time.Time),
 		optimizer:               scalingOptimizer,
@@ -503,14 +497,7 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	// Keyed by VariantAutoscaling Namespace/Name
 	currentAllocations := make(map[string]*domain.Allocation)
 
-	// Determine which analyzer to use.
-	// Priority: queueing model ConfigMap (presence-based) > saturation config analyzerName.
-	// If wva-queueing-model-config exists with a "default" entry, the queueing model
-	// analyzer is active regardless of the saturation config's analyzerName field.
-	qmConfigMap := e.Config.QMAnalyzerConfig()
-	_, hasQMAnalyzerConfig := qmConfigMap["default"]
-
-	// Read saturation config for fallback analyzer selection and limiter flag.
+	// Read saturation config for analyzer selection and limiter flag.
 	globalSatCfgMap := e.Config.SaturationConfig()
 	analyzerName := ""
 	enableLimiter := false
@@ -520,14 +507,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		enableLimiter = cfg.EnableLimiter
 	}
 
-	// Queueing model ConfigMap takes priority over saturation analyzerName.
-	if hasQMAnalyzerConfig {
-		analyzerName = domain.QueueingModelAnalyzerName
-	}
-
-	// Select optimizer based on enableLimiter flag (both are stateless, safe to swap)
-	// Applies to V2 and queueing-model paths which both use the optimizer pipeline.
-	if analyzerName == domain.SaturationAnalyzerName || analyzerName == domain.QueueingModelAnalyzerName {
+	// Select optimizer based on enableLimiter flag (both are stateless, safe to swap).
+	// Applies to the V2 path, which uses the optimizer pipeline.
+	if analyzerName == domain.SaturationAnalyzerName {
 		savedOptimizer := e.optimizer
 		if enableLimiter {
 			e.optimizer = pipeline.NewGreedyByScoreOptimizer()
@@ -546,13 +528,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	// different analysis types and target-building flows:
 	//   - V1: saturationv1.Analyzer → ModelSaturationAnalysis → CalculateSaturationTargets → Enforcer → Limiter
 	//   - V2 (saturation): saturation_v2.Analyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge
-	//   - Queueing model: QueueingModelAnalyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge
 	// V1 is deprecated in favor of V2; see issue #1441 for the staged removal plan.
-	// Queueing model is activated by presence of wva-queueing-model-config ConfigMap.
 	mode := modeLabelForAnalyzer(analyzerName)
 	switch analyzerName {
-	case domain.QueueingModelAnalyzerName:
-		allDecisions = e.optimizeQueueingModel(ctx, modelGroups, currentAllocations)
 	case domain.SaturationAnalyzerName:
 		allDecisions = e.optimizeV2(ctx, modelGroups, currentAllocations)
 	default:
@@ -584,8 +562,6 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 // It mirrors the analyzer selection in optimize's switch statement.
 func modeLabelForAnalyzer(analyzerName string) string {
 	switch analyzerName {
-	case domain.QueueingModelAnalyzerName:
-		return domain.QueueingModelAnalyzerName
 	case domain.SaturationAnalyzerName:
 		return domain.SaturationAnalyzerName
 	default:
