@@ -19,6 +19,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -90,6 +91,7 @@ func Discover(
 			Role:            RoleFromScaleTarget(scaleTarget),
 			Cost:            costFromVA(ctx, va),
 			AcceleratorName: accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget),
+			Engine:          inferenceengine.Detect(scaleTarget).String(),
 			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
 			CurrentReplicas: currentReplicas,
 			DesiredReplicas: desiredReplicas,

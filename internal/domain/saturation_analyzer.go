@@ -368,6 +368,10 @@ type VariantReplicaState struct {
 	// capacity lookup); the per-variant identity on the analyzer's *output* is
 	// filled by the capacity builder from discovery, not laundered per-pod.
 	AcceleratorName string
+	// Engine is the inference engine the variant runs ("vllm", "sglang"),
+	// resolved by discovery. Analyzers with per-engine query bodies use it to
+	// select the body for this variant.
+	Engine string
 	// MinReplicas is the minimum number of replicas for this variant (from VA spec field).
 	// nil means not set (default: 0, allows scale to zero).
 	MinReplicas *int

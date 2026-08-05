@@ -28,6 +28,11 @@ type VariantMetadata struct {
 	// scale target's pod-template nodeSelector/nodeAffinity (identical for every
 	// pod of the variant — a variant-level fact, not a per-pod one).
 	AcceleratorName string
+	// Engine is the inference engine the variant runs ("vllm", "sglang"),
+	// detected from the scale target's pod template. It selects the per-engine
+	// query body for engine-specific analyzers (mirrors the collector's
+	// registerForEngine).
+	Engine          string
 	GPUsPerReplica  int
 	CurrentReplicas int
 	// DesiredReplicas is the last optimizer decision recorded on the VA status,
@@ -57,6 +62,7 @@ func (m VariantMetadata) ToReplicaState() VariantReplicaState {
 		GPUsPerReplica:  m.GPUsPerReplica,
 		Role:            m.Role,
 		AcceleratorName: m.AcceleratorName,
+		Engine:          m.Engine,
 		MinReplicas:     m.MinReplicas,
 		MaxReplicas:     m.MaxReplicas,
 	}
