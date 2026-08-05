@@ -36,6 +36,7 @@ func ConfigMapPredicate(ds datastore.Datastore, cfg *config.Config) predicate.Pr
 			config.SaturationConfigMapName():       true,
 			config.DefaultScaleToZeroConfigMapName: true,
 			config.QMAnalyzerConfigMapName():       true,
+			config.AnalyzerCatalogConfigMapName():  true,
 		}
 
 		// Check if this is a well-known ConfigMap name

@@ -96,6 +96,8 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
 	case config.QMAnalyzerConfigMapName():
 		r.handleQMAnalyzerConfigMap(ctx, cm, namespace, isGlobal)
+	case config.AnalyzerCatalogConfigMapName():
+		r.handleAnalyzerCatalogConfigMap(ctx, cm, isGlobal)
 	default:
 		logger.V(1).Info("Ignoring unrecognized ConfigMap", "name", name, "namespace", namespace)
 	}
@@ -250,6 +252,22 @@ func (r *ConfigMapReconciler) handleScaleToZeroConfigMap(ctx context.Context, cm
 		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
 		logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
 	}
+}
+
+// handleAnalyzerCatalogConfigMap handles updates to the external-analyzer catalog
+// ConfigMap (wva-analyzers). The catalog is cluster-scoped, so only the global
+// ConfigMap in the controller namespace is applied; a namespace-local copy is
+// ignored. The engine picks up the refreshed catalog on its next optimize cycle.
+func (r *ConfigMapReconciler) handleAnalyzerCatalogConfigMap(ctx context.Context, cm *corev1.ConfigMap, isGlobal bool) {
+	logger := log.FromContext(ctx)
+	if !isGlobal {
+		logger.V(1).Info("Ignoring namespace-local analyzer catalog ConfigMap (catalog is cluster-scoped)",
+			"name", cm.GetName(), "namespace", cm.GetNamespace())
+		return
+	}
+	catalog := config.ParseAnalyzerCatalogConfigMap(cm.Data)
+	r.Config.UpdateExternalAnalyzerCatalog(catalog)
+	logger.Info("Updated external-analyzer catalog from ConfigMap", "entries", len(catalog))
 }
 
 // handleQMAnalyzerConfigMap handles updates to the queueing model ConfigMap.
