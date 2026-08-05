@@ -207,6 +207,12 @@ const (
 	// WVAErrorsTotal is a counter that tracks the total number of errors by component.
 	// Labels: component, error_type
 	WVAErrorsTotal = "wva_errors_total"
+	// WVAAnalyzerDemand is a gauge exposing each analyzer's demand D (per model,
+	// per role). Labels: analyzer_name, namespace, model_name, role.
+	WVAAnalyzerDemand = "wva_analyzer_demand"
+	// WVAAnalyzerTarget is a gauge exposing each analyzer's per-replica target P
+	// (per variant). Labels: analyzer_name, namespace, model_name, variant_name.
+	WVAAnalyzerTarget = "wva_analyzer_target"
 	// WVAConfigInfo is an info-style gauge that exposes WVA configuration as labels.
 	// Labels: analyzer_name, limiter_enabled, scale_to_zero_enabled
 	WVAConfigInfo = "wva_config_info"
@@ -301,6 +307,7 @@ const (
 	LabelAcceleratorModel   = "accelerator_model"
 	LabelAcceleratorType    = "accelerator_type"
 	LabelControllerInstance = "controller_instance"
+	LabelRole               = "role"
 	LabelStatus             = "status"
 	LabelLimiterName        = "limiter_name"
 	LabelPolicyType         = "policy_type"

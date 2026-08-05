@@ -74,6 +74,11 @@ var (
 	kvCacheTokensCapacity *prometheus.GaugeVec
 	saturationMetricsUp   *prometheus.GaugeVec
 
+	// Per-analyzer (demand, target) signals — the common D/P contract exposed so
+	// KEDA/HPA and dashboards can consume every analyzer's reasoning.
+	analyzerDemand *prometheus.GaugeVec
+	analyzerTarget *prometheus.GaugeVec
+
 	// controllerInstance stores the optional controller instance identifier.
 	// When set, it's added as a label to all emitted metrics.
 	controllerInstance string
@@ -117,6 +122,10 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// saturation/capacity gauges. Freshness is a per-VA property, so
 	// model_name / accelerator_type / unit don't need to be on this series.
 	satFreshnessLabels := []string{constants.LabelVariantName, constants.LabelNamespace}
+	// analyzerDemandLabels: per-analyzer demand D, per model instance and role.
+	analyzerDemandLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelRole}
+	// analyzerTargetLabels: per-analyzer per-replica target P, per variant.
+	analyzerTargetLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 
 	if controllerInstance != "" {
 		baseLabels = append(baseLabels, constants.LabelControllerInstance)
@@ -126,6 +135,8 @@ func InitMetrics(registry prometheus.Registerer) error {
 		satModelLabels = append(satModelLabels, constants.LabelControllerInstance)
 		requiredCapacityLabels = append(requiredCapacityLabels, constants.LabelControllerInstance)
 		satFreshnessLabels = append(satFreshnessLabels, constants.LabelControllerInstance)
+		analyzerDemandLabels = append(analyzerDemandLabels, constants.LabelControllerInstance)
+		analyzerTargetLabels = append(analyzerTargetLabels, constants.LabelControllerInstance)
 	}
 
 	replicaScalingTotal = prometheus.NewCounterVec(
@@ -204,6 +215,20 @@ func InitMetrics(registry prometheus.Registerer) error {
 			Help: "Per-VA freshness signal for the saturation/capacity gauges: 1.0 in cycles where the optimizer produced a fresh decision for the variant, 0.0 in cycles where the analyzer was aware of the variant but did not refresh those gauges. Pairs with wva_saturation_utilization, wva_spare_capacity, wva_required_capacity, wva_kv_cache_tokens_used, and wva_kv_cache_tokens_capacity so dashboards can gate alerts on this gauge instead of relying on Prometheus' implicit staleness marker.",
 		},
 		satFreshnessLabels,
+	)
+	analyzerDemand = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAAnalyzerDemand,
+			Help: "Per-analyzer demand D (the total measured signal) for a model instance, in the analyzer's own unit. Role is empty for non-disaggregated models. Paired with wva_analyzer_target as the D/P contract every analyzer exposes.",
+		},
+		analyzerDemandLabels,
+	)
+	analyzerTarget = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAAnalyzerTarget,
+			Help: "Per-analyzer per-replica target P — the amount of demand one replica of a variant can serve, in the same unit as wva_analyzer_demand, so desired = ceil(demand / target).",
+		},
+		analyzerTargetLabels,
 	)
 
 	optimizationDurationLabels := []string{constants.LabelStatus}
@@ -472,6 +497,12 @@ func InitMetrics(registry prometheus.Registerer) error {
 	}
 	if err := registry.Register(saturationMetricsUp); err != nil {
 		return fmt.Errorf("failed to register saturationMetricsUp metric: %w", err)
+	}
+	if err := registry.Register(analyzerDemand); err != nil {
+		return fmt.Errorf("failed to register analyzerDemand metric: %w", err)
+	}
+	if err := registry.Register(analyzerTarget); err != nil {
+		return fmt.Errorf("failed to register analyzerTarget metric: %w", err)
 	}
 
 	return nil
@@ -903,6 +934,43 @@ func (m *MetricsEmitter) RecordSaturationMetrics(
 	requiredCapacity.With(capacityLabels).Set(required)
 	kvCacheTokensUsed.With(modelLabels).Set(float64(kvTokensUsed))
 	kvCacheTokensCapacity.With(modelLabels).Set(float64(kvTokensCapacity))
+}
+
+// RecordAnalyzerDemand publishes an analyzer's demand D for a model instance and
+// role ("" for non-disaggregated). Nil-guarded so tests that never call
+// InitMetrics are a no-op.
+func (m *MetricsEmitter) RecordAnalyzerDemand(analyzer, namespace, modelID, role string, demand float64) {
+	if analyzerDemand == nil {
+		return
+	}
+	labels := prometheus.Labels{
+		constants.LabelAnalyzerName: analyzer,
+		constants.LabelNamespace:    namespace,
+		constants.LabelModelName:    modelID,
+		constants.LabelRole:         role,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	analyzerDemand.With(labels).Set(demand)
+}
+
+// RecordAnalyzerTarget publishes an analyzer's per-replica target P for a variant.
+// Nil-guarded like RecordAnalyzerDemand.
+func (m *MetricsEmitter) RecordAnalyzerTarget(analyzer, namespace, modelID, variantName string, target float64) {
+	if analyzerTarget == nil {
+		return
+	}
+	labels := prometheus.Labels{
+		constants.LabelAnalyzerName: analyzer,
+		constants.LabelNamespace:    namespace,
+		constants.LabelModelName:    modelID,
+		constants.LabelVariantName:  variantName,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	analyzerTarget.With(labels).Set(target)
 }
 
 // RecordSaturationFreshness publishes the per-VA freshness signal for the

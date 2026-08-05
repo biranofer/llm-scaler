@@ -176,11 +176,35 @@ func (e *Engine) runAnalyzersAndScore(
 		})
 	}
 	e.updateLivenessAndSetLive(ctx, namespace, modelID, namedResults)
+	e.recordAnalyzerMetrics(namespace, modelID, namedResults)
 
 	for _, nr := range namedResults {
 		logAnalyzerResult(ctx, modelID, namespace, nr)
 	}
 	return namedResults, nil
+}
+
+// recordAnalyzerMetrics publishes the wva_analyzer_demand / wva_analyzer_target
+// series for every analyzer that ran this cycle, straight from the (D, P) it
+// produced: demand per model instance (per role when disaggregated) and the
+// per-replica target per variant. This exposes every analyzer's reasoning — the
+// same D/P contract the optimizer and the external-analyzer wrapper use.
+func (e *Engine) recordAnalyzerMetrics(namespace, modelID string, results []pipeline.NamedAnalyzerResult) {
+	for _, nr := range results {
+		if nr.Result == nil {
+			continue
+		}
+		if len(nr.Result.RoleCapacities) > 0 {
+			for role, rc := range nr.Result.RoleCapacities {
+				e.metricsEmitter.RecordAnalyzerDemand(nr.Name, namespace, modelID, role, rc.TotalDemand)
+			}
+		} else {
+			e.metricsEmitter.RecordAnalyzerDemand(nr.Name, namespace, modelID, "", nr.Result.TotalDemand)
+		}
+		for _, vc := range nr.Result.VariantCapacities {
+			e.metricsEmitter.RecordAnalyzerTarget(nr.Name, namespace, modelID, vc.VariantName, vc.PerReplicaCapacity)
+		}
+	}
 }
 
 // updateLivenessAndSetLive refreshes e.lastGoodAnalysis for this model with
