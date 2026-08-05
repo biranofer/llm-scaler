@@ -43,3 +43,53 @@ var _ = Describe("EscapePromQLValue", func() {
 		Expect(escaped).NotTo(ContainSubstring(`namespace="other`))
 	})
 })
+
+var _ = Describe("QueryList runtime registration", func() {
+	var list *QueryList
+
+	BeforeEach(func() {
+		list = NewQueryList()
+	})
+
+	Describe("Upsert", func() {
+		It("adds a new query", func() {
+			Expect(list.Upsert(QueryTemplate{Name: "q1", Template: "up"})).To(Succeed())
+			Expect(list.Get("q1").Template).To(Equal("up"))
+		})
+
+		It("replaces an existing query without error (unlike Register)", func() {
+			Expect(list.Register(QueryTemplate{Name: "q1", Template: "v1"})).To(Succeed())
+			Expect(list.Register(QueryTemplate{Name: "q1", Template: "v2"})).NotTo(Succeed())
+
+			Expect(list.Upsert(QueryTemplate{Name: "q1", Template: "v2"})).To(Succeed())
+			Expect(list.Get("q1").Template).To(Equal("v2"))
+		})
+
+		It("rejects an empty name", func() {
+			Expect(list.Upsert(QueryTemplate{Template: "up"})).NotTo(Succeed())
+		})
+
+		It("rejects an empty template", func() {
+			Expect(list.Upsert(QueryTemplate{Name: "q1"})).NotTo(Succeed())
+		})
+	})
+
+	Describe("Remove", func() {
+		It("deletes a registered query", func() {
+			Expect(list.Upsert(QueryTemplate{Name: "q1", Template: "up"})).To(Succeed())
+			list.Remove("q1")
+			Expect(list.Get("q1")).To(BeNil())
+		})
+
+		It("is a no-op for an unknown name", func() {
+			Expect(func() { list.Remove("missing") }).NotTo(Panic())
+		})
+
+		It("frees the name so Register can reuse it", func() {
+			Expect(list.Register(QueryTemplate{Name: "q1", Template: "v1"})).To(Succeed())
+			list.Remove("q1")
+			Expect(list.Register(QueryTemplate{Name: "q1", Template: "v2"})).To(Succeed())
+			Expect(list.Get("q1").Template).To(Equal("v2"))
+		})
+	})
+})

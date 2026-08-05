@@ -90,6 +90,33 @@ func (r *QueryList) MustRegister(query QueryTemplate) {
 	}
 }
 
+// Upsert adds a query template, replacing any existing template with the same
+// name. Unlike Register it does not error on a duplicate name, so it is safe for
+// runtime (re)registration of dynamic queries — e.g. external analyzers whose
+// catalog can change while the process runs. It mirrors SourceRegistry.Update.
+func (r *QueryList) Upsert(query QueryTemplate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if query.Name == "" {
+		return errors.New("query name is required")
+	}
+	if query.Template == "" {
+		return fmt.Errorf("query template is required for %q", query.Name)
+	}
+	r.queries[query.Name] = query
+	return nil
+}
+
+// Remove deletes the query template with the given name. It is idempotent:
+// removing an unknown name is a no-op. Use it to retire dynamic queries that are
+// no longer in the catalog. It mirrors SourceRegistry.Unregister.
+func (r *QueryList) Remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.queries, name)
+}
+
 // Get retrieves a registered query by name.
 func (r *QueryList) Get(name string) *QueryTemplate {
 	r.mu.RLock()
