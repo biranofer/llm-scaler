@@ -23,26 +23,26 @@ import (
 // (saturation config fields vs queueing-model config presence), then simplify
 // this spec to a single explicit analyzer selector contract.
 //
-// NOTE (v0.9.0): V2 is the default analyzer since v0.9.0. This suite is
-// self-guarded — it snapshots the base ConfigMap and writes its own explicit
-// config for each arc (V1 cases set analyzerName:"" to select the legacy V1
-// path), so the default flip does not affect it. The V1 arcs below deliberately
-// exercise the still-selectable legacy analyzer.
-// TODO(v1-removal): drop the V1 arcs (analyzerName:"") when V1 is removed.
+// NOTE: V2 is the sole analysis path — the V1 analyzer was removed, so
+// analyzerName no longer selects between engines. The arcs that leave
+// analyzerName unset now assert that an unset value keeps processing on V2
+// rather than stalling the model. This suite remains self-guarded: it snapshots
+// the base ConfigMap and writes its own explicit config for each arc, so a
+// change to the shipped default does not affect it.
 
-// V1 saturation calibration via the simulator's --fake-metrics flag.
+// Saturation calibration via the simulator's --fake-metrics flag.
 //
 // kv-cache-usage=0.3 and waiting-requests=2 are chosen so both threshold arcs
 // are deterministically exercisable by config alone — no load required:
 //
 //   - Scale-up path (aggressive thresholds: kvCache=0.05, queue=1):
-//     0.3 > 0.05 and 2 >= 1 → V1 sees saturation → recommends scale-up.
+//     0.3 > 0.05 and 2 >= 1 → the analyzer sees saturation → recommends scale-up.
 //   - No-scale path (conservative thresholds: kvCache=1.00, queue=100):
-//     0.3 < 1.00 and 2 < 100 → V1 sees no saturation → no scale-up.
+//     0.3 < 1.00 and 2 < 100 → no saturation → no scale-up.
 //
 // --fake-metrics replaces simulator runtime emission entirely; service traffic
-// has no effect on the values V1 reads.
-const v1FakeMetricsJSON = `{"kv-cache-usage":0.3,"waiting-requests":2,"running-requests":1}`
+// has no effect on the values the analyzer reads.
+const fakeMetricsJSON = `{"kv-cache-usage":0.3,"waiting-requests":2,"running-requests":1}`
 
 const (
 	saturationConfigTemplate = `
@@ -57,19 +57,19 @@ scaleDownBoundary: %.2f
 analyzerName: %q
 `
 
-	// Aggressive V1 thresholds: fake metrics (kv=0.3, queue=2) exceed these → scale-up.
-	saturationV1KVCacheThreshold     = 0.05
-	saturationV1QueueLengthThreshold = 1
-	saturationV1KVSpareTrigger       = 0.01
-	saturationV1QueueSpareTrigger    = 1
-	saturationV1ScaleUpThreshold     = 0.85
-	saturationV1ScaleDownBoundary    = 0.70
+	// Aggressive saturation thresholds: fake metrics (kv=0.3, queue=2) exceed these → scale-up.
+	saturationKVCacheThreshold     = 0.05
+	saturationQueueLengthThreshold = 1
+	saturationKVSpareTrigger       = 0.01
+	saturationQueueSpareTrigger    = 1
+	saturationScaleUpThreshold     = 0.85
+	saturationScaleDownBoundary    = 0.70
 
-	// Conservative V1 thresholds: fake metrics (kv=0.3, queue=2) stay below these → no scale-up.
-	saturationV1NoScaleKVCacheThreshold     = 1.00
-	saturationV1NoScaleQueueLengthThreshold = 100
-	saturationV1NoScaleKVSpareTrigger       = 0.00
-	saturationV1NoScaleQueueSpareTrigger    = 0
+	// Conservative saturation thresholds: fake metrics (kv=0.3, queue=2) stay below these → no scale-up.
+	saturationNoScaleKVCacheThreshold     = 1.00
+	saturationNoScaleQueueLengthThreshold = 100
+	saturationNoScaleKVSpareTrigger       = 0.00
+	saturationNoScaleQueueSpareTrigger    = 0
 )
 
 // buildSaturationConfigYAML builds a valid saturation config entry for the requested analyzer mode.
@@ -120,12 +120,14 @@ func saturationConfigMapNameFromDeployment(dep *appsv1.Deployment) string {
 }
 
 // expectAnalyzerPathLog is a Ginkgo helper: it Eventually-waits until WVA
-// controller-manager logs contain both the analyzer path marker for mode and
-// modelID. It uses testutils.PodLogsLabelSelectorContain for log collection.
-func expectAnalyzerPathLog(mode, modelID string) {
+// controller-manager logs show the model being processed on the V2 path. V2 is
+// the sole analysis path since the V1 analyzer was removed, so there is no mode
+// to select — the helper asserts the model is being processed at all.
+// It uses testutils.PodLogsLabelSelectorContain for log collection.
+func expectAnalyzerPathLog(modelID string) {
 	GinkgoHelper()
 	const controllerManagerLabel = "control-plane=controller-manager"
-	pattern := fmt.Sprintf("Processing model (%s)", mode)
+	const pattern = "Processing model (V2)"
 	Eventually(func(g Gomega) {
 		ok, logs, logErr := testutils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace, controllerManagerLabel, pattern, 120)
 		g.Expect(logErr).NotTo(HaveOccurred())
@@ -193,7 +195,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		By("Creating model service + service + ServiceMonitor for saturation path test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
-			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", v1FakeMetricsJSON})
+			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", fakeMetricsJSON})
 		Expect(err).NotTo(HaveOccurred())
 		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)
 		Expect(err).NotTo(HaveOccurred())
@@ -253,16 +255,19 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Waiting for controller logs to show V2 processing for this model")
-		expectAnalyzerPathLog("V2", modelID)
+		expectAnalyzerPathLog(modelID)
 	})
 
-	It("switches to V1 path when analyzerName is unset", func() {
+	It("still uses the V2 path when analyzerName is unset", func() {
+		// V2 is the sole analysis path since the V1 analyzer was removed, so an
+		// unset analyzerName no longer selects a different engine — it must simply
+		// keep processing on V2 rather than stalling the model.
 		By("Updating model-specific saturation config with analyzerName unset")
 		err := upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, buildSaturationConfigYAML(""))
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Waiting for controller logs to show V1 processing for this model")
-		expectAnalyzerPathLog("V1", modelID)
+		By("Waiting for controller logs to show V2 processing for this model")
+		expectAnalyzerPathLog(modelID)
 	})
 
 	It("propagates saturation results into wva_desired_replicas for the variant", func() {
@@ -276,8 +281,8 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
-	It("does not scale the target deployment up for bounded below-threshold V1 traffic", func() {
-		By("Configuring conservative V1 thresholds to avoid scale-up")
+	It("does not scale the target deployment up for bounded below-threshold traffic", func() {
+		By("Configuring conservative saturation thresholds to avoid scale-up")
 		// Set thresholds before capturing the baseline so WVA has time to reconcile
 		// while we wait for KEDA to settle. With the KEDA Prometheus query now using
 		// exported_namespace (fixed), KEDA can act on wva_desired_replicas from the
@@ -291,24 +296,24 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			cmKey,
 			buildSaturationConfigYAMLWithThresholds(
 				"",
-				saturationV1NoScaleKVCacheThreshold,
-				saturationV1NoScaleQueueLengthThreshold,
-				saturationV1NoScaleKVSpareTrigger,
-				saturationV1NoScaleQueueSpareTrigger,
-				saturationV1ScaleUpThreshold,
-				saturationV1ScaleDownBoundary,
+				saturationNoScaleKVCacheThreshold,
+				saturationNoScaleQueueLengthThreshold,
+				saturationNoScaleKVSpareTrigger,
+				saturationNoScaleQueueSpareTrigger,
+				saturationScaleUpThreshold,
+				saturationScaleDownBoundary,
 			),
 		)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Verifying controller is using V1 analyzer path")
-		expectAnalyzerPathLog("V1", modelID)
+		By("Verifying controller is processing this model on the V2 path")
+		expectAnalyzerPathLog(modelID)
 
 		By("Waiting for the pipeline to converge to a sustained minReplicas (drain any in-flight scale-up)")
 		// A single Spec.Replicas <= 1 reading is NOT proof of convergence: the deployment
 		// starts at minReplicas, so that check passes on the pre-existing state while a
 		// scale-up recommendation left in flight by the prior It (default config:
-		// queueLengthThreshold=1 vs faked queue=2 → V1 scale-up) is still working through
+		// queueLengthThreshold=1 vs faked queue=2 → scale-up) is still working through
 		// WVA (≤15 s reconcile) → Prometheus → KEDA (5 s poll) → HPA. That stale
 		// recommendation actuates a scale-up mid-assertion unless it has fully drained.
 		//
@@ -357,11 +362,11 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			}
 			GinkgoWriter.Printf("  Negative-path progress (%s): replicas=%d baseline=%d\n", modelDecodeDeployment, current, baseline)
 			g.Expect(current).To(BeNumerically("<=", baseline),
-				"V1 bounded below-threshold traffic should not scale the target deployment above baseline")
+				"bounded below-threshold traffic should not scale the target deployment above baseline")
 		}, time.Duration(cfg.EventuallyMediumSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
-	It("crosses V1 threshold with bounded requests and raises wva_desired_replicas", func() {
+	It("crosses the saturation threshold with bounded requests and raises wva_desired_replicas", func() {
 		var baseline int32
 
 		By("Capturing baseline target deployment replicas before scale-up trigger")
@@ -373,7 +378,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			GinkgoWriter.Printf("  Scale-up baseline (%s): replicas=%d\n", modelDecodeDeployment, baseline)
 		}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-		By("Configuring aggressive V1 thresholds and unsetting analyzerName")
+		By("Configuring aggressive saturation thresholds and unsetting analyzerName")
 		err := upsertSaturationConfigEntry(
 			ctx,
 			cmNamespace,
@@ -381,21 +386,21 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			cmKey,
 			buildSaturationConfigYAMLWithThresholds(
 				"",
-				saturationV1KVCacheThreshold,
-				saturationV1QueueLengthThreshold,
-				saturationV1KVSpareTrigger,
-				saturationV1QueueSpareTrigger,
-				saturationV1ScaleUpThreshold,
-				saturationV1ScaleDownBoundary,
+				saturationKVCacheThreshold,
+				saturationQueueLengthThreshold,
+				saturationKVSpareTrigger,
+				saturationQueueSpareTrigger,
+				saturationScaleUpThreshold,
+				saturationScaleDownBoundary,
 			),
 		)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Verifying controller is using V1 analyzer path")
-		expectAnalyzerPathLog("V1", modelID)
+		By("Verifying controller is processing this model on the V2 path")
+		expectAnalyzerPathLog(modelID)
 
 		By("Asserting KEDA actuates scale-up above baseline")
-		// Aggressive V1 thresholds (kvCache=0.05, queue=1) against faked metrics
+		// Aggressive saturation thresholds (kvCache=0.05, queue=1) against faked metrics
 		// (kv=0.3, queue=2) deterministically drive a scale-up; KEDA consumes
 		// wva_desired_replicas and drives the Deployment above its baseline. Assert the
 		// observable Deployment replica count — the ground truth — rather than the KEDA
@@ -404,7 +409,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">", baseline),
-				"V1 above-threshold traffic should scale the target Deployment above baseline")
+				"above-threshold traffic should scale the target Deployment above baseline")
 		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 

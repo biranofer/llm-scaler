@@ -199,7 +199,7 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 	// is consumed by the managed scaler.
 	It("should select V2 path and emit wva_desired_replicas for the annotated scaler", func() {
 		By("Asserting controller logs show V2 path selected for our model")
-		expectAnalyzerPathLog("V2", modelID)
+		expectAnalyzerPathLog(modelID)
 
 		// WVA's observable output is the wva_desired_replicas metric being consumed by KEDA.
 		// Verify the KEDA-managed HPA has CurrentMetrics populated (only set after a
