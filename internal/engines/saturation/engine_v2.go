@@ -276,8 +276,16 @@ func (e *Engine) evictStaleAnalyzerSeries(namespace, modelID string, current ana
 
 // pruneAnalyzerSeries evicts every analyzer series belonging to a model that is
 // no longer reconciled. Mirrors pruneLastGoodAnalysis, including its empty-set
-// guard: a transient cycle that enumerates no models (a collector hiccup, or
-// config not loaded yet) must not wipe live models' series.
+// guard — though at this call site activeKeys is never empty, because a cycle
+// with no active models returns before reaching here (and evicts everything via
+// evictAllAnalyzerSeries instead). The guard is kept for symmetry with
+// pruneLastGoodAnalysis and to stay safe if the call site moves.
+//
+// Note this only covers models that stop being *enumerated*. A model that is
+// still enumerated but skips analysis this cycle — config not loaded, a
+// prepare/collect error — keeps its last published series deliberately: a
+// transient collection blip should not make the series flap in and out, and
+// staleness there is reported separately through the analyzer liveness signal.
 func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 	if len(activeKeys) == 0 || e.lastAnalyzerSeries == nil {
 		return
@@ -287,6 +295,19 @@ func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
 			e.metricsEmitter.DeleteAnalyzerSeriesForModel(series.namespace, series.modelID)
 			delete(e.lastAnalyzerSeries, modelKey)
 		}
+	}
+}
+
+// evictAllAnalyzerSeries removes every analyzer series the engine has published,
+// for every model it tracks. Used when a cycle analyzes no models at all, where
+// the per-model prune has nothing to compare against: without this, the series
+// would keep their last values with nothing left to refresh or contradict them.
+// Safe to call repeatedly — it empties its own bookkeeping, so subsequent idle
+// cycles are no-ops.
+func (e *Engine) evictAllAnalyzerSeries() {
+	for modelKey, series := range e.lastAnalyzerSeries {
+		e.metricsEmitter.DeleteAnalyzerSeriesForModel(series.namespace, series.modelID)
+		delete(e.lastAnalyzerSeries, modelKey)
 	}
 }
 

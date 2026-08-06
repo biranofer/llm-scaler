@@ -208,6 +208,13 @@ func TestDeleteAnalyzerSeriesForModelRemovesAllAnalyzersRolesAndVariants(t *test
 // the Delete methods must be a no-op when InitMetrics has not run, so callers
 // need not know whether the gauges exist.
 func TestDeleteAnalyzerMetrics_NilGuard(t *testing.T) {
+	savedDemand := analyzerDemand
+	savedTarget := analyzerTarget
+	defer func() {
+		analyzerDemand = savedDemand
+		analyzerTarget = savedTarget
+	}()
+
 	analyzerDemand = nil
 	analyzerTarget = nil
 	emitter := NewMetricsEmitter()

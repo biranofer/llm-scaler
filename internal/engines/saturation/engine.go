@@ -572,6 +572,15 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 
 	if len(activeVAs) == 0 {
 		logger.Info("No active VariantAutoscalings found, skipping optimization")
+		// This cycle analyzes nothing, so no analyzer series gets refreshed and
+		// the per-model prune below is never reached. Absence is meaningful for
+		// those series: left alone they would hold their last busy-cycle values
+		// indefinitely — a scale-to-zero fleet idling overnight would keep
+		// reporting the demand it saw at peak, with no other series to
+		// contradict it. This is a genuine empty state, not a transient one: a
+		// failed list returns above, so reaching here means there really are no
+		// active models.
+		e.evictAllAnalyzerSeries()
 		return nil
 	}
 

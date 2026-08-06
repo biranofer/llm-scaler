@@ -11,6 +11,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 )
 
 // analyzerSeriesEngine returns an Engine wired to a fresh Prometheus registry so
@@ -187,13 +188,17 @@ func TestPruneAnalyzerSeries_EvictsDepartedModel(t *testing.T) {
 		namedResult("saturation", map[string]float64{"prefill": 1, "decode": 2}, 3, "v2", "v3"),
 	})
 
-	e.pruneAnalyzerSeries(map[string]bool{"ns/stays": true})
+	// Build the active-key the same way the production call site does
+	// (engine.go, from the model group's namespace + modelID) rather than
+	// hardcoding the format, so the two cannot silently diverge.
+	e.pruneAnalyzerSeries(map[string]bool{utils.GetNamespacedKey("ns", "stays"): true})
 
 	assert.ElementsMatch(t, []string{"stays"},
 		seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
 	assert.ElementsMatch(t, []string{"v1"},
 		seriesLabels(t, registry, constants.WVAAnalyzerTarget, constants.LabelVariantName))
-	assert.NotContains(t, e.lastAnalyzerSeries, "ns/gone", "bookkeeping for the departed model must be dropped")
+	assert.NotContains(t, e.lastAnalyzerSeries, utils.GetNamespacedKey("ns", "gone"),
+		"bookkeeping for the departed model must be dropped")
 }
 
 func TestPruneAnalyzerSeries_EmptyActiveSetIsNoOp(t *testing.T) {
@@ -210,11 +215,77 @@ func TestPruneAnalyzerSeries_EmptyActiveSetIsNoOp(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"m"},
 		seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
-	assert.Contains(t, e.lastAnalyzerSeries, "ns/m")
+	assert.Contains(t, e.lastAnalyzerSeries, utils.GetNamespacedKey("ns", "m"))
 }
 
 func TestPruneAnalyzerSeries_NilMapDoesNotPanic(t *testing.T) {
 	e, _ := analyzerSeriesEngine(t)
 	e.lastAnalyzerSeries = nil
-	assert.NotPanics(t, func() { e.pruneAnalyzerSeries(map[string]bool{"ns/m": true}) })
+	assert.NotPanics(t, func() { e.pruneAnalyzerSeries(map[string]bool{utils.GetNamespacedKey("ns", "m"): true}) })
+}
+
+// A cycle with no active models never reaches the per-model prune, so it evicts
+// everything instead. Without this, a scale-to-zero fleet that idles overnight
+// would keep publishing the demand and targets it saw at peak, with no other
+// series left to contradict the stale reading.
+
+func TestEvictAllAnalyzerSeries_ClearsEveryModel(t *testing.T) {
+	e, registry := analyzerSeriesEngine(t)
+
+	e.recordAnalyzerMetrics("ns", "m1", []pipeline.NamedAnalyzerResult{
+		namedResult("saturation", map[string]float64{"prefill": 1, "decode": 2}, 3, "v1", "v2"),
+	})
+	e.recordAnalyzerMetrics("other-ns", "m2", []pipeline.NamedAnalyzerResult{
+		namedResult("ttft-slo", nil, 4, "v3"),
+	})
+	require.NotEmpty(t, seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
+
+	e.evictAllAnalyzerSeries()
+
+	assert.Empty(t, seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
+	assert.Empty(t, seriesLabels(t, registry, constants.WVAAnalyzerTarget, constants.LabelVariantName))
+	assert.Empty(t, e.lastAnalyzerSeries, "bookkeeping must be cleared too")
+}
+
+func TestEvictAllAnalyzerSeries_IsIdempotent(t *testing.T) {
+	// Idle cycles repeat every reconcile; the second and later ones must be no-ops
+	// rather than re-deleting or panicking.
+	e, registry := analyzerSeriesEngine(t)
+
+	e.recordAnalyzerMetrics("ns", "m", []pipeline.NamedAnalyzerResult{
+		namedResult("saturation", nil, 1, "v1"),
+	})
+
+	assert.NotPanics(t, func() {
+		e.evictAllAnalyzerSeries()
+		e.evictAllAnalyzerSeries()
+		e.evictAllAnalyzerSeries()
+	})
+	assert.Empty(t, seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
+}
+
+func TestEvictAllAnalyzerSeries_EmptyBookkeepingDoesNotPanic(t *testing.T) {
+	e, _ := analyzerSeriesEngine(t)
+	assert.NotPanics(t, func() { e.evictAllAnalyzerSeries() })
+	e.lastAnalyzerSeries = nil
+	assert.NotPanics(t, func() { e.evictAllAnalyzerSeries() })
+}
+
+func TestRecordAnalyzerMetrics_RepublishesAfterEvictAll(t *testing.T) {
+	// The fleet comes back after an idle stretch: series must reappear, and the
+	// eviction must not have left bookkeeping that suppresses them.
+	e, registry := analyzerSeriesEngine(t)
+
+	e.recordAnalyzerMetrics("ns", "m", []pipeline.NamedAnalyzerResult{
+		namedResult("saturation", nil, 1, "v1"),
+	})
+	e.evictAllAnalyzerSeries()
+	e.recordAnalyzerMetrics("ns", "m", []pipeline.NamedAnalyzerResult{
+		namedResult("saturation", nil, 1, "v1"),
+	})
+
+	assert.ElementsMatch(t, []string{"m"},
+		seriesLabels(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName))
+	assert.ElementsMatch(t, []string{"v1"},
+		seriesLabels(t, registry, constants.WVAAnalyzerTarget, constants.LabelVariantName))
 }
