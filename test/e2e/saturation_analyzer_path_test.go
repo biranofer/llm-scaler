@@ -31,10 +31,18 @@ import (
 // kv-cache-usage=0.3 and waiting-requests=2 are chosen so both threshold arcs
 // are deterministically exercisable by config alone — no load required:
 //
-//   - Scale-up path (aggressive thresholds: kvCache=0.05, queue=1):
-//     0.3 > 0.05 and 2 >= 1 → the analyzer sees saturation → recommends scale-up.
-//   - No-scale path (conservative thresholds: kvCache=1.00, queue=100):
-//     0.3 < 1.00 and 2 < 100 → no saturation → no scale-up.
+// V2 does not compare the usage against the threshold as a boolean the way V1
+// did; kvCacheThreshold is a utilization *target* that sizes per-replica
+// capacity, and the engine scales on demand vs that capacity:
+//
+//   - Scale-up path (kvCache=0.80, queue=1): the tighter target sizes capacity
+//     so demand ≈ supply → utilization ≈ 1.0 > scaleUpThreshold 0.85 → scale-up.
+//   - No-scale path (kvCache=1.00, queue=100): the looser target sizes ~25% more
+//     capacity per replica → utilization drops below 0.85 → no scale-up.
+//
+// The target must stay above the faked 0.30 usage in both arcs: below it there
+// is no headroom, per-replica capacity collapses to zero, and the analyzer
+// reports a shortfall it cannot size — so nothing scales at all.
 //
 // --fake-metrics replaces simulator runtime emission entirely; service traffic
 // has no effect on the values the analyzer reads.
@@ -53,15 +61,24 @@ scaleDownBoundary: %.2f
 analyzerName: %q
 `
 
-	// Aggressive saturation thresholds: fake metrics (kv=0.3, queue=2) exceed these → scale-up.
-	saturationKVCacheThreshold     = 0.05
+	// Scale-up arc. kvCacheThreshold is V2's KV utilization *target*: it divides
+	// the measured usage to size per-replica capacity, so a tighter target means
+	// less capacity per replica, higher utilization, and a scale-up. It must stay
+	// ABOVE the faked 0.30 usage — a target below observed usage leaves no
+	// headroom and collapses per-replica capacity to zero, at which point the
+	// analyzer reports a shortfall it cannot size (supply 0, prc 0) and no
+	// scale-up is possible. 0.80 against kv=0.30 yields demand ≈ supply, i.e.
+	// utilization ≈ 1.0, comfortably past scaleUpThreshold.
+	saturationKVCacheThreshold     = 0.80
 	saturationQueueLengthThreshold = 1
 	saturationKVSpareTrigger       = 0.01
 	saturationQueueSpareTrigger    = 1
 	saturationScaleUpThreshold     = 0.85
 	saturationScaleDownBoundary    = 0.70
 
-	// Conservative saturation thresholds: fake metrics (kv=0.3, queue=2) stay below these → no scale-up.
+	// No-scale arc. The looser 1.00 target sizes ~25% more capacity per replica
+	// than the scale-up arc, dropping utilization below scaleUpThreshold so the
+	// engine sees no shortfall.
 	saturationNoScaleKVCacheThreshold     = 1.00
 	saturationNoScaleQueueLengthThreshold = 100
 	saturationNoScaleKVSpareTrigger       = 0.00
@@ -396,8 +413,9 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		expectAnalyzerPathLog(modelID)
 
 		By("Asserting KEDA actuates scale-up above baseline")
-		// Aggressive saturation thresholds (kvCache=0.05, queue=1) against faked metrics
-		// (kv=0.3, queue=2) deterministically drive a scale-up; KEDA consumes
+		// A 0.80 KV target against faked kv=0.30 sizes per-replica capacity so that
+		// demand ≈ supply — utilization ≈ 1.0, past scaleUpThreshold=0.85 — which
+		// deterministically drives a scale-up; KEDA consumes
 		// wva_desired_replicas and drives the Deployment above its baseline. Assert the
 		// observable Deployment replica count — the ground truth — rather than the KEDA
 		// HPA CurrentMetrics surface, which only proves the metric was consumed.
