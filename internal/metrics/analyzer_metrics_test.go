@@ -85,8 +85,8 @@ func countSeries(t *testing.T, registry *prometheus.Registry, name string) int {
 	return 0
 }
 
-// hasSeries reports whether a series with the given analyzer and role/variant
-// label is present in the named metric family.
+// hasSeries reports whether the named metric family holds a series whose
+// labelName label equals labelValue.
 func hasSeries(t *testing.T, registry *prometheus.Registry, name, labelName, labelValue string) bool {
 	t.Helper()
 	mfs, err := registry.Gather()
@@ -215,4 +215,92 @@ func TestDeleteAnalyzerMetrics_NilGuard(t *testing.T) {
 	emitter.DeleteAnalyzerDemand("a", "ns", "m", "r")
 	emitter.DeleteAnalyzerTarget("a", "ns", "m", "v")
 	emitter.DeleteAnalyzerSeriesForModel("ns", "m")
+}
+
+// TestDeleteAnalyzerSeries_WithControllerInstance exercises the exact-match
+// requirement that motivated centralizing label construction: Prometheus's
+// Delete matches on the FULL label set, and controller_instance is present only
+// when CONTROLLER_INSTANCE is set. A Delete that built its labels independently
+// of Record would silently fail to match here — leaving precisely the stale
+// series this eviction exists to remove — while still passing every test that
+// runs without the label.
+func TestDeleteAnalyzerSeries_WithControllerInstance(t *testing.T) {
+	savedInstance := controllerInstance
+	savedDemand := analyzerDemand
+	savedTarget := analyzerTarget
+	defer func() {
+		controllerInstance = savedInstance
+		analyzerDemand = savedDemand
+		analyzerTarget = savedTarget
+	}()
+
+	// Must be set before InitMetrics so the label is part of the gauge schema.
+	t.Setenv(ControllerInstanceEnvVar, "controller-1")
+
+	registry := prometheus.NewRegistry()
+	if err := InitMetrics(registry); err != nil {
+		t.Fatalf("InitMetrics failed: %v", err)
+	}
+	emitter := NewMetricsEmitter()
+
+	emitter.RecordAnalyzerDemand("saturation", "ns", "m", "prefill", 10)
+	emitter.RecordAnalyzerTarget("saturation", "ns", "m", "v1", 1)
+
+	// The label really is on the series, so the delete below is a genuine
+	// exact-match test rather than a no-op.
+	if !hasSeries(t, registry, constants.WVAAnalyzerDemand, constants.LabelControllerInstance, "controller-1") {
+		t.Fatal("setup: demand series is missing the controller_instance label")
+	}
+	if !hasSeries(t, registry, constants.WVAAnalyzerTarget, constants.LabelControllerInstance, "controller-1") {
+		t.Fatal("setup: target series is missing the controller_instance label")
+	}
+
+	emitter.DeleteAnalyzerDemand("saturation", "ns", "m", "prefill")
+	emitter.DeleteAnalyzerTarget("saturation", "ns", "m", "v1")
+
+	if got := countSeries(t, registry, constants.WVAAnalyzerDemand); got != 0 {
+		t.Errorf("after delete: %d demand series, want 0 (label set did not match)", got)
+	}
+	if got := countSeries(t, registry, constants.WVAAnalyzerTarget); got != 0 {
+		t.Errorf("after delete: %d target series, want 0 (label set did not match)", got)
+	}
+}
+
+// TestDeleteAnalyzerSeriesForModel_WithControllerInstance covers the partial-match
+// path with the optional label present. DeletePartialMatch matches on a label
+// subset, so it must still evict the model's series when controller_instance is
+// set and not named in the match.
+func TestDeleteAnalyzerSeriesForModel_WithControllerInstance(t *testing.T) {
+	savedInstance := controllerInstance
+	savedDemand := analyzerDemand
+	savedTarget := analyzerTarget
+	defer func() {
+		controllerInstance = savedInstance
+		analyzerDemand = savedDemand
+		analyzerTarget = savedTarget
+	}()
+
+	t.Setenv(ControllerInstanceEnvVar, "controller-1")
+
+	registry := prometheus.NewRegistry()
+	if err := InitMetrics(registry); err != nil {
+		t.Fatalf("InitMetrics failed: %v", err)
+	}
+	emitter := NewMetricsEmitter()
+
+	emitter.RecordAnalyzerDemand("saturation", "ns", "gone", "", 1)
+	emitter.RecordAnalyzerTarget("saturation", "ns", "gone", "v1", 2)
+	emitter.RecordAnalyzerDemand("saturation", "ns", "stays", "", 3)
+
+	emitter.DeleteAnalyzerSeriesForModel("ns", "gone")
+
+	if got := countSeries(t, registry, constants.WVAAnalyzerDemand); got != 1 {
+		t.Errorf("after delete: %d demand series, want 1 (only ns/stays)", got)
+	}
+	if got := countSeries(t, registry, constants.WVAAnalyzerTarget); got != 0 {
+		t.Errorf("after delete: %d target series, want 0", got)
+	}
+	if !hasSeries(t, registry, constants.WVAAnalyzerDemand, constants.LabelModelName, "stays") {
+		t.Error("the surviving model's series was wrongly removed")
+	}
 }
