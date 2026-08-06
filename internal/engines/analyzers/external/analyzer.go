@@ -23,7 +23,6 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 )
 
 // queryNamePrefix namespaces external-analyzer queries in the shared QueryList so
@@ -149,16 +148,16 @@ func (a *Analyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 	}
 
 	return &domain.AnalyzerResult{
-		AnalyzerName:           a.def.Label,
-		ModelID:                input.ModelID,
-		Namespace:              input.Namespace,
-		AnalyzedAt:             time.Now(),
-		VariantCapacities:      vcs,
-		TotalSupply:            aggregation.SumTotalSupply(vcs),
-		TotalAnticipatedSupply: aggregation.SumTotalAnticipatedSupply(vcs),
-		TotalDemand:            demand,
+		AnalyzerName:      a.def.Label,
+		ModelID:           input.ModelID,
+		Namespace:         input.Namespace,
+		AnalyzedAt:        time.Now(),
+		VariantCapacities: vcs,
+		TotalDemand:       demand,
+		// Supply, utilization, and RoleCapacities are assembled downstream by the
+		// engine's capacity-build step; the wrapper emits only the (D, P) signal.
 		// RequiredCapacity/SpareCapacity are written by the engine post-step.
-		// RoleCapacities is nil: this MVP treats demand as model-level.
+		// RoleDemand is nil: this MVP treats demand as model-level.
 	}, nil
 }
 

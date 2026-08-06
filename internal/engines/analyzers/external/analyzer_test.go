@@ -9,6 +9,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/external"
 )
 
@@ -126,8 +127,10 @@ var _ = Describe("external.Analyzer", func() {
 			vc := res.VariantCapacities[0]
 			Expect(vc.PerReplicaCapacity).To(Equal(2.0))
 			Expect(vc.ReplicaCount).To(Equal(3)) // 4 current − 1 pending
-			Expect(res.TotalSupply).To(Equal(6.0))
-			Expect(res.TotalAnticipatedSupply).To(Equal(8.0))
+			// Supply is assembled downstream by the engine's capacity-build step;
+			// the wrapper emits only (D, P). Assert the supply the builder derives.
+			Expect(aggregation.SumTotalSupply(res.VariantCapacities)).To(Equal(6.0))
+			Expect(aggregation.SumTotalAnticipatedSupply(res.VariantCapacities)).To(Equal(8.0))
 			Expect(vc.Cost).To(BeZero())
 			Expect(vc.AcceleratorName).To(BeEmpty())
 		})

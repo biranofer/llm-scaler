@@ -9,6 +9,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 )
 
 var _ = Describe("SaturationAnalyzer", func() {
@@ -241,7 +242,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// readyCount = 2 - 1 = 1; anticipated = (1 + 1) × PRC
 			// RC/SC are left zero by the analyzer; engine post-step sets them.
-			Expect(result.TotalAnticipatedSupply).To(BeNumerically(">", result.TotalSupply))
+			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(BeNumerically(">", aggregation.SumTotalSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(BeZero())
 		})
 
@@ -260,7 +261,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TotalSupply uses ready replicas only; TotalAnticipatedSupply includes pending.
 			// RC/SC are left zero by the analyzer; engine post-step sets them.
-			Expect(result.TotalAnticipatedSupply).To(BeNumerically(">", result.TotalSupply))
+			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(BeNumerically(">", aggregation.SumTotalSupply(result.VariantCapacities)))
 			Expect(result.SpareCapacity).To(BeZero())
 		})
 	})
@@ -517,7 +518,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// Very low utilization — TotalSupply well above TotalDemand/scaleDown.
 			// RC/SC are left zero by the analyzer; engine post-step sets them.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand/0.70))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand/0.70))
 			Expect(result.SpareCapacity).To(BeZero())
 			Expect(result.RequiredCapacity).To(BeZero())
 		})
@@ -794,16 +795,13 @@ var _ = Describe("SaturationAnalyzer", func() {
 			a := NewSaturationAnalyzer(store)
 			result, err := a.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RoleCapacities).NotTo(BeNil())
+			Expect(result.RoleDemand).NotTo(BeNil())
 
 			// Scheduler queue: input=max(0, 10*100)=1000, output=10*50=500
 			// Prefill role demand: replica(3000) + queue(1000) = 4000
 			// Decode role demand: replica(2000) + queue(1500) = 3500
-			prefill := result.RoleCapacities["prefill"]
-			Expect(prefill.TotalDemand).To(Equal(4000.0))
-
-			decode := result.RoleCapacities["decode"]
-			Expect(decode.TotalDemand).To(Equal(3500.0))
+			Expect(result.RoleDemand["prefill"]).To(Equal(4000.0))
+			Expect(result.RoleDemand["decode"]).To(Equal(3500.0))
 
 			// Model-level total still uses inputTokens+outputTokens (1500)
 			// Replica demand = 3000 + 2000 = 5000
@@ -1762,6 +1760,6 @@ var _ = Describe("aggregateByVariant DP>1 with pending replicas", func() {
 
 		// TotalAnticipatedSupply = (ReplicaCount + PendingReplicas) × PerReplicaCapacity
 		want := float64(vc.ReplicaCount+vc.PendingReplicas) * vc.PerReplicaCapacity
-		Expect(result.TotalAnticipatedSupply).To(Equal(want))
+		Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(Equal(want))
 	})
 })

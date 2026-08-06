@@ -679,9 +679,15 @@ func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]dom
 			}
 		}
 	}
-	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P).
+	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P), and
+	// the model-level utilization from demand vs supply.
 	result.TotalSupply = aggregation.SumTotalSupply(result.VariantCapacities)
 	result.TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)
+	if result.TotalSupply > 0 {
+		result.Utilization = result.TotalDemand / result.TotalSupply
+	} else {
+		result.Utilization = 0
+	}
 	// (3) Assemble per-role capacities: supply grouped by role, demand from the
 	// analyzer's per-role attribution (RoleDemand).
 	result.RoleCapacities = buildRoleCapacities(result.VariantCapacities, result.RoleDemand)

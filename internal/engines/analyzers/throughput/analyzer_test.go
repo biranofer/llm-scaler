@@ -314,7 +314,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
@@ -333,7 +333,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as SC>0.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
@@ -364,9 +364,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, _ := analyzer.Analyze(ctx, input)
 			Expect(result.VariantCapacities).To(HaveLen(1))
-			Expect(result.TotalSupply).To(BeNumerically("~", muSat, muSat*0.10))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically("~", muSat, muSat*0.10))
 			Expect(result.TotalDemand).To(BeNumerically("~", 1000.0, 1.0))
-			Expect(result.Utilization).To(BeNumerically(">", 0))
+			// Utilization is derived downstream by the engine's capacity-build step
+			// from TotalDemand/TotalSupply; the analyzer leaves it zero.
+			Expect(result.Utilization).To(BeZero())
 		})
 
 		It("excludes booting (KV=0) replicas from ReplicaCount and TotalSupply", func() {
@@ -402,10 +404,10 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(vc.TotalCapacity).To(BeNumerically("~", vc.PerReplicaCapacity, vc.PerReplicaCapacity*1e-6),
 				"TotalCapacity is the measured supply over KV-capable replicas only")
 			// TotalSupply (drives SpareCapacity) counts only the KV-capable replica — not inflated.
-			Expect(result.TotalSupply).To(BeNumerically("~", muSat, muSat*0.10))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically("~", muSat, muSat*0.10))
 			// TotalAnticipatedSupply (drives RequiredCapacity) still counts the booting replica
 			// via PendingReplicas, so scale-out remains suppressed (no double-counting).
-			Expect(result.TotalAnticipatedSupply).To(BeNumerically("~", 2*vc.PerReplicaCapacity, vc.PerReplicaCapacity*0.01))
+			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(BeNumerically("~", 2*vc.PerReplicaCapacity, vc.PerReplicaCapacity*0.01))
 		})
 
 		It("exposes ITLModel and supply/demand in VariantState after Analyze", func() {
@@ -480,7 +482,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 
@@ -746,7 +748,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 	})
@@ -806,9 +808,9 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RoleCapacities).NotTo(BeNil())
-			Expect(result.RoleCapacities).To(HaveKey("decode"))
-			Expect(result.RoleCapacities).To(HaveKey("prefill"))
+			Expect(result.RoleDemand).NotTo(BeNil())
+			Expect(result.RoleDemand).To(HaveKey("decode"))
+			Expect(result.RoleDemand).To(HaveKey("prefill"))
 		})
 
 		It("suppresses RequiredCapacity for the prefill role even under load", func() {
@@ -832,16 +834,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 
-			decodeRC := result.RoleCapacities["decode"]
-			prefillRC := result.RoleCapacities["prefill"]
-
-			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
-			// supply/demand inequality that the engine interprets as decode RC>0.
-			Expect(decodeRC.TotalDemand).To(BeNumerically(">", decodeRC.TotalAnticipatedSupply))
-			Expect(decodeRC.RequiredCapacity).To(Equal(0.0))
-			// Prefill role: TA no longer suppresses RC in role capacities — it leaves
-			// RequiredCapacity zero for all roles. Engine post-step handles per-role RC.
-			Expect(prefillRC.RequiredCapacity).To(Equal(0.0))
+			// The analyzer emits per-role demand (RoleDemand); the builder pairs it
+			// with per-role supply. Assert the raw supply/demand inequality the engine
+			// interprets as decode RequiredCapacity>0.
+			byRole := aggregation.AggregateByRole(result.VariantCapacities)
+			Expect(result.RoleDemand["decode"]).To(BeNumerically(">", byRole["decode"].TotalAnticipatedSupply))
 		})
 
 		It("returns nil RoleCapacities when all variants are non-disaggregated", func() {
@@ -855,7 +852,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RoleCapacities).To(BeNil())
+			Expect(result.RoleDemand).To(BeNil())
 		})
 
 		It("sets Role on VariantCapacity and ThroughputVariantState", func() {
@@ -1096,7 +1093,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 
@@ -1151,11 +1148,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// Model-level: totalDemand=3200 < totalAnticipated≈5564 → no scale-up needed.
 			// TA leaves RC/SC zero. Assert the raw inequality: TotalDemand ≤ TotalAnticipatedSupply.
-			Expect(result.TotalDemand).To(BeNumerically("<=", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically("<=", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 			// EPP deployed (ArrivalRate>0) and totalSupply >> totalDemand → engine posts SC>0.
 			// TA leaves SC zero; assert the raw inequality the engine interprets as SC>0.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
@@ -1180,7 +1177,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
@@ -1200,45 +1197,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 		)
 		kValuesA := []float64{0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65}
 
-		It("TotalSupply equals aggregation.SumTotalSupply(VariantCapacities)", func() {
-			injectWindowObs(analyzer, ctx, modelID, namespace, "v1", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
-			injectWindowObs(analyzer, ctx, modelID, namespace, "v2", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
-			replicas := []domain.ReplicaMetrics{
-				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
-					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 5},
-				{VariantName: "v2", KvCacheUsage: 0.40, KvUsageInstant: 0.40,
-					AvgITL: aA*0.40 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 3},
-			}
-			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
-				ModelID: modelID, Namespace: namespace, ReplicaMetrics: replicas,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.TotalSupply).To(BeNumerically("~",
-				aggregation.SumTotalSupply(result.VariantCapacities), 1e-9))
-		})
-
-		It("TotalAnticipatedSupply equals aggregation.SumTotalAnticipatedSupply(VariantCapacities)", func() {
-			injectWindowObs(analyzer, ctx, modelID, namespace, "v1", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
-			replicas := []domain.ReplicaMetrics{
-				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
-					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 5},
-			}
-			// 1 pending replica — TotalAnticipatedSupply should count it.
-			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
-				ModelID:        modelID,
-				Namespace:      namespace,
-				ReplicaMetrics: replicas,
-				VariantStates: []domain.VariantReplicaState{
-					{VariantName: "v1", PendingReplicas: 1},
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.TotalAnticipatedSupply).To(BeNumerically("~",
-				aggregation.SumTotalAnticipatedSupply(result.VariantCapacities), 1e-9))
-		})
+		// The TotalSupply == SumTotalSupply(VariantCapacities) and
+		// TotalAnticipatedSupply == SumTotalAnticipatedSupply(VariantCapacities)
+		// invariants are now guaranteed by construction in the engine's
+		// capacity-build step (which computes those totals from the same
+		// VariantCapacities), so the analyzer no longer publishes them and the two
+		// specs that asserted them here were removed.
 
 		It("TotalDemand equals input.ArrivalRate×avgOL plus queue demand", func() {
 			// Commit 2 retires the old invariant (TotalDemand = SumTotalDemand
@@ -1269,35 +1233,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(result.TotalDemand - arrivalDecodeDemand).To(BeNumerically(">", 0))
 		})
 
-		It("RoleCapacities[role].TotalAnticipatedSupply matches per-role aggregation", func() {
-			injectWindowObs(analyzer, ctx, modelID, namespace, "v-decode", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
-			injectWindowObs(analyzer, ctx, modelID, namespace, "v-prefill", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
-			replicas := []domain.ReplicaMetrics{
-				{VariantName: "v-decode", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
-					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 5},
-				{VariantName: "v-prefill", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
-					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 1},
-			}
-			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
-				ModelID:        modelID,
-				Namespace:      namespace,
-				ReplicaMetrics: replicas,
-				VariantStates: []domain.VariantReplicaState{
-					{VariantName: "v-decode", Role: "decode"},
-					{VariantName: "v-prefill", Role: "prefill"},
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RoleCapacities).NotTo(BeNil())
-			byRole := aggregation.AggregateByRole(result.VariantCapacities)
-			for role, rc := range result.RoleCapacities {
-				Expect(rc.TotalAnticipatedSupply).To(BeNumerically("~",
-					byRole[role].TotalAnticipatedSupply, 1e-9),
-					"role %s TotalAnticipatedSupply mismatch", role)
-			}
-		})
+		// The per-role TotalAnticipatedSupply == AggregateByRole(VariantCapacities)
+		// invariant is now guaranteed by construction in the engine's
+		// capacity-build step (buildRoleCapacities uses the same AggregateByRole),
+		// so the analyzer no longer publishes RoleCapacities and the spec that
+		// asserted this at the analyzer layer was removed.
 
 		It("RoleCapacities[decode].TotalDemand includes the queue-demand share", func() {
 			injectWindowObs(analyzer, ctx, modelID, namespace, "v-decode", ilA, olA, prefixA, kvMaxA, bA, kValuesA)
@@ -1333,12 +1273,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			resultWithQ, errWithQ := analyzer2.Analyze(ctx, inputWithQ)
 			Expect(errWithQ).NotTo(HaveOccurred())
 
-			// decode TotalDemand with queue > without queue (queue share was added).
-			Expect(resultWithQ.RoleCapacities["decode"].TotalDemand).To(
-				BeNumerically(">", resultNoQ.RoleCapacities["decode"].TotalDemand))
-			// prefill TotalDemand unchanged (queue demand skips prefill role).
-			Expect(resultWithQ.RoleCapacities["prefill"].TotalDemand).To(
-				BeNumerically("~", resultNoQ.RoleCapacities["prefill"].TotalDemand, 1e-9))
+			// decode demand with queue > without queue (queue share was added).
+			Expect(resultWithQ.RoleDemand["decode"]).To(
+				BeNumerically(">", resultNoQ.RoleDemand["decode"]))
+			// prefill demand unchanged (queue demand skips prefill role).
+			Expect(resultWithQ.RoleDemand["prefill"]).To(
+				BeNumerically("~", resultNoQ.RoleDemand["prefill"], 1e-9))
 		})
 	})
 
@@ -1433,10 +1373,10 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(queueDemand).To(BeNumerically(">", 0), "queue term must be added on top, not folded in")
 
 			// No double-count: role sums reconstruct the model-level total exactly.
-			Expect(result.RoleCapacities).NotTo(BeNil())
+			Expect(result.RoleDemand).NotTo(BeNil())
 			roleSum := 0.0
-			for _, rc := range result.RoleCapacities {
-				roleSum += rc.TotalDemand
+			for _, d := range result.RoleDemand {
+				roleSum += d
 			}
 			Expect(roleSum).To(BeNumerically("~", result.TotalDemand, 1e-6),
 				"sum of per-role TotalDemand must equal model-level TotalDemand exactly once")
@@ -1761,7 +1701,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
@@ -1790,7 +1730,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
@@ -1805,7 +1745,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
-			Expect(result.TotalSupply).To(BeNumerically(">", result.TotalDemand))
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
 			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
@@ -1823,7 +1763,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.SpareCapacity).To(Equal(0.0))
 			// TA leaves RC zero; assert the raw inequality the engine interprets as RC>0.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply))
+			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
 			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 	})

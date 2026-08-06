@@ -382,11 +382,6 @@ func (a *ThroughputAnalyzer) Analyze(
 		})
 	}
 
-	// Model-level supply totals computed from the per-variant slice.
-	// TotalAnticipatedSupply is published so the engine's post-step can compute RC/SC.
-	totalSupply := aggregation.SumTotalSupply(variantCapacities)
-	totalAnticipatedSupply := aggregation.SumTotalAnticipatedSupply(variantCapacities)
-
 	// Decode demand is a model-level quantity: Λ_req × avgOL,
 	// computed once from the model-level arrival rate rather than summed from each
 	// variant's computeDemand result. This replaces the retired per-variant EPP
@@ -437,20 +432,20 @@ func (a *ThroughputAnalyzer) Analyze(
 	_ = anyEPP
 	_ = anyGPSMismatch
 
+	// Supply, utilization, and RoleCapacities are assembled downstream by the
+	// engine's capacity-build step; the analyzer emits only the measured (D, P)
+	// signal plus its per-role demand. aggregateRoleCapacities is used only to
+	// derive RoleDemand (the builder recomputes per-role supply).
 	roleCapacities := aggregateRoleCapacities(variantCapacities, arrivalDemandByRole, queueDemandByRole)
 
 	return &domain.AnalyzerResult{
-		AnalyzerName:           AnalyzerName,
-		ModelID:                input.ModelID,
-		Namespace:              input.Namespace,
-		AnalyzedAt:             now,
-		VariantCapacities:      variantCapacities,
-		TotalSupply:            totalSupply,
-		TotalAnticipatedSupply: totalAnticipatedSupply,
-		TotalDemand:            totalDemand,
-		Utilization:            safeDivide(totalDemand, totalSupply),
-		RoleCapacities:         roleCapacities,
-		RoleDemand:             aggregation.RoleDemands(roleCapacities),
+		AnalyzerName:      AnalyzerName,
+		ModelID:           input.ModelID,
+		Namespace:         input.Namespace,
+		AnalyzedAt:        now,
+		VariantCapacities: variantCapacities,
+		TotalDemand:       totalDemand,
+		RoleDemand:        aggregation.RoleDemands(roleCapacities),
 	}, nil
 }
 

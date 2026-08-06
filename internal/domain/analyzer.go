@@ -102,19 +102,23 @@ type AnalyzerResult struct {
 	// Per-variant capacity breakdown (in analyzer-specific units).
 	VariantCapacities []VariantCapacity
 
-	// Model-level aggregates (in analyzer-specific units).
-	TotalSupply float64 // Sum of all variant TotalCapacity
-	TotalDemand float64 // Sum of all variant TotalDemand
-	Utilization float64 // TotalDemand / TotalSupply (0.0-1.0)
+	// TotalDemand is the model-level demand D (in analyzer-specific units).
+	// Analyzer-supplied: the analyzer owns demand attribution.
+	TotalDemand float64
 
-	// TotalAnticipatedSupply is the anticipated supply the engine's universal
-	// threshold post-step subtracts from TotalDemand/scaleUp to compute RC.
-	// Analyzer-supplied; the engine reads it as-is (zero is a literal value,
-	// not a sentinel). Saturation V2 sets this to
-	// Σ_v (ReplicaCount + PendingReplicas) × PerReplicaCapacity so pending
-	// replicas count against demand, preventing double-scaling. Use
-	// aggregation.SumTotalAnticipatedSupply to populate this correctly.
+	// Model-level supply aggregates — written by the engine's capacity-build
+	// step, not by analyzers. They are derived from VariantCapacities so the
+	// linearity invariant (supply = Σ_v replicas × per-replica P) holds by
+	// construction:
+	//   TotalSupply            = Σ_v ReplicaCount × PerReplicaCapacity
+	//   TotalAnticipatedSupply = Σ_v (ReplicaCount + PendingReplicas) × PerReplicaCapacity
+	//   Utilization            = TotalDemand / TotalSupply (0 when TotalSupply == 0)
+	// TotalAnticipatedSupply counts pending replicas so they offset demand,
+	// preventing double-scaling. Analyzer-written values are discarded;
+	// analyzers should leave these zero.
+	TotalSupply            float64
 	TotalAnticipatedSupply float64
+	Utilization            float64
 
 	// Scaling signals — written by the engine post-step; read by the optimizer.
 	// The engine overwrites both fields after each analyzer's Analyze() returns:

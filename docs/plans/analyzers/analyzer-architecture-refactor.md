@@ -249,16 +249,31 @@ identity that came from discovery, not the analyzer's copies. **Behavior-preserv
 today); no-op on paths that don't run discovery. `saturationEntry` deletion is deferred to Phase 3
 (it is still the variant-list/P source until analyzers emit pure `(D, P)`).
 
-**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`. ⚠️ PARTIAL — increment 1 done, the rest DEFERRED.**
-*Done (increment 1):* `saturation_v2` stopped laundering per-pod `Cost`/`AcceleratorName` onto its
-output — identity now comes from discovery via the builder overlay. *Deferred (not implemented — the
-code stopped here):* moving `RequiredCapacity`/`SpareCapacity` off the analyzer contract, replacing
-`AnalyzerResult`/`VariantCapacity` with the trimmed `VariantTarget`/`RoleDemand`, and deleting
-`saturationEntry` (it still exists at `analyzer_helpers.go:91` and remains the per-variant metadata
-keeper) + the Phase-2 overlay. §3.2/§3.3/§4 describe this **target end-state**, not the current code.
+**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`. ⚠️ PARTIAL — the behavioral split is done; the type-level trim is DEFERRED.**
+*Done:*
+- *(3.0)* `saturation_v2` stopped laundering per-pod `Cost`/`AcceleratorName` onto its output —
+  identity now comes from discovery via the builder overlay.
+- *(3.1)* Extracted the dedicated capacity-build step (`buildCapacities` in `engine_v2.go`) that runs
+  between every analyzer's `Analyze()` and the optimizer.
+- *(3.3a)* The builder assembles per-variant identity, model-level supply, and `RoleCapacities`
+  (pairing the analyzer's `RoleDemand` with per-role supply grouped from `VariantCapacities`).
+- *(3.3b)* Analyzers now emit **pure `(D, P)`**: `saturation_v2`, `throughput`, and the external
+  wrapper no longer set `TotalSupply`, `TotalAnticipatedSupply`, `Utilization`, or `RoleCapacities`.
+  The builder derives all four from `VariantCapacities` + `RoleDemand`, so the linearity invariant
+  (supply = Σ_v replicas × per-replica P) now holds **by construction** rather than by assertion —
+  the analyzer-level specs that policed it were removed as redundant.
+  `RequiredCapacity`/`SpareCapacity` were already engine-post-step-owned.
 
-**Phase 4 — `wva_analyzer_*` metrics. ⬜ DEFERRED — not implemented.** No `wva_analyzer_demand`/
-`wva_analyzer_target` series exist yet; the goal in §2 / §3.4 remains a plan.
+*Deferred (not implemented):* the **type-level** trim — replacing `AnalyzerResult`/`VariantCapacity`
+with `VariantTarget`/`RoleDemand` (the engine-owned fields still live on `AnalyzerResult`; analyzers
+simply leave them zero), and deleting `saturationEntry` (still at `analyzer_helpers.go:91`, still the
+per-variant metadata keeper) + the Phase-2 overlay. §3.2/§3.3/§4 describe that **target end-state**,
+not the current code.
+
+**Phase 4 — `wva_analyzer_*` metrics. ✅ DONE.** `wva_analyzer_demand` (per model instance, per role
+when disaggregated) and `wva_analyzer_target` (per-replica P per variant) are emitted for every
+analyzer that runs each cycle, straight from the `(D, P)` it produced — see `recordAnalyzerMetrics`
+in `engine_v2.go`.
 
 **Phase 5 — External-analyzer wrapper (#1455). ✅ DONE.** Delivered as §10 describes (catalog CM +
 per-engine bodies + runtime registry + per-cycle reconcile + built-in→catalog name resolution). Unit

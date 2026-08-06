@@ -95,9 +95,10 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	// Phase 2: Per-variant aggregation
 	variantCapacities := a.aggregateByVariant(replicaCapacities, input.ReplicaMetrics, input.VariantStates, input.ModelID, input.Namespace, satConfig.KvCacheThreshold)
 
-	// Phase 3: Model-level aggregation via shared helpers (enforces linearity invariant).
-	totalSupply := aggregation.SumTotalSupply(variantCapacities)
-	totalAnticipatedSupply := aggregation.SumTotalAnticipatedSupply(variantCapacities)
+	// Model-level demand D (the analyzer owns demand attribution). Supply,
+	// utilization, and RoleCapacities are assembled downstream by the engine's
+	// capacity-build step from the per-variant capacities and RoleDemand, so they
+	// are not set here — the analyzer emits only the measured (D, P) signal.
 	totalDemand := aggregation.SumTotalDemand(variantCapacities)
 
 	// Track active roles for queue demand attribution.
@@ -110,31 +111,19 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	queueDemand := estimateSchedulerQueueDemand(input.SchedulerQueue, input.ReplicaMetrics, activeRoles)
 	totalDemand += queueDemand.total
 
-	var utilization float64
-	if totalSupply > 0 {
-		utilization = totalDemand / totalSupply
-	}
-
-	// Phase 4: Per-role aggregation (P/D disaggregation).
-	// RequiredCapacity and SpareCapacity are NOT computed here — the engine's
-	// universal threshold post-step writes them after Analyze() returns.
+	// Per-role demand attribution (P/D disaggregation); RoleDemand is nil when
+	// non-disaggregated. aggregateByRole is used only to derive the per-role
+	// demand — the builder recomputes per-role supply.
 	roleCapacities := a.aggregateByRole(variantCapacities, queueDemand.byRole)
 
-	// Phase 5: Build result. RequiredCapacity and SpareCapacity left zero;
-	// the engine post-step overwrites them using TotalDemand, TotalSupply,
-	// and TotalAnticipatedSupply with the resolved thresholds.
 	result := &domain.AnalyzerResult{
-		AnalyzerName:           a.Name(),
-		ModelID:                input.ModelID,
-		Namespace:              input.Namespace,
-		AnalyzedAt:             time.Now(),
-		VariantCapacities:      variantCapacities,
-		TotalSupply:            totalSupply,
-		TotalDemand:            totalDemand,
-		TotalAnticipatedSupply: totalAnticipatedSupply,
-		Utilization:            utilization,
-		RoleCapacities:         roleCapacities,
-		RoleDemand:             aggregation.RoleDemands(roleCapacities),
+		AnalyzerName:      a.Name(),
+		ModelID:           input.ModelID,
+		Namespace:         input.Namespace,
+		AnalyzedAt:        time.Now(),
+		VariantCapacities: variantCapacities,
+		TotalDemand:       totalDemand,
+		RoleDemand:        aggregation.RoleDemands(roleCapacities),
 	}
 
 	return result, nil
