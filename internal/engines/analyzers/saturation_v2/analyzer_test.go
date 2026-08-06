@@ -496,8 +496,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 			// demand is high relative to supply — TotalDemand > TotalAnticipatedSupply.
+			// The analyzer no longer publishes supply, so compare against the supply
+			// the engine's capacity-build step derives from the same variant capacities.
 			// RC/SC are left zero by the analyzer; engine post-step sets them.
-			Expect(result.TotalDemand).To(BeNumerically(">", result.TotalAnticipatedSupply*0.85))
+			Expect(result.TotalDemand).To(BeNumerically(">",
+				aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)*0.85))
 			Expect(result.RequiredCapacity).To(BeZero())
 		})
 

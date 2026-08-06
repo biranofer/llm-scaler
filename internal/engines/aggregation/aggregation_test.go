@@ -199,7 +199,7 @@ var _ = Describe("aggregation helpers", func() {
 			Expect(result[domain.RoleBoth]).To(Equal(3250.0))
 		})
 
-		It("agrees with AggregateByRole's TotalDemand for the same input", func() {
+		It("agrees with AggregateByRole's TotalDemand for the same input by construction", func() {
 			vcs := []domain.VariantCapacity{
 				{Role: "prefill", ReplicaCount: 2, PendingReplicas: 1, PerReplicaCapacity: 5000, TotalDemand: 8000},
 				{Role: "decode", ReplicaCount: 3, PerReplicaCapacity: 8000, TotalDemand: 9000},
@@ -210,6 +210,60 @@ var _ = Describe("aggregation helpers", func() {
 			Expect(demand).To(HaveLen(len(byRole)))
 			for role, totals := range byRole {
 				Expect(demand[role]).To(Equal(totals.TotalDemand), "role %s demand mismatch", role)
+			}
+		})
+	})
+
+	Describe("IsDisaggregated", func() {
+		It("is false for empty input", func() {
+			Expect(aggregation.IsDisaggregated(nil)).To(BeFalse())
+		})
+
+		It("is false when every variant is explicitly 'both'", func() {
+			vcs := []domain.VariantCapacity{
+				{Role: domain.RoleBoth}, {Role: domain.RoleBoth},
+			}
+			Expect(aggregation.IsDisaggregated(vcs)).To(BeFalse())
+		})
+
+		It("is false when every variant has an empty role", func() {
+			// Empty canonicalizes to "both", so this fleet is not disaggregated.
+			Expect(aggregation.IsDisaggregated([]domain.VariantCapacity{{Role: ""}})).To(BeFalse())
+		})
+
+		It("is false for a mix of empty and explicit 'both' roles", func() {
+			vcs := []domain.VariantCapacity{{Role: ""}, {Role: domain.RoleBoth}}
+			Expect(aggregation.IsDisaggregated(vcs)).To(BeFalse())
+		})
+
+		It("is true when any variant serves a P/D role", func() {
+			vcs := []domain.VariantCapacity{{Role: domain.RoleBoth}, {Role: "prefill"}}
+			Expect(aggregation.IsDisaggregated(vcs)).To(BeTrue())
+		})
+
+		It("is true for a fully disaggregated fleet", func() {
+			vcs := []domain.VariantCapacity{{Role: "prefill"}, {Role: "decode"}}
+			Expect(aggregation.IsDisaggregated(vcs)).To(BeTrue())
+		})
+
+		It("matches the DemandByRole key-set test both analyzers rely on", func() {
+			// The analyzers gate on IsDisaggregated and then key off DemandByRole,
+			// so the two must agree about what counts as a per-role breakdown:
+			// disaggregated iff more than just the "both" bucket is present.
+			cases := [][]domain.VariantCapacity{
+				nil,
+				{{Role: ""}},
+				{{Role: domain.RoleBoth}, {Role: ""}},
+				{{Role: "prefill"}},
+				{{Role: "prefill"}, {Role: domain.RoleBoth}},
+				{{Role: "prefill"}, {Role: "decode"}},
+			}
+			for _, vcs := range cases {
+				byRole := aggregation.DemandByRole(vcs)
+				_, hasBoth := byRole[domain.RoleBoth]
+				moreThanBoth := len(byRole) > 1 || (len(byRole) == 1 && !hasBoth)
+				Expect(aggregation.IsDisaggregated(vcs)).To(Equal(moreThanBoth),
+					"disagreement for %+v", vcs)
 			}
 		})
 	})

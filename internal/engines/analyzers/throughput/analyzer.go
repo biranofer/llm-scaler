@@ -885,16 +885,16 @@ func distributeDemandByRole(demand float64, vcs []domain.VariantCapacity) map[st
 // Per-role supply is deliberately not computed here: the engine's capacity-build
 // step recomputes it from the same VariantCapacities and pairs it with this map.
 func aggregateRoleDemand(vcs []domain.VariantCapacity, arrivalDemandByRole, queueDemandByRole map[string]float64) map[string]float64 {
-	byRole := aggregation.DemandByRole(vcs)
-	// Non-disaggregated: only a "both" bucket (or nothing) — no per-role breakdown.
-	if _, hasBoth := byRole[domain.RoleBoth]; len(byRole) == 0 || (len(byRole) == 1 && hasBoth) {
+	if !aggregation.IsDisaggregated(vcs) {
 		return nil
 	}
 
-	// Keys come from the variant set, so demand is only attributed to roles that
-	// actually have variants behind them.
-	result := make(map[string]float64, len(byRole))
-	for role := range byRole {
+	// DemandByRole is used for its key set, not its values: the per-variant demand
+	// sums are deliberately discarded here (see the doc comment above) and replaced
+	// by the model-level arrival term plus the queue term. Keying off the variant
+	// set means demand is only attributed to roles that have variants behind them.
+	result := make(map[string]float64)
+	for role := range aggregation.DemandByRole(vcs) {
 		result[role] = arrivalDemandByRole[role] + queueDemandByRole[role]
 	}
 	return result

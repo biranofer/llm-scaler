@@ -21,7 +21,7 @@ var _ = Describe("buildCapacities", func() {
 	)
 
 	It("is a no-op on a nil result", func() {
-		Expect(func() { buildCapacities(nil, nil, noScaleUp, noScaleDown) }).NotTo(Panic())
+		Expect(func() { buildCapacities(ctx, nil, nil, noScaleUp, noScaleDown) }).NotTo(Panic())
 	})
 
 	It("assembles model-level supply from each variant's (ReplicaCount, P)", func() {
@@ -32,7 +32,7 @@ var _ = Describe("buildCapacities", func() {
 				{VariantName: "v2", ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 4000},
 			},
 		}
-		buildCapacities(r, nil, noScaleUp, noScaleDown)
+		buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 
 		Expect(r.TotalSupply).To(Equal(14000.0))            // 2×5000 + 1×4000
 		Expect(r.TotalAnticipatedSupply).To(Equal(19000.0)) // (2+1)×5000 + 1×4000
@@ -45,7 +45,7 @@ var _ = Describe("buildCapacities", func() {
 				{VariantName: "v1", ReplicaCount: 2, PerReplicaCapacity: 5000},
 			},
 		}
-		buildCapacities(r, nil, noScaleUp, noScaleDown)
+		buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 		Expect(r.Utilization).To(Equal(0.7)) // 7000 / 10000
 	})
 
@@ -56,7 +56,7 @@ var _ = Describe("buildCapacities", func() {
 				{VariantName: "v1", ReplicaCount: 0, PerReplicaCapacity: 5000},
 			},
 		}
-		buildCapacities(r, nil, noScaleUp, noScaleDown)
+		buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 		Expect(r.TotalSupply).To(BeZero())
 		Expect(r.Utilization).To(BeZero())
 	})
@@ -73,7 +73,7 @@ var _ = Describe("buildCapacities", func() {
 				{VariantName: "v1", ReplicaCount: 1, PerReplicaCapacity: 2000},
 			},
 		}
-		buildCapacities(r, nil, noScaleUp, noScaleDown)
+		buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 		Expect(r.TotalSupply).To(Equal(2000.0))
 		Expect(r.TotalAnticipatedSupply).To(Equal(2000.0))
 		Expect(r.Utilization).To(Equal(0.5))
@@ -88,7 +88,7 @@ var _ = Describe("buildCapacities", func() {
 		meta := map[string]domain.VariantMetadata{
 			"v1": {VariantName: "v1", Cost: 12.5, AcceleratorName: "H100", Role: "decode"},
 		}
-		buildCapacities(r, meta, noScaleUp, noScaleDown)
+		buildCapacities(ctx, r, meta, noScaleUp, noScaleDown)
 
 		vc := r.VariantCapacities[0]
 		Expect(vc.Cost).To(Equal(12.5))
@@ -105,7 +105,7 @@ var _ = Describe("buildCapacities", func() {
 					{VariantName: "v1", Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
-			buildCapacities(r, nil, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 			Expect(r.RoleCapacities).To(BeNil())
 		})
 
@@ -118,7 +118,7 @@ var _ = Describe("buildCapacities", func() {
 				},
 				RoleDemand: map[string]float64{"prefill": 4000, "decode": 8000},
 			}
-			buildCapacities(r, nil, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 
 			Expect(r.RoleCapacities).To(HaveLen(2))
 
@@ -147,7 +147,7 @@ var _ = Describe("buildCapacities", func() {
 				},
 				RoleDemand: map[string]float64{"prefill": 4000, domain.RoleBoth: 5000},
 			}
-			buildCapacities(r, nil, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 
 			Expect(r.RoleCapacities).To(HaveKey(domain.RoleBoth))
 			both := r.RoleCapacities[domain.RoleBoth]
@@ -164,7 +164,7 @@ var _ = Describe("buildCapacities", func() {
 				},
 				RoleDemand: map[string]float64{"decode": 2000, domain.RoleBoth: 500},
 			}
-			buildCapacities(r, nil, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 			Expect(r.RoleCapacities[domain.RoleBoth].TotalSupply).To(Equal(1000.0))
 		})
 
@@ -178,7 +178,7 @@ var _ = Describe("buildCapacities", func() {
 				},
 				RoleDemand: map[string]float64{"decode": 2000, "prefill": 1500},
 			}
-			buildCapacities(r, nil, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, nil, noScaleUp, noScaleDown)
 
 			prefill := r.RoleCapacities["prefill"]
 			Expect(prefill.TotalSupply).To(BeZero())
@@ -197,7 +197,7 @@ var _ = Describe("buildCapacities", func() {
 			meta := map[string]domain.VariantMetadata{
 				"v1": {VariantName: "v1", Role: "decode"},
 			}
-			buildCapacities(r, meta, noScaleUp, noScaleDown)
+			buildCapacities(ctx, r, meta, noScaleUp, noScaleDown)
 
 			Expect(r.RoleCapacities["decode"].TotalSupply).To(Equal(4000.0))
 		})

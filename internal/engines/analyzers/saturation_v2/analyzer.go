@@ -447,15 +447,7 @@ func (a *SaturationAnalyzer) aggregateRoleDemand(
 	variantCapacities []domain.VariantCapacity,
 	queueDemandByRole map[string]float64,
 ) map[string]float64 {
-	// Check if any variant has a non-"both" role.
-	hasDisaggregation := false
-	for _, vc := range variantCapacities {
-		if vc.Role != "" && vc.Role != domain.RoleBoth {
-			hasDisaggregation = true
-			break
-		}
-	}
-	if !hasDisaggregation {
+	if !aggregation.IsDisaggregated(variantCapacities) {
 		return nil
 	}
 

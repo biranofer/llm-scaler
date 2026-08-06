@@ -76,14 +76,15 @@ type SchedulerQueueMetrics struct {
 }
 
 // RoleCapacity holds per-role capacity aggregation for P/D disaggregated models.
+// Analyzers never populate this struct: they emit per-role demand as
+// AnalyzerResult.RoleDemand, and the engine's capacity-build step pairs that with
+// the per-role supply it derives from the variant capacities. Supply is assembled
+// by buildRoleCapacities and RequiredCapacity/SpareCapacity by the universal
+// threshold post-step, so a zero is a literal value here, never a sentinel.
 type RoleCapacity struct {
-	Role        string
-	TotalSupply float64
-	TotalDemand float64
-	// TotalAnticipatedSupply is the per-role anticipated supply used by the
-	// engine's universal threshold post-step for the RC formula. Analyzer-
-	// supplied; the engine reads it as-is (zero is a literal value, not a
-	// sentinel). Use aggregation.AggregateByRole to populate this correctly.
+	Role                   string
+	TotalSupply            float64
+	TotalDemand            float64
 	TotalAnticipatedSupply float64
 	RequiredCapacity       float64
 	SpareCapacity          float64

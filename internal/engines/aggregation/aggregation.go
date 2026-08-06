@@ -15,10 +15,21 @@ limitations under the License.
 */
 
 // Package aggregation provides pure helper functions for aggregating
-// per-variant capacity data into model-level and per-role totals.
-// Analyzers use these helpers to populate AnalyzerResult.Total* and
-// AnalyzerResult.RoleCapacities[role].Total* fields, ensuring the
-// linearity invariant required by the optimizer's per-variant scaling math:
+// per-variant capacity data into model-level and per-role totals. The helpers
+// are split along the analyzer/engine contract:
+//
+// Analyzers own demand. They use SumTotalDemand and DemandByRole (plus
+// IsDisaggregated to decide whether a per-role breakdown applies) to populate
+// AnalyzerResult.TotalDemand and AnalyzerResult.RoleDemand.
+//
+// The engine's capacity-build step owns supply. It uses SumTotalSupply,
+// SumTotalAnticipatedSupply, and AggregateByRole to derive
+// AnalyzerResult.Total*/Utilization and to assemble
+// AnalyzerResult.RoleCapacities from the analyzer's RoleDemand.
+//
+// Deriving both halves from the same VariantCapacities is what makes the
+// linearity invariant required by the optimizer's per-variant scaling math hold
+// by construction:
 //
 //	r.TotalSupply            == Σ_v vc.ReplicaCount × vc.PerReplicaCapacity
 //	r.TotalAnticipatedSupply == Σ_v (vc.ReplicaCount + vc.PendingReplicas) × vc.PerReplicaCapacity
@@ -58,22 +69,33 @@ func SumTotalAnticipatedSupply(vcs []domain.VariantCapacity) float64 {
 }
 
 // DemandByRole groups vcs by role and sums each group's TotalDemand. It is the
-// demand-only counterpart to AggregateByRole: analyzers own demand attribution
+// demand-only projection of AggregateByRole: analyzers own demand attribution
 // and emit it as AnalyzerResult.RoleDemand, while per-role supply is recomputed
 // by the engine's capacity-build step. The returned map's keys are also the set
-// of roles present in vcs, which analyzers use to decide whether a model is
-// disaggregated at all. Role canonicalization matches AggregateByRole: an empty
-// role is treated as domain.RoleBoth.
+// of roles present in vcs, which analyzers use to decide how to distribute
+// demand. Role canonicalization therefore matches AggregateByRole by
+// construction: an empty role is treated as domain.RoleBoth.
 func DemandByRole(vcs []domain.VariantCapacity) map[string]float64 {
-	result := make(map[string]float64)
-	for _, vc := range vcs {
-		role := vc.Role
-		if role == "" {
-			role = domain.RoleBoth
-		}
-		result[role] += vc.TotalDemand
+	totals := AggregateByRole(vcs)
+	result := make(map[string]float64, len(totals))
+	for role, t := range totals {
+		result[role] = t.TotalDemand
 	}
 	return result
+}
+
+// IsDisaggregated reports whether vcs describes a P/D-disaggregated model, i.e.
+// whether any variant serves a role other than domain.RoleBoth. An empty role is
+// canonicalized to domain.RoleBoth, so a fleet of only empty/"both" variants is
+// not disaggregated and its analyzer emits model-level demand with no per-role
+// breakdown.
+func IsDisaggregated(vcs []domain.VariantCapacity) bool {
+	for _, vc := range vcs {
+		if vc.Role != "" && vc.Role != domain.RoleBoth {
+			return true
+		}
+	}
+	return false
 }
 
 // SumTotalDemand returns Σ_v vc.TotalDemand.

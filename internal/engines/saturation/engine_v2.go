@@ -3,6 +3,7 @@ package saturation
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -123,7 +124,7 @@ func (e *Engine) runAnalyzersAndScore(
 	// Capacity-build step for saturation: join discovery metadata and compute the
 	// engine-owned scaling signals (RC/SC) with the resolved per-analyzer threshold.
 	satUp, satDown := resolveThresholds(domain.SaturationAnalyzerName, config)
-	buildCapacities(baseResult, metaByVariant, satUp, satDown)
+	buildCapacities(ctx, baseResult, metaByVariant, satUp, satDown)
 
 	// Build AnalyzerInput once; shared by all non-saturation analyzers.
 	// Note: &config has had saturation's per-entry threshold overrides applied
@@ -165,7 +166,7 @@ func (e *Engine) runAnalyzersAndScore(
 			continue
 		}
 		up, down := resolveThresholds(entry.name, config)
-		buildCapacities(result, metaByVariant, up, down)
+		buildCapacities(ctx, result, metaByVariant, up, down)
 		namedResults = append(namedResults, pipeline.NamedAnalyzerResult{
 			Name:              entry.name,
 			Result:            result,
@@ -665,7 +666,7 @@ func metadataByVariant(variantMetadata []domain.VariantMetadata) map[string]doma
 // analyzer supplies only the measured signal (demand + per-replica capacity); the
 // builder assembles the structure the optimizer consumes. The metadata join is a
 // no-op when metaByVariant is empty (paths without discovery keep analyzer values).
-func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]domain.VariantMetadata, scaleUp, scaleDown float64) {
+func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByVariant map[string]domain.VariantMetadata, scaleUp, scaleDown float64) {
 	if result == nil {
 		return
 	}
@@ -690,7 +691,7 @@ func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]dom
 	}
 	// (3) Assemble per-role capacities: supply grouped by role, demand from the
 	// analyzer's per-role attribution (RoleDemand).
-	result.RoleCapacities = buildRoleCapacities(result.VariantCapacities, result.RoleDemand)
+	result.RoleCapacities = buildRoleCapacities(ctx, result.AnalyzerName, result.VariantCapacities, result.RoleDemand)
 	// (4) Engine-owned scaling signals (RC/SC) from demand vs supply.
 	applyUniversalThreshold(result, scaleUp, scaleDown)
 }
@@ -700,14 +701,29 @@ func buildCapacities(result *domain.AnalyzerResult, metaByVariant map[string]dom
 // consumes for P/D-disaggregated models. Returns nil when the analyzer emitted no
 // per-role demand (non-disaggregated). RequiredCapacity/SpareCapacity are left
 // zero here — the universal threshold post-step fills them.
-func buildRoleCapacities(vcs []domain.VariantCapacity, roleDemand map[string]float64) map[string]domain.RoleCapacity {
+//
+// Pairing the two halves relies on an invariant the type system cannot express:
+// the roles an analyzer keyed its demand by must be the roles the variant
+// capacities are keyed by. Both come from the same discovery output in a cycle
+// (the engine projects VariantMetadata into the analyzers' VariantReplicaState
+// and re-joins it in step (1) of buildCapacities), so they agree in practice. A
+// role carrying demand with no variants behind it would otherwise silently
+// produce a zero-supply bucket, which the threshold post-step reads as an
+// unservable shortfall and turns into a spurious scale-up — so log it rather
+// than let it pass unnoticed.
+func buildRoleCapacities(ctx context.Context, analyzerName string, vcs []domain.VariantCapacity, roleDemand map[string]float64) map[string]domain.RoleCapacity {
 	if len(roleDemand) == 0 {
 		return nil
 	}
 	totals := aggregation.AggregateByRole(vcs)
 	out := make(map[string]domain.RoleCapacity, len(roleDemand))
 	for role, demand := range roleDemand {
-		t := totals[role]
+		t, ok := totals[role]
+		if !ok && demand > 0 {
+			ctrl.LoggerFrom(ctx).Info("analyzer attributed demand to a role with no variants",
+				"analyzer", analyzerName, "role", role, "demand", demand,
+				"variantRoles", rolesOf(totals))
+		}
 		out[role] = domain.RoleCapacity{
 			Role:                   role,
 			TotalSupply:            t.TotalSupply,
@@ -716,6 +732,17 @@ func buildRoleCapacities(vcs []domain.VariantCapacity, roleDemand map[string]flo
 		}
 	}
 	return out
+}
+
+// rolesOf returns the roles present in a per-role aggregation, sorted so the
+// log line above is stable across cycles.
+func rolesOf(totals map[string]aggregation.ScopeTotals) []string {
+	roles := make([]string, 0, len(totals))
+	for role := range totals {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	return roles
 }
 
 // logAnalyzerResult emits one INFO "analyzer-result" line for a single named
