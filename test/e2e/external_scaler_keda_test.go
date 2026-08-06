@@ -70,7 +70,7 @@ var _ = Describe("KEDA external scaler", Label("smoke", "full"), Ordered, func()
 		modelID = cfg.ModelID
 		cmName = saturationConfigMapName()
 		cmNamespace = cfg.WVANamespace
-		cmKey = "default"
+		cmKey = defaultConfigKey
 		variantName = scalerBaseName + "-so"
 		// WVA's external scaler runs on the controller and is exposed by the
 		// external-scaler Service (config/base/manager/external-scaler-service.yaml),

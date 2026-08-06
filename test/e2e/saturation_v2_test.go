@@ -106,7 +106,7 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		modelID = cfg.ModelID
 		cmName = saturationConfigMapName()
 		cmNamespace = cfg.WVANamespace
-		cmKey = "default"
+		cmKey = defaultConfigKey
 		variantName = scalerBaseName + "-so"
 
 		By("Snapshotting existing saturation ConfigMap for restore in AfterAll")

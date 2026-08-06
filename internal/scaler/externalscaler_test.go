@@ -17,8 +17,14 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/scaler"
 )
 
-func ref(namespace, name string, metadata map[string]string) *pb.ScaledObjectRef {
-	return &pb.ScaledObjectRef{Namespace: namespace, Name: name, ScalerMetadata: metadata}
+// testNamespace is the single namespace these specs operate in. The handler
+// resolves a ScaledObject and its decision by (namespace, name), so the refs,
+// the seeded ScaledObjects and the decision-store entries must all agree on it —
+// naming it keeps that pairing explicit rather than repeating a bare literal.
+const testNamespace = "chat"
+
+func ref(name string, metadata map[string]string) *pb.ScaledObjectRef {
+	return &pb.ScaledObjectRef{Namespace: testNamespace, Name: name, ScalerMetadata: metadata}
 }
 
 func ptr(v int32) *int32 { return &v }
@@ -55,7 +61,7 @@ var _ = Describe("External scaler handler", func() {
 	Describe("GetMetricSpec", func() {
 		It("advertises the WVA metric with a target of 1", func() {
 			h := newHandler()
-			resp, err := h.GetMetricSpec(ctx, ref("chat", "chat-decode", nil))
+			resp, err := h.GetMetricSpec(ctx, ref("chat-decode", nil))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.MetricSpecs).To(HaveLen(1))
 			Expect(resp.MetricSpecs[0].MetricName).To(Equal(scaler.MetricName))
@@ -65,11 +71,11 @@ var _ = Describe("External scaler handler", func() {
 
 	Describe("GetMetrics", func() {
 		It("returns the desired replicas resolved via the ScaledObject's scaleTargetRef", func() {
-			h := newHandler(scaledObject("chat", "chat-decode", "chat-decode-deploy"))
-			store.Set("chat", "chat-decode-deploy", 5)
+			h := newHandler(scaledObject(testNamespace, "chat-decode", "chat-decode-deploy"))
+			store.Set(testNamespace, "chat-decode-deploy", 5)
 
 			resp, err := h.GetMetrics(ctx, &pb.GetMetricsRequest{
-				ScaledObjectRef: ref("chat", "chat-decode", nil),
+				ScaledObjectRef: ref("chat-decode", nil),
 				MetricName:      scaler.MetricName,
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -79,10 +85,10 @@ var _ = Describe("External scaler handler", func() {
 		})
 
 		It("returns 0 before any optimization decision exists", func() {
-			h := newHandler(scaledObject("chat", "chat-decode", "chat-decode-deploy"))
+			h := newHandler(scaledObject(testNamespace, "chat-decode", "chat-decode-deploy"))
 
 			resp, err := h.GetMetrics(ctx, &pb.GetMetricsRequest{
-				ScaledObjectRef: ref("chat", "chat-decode", nil),
+				ScaledObjectRef: ref("chat-decode", nil),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.MetricValues[0].MetricValue).To(Equal(int64(0)))
@@ -90,10 +96,10 @@ var _ = Describe("External scaler handler", func() {
 
 		It("honours a variantName override without reading the ScaledObject", func() {
 			h := newHandler() // no ScaledObject present
-			store.Set("chat", "direct-target", 7)
+			store.Set(testNamespace, "direct-target", 7)
 
 			resp, err := h.GetMetrics(ctx, &pb.GetMetricsRequest{
-				ScaledObjectRef: ref("chat", "ignored", map[string]string{"variantName": "direct-target"}),
+				ScaledObjectRef: ref("ignored", map[string]string{"variantName": "direct-target"}),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.MetricValues[0].MetricValue).To(Equal(int64(7)))
@@ -103,7 +109,7 @@ var _ = Describe("External scaler handler", func() {
 			h := newHandler()
 
 			_, err := h.GetMetrics(ctx, &pb.GetMetricsRequest{
-				ScaledObjectRef: ref("chat", "missing", nil),
+				ScaledObjectRef: ref("missing", nil),
 			})
 			Expect(err).To(HaveOccurred())
 		})
@@ -112,11 +118,11 @@ var _ = Describe("External scaler handler", func() {
 	Describe("IsActive", func() {
 		DescribeTable("gates on WVA's decision",
 			func(seed *int32, wantActive bool) {
-				h := newHandler(scaledObject("chat", "chat-decode", "chat-decode-deploy"))
+				h := newHandler(scaledObject(testNamespace, "chat-decode", "chat-decode-deploy"))
 				if seed != nil {
-					store.Set("chat", "chat-decode-deploy", *seed)
+					store.Set(testNamespace, "chat-decode-deploy", *seed)
 				}
-				resp, err := h.IsActive(ctx, ref("chat", "chat-decode", nil))
+				resp, err := h.IsActive(ctx, ref("chat-decode", nil))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.Result).To(Equal(wantActive))
 			},

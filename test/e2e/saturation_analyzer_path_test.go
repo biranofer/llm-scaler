@@ -194,7 +194,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		// Use global saturation config for deterministic engine-path selection.
 		// Namespace-local ConfigMap watch is opt-in/tracked and can race in e2e.
 		cmNamespace = cfg.WVANamespace
-		cmKey = "default"
+		cmKey = defaultConfigKey
 
 		// Snapshot existing saturation config so the test can restore it.
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
