@@ -434,10 +434,7 @@ func (a *ThroughputAnalyzer) Analyze(
 
 	// Supply, utilization, and RoleCapacities are assembled downstream by the
 	// engine's capacity-build step; the analyzer emits only the measured (D, P)
-	// signal plus its per-role demand. aggregateRoleCapacities is used only to
-	// derive RoleDemand (the builder recomputes per-role supply).
-	roleCapacities := aggregateRoleCapacities(variantCapacities, arrivalDemandByRole, queueDemandByRole)
-
+	// signal plus its per-role demand attribution.
 	return &domain.AnalyzerResult{
 		AnalyzerName:      AnalyzerName,
 		ModelID:           input.ModelID,
@@ -445,7 +442,7 @@ func (a *ThroughputAnalyzer) Analyze(
 		AnalyzedAt:        now,
 		VariantCapacities: variantCapacities,
 		TotalDemand:       totalDemand,
-		RoleDemand:        aggregation.RoleDemands(roleCapacities),
+		RoleDemand:        aggregateRoleDemand(variantCapacities, arrivalDemandByRole, queueDemandByRole),
 	}, nil
 }
 
@@ -877,31 +874,28 @@ func distributeDemandByRole(demand float64, vcs []domain.VariantCapacity) map[st
 	return result
 }
 
-// aggregateRoleCapacities groups variant capacities by P/D role and computes
-// per-role raw Total* fields. TotalDemand per role is arrivalDemandByRole[role] +
-// queueDemandByRole[role] (either map nil is safe — treated as zero); it no
-// longer sums each role's per-variant computeDemand results (AggregateByRole's
-// TotalDemand is unused here), since the model-level arrival decode term
-// replaced that path — see Analyze's arrivalDecodeDemand. TotalSupply and
-// TotalAnticipatedSupply are still summed per-variant, unaffected by the demand
-// change. Returns nil for non-disaggregated models (all variants role "" or
-// "both"). RequiredCapacity and SpareCapacity are left zero — the engine's
-// universal threshold post-step writes them.
-func aggregateRoleCapacities(vcs []domain.VariantCapacity, arrivalDemandByRole, queueDemandByRole map[string]float64) map[string]domain.RoleCapacity {
-	byRole := aggregation.AggregateByRole(vcs)
+// aggregateRoleDemand groups variant capacities by P/D role and returns the
+// analyzer's per-role demand attribution — the demand half of the (D, P)
+// contract. Demand per role is arrivalDemandByRole[role] + queueDemandByRole[role]
+// (either map nil is safe — treated as zero); it does not sum each role's
+// per-variant computeDemand results, since the model-level arrival decode term
+// replaced that path — see Analyze's arrivalDecodeDemand. Returns nil for
+// non-disaggregated models (all variants role "" or "both").
+//
+// Per-role supply is deliberately not computed here: the engine's capacity-build
+// step recomputes it from the same VariantCapacities and pairs it with this map.
+func aggregateRoleDemand(vcs []domain.VariantCapacity, arrivalDemandByRole, queueDemandByRole map[string]float64) map[string]float64 {
+	byRole := aggregation.DemandByRole(vcs)
 	// Non-disaggregated: only a "both" bucket (or nothing) — no per-role breakdown.
 	if _, hasBoth := byRole[domain.RoleBoth]; len(byRole) == 0 || (len(byRole) == 1 && hasBoth) {
 		return nil
 	}
 
-	result := make(map[string]domain.RoleCapacity, len(byRole))
-	for role, t := range byRole {
-		result[role] = domain.RoleCapacity{
-			Role:                   role,
-			TotalSupply:            t.TotalSupply,
-			TotalAnticipatedSupply: t.TotalAnticipatedSupply,
-			TotalDemand:            arrivalDemandByRole[role] + queueDemandByRole[role],
-		}
+	// Keys come from the variant set, so demand is only attributed to roles that
+	// actually have variants behind them.
+	result := make(map[string]float64, len(byRole))
+	for role := range byRole {
+		result[role] = arrivalDemandByRole[role] + queueDemandByRole[role]
 	}
 	return result
 }

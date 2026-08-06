@@ -135,6 +135,54 @@ var _ = Describe("external.Analyzer", func() {
 			Expect(vc.AcceleratorName).To(BeEmpty())
 		})
 
+		It("copies each variant's role onto its capacity", func() {
+			a, err := external.New(agnosticDef(), fs)
+			Expect(err).NotTo(HaveOccurred())
+			fs.results[agnosticQueryName] = &source.MetricResult{
+				Values: []source.MetricValue{{Value: 9}},
+			}
+
+			res, err := a.Analyze(context.Background(), domain.AnalyzerInput{
+				ModelID:   "m",
+				Namespace: "ns",
+				VariantStates: []domain.VariantReplicaState{
+					{VariantName: "p1", Role: "prefill", CurrentReplicas: 1},
+					{VariantName: "d1", Role: "decode", CurrentReplicas: 2},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			byName := map[string]string{}
+			for _, vc := range res.VariantCapacities {
+				byName[vc.VariantName] = vc.Role
+			}
+			Expect(byName).To(Equal(map[string]string{"p1": "prefill", "d1": "decode"}))
+		})
+
+		It("emits model-level demand only — nil RoleDemand even for a disaggregated fleet", func() {
+			// MVP contract: an external analyzer's query yields a single model-level
+			// D, so it never attributes demand per role. The capacity builder turns a
+			// nil RoleDemand into nil RoleCapacities, and the optimizer's role state
+			// then synthesizes the single "both" role from the model-level RC/SC.
+			a, err := external.New(agnosticDef(), fs)
+			Expect(err).NotTo(HaveOccurred())
+			fs.results[agnosticQueryName] = &source.MetricResult{
+				Values: []source.MetricValue{{Value: 9}},
+			}
+
+			res, err := a.Analyze(context.Background(), domain.AnalyzerInput{
+				ModelID:   "m",
+				Namespace: "ns",
+				VariantStates: []domain.VariantReplicaState{
+					{VariantName: "p1", Role: "prefill", CurrentReplicas: 1},
+					{VariantName: "d1", Role: "decode", CurrentReplicas: 2},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RoleDemand).To(BeNil())
+			Expect(res.TotalDemand).To(Equal(9.0))
+		})
+
 		It("selects the query body matching the model's engine", func() {
 			def := external.Definition{
 				Label: "ttft-slo",

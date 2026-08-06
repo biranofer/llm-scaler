@@ -889,7 +889,7 @@ func makeReplicaMetrics(
 	}
 }
 
-var _ = Describe("aggregateByRole", func() {
+var _ = Describe("aggregateRoleDemand", func() {
 	var analyzer *SaturationAnalyzer
 
 	BeforeEach(func() {
@@ -902,36 +902,50 @@ var _ = Describe("aggregateByRole", func() {
 			{VariantName: "v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 			{VariantName: "v2", Role: "", TotalCapacity: 20000, TotalDemand: 10000, ReplicaCount: 1, PerReplicaCapacity: 20000},
 		}
-		result := analyzer.aggregateByRole(vcs, nil)
+		result := analyzer.aggregateRoleDemand(vcs, nil)
 		Expect(result).To(BeNil())
 	})
 
-	It("should compute per-role capacities for P/D disaggregated model", func() {
+	It("should return nil when every variant has an empty role", func() {
+		// Empty role canonicalizes to "both", so this is still non-disaggregated
+		// and must not produce a per-role breakdown.
+		vcs := []domain.VariantCapacity{
+			{VariantName: "v1", Role: "", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+		}
+		Expect(analyzer.aggregateRoleDemand(vcs, nil)).To(BeNil())
+	})
+
+	It("should not attribute queue demand when non-disaggregated", func() {
+		// Even with queue demand present, an all-"both" fleet stays model-level:
+		// the queue term is already folded into the model-level TotalDemand.
+		vcs := []domain.VariantCapacity{
+			{VariantName: "v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+		}
+		queueByRole := map[string]float64{"prefill": 1000, "decode": 1500}
+		Expect(analyzer.aggregateRoleDemand(vcs, queueByRole)).To(BeNil())
+	})
+
+	It("should compute per-role demand for a P/D disaggregated model", func() {
 		vcs := []domain.VariantCapacity{
 			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 9000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
 			{VariantName: "decode-v1", Role: "decode", TotalCapacity: 20000, TotalDemand: 5000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
 		}
-		result := analyzer.aggregateByRole(vcs, nil)
+		result := analyzer.aggregateRoleDemand(vcs, nil)
 		Expect(result).NotTo(BeNil())
 		Expect(result).To(HaveLen(2))
+		Expect(result["prefill"]).To(Equal(9000.0))
+		Expect(result["decode"]).To(Equal(5000.0))
+	})
 
-		prefill := result["prefill"]
-		Expect(prefill.Role).To(Equal("prefill"))
-		Expect(prefill.TotalSupply).To(Equal(10000.0))
-		Expect(prefill.TotalDemand).To(Equal(9000.0))
-		Expect(prefill.TotalAnticipatedSupply).To(Equal(10000.0)) // 1 replica, no pending
-		// RC/SC are left zero; engine post-step sets them.
-		Expect(prefill.RequiredCapacity).To(BeZero())
-		Expect(prefill.SpareCapacity).To(BeZero())
-
-		decode := result["decode"]
-		Expect(decode.Role).To(Equal("decode"))
-		Expect(decode.TotalSupply).To(Equal(20000.0))
-		Expect(decode.TotalDemand).To(Equal(5000.0))
-		Expect(decode.TotalAnticipatedSupply).To(Equal(20000.0)) // 2 replicas, no pending
-		// RC/SC are left zero; engine post-step sets them.
-		Expect(decode.SpareCapacity).To(BeZero())
-		Expect(decode.RequiredCapacity).To(BeZero())
+	It("should sum demand across multiple variants sharing a role", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "decode-a", Role: "decode", TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "decode-b", Role: "decode", TotalDemand: 2500, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "prefill-a", Role: "prefill", TotalDemand: 1000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+		}
+		result := analyzer.aggregateRoleDemand(vcs, nil)
+		Expect(result["decode"]).To(Equal(7500.0))
+		Expect(result["prefill"]).To(Equal(1000.0))
 	})
 
 	It("should handle mixed roles including 'both'", func() {
@@ -939,14 +953,28 @@ var _ = Describe("aggregateByRole", func() {
 			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 9000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 			{VariantName: "both-v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 		}
-		result := analyzer.aggregateByRole(vcs, nil)
-		// Has disaggregation because prefill-v1 has role != "both"
+		result := analyzer.aggregateRoleDemand(vcs, nil)
+		// Has disaggregation because prefill-v1 has role != "both"; the "both"
+		// bucket keeps its own demand so no variant's demand is dropped.
 		Expect(result).NotTo(BeNil())
 		Expect(result).To(HaveKey("prefill"))
 		Expect(result).To(HaveKey("both"))
+		Expect(result["prefill"]).To(Equal(9000.0))
+		Expect(result["both"]).To(Equal(5000.0))
 	})
 
-	It("should add scheduler queue demand to per-role totals", func() {
+	It("should fold an empty-role variant into the 'both' bucket when disaggregated", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "decode-v1", Role: "decode", TotalDemand: 3000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "legacy", Role: "", TotalDemand: 700, ReplicaCount: 1, PerReplicaCapacity: 10000},
+		}
+		result := analyzer.aggregateRoleDemand(vcs, nil)
+		Expect(result).To(HaveKey(domain.RoleBoth))
+		Expect(result[domain.RoleBoth]).To(Equal(700.0))
+		Expect(result["decode"]).To(Equal(3000.0))
+	})
+
+	It("should add scheduler queue demand to per-role demand", func() {
 		vcs := []domain.VariantCapacity{
 			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 2000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
 			{VariantName: "decode-v1", Role: "decode", TotalCapacity: 20000, TotalDemand: 3000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
@@ -955,16 +983,12 @@ var _ = Describe("aggregateByRole", func() {
 			"prefill": 1000, // inputTokens only
 			"decode":  1500, // inputTokens + outputTokens
 		}
-		result := analyzer.aggregateByRole(vcs, queueByRole)
+		result := analyzer.aggregateRoleDemand(vcs, queueByRole)
 		Expect(result).NotTo(BeNil())
-
-		prefill := result["prefill"]
 		// 2000 (replica) + 1000 (queue) = 3000
-		Expect(prefill.TotalDemand).To(Equal(3000.0))
-
-		decode := result["decode"]
+		Expect(result["prefill"]).To(Equal(3000.0))
 		// 3000 (replica) + 1500 (queue) = 4500
-		Expect(decode.TotalDemand).To(Equal(4500.0))
+		Expect(result["decode"]).To(Equal(4500.0))
 	})
 
 	It("should skip queue demand for roles with no variants", func() {
@@ -976,11 +1000,11 @@ var _ = Describe("aggregateByRole", func() {
 			"prefill": 1000,
 			"decode":  1500,
 		}
-		result := analyzer.aggregateByRole(vcs, queueByRole)
+		result := analyzer.aggregateRoleDemand(vcs, queueByRole)
 		Expect(result).NotTo(BeNil())
 		Expect(result).To(HaveLen(1))
 		Expect(result).To(HaveKey("prefill"))
-		Expect(result["prefill"].TotalDemand).To(Equal(6000.0)) // 5000 + 1000
+		Expect(result["prefill"]).To(Equal(6000.0)) // 5000 + 1000
 	})
 })
 

@@ -57,19 +57,23 @@ func SumTotalAnticipatedSupply(vcs []domain.VariantCapacity) float64 {
 	return total
 }
 
-// RoleDemands extracts the per-role demand from a RoleCapacity map (nil when the
-// map is empty). It lets an analyzer expose its per-role demand attribution — the
-// demand half of the (D, P) contract — so the capacity builder can pair it with
-// per-role supply. Transitional: analyzers will compute RoleDemand directly.
-func RoleDemands(rc map[string]domain.RoleCapacity) map[string]float64 {
-	if len(rc) == 0 {
-		return nil
+// DemandByRole groups vcs by role and sums each group's TotalDemand. It is the
+// demand-only counterpart to AggregateByRole: analyzers own demand attribution
+// and emit it as AnalyzerResult.RoleDemand, while per-role supply is recomputed
+// by the engine's capacity-build step. The returned map's keys are also the set
+// of roles present in vcs, which analyzers use to decide whether a model is
+// disaggregated at all. Role canonicalization matches AggregateByRole: an empty
+// role is treated as domain.RoleBoth.
+func DemandByRole(vcs []domain.VariantCapacity) map[string]float64 {
+	result := make(map[string]float64)
+	for _, vc := range vcs {
+		role := vc.Role
+		if role == "" {
+			role = domain.RoleBoth
+		}
+		result[role] += vc.TotalDemand
 	}
-	out := make(map[string]float64, len(rc))
-	for role, c := range rc {
-		out[role] = c.TotalDemand
-	}
-	return out
+	return result
 }
 
 // SumTotalDemand returns Σ_v vc.TotalDemand.

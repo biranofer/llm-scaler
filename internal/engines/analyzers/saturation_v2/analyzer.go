@@ -111,11 +111,8 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	queueDemand := estimateSchedulerQueueDemand(input.SchedulerQueue, input.ReplicaMetrics, activeRoles)
 	totalDemand += queueDemand.total
 
-	// Per-role demand attribution (P/D disaggregation); RoleDemand is nil when
-	// non-disaggregated. aggregateByRole is used only to derive the per-role
-	// demand — the builder recomputes per-role supply.
-	roleCapacities := a.aggregateByRole(variantCapacities, queueDemand.byRole)
-
+	// Per-role demand attribution (P/D disaggregation); nil when non-disaggregated.
+	// The builder pairs this with the per-role supply it recomputes.
 	result := &domain.AnalyzerResult{
 		AnalyzerName:      a.Name(),
 		ModelID:           input.ModelID,
@@ -123,7 +120,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		AnalyzedAt:        time.Now(),
 		VariantCapacities: variantCapacities,
 		TotalDemand:       totalDemand,
-		RoleDemand:        aggregation.RoleDemands(roleCapacities),
+		RoleDemand:        a.aggregateRoleDemand(variantCapacities, queueDemand.byRole),
 	}
 
 	return result, nil
@@ -436,18 +433,20 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 	return result
 }
 
-// aggregateByRole groups variant capacities by role and returns per-role
-// Total* aggregates for the engine post-step to compute RC/SC from.
-// Returns nil when no disaggregation is active (all variants are role "both"
-// or empty). The queueDemandByRole map adds scheduler queue demand attributed
-// to each role (nil when there's no queue demand).
+// aggregateRoleDemand groups the variant capacities' demand by role and returns
+// the analyzer's per-role demand attribution — the demand half of the (D, P)
+// contract. Returns nil when no disaggregation is active (all variants are role
+// "both" or empty). The queueDemandByRole map adds scheduler queue demand
+// attributed to each role (nil when there's no queue demand); a role that no
+// variant serves is ignored, so queue demand is never charged to a role with no
+// supply behind it.
 //
-// RequiredCapacity and SpareCapacity are left zero — the engine post-step
-// writes them after Analyze() returns using the universal threshold formula.
-func (a *SaturationAnalyzer) aggregateByRole(
+// Per-role supply is deliberately not computed here: the engine's capacity-build
+// step recomputes it from the same VariantCapacities and pairs it with this map.
+func (a *SaturationAnalyzer) aggregateRoleDemand(
 	variantCapacities []domain.VariantCapacity,
 	queueDemandByRole map[string]float64,
-) map[string]domain.RoleCapacity {
+) map[string]float64 {
 	// Check if any variant has a non-"both" role.
 	hasDisaggregation := false
 	for _, vc := range variantCapacities {
@@ -460,27 +459,15 @@ func (a *SaturationAnalyzer) aggregateByRole(
 		return nil
 	}
 
-	// Aggregate supply/demand/anticipated per role via shared helpers.
-	totals := aggregation.AggregateByRole(variantCapacities)
+	demand := aggregation.DemandByRole(variantCapacities)
 
 	// Add scheduler queue demand attributed to each role.
 	for role, qd := range queueDemandByRole {
-		if t, ok := totals[role]; ok {
-			t.TotalDemand += qd
-			totals[role] = t
+		if _, ok := demand[role]; ok {
+			demand[role] += qd
 		}
 	}
-
-	result := make(map[string]domain.RoleCapacity, len(totals))
-	for role, t := range totals {
-		result[role] = domain.RoleCapacity{
-			Role:                   role,
-			TotalSupply:            t.TotalSupply,
-			TotalDemand:            t.TotalDemand,
-			TotalAnticipatedSupply: t.TotalAnticipatedSupply,
-		}
-	}
-	return result
+	return demand
 }
 
 // lookupCompatibleCapacity searches the capacity store for a record from

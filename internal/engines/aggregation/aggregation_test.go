@@ -156,4 +156,61 @@ var _ = Describe("aggregation helpers", func() {
 			Expect(prefill.TotalDemand).To(BeZero())
 		})
 	})
+
+	Describe("DemandByRole", func() {
+		It("returns empty map for empty input", func() {
+			Expect(aggregation.DemandByRole(nil)).To(BeEmpty())
+		})
+
+		It("canonicalizes empty role to RoleBoth, matching AggregateByRole", func() {
+			vcs := []domain.VariantCapacity{
+				{Role: "", ReplicaCount: 1, PerReplicaCapacity: 1000, TotalDemand: 500},
+			}
+			result := aggregation.DemandByRole(vcs)
+			Expect(result).To(HaveKey(domain.RoleBoth))
+			Expect(result).NotTo(HaveKey(""))
+			Expect(result[domain.RoleBoth]).To(Equal(500.0))
+		})
+
+		It("sums TotalDemand within each role group", func() {
+			vcs := []domain.VariantCapacity{
+				{Role: "prefill", ReplicaCount: 2, PendingReplicas: 1, PerReplicaCapacity: 5000, TotalDemand: 8000},
+				{Role: "decode", ReplicaCount: 3, PerReplicaCapacity: 8000, TotalDemand: 9000},
+				{Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 4000, TotalDemand: 2000},
+			}
+			result := aggregation.DemandByRole(vcs)
+			Expect(result).To(HaveLen(2))
+			Expect(result["prefill"]).To(Equal(8000.0))
+			Expect(result["decode"]).To(Equal(11000.0)) // 9000 + 2000
+		})
+
+		It("keeps a 'both' bucket alongside P/D roles in a mixed fleet", func() {
+			// The optimizer looks up RoleCapacities["both"] for a variant whose role
+			// is "both" in an otherwise disaggregated model, so the bucket must survive.
+			vcs := []domain.VariantCapacity{
+				{Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 5000, TotalDemand: 4000},
+				{Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 9000, TotalDemand: 3000},
+				{Role: "", ReplicaCount: 1, PerReplicaCapacity: 1000, TotalDemand: 250},
+			}
+			result := aggregation.DemandByRole(vcs)
+			Expect(result).To(HaveLen(2))
+			Expect(result["prefill"]).To(Equal(4000.0))
+			// The explicit "both" and the empty-role variant land in the same bucket.
+			Expect(result[domain.RoleBoth]).To(Equal(3250.0))
+		})
+
+		It("agrees with AggregateByRole's TotalDemand for the same input", func() {
+			vcs := []domain.VariantCapacity{
+				{Role: "prefill", ReplicaCount: 2, PendingReplicas: 1, PerReplicaCapacity: 5000, TotalDemand: 8000},
+				{Role: "decode", ReplicaCount: 3, PerReplicaCapacity: 8000, TotalDemand: 9000},
+				{Role: "", ReplicaCount: 1, PerReplicaCapacity: 4000, TotalDemand: 2000},
+			}
+			byRole := aggregation.AggregateByRole(vcs)
+			demand := aggregation.DemandByRole(vcs)
+			Expect(demand).To(HaveLen(len(byRole)))
+			for role, totals := range byRole {
+				Expect(demand[role]).To(Equal(totals.TotalDemand), "role %s demand mismatch", role)
+			}
+		})
+	})
 })
