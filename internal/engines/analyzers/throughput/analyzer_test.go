@@ -2013,3 +2013,79 @@ var _ = Describe("computeLocalDemand", func() {
 		Expect(total).To(Equal(0.0))
 	})
 })
+
+var _ = Describe("aggregateRoleDemand", func() {
+	// The throughput analyzer keys its per-role demand off the variant set but
+	// takes the values from the model-level arrival term plus the queue term
+	// (it deliberately discards the per-variant demand sums). These specs pin
+	// that keying, including the "both" bucket, which the optimizer looks up for
+	// a non-disaggregated variant in an otherwise disaggregated fleet.
+	It("returns nil when every variant is role 'both'", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "v1", Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "v2", Role: "", ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		Expect(aggregateRoleDemand(vcs, map[string]float64{domain.RoleBoth: 50}, nil)).To(BeNil())
+	})
+
+	It("returns nil for an empty variant set", func() {
+		Expect(aggregateRoleDemand(nil, nil, nil)).To(BeNil())
+	})
+
+	It("combines the arrival and queue terms per role", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		got := aggregateRoleDemand(vcs,
+			map[string]float64{"prefill": 400, "decode": 900},
+			map[string]float64{"decode": 100})
+		Expect(got).To(Equal(map[string]float64{"prefill": 400, "decode": 1000}))
+	})
+
+	It("keeps a 'both' bucket in a mixed fleet", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "b1", Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		got := aggregateRoleDemand(vcs,
+			map[string]float64{"prefill": 400, domain.RoleBoth: 250}, nil)
+		Expect(got).To(HaveKey(domain.RoleBoth))
+		Expect(got[domain.RoleBoth]).To(Equal(250.0))
+		Expect(got["prefill"]).To(Equal(400.0))
+	})
+
+	It("folds an empty-role variant into the 'both' bucket", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "legacy", Role: "", ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		got := aggregateRoleDemand(vcs,
+			map[string]float64{"decode": 300, domain.RoleBoth: 75}, nil)
+		Expect(got).To(HaveLen(2))
+		Expect(got[domain.RoleBoth]).To(Equal(75.0))
+	})
+
+	It("does not attribute demand to a role with no variants", func() {
+		// Keys come from the variant set, so an arrival/queue entry for an absent
+		// role is dropped rather than becoming a zero-supply bucket.
+		vcs := []domain.VariantCapacity{
+			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		got := aggregateRoleDemand(vcs,
+			map[string]float64{"decode": 300, "ghost": 999},
+			map[string]float64{"ghost": 5})
+		Expect(got).NotTo(HaveKey("ghost"))
+		Expect(got).To(HaveLen(2))
+	})
+
+	It("yields zero for a present role with neither arrival nor queue demand", func() {
+		vcs := []domain.VariantCapacity{
+			{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 100},
+			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 100},
+		}
+		got := aggregateRoleDemand(vcs, map[string]float64{"decode": 300}, nil)
+		Expect(got["prefill"]).To(Equal(0.0))
+	})
+})

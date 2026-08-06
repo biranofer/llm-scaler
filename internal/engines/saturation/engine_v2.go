@@ -691,7 +691,7 @@ func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByV
 	}
 	// (3) Assemble per-role capacities: supply grouped by role, demand from the
 	// analyzer's per-role attribution (RoleDemand).
-	result.RoleCapacities = buildRoleCapacities(ctx, result.AnalyzerName, result.VariantCapacities, result.RoleDemand)
+	result.RoleCapacities = buildRoleCapacities(ctx, result)
 	// (4) Engine-owned scaling signals (RC/SC) from demand vs supply.
 	applyUniversalThreshold(result, scaleUp, scaleDown)
 }
@@ -711,17 +711,21 @@ func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByV
 // produce a zero-supply bucket, which the threshold post-step reads as an
 // unservable shortfall and turns into a spurious scale-up — so log it rather
 // than let it pass unnoticed.
-func buildRoleCapacities(ctx context.Context, analyzerName string, vcs []domain.VariantCapacity, roleDemand map[string]float64) map[string]domain.RoleCapacity {
+func buildRoleCapacities(ctx context.Context, result *domain.AnalyzerResult) map[string]domain.RoleCapacity {
+	roleDemand := result.RoleDemand
 	if len(roleDemand) == 0 {
 		return nil
 	}
-	totals := aggregation.AggregateByRole(vcs)
+	totals := aggregation.AggregateByRole(result.VariantCapacities)
 	out := make(map[string]domain.RoleCapacity, len(roleDemand))
 	for role, demand := range roleDemand {
 		t, ok := totals[role]
 		if !ok && demand > 0 {
+			// modelID/namespace included so the line is actionable: the engine
+			// reconciles many models per cycle into one controller log.
 			ctrl.LoggerFrom(ctx).Info("analyzer attributed demand to a role with no variants",
-				"analyzer", analyzerName, "role", role, "demand", demand,
+				"modelID", result.ModelID, "namespace", result.Namespace,
+				"analyzer", result.AnalyzerName, "role", role, "demand", demand,
 				"variantRoles", rolesOf(totals))
 		}
 		out[role] = domain.RoleCapacity{
