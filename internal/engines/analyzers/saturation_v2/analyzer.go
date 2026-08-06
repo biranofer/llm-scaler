@@ -227,15 +227,29 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	// Apply KvCacheThreshold to match the main path (where k1 = totalTokens * threshold).
 	// For deployment-derived records, EffectiveCapacity is the raw estimate; the threshold
 	// reduces it to the usable portion, consistent with the normal code path.
+	//
+	// Floor at one token rather than letting the product truncate to zero: rec.EffectiveCapacity
+	// is already known positive, and a zero here does not mean "no capacity", it means
+	// "less than one token of capacity". Reporting zero makes the variant unsizable —
+	// the engine sees a shortfall it cannot divide by a per-replica capacity, so it asks
+	// for capacity and can never act on the answer.
 	effectiveCapacity := int64(float64(rec.EffectiveCapacity) * cfg.KvCacheThreshold)
 	if effectiveCapacity <= 0 {
-		return nil
+		effectiveCapacity = 1
 	}
 
-	// Estimate demand from KV cache usage percentage applied to the thresholded capacity.
+	// Estimate demand from KV cache usage percentage applied to the record's RAW
+	// capacity, not the thresholded one. Charging usage against the thresholded
+	// capacity would put KvCacheThreshold on both sides of demand/supply, where it
+	// cancels: utilization would collapse to KvCacheUsage and the threshold would
+	// have no effect on the scaling decision at all. Against the raw capacity the
+	// ratio is KvCacheUsage/KvCacheThreshold, which is what the main path computes
+	// (TokensInUse / (TotalKvCapacityTokens × threshold)) — utilization reaches 1.0
+	// exactly when observed KV occupancy reaches the configured ceiling.
+	//
 	// This is a coarse approximation — KvCacheUsage reflects memory pressure, not
 	// exact token demand — but it's sufficient when token-level metrics are absent.
-	replicaDemand := int64(rm.KvCacheUsage * float64(effectiveCapacity))
+	replicaDemand := int64(rm.KvCacheUsage * float64(rec.EffectiveCapacity))
 
 	// Add the role-aware footprint of requests waiting in the local engine queue,
 	// matching the main path.

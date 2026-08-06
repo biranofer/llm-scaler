@@ -102,3 +102,85 @@ func TestBuildRoleCapacities_QuietWhenOrphanRoleHasZeroDemand(t *testing.T) {
 
 	assert.Zero(t, logs.FilterMessage(orphanRoleDemandMsg).Len())
 }
+
+const unsizableShortfallMsg = "analyzer needs capacity but no variant has a per-replica capacity to scale with"
+
+// A shortfall the optimizer cannot size reads from the outside exactly like a
+// stuck autoscaler: the engine reports it needs capacity every cycle and never
+// acts, because sizing a scale-up divides by per-replica capacity and every one
+// of them is zero. These tests pin that the state is announced rather than left
+// to be inferred from a prc:0 buried in the analyzer-result line.
+func TestWarnUnsizableShortfall_LogsWhenNoVariantCanBeSized(t *testing.T) {
+	ctx, logs := zapObserverCtx(t)
+
+	r := &domain.AnalyzerResult{
+		AnalyzerName: "saturation",
+		ModelID:      "m1",
+		Namespace:    "ns1",
+		TotalDemand:  2,
+		VariantCapacities: []domain.VariantCapacity{
+			{VariantName: "vB", ReplicaCount: 1, PerReplicaCapacity: 0},
+			{VariantName: "vA", ReplicaCount: 1, PerReplicaCapacity: 0},
+		},
+	}
+	// scaleUp=0.85 with zero supply leaves RequiredCapacity > 0.
+	buildCapacities(ctx, r, nil, 0.85, 0.70)
+
+	require.Positive(t, r.RequiredCapacity, "setup: expected an unmet shortfall")
+	entries := logs.FilterMessage(unsizableShortfallMsg)
+	require.Equal(t, 1, entries.Len())
+
+	fields := entries.All()[0].ContextMap()
+	assert.Equal(t, "m1", fields["modelID"])
+	assert.Equal(t, "ns1", fields["namespace"])
+	assert.Equal(t, "saturation", fields["analyzer"])
+	// Sorted, so the line is stable across cycles despite map/slice ordering.
+	assert.Equal(t, []any{"vA", "vB"}, fields["variants"])
+}
+
+func TestWarnUnsizableShortfall_QuietWhenAnyVariantCanAbsorbIt(t *testing.T) {
+	// One sizable variant is enough: the optimizer has something to divide by.
+	ctx, logs := zapObserverCtx(t)
+
+	r := &domain.AnalyzerResult{
+		AnalyzerName: "saturation",
+		TotalDemand:  10000,
+		VariantCapacities: []domain.VariantCapacity{
+			{VariantName: "dead", ReplicaCount: 1, PerReplicaCapacity: 0},
+			{VariantName: "live", ReplicaCount: 1, PerReplicaCapacity: 100},
+		},
+	}
+	buildCapacities(ctx, r, nil, 0.85, 0.70)
+
+	require.Positive(t, r.RequiredCapacity, "setup: expected an unmet shortfall")
+	assert.Zero(t, logs.FilterMessage(unsizableShortfallMsg).Len())
+}
+
+func TestWarnUnsizableShortfall_QuietWhenThereIsNoShortfall(t *testing.T) {
+	// Zero capacity is only worth reporting when something is actually being
+	// asked for; an idle model with no demand must not log every cycle.
+	ctx, logs := zapObserverCtx(t)
+
+	r := &domain.AnalyzerResult{
+		AnalyzerName: "saturation",
+		TotalDemand:  0,
+		VariantCapacities: []domain.VariantCapacity{
+			{VariantName: "v1", ReplicaCount: 1, PerReplicaCapacity: 0},
+		},
+	}
+	buildCapacities(ctx, r, nil, 0.85, 0.70)
+
+	assert.Zero(t, r.RequiredCapacity)
+	assert.Zero(t, logs.FilterMessage(unsizableShortfallMsg).Len())
+}
+
+func TestWarnUnsizableShortfall_QuietWhenThereAreNoVariants(t *testing.T) {
+	// No variants at all is a different condition (nothing discovered yet), and
+	// naming zero variants in the log would say nothing useful.
+	ctx, logs := zapObserverCtx(t)
+
+	r := &domain.AnalyzerResult{AnalyzerName: "saturation", TotalDemand: 5}
+	buildCapacities(ctx, r, nil, 0.85, 0.70)
+
+	assert.Zero(t, logs.FilterMessage(unsizableShortfallMsg).Len())
+}

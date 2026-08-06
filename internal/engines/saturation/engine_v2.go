@@ -796,6 +796,39 @@ func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByV
 	result.RoleCapacities = buildRoleCapacities(ctx, result)
 	// (4) Engine-owned scaling signals (RC/SC) from demand vs supply.
 	applyUniversalThreshold(result, scaleUp, scaleDown)
+	// (5) Flag a shortfall the optimizer cannot act on.
+	warnUnsizableShortfall(ctx, result)
+}
+
+// warnUnsizableShortfall logs when an analyzer reports that more capacity is
+// needed while no variant has a per-replica capacity to supply it with. The
+// optimizer sizes a scale-up as demand/target ÷ per-replica capacity, so with
+// every capacity at zero there is nothing to divide by: the engine asks for
+// capacity every cycle and can never act on the answer, which reads from the
+// outside exactly like a stuck autoscaler.
+//
+// The usual cause is configuration rather than load — a KvCacheThreshold small
+// enough that the usable-capacity estimate rounds away, or a variant whose
+// capacity was never learned — so the log names the variants involved.
+func warnUnsizableShortfall(ctx context.Context, result *domain.AnalyzerResult) {
+	if result.RequiredCapacity <= 0 || len(result.VariantCapacities) == 0 {
+		return
+	}
+	for _, vc := range result.VariantCapacities {
+		if vc.PerReplicaCapacity > 0 {
+			return // at least one variant can absorb the shortfall
+		}
+	}
+	names := make([]string, 0, len(result.VariantCapacities))
+	for _, vc := range result.VariantCapacities {
+		names = append(names, vc.VariantName)
+	}
+	sort.Strings(names)
+	ctrl.LoggerFrom(ctx).Info("analyzer needs capacity but no variant has a per-replica capacity to scale with",
+		"modelID", result.ModelID, "namespace", result.Namespace,
+		"analyzer", result.AnalyzerName, "requiredCapacity", result.RequiredCapacity,
+		"variants", names,
+		"hint", "check kvCacheThreshold: a value small enough to round the usable-capacity estimate to zero makes the shortfall unsizable")
 }
 
 // buildRoleCapacities pairs per-role supply (grouped from the variant capacities)

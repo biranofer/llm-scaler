@@ -1032,6 +1032,77 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		}
 	})
 
+	It("keeps KvCacheThreshold out of both sides of the ratio", func() {
+		// Regression: demand used to be charged against the *thresholded* capacity,
+		// so the threshold cancelled and utilization equalled KvCacheUsage no matter
+		// how it was configured — the knob had no effect on the scaling decision.
+		// Tightening the ceiling must raise utilization for identical KV occupancy.
+		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
+			AcceleratorName:   "H100",
+			EffectiveCapacity: 10000,
+			LearnedFrom:       "deployment",
+		})
+		rm := domain.ReplicaMetrics{
+			PodName:         "pod-1",
+			VariantName:     "variant-a",
+			AcceleratorName: "H100",
+			KvCacheUsage:    0.5,
+		}
+
+		utilizationAt := func(threshold float64) float64 {
+			cfg.KvCacheThreshold = threshold
+			r := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+			Expect(r).NotTo(BeNil())
+			return float64(r.ReplicaDemand) / float64(r.EffectiveCapacity)
+		}
+
+		// utilization == KvCacheUsage / KvCacheThreshold, as on the main path.
+		Expect(utilizationAt(1.0)).To(BeNumerically("~", 0.5, 1e-9))
+		Expect(utilizationAt(0.8)).To(BeNumerically("~", 0.625, 1e-9))
+		// At a ceiling equal to the occupancy, the replica is exactly saturated.
+		Expect(utilizationAt(0.5)).To(BeNumerically("~", 1.0, 1e-9))
+	})
+
+	It("floors a tiny usable capacity at one token instead of dropping the replica", func() {
+		// int64 truncation used to turn a small (capacity x threshold) product into
+		// 0, and the zero-guard then discarded the replica entirely — the variant
+		// reported no capacity at all, so the engine could see a shortfall it had no
+		// per-replica capacity to divide by and never acted on it.
+		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
+			AcceleratorName:   "H100",
+			EffectiveCapacity: 10, // 10 * 0.05 = 0.5 -> truncates to 0
+			LearnedFrom:       "deployment",
+		})
+		cfg.KvCacheThreshold = 0.05
+
+		rm := domain.ReplicaMetrics{
+			PodName:         "pod-1",
+			VariantName:     "variant-a",
+			AcceleratorName: "H100",
+			KvCacheUsage:    0.5,
+		}
+
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		Expect(result).NotTo(BeNil(), "a positive stored capacity must stay sizable")
+		Expect(result.EffectiveCapacity).To(Equal(int64(1)))
+	})
+
+	It("still returns nil when the stored capacity is genuinely zero", func() {
+		// The floor must not resurrect a record that carries no capacity at all.
+		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
+			AcceleratorName:   "H100",
+			EffectiveCapacity: 0,
+			LearnedFrom:       "deployment",
+		})
+		rm := domain.ReplicaMetrics{
+			PodName:         "pod-1",
+			VariantName:     "variant-a",
+			AcceleratorName: "H100",
+			KvCacheUsage:    0.5,
+		}
+		Expect(analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)).To(BeNil())
+	})
+
 	It("should return nil when capacity store has no record", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
@@ -1079,11 +1150,14 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
 		Expect(result).NotTo(BeNil())
-		// effectiveCapacity = 10000 * 0.8 (KvCacheThreshold) = 8000
+		// Capacity is the usable portion: 10000 * 0.8 (KvCacheThreshold) = 8000.
 		Expect(result.EffectiveCapacity).To(Equal(int64(8000)))
-		// demand = 0.6 * 8000 = 4800
-		Expect(result.ReplicaDemand).To(Equal(int64(4800)))
-		Expect(result.IsSaturated).To(BeFalse()) // 4800 < 8000
+		// Demand is occupancy against the RAW capacity: 0.6 * 10000 = 6000. Charging
+		// it against the thresholded capacity instead would put the threshold on both
+		// sides and cancel, making utilization equal KvCacheUsage regardless of it.
+		Expect(result.ReplicaDemand).To(Equal(int64(6000)))
+		// utilization = 6000/8000 = 0.75 = KvCacheUsage/KvCacheThreshold, as the main path.
+		Expect(result.IsSaturated).To(BeFalse()) // 6000 < 8000
 	})
 
 	It("should detect saturation at KvCacheUsage >= KvCacheThreshold", func() {
@@ -1103,9 +1177,8 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
 		Expect(result).NotTo(BeNil())
-		// effectiveCapacity = 10000 * 0.8 = 8000
-		// demand = 1.0 * 8000 = 8000 >= 8000
-		Expect(result.ReplicaDemand).To(Equal(int64(8000)))
+		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 1.0 * 10000 = 10000 >= 8000
+		Expect(result.ReplicaDemand).To(Equal(int64(10000)))
 		Expect(result.IsSaturated).To(BeTrue())
 	})
 
@@ -1128,14 +1201,15 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
 		Expect(result).NotTo(BeNil())
-		// effectiveCapacity = 10000 * 0.8 = 8000
-		// demand = 0.9 * 8000 = 7200
-		// 7200 < 8000 → not saturated by demand alone, BUT this is close to capacity.
-		// In the main path, k1=8000 and demand includes tokens+queue. The important thing
-		// is that the threshold IS applied (8000 not 10000), so scale-up signals trigger
-		// at the same utilization level as the main path.
+		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 0.9 * 10000 = 9000 >= 8000.
+		// The spec title is now actually satisfied: occupancy past the configured
+		// ceiling reads as saturated, exactly as the main path does. Under the older
+		// arithmetic demand was charged against the thresholded capacity (0.9 * 8000 =
+		// 7200 < 8000), so utilization was pinned to KvCacheUsage and no KV occupancy
+		// short of 100% could ever cross the ceiling.
 		Expect(result.EffectiveCapacity).To(Equal(int64(8000)))
-		Expect(result.ReplicaDemand).To(Equal(int64(7200)))
+		Expect(result.ReplicaDemand).To(Equal(int64(9000)))
+		Expect(result.IsSaturated).To(BeTrue())
 	})
 
 	It("should add queue-based demand when avg input tokens available", func() {
@@ -1158,8 +1232,8 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
-		// demand = 0.5 * 8000 + 3 * 500 = 4000 + 1500 = 5500
-		Expect(result.ReplicaDemand).To(Equal(int64(5500)))
+		// demand = 0.5 * 10000 + 3 * 500 = 5000 + 1500 = 6500
+		Expect(result.ReplicaDemand).To(Equal(int64(6500)))
 		Expect(result.IsSaturated).To(BeFalse())
 	})
 
@@ -1183,8 +1257,8 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
-		// demand = 0.3 * 8000 = 2400 (no queue contribution)
-		Expect(result.ReplicaDemand).To(Equal(int64(2400)))
+		// demand = 0.3 * 10000 = 3000 (no queue contribution)
+		Expect(result.ReplicaDemand).To(Equal(int64(3000)))
 	})
 
 	It("should charge queue demand by role", func() {
@@ -1205,16 +1279,16 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			AvgOutputTokens:       250,
 		}
 
-		// effectiveCapacity = 10000 * 0.8 = 8000; resident = 0.5 * 8000 = 4000.
+		// effectiveCapacity = 10000 * 0.8 = 8000; resident = 0.5 * 10000 = 5000.
 		prefill := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RolePrefill)
 		Expect(prefill).NotTo(BeNil())
-		// 4000 + 3 * 500 = 5500 — output tokens excluded.
-		Expect(prefill.ReplicaDemand).To(Equal(int64(5500)))
+		// 5000 + 3 * 500 = 6500 — output tokens excluded.
+		Expect(prefill.ReplicaDemand).To(Equal(int64(6500)))
 
 		decode := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode)
 		Expect(decode).NotTo(BeNil())
-		// 4000 + 3 * (500 + 250) = 6250 — output tokens included.
-		Expect(decode.ReplicaDemand).To(Equal(int64(6250)))
+		// 5000 + 3 * (500 + 250) = 7250 — output tokens included.
+		Expect(decode.ReplicaDemand).To(Equal(int64(7250)))
 	})
 
 	It("should not report saturation for an idle replica with a shallow queue", func() {
@@ -1243,9 +1317,9 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode)
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 8192 * 0.8 = 6553
-		// demand = 0.10 * 6553 + 2 * (200 + 100) = 655 + 600 = 1255
+		// demand = 0.10 * 8192 + 2 * (200 + 100) = 819 + 600 = 1419
 		Expect(result.EffectiveCapacity).To(Equal(int64(6553)))
-		Expect(result.ReplicaDemand).To(Equal(int64(1255)))
+		Expect(result.ReplicaDemand).To(Equal(int64(1419)))
 		Expect(result.IsSaturated).To(BeFalse())
 	})
 
@@ -1274,9 +1348,9 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		Expect(result.MemoryBoundCapacity).To(Equal(int64(8000)))
 		Expect(result.ComputeBoundCapacity).To(Equal(int64(8000)))
 		Expect(result.TotalKvCapacityTokens).To(Equal(int64(8000)))
-		// demand = 0.4 * 8000 = 3200
-		Expect(result.TokensInUse).To(Equal(int64(3200)))
-		Expect(result.ReplicaDemand).To(Equal(int64(3200)))
+		// demand = 0.4 * 10000 (raw) = 4000
+		Expect(result.TokensInUse).To(Equal(int64(4000)))
+		Expect(result.ReplicaDemand).To(Equal(int64(4000)))
 	})
 })
 
@@ -1476,13 +1550,13 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 
 		It("excludes output tokens for a prefill variant", func() {
 			// effectiveCapacity = 10000 * 0.8 = 8000
-			// 0.5 * 8000 + 4 * 100 input = 4000 + 400 = 4400
-			Expect(fallbackDemandFor(domain.RolePrefill)).To(BeNumerically("==", 4400))
+			// demand = 0.5 * 10000 (raw) + 4 * 100 input = 5000 + 400 = 5400
+			Expect(fallbackDemandFor(domain.RolePrefill)).To(BeNumerically("==", 5400))
 		})
 
 		It("includes output tokens for a decode variant", func() {
-			// 0.5 * 8000 + 4 * (100 + 50) = 4000 + 600 = 4600
-			Expect(fallbackDemandFor(domain.RoleDecode)).To(BeNumerically("==", 4600))
+			// demand = 0.5 * 10000 (raw) + 4 * (100 + 50) = 5000 + 600 = 5600
+			Expect(fallbackDemandFor(domain.RoleDecode)).To(BeNumerically("==", 5600))
 		})
 	})
 

@@ -16,7 +16,22 @@ type SaturationScalingConfig struct {
 	// Namespace is the namespace for this override (only used in override entries)
 	Namespace string `yaml:"namespace,omitempty"`
 
-	// KvCacheThreshold: Replica is saturated if KV cache utilization >= this threshold (0.0-1.0)
+	// KvCacheThreshold is the ceiling on usable KV cache (0.0-1.0): a replica's
+	// capacity is its physical KV budget scaled by this value, so utilization
+	// reaches 1.0 exactly when observed KV occupancy reaches the ceiling. At the
+	// default 0.80, "100% utilized" means 80% of KV is resident — the headroom
+	// notion EPP saturation uses.
+	//
+	// NOTE: this is a capacity multiplier, NOT the V1 boolean test it used to be
+	// ("saturated if KV utilization >= threshold"). The tuning direction is
+	// therefore inverted from V1: a LOWER value shrinks each replica's capacity
+	// and scales out sooner, where under V1 a lower value was the aggressive
+	// setting for the opposite reason. Configs carried over from V1 need review.
+	//
+	// It compounds with ScaleUpThreshold — the effective scale-out point is
+	// KvCacheThreshold × ScaleUpThreshold of physical KV. Retiring this field in
+	// favour of ScaleUpThreshold alone is proposed in
+	// docs/plans/analyzers/kvcachethreshold-retirement.md.
 	KvCacheThreshold float64 `yaml:"kvCacheThreshold"`
 
 	// QueueLengthThreshold: Replica is saturated if queue length >= this threshold
