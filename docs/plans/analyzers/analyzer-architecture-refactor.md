@@ -275,6 +275,16 @@ when disaggregated) and `wva_analyzer_target` (per-replica P per variant) are em
 analyzer that runs each cycle, straight from the `(D, P)` it produced — see `recordAnalyzerMetrics`
 in `engine_v2.go`.
 
+§3.4's "absence is meaningful (a missing series is not a zero)" is enforced, not just asserted: the
+engine evicts analyzer series it stops publishing. Prometheus gauges cannot enumerate their own
+children, so `Engine.lastAnalyzerSeries` records what each model published last cycle and
+`evictStaleAnalyzerSeries` deletes what is no longer emitted — a role that disappears when a fleet
+stops being disaggregated, a variant that is removed, an analyzer that gets disabled.
+`pruneAnalyzerSeries` clears a whole model instance when it stops being reconciled, mirroring
+`pruneLastGoodAnalysis` including its empty-active-set guard. Eviction always runs **after** the
+cycle's `Set` calls, per the existing "no zero-value window" rule, so a surviving series is never
+briefly absent from a concurrent scrape.
+
 **Phase 5 — External-analyzer wrapper (#1455). ✅ DONE.** Delivered as §10 describes (catalog CM +
 per-engine bodies + runtime registry + per-cycle reconcile + built-in→catalog name resolution). Unit
 + envtest coverage at every layer. Still pending: re-running the KEDA external-scaler **kind e2e**.

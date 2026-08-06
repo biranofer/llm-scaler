@@ -186,12 +186,50 @@ func (e *Engine) runAnalyzersAndScore(
 	return namedResults, nil
 }
 
+// analyzerDemandSeries identifies one wva_analyzer_demand series within a model
+// instance. Role is "" for a non-disaggregated model.
+type analyzerDemandSeries struct {
+	analyzer string
+	role     string
+}
+
+// analyzerTargetSeries identifies one wva_analyzer_target series within a model
+// instance.
+type analyzerTargetSeries struct {
+	analyzer string
+	variant  string
+}
+
+// analyzerSeries is the set of analyzer metric series emitted for one model
+// instance in a cycle, plus the identity needed to evict them wholesale when the
+// model departs.
+type analyzerSeries struct {
+	namespace string
+	modelID   string
+	demand    map[analyzerDemandSeries]struct{}
+	target    map[analyzerTargetSeries]struct{}
+}
+
 // recordAnalyzerMetrics publishes the wva_analyzer_demand / wva_analyzer_target
 // series for every analyzer that ran this cycle, straight from the (D, P) it
 // produced: demand per model instance (per role when disaggregated) and the
 // per-replica target per variant. This exposes every analyzer's reasoning — the
 // same D/P contract the optimizer and the external-analyzer wrapper use.
+//
+// Absence is meaningful for these series: a missing one means the analyzer did
+// not report, which is different from reporting zero. So after emitting, any
+// series published last cycle but not this one is deleted — otherwise a role
+// that disappears, a variant that is removed, or an analyzer that stops running
+// would leave its last value frozen in the registry forever, and no consumer
+// could tell it apart from a live reading.
 func (e *Engine) recordAnalyzerMetrics(namespace, modelID string, results []pipeline.NamedAnalyzerResult) {
+	current := analyzerSeries{
+		namespace: namespace,
+		modelID:   modelID,
+		demand:    make(map[analyzerDemandSeries]struct{}),
+		target:    make(map[analyzerTargetSeries]struct{}),
+	}
+
 	for _, nr := range results {
 		if nr.Result == nil {
 			continue
@@ -199,12 +237,55 @@ func (e *Engine) recordAnalyzerMetrics(namespace, modelID string, results []pipe
 		if len(nr.Result.RoleCapacities) > 0 {
 			for role, rc := range nr.Result.RoleCapacities {
 				e.metricsEmitter.RecordAnalyzerDemand(nr.Name, namespace, modelID, role, rc.TotalDemand)
+				current.demand[analyzerDemandSeries{analyzer: nr.Name, role: role}] = struct{}{}
 			}
 		} else {
 			e.metricsEmitter.RecordAnalyzerDemand(nr.Name, namespace, modelID, "", nr.Result.TotalDemand)
+			current.demand[analyzerDemandSeries{analyzer: nr.Name}] = struct{}{}
 		}
 		for _, vc := range nr.Result.VariantCapacities {
 			e.metricsEmitter.RecordAnalyzerTarget(nr.Name, namespace, modelID, vc.VariantName, vc.PerReplicaCapacity)
+			current.target[analyzerTargetSeries{analyzer: nr.Name, variant: vc.VariantName}] = struct{}{}
+		}
+	}
+
+	// Evict after emitting, never before, so a series that survives the cycle is
+	// never briefly absent from a concurrent scrape.
+	e.evictStaleAnalyzerSeries(namespace, modelID, current)
+}
+
+// evictStaleAnalyzerSeries deletes the analyzer series this model published on
+// the previous cycle but not on this one, then records the current set.
+func (e *Engine) evictStaleAnalyzerSeries(namespace, modelID string, current analyzerSeries) {
+	if e.lastAnalyzerSeries == nil {
+		e.lastAnalyzerSeries = make(map[string]analyzerSeries)
+	}
+	modelKey := utils.GetNamespacedKey(namespace, modelID)
+	for prev := range e.lastAnalyzerSeries[modelKey].demand {
+		if _, still := current.demand[prev]; !still {
+			e.metricsEmitter.DeleteAnalyzerDemand(prev.analyzer, namespace, modelID, prev.role)
+		}
+	}
+	for prev := range e.lastAnalyzerSeries[modelKey].target {
+		if _, still := current.target[prev]; !still {
+			e.metricsEmitter.DeleteAnalyzerTarget(prev.analyzer, namespace, modelID, prev.variant)
+		}
+	}
+	e.lastAnalyzerSeries[modelKey] = current
+}
+
+// pruneAnalyzerSeries evicts every analyzer series belonging to a model that is
+// no longer reconciled. Mirrors pruneLastGoodAnalysis, including its empty-set
+// guard: a transient cycle that enumerates no models (a collector hiccup, or
+// config not loaded yet) must not wipe live models' series.
+func (e *Engine) pruneAnalyzerSeries(activeKeys map[string]bool) {
+	if len(activeKeys) == 0 || e.lastAnalyzerSeries == nil {
+		return
+	}
+	for modelKey, series := range e.lastAnalyzerSeries {
+		if !activeKeys[modelKey] {
+			e.metricsEmitter.DeleteAnalyzerSeriesForModel(series.namespace, series.modelID)
+			delete(e.lastAnalyzerSeries, modelKey)
 		}
 	}
 }

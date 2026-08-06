@@ -943,6 +943,22 @@ func (m *MetricsEmitter) RecordAnalyzerDemand(analyzer, namespace, modelID, role
 	if analyzerDemand == nil {
 		return
 	}
+	analyzerDemand.With(analyzerDemandLabelsFor(analyzer, namespace, modelID, role)).Set(demand)
+}
+
+// RecordAnalyzerTarget publishes an analyzer's per-replica target P for a variant.
+// Nil-guarded like RecordAnalyzerDemand.
+func (m *MetricsEmitter) RecordAnalyzerTarget(analyzer, namespace, modelID, variantName string, target float64) {
+	if analyzerTarget == nil {
+		return
+	}
+	analyzerTarget.With(analyzerTargetLabelsFor(analyzer, namespace, modelID, variantName)).Set(target)
+}
+
+// analyzerDemandLabelsFor builds the full label set for one wva_analyzer_demand
+// series, so Record and Delete cannot disagree about it (Delete needs an exact
+// match, including the optional controller_instance label).
+func analyzerDemandLabelsFor(analyzer, namespace, modelID, role string) prometheus.Labels {
 	labels := prometheus.Labels{
 		constants.LabelAnalyzerName: analyzer,
 		constants.LabelNamespace:    namespace,
@@ -952,15 +968,12 @@ func (m *MetricsEmitter) RecordAnalyzerDemand(analyzer, namespace, modelID, role
 	if controllerInstance != "" {
 		labels[constants.LabelControllerInstance] = controllerInstance
 	}
-	analyzerDemand.With(labels).Set(demand)
+	return labels
 }
 
-// RecordAnalyzerTarget publishes an analyzer's per-replica target P for a variant.
-// Nil-guarded like RecordAnalyzerDemand.
-func (m *MetricsEmitter) RecordAnalyzerTarget(analyzer, namespace, modelID, variantName string, target float64) {
-	if analyzerTarget == nil {
-		return
-	}
+// analyzerTargetLabelsFor is analyzerDemandLabelsFor's counterpart for
+// wva_analyzer_target.
+func analyzerTargetLabelsFor(analyzer, namespace, modelID, variantName string) prometheus.Labels {
 	labels := prometheus.Labels{
 		constants.LabelAnalyzerName: analyzer,
 		constants.LabelNamespace:    namespace,
@@ -970,7 +983,43 @@ func (m *MetricsEmitter) RecordAnalyzerTarget(analyzer, namespace, modelID, vari
 	if controllerInstance != "" {
 		labels[constants.LabelControllerInstance] = controllerInstance
 	}
-	analyzerTarget.With(labels).Set(target)
+	return labels
+}
+
+// DeleteAnalyzerDemand removes one wva_analyzer_demand series. Absence is
+// meaningful for the analyzer metrics — a series that is no longer emitted must
+// disappear rather than freeze at its last value — so the engine evicts the
+// series it stops publishing. Nil-guarded like the Record methods.
+func (m *MetricsEmitter) DeleteAnalyzerDemand(analyzer, namespace, modelID, role string) {
+	if analyzerDemand == nil {
+		return
+	}
+	analyzerDemand.Delete(analyzerDemandLabelsFor(analyzer, namespace, modelID, role))
+}
+
+// DeleteAnalyzerTarget removes one wva_analyzer_target series.
+func (m *MetricsEmitter) DeleteAnalyzerTarget(analyzer, namespace, modelID, variantName string) {
+	if analyzerTarget == nil {
+		return
+	}
+	analyzerTarget.Delete(analyzerTargetLabelsFor(analyzer, namespace, modelID, variantName))
+}
+
+// DeleteAnalyzerSeriesForModel removes every wva_analyzer_demand and
+// wva_analyzer_target series for a model instance, across all analyzers, roles
+// and variants. Used when a model stops being reconciled entirely, where the
+// per-series bookkeeping the engine keeps for live models no longer applies.
+func (m *MetricsEmitter) DeleteAnalyzerSeriesForModel(namespace, modelID string) {
+	match := prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelID,
+	}
+	if analyzerDemand != nil {
+		analyzerDemand.DeletePartialMatch(match)
+	}
+	if analyzerTarget != nil {
+		analyzerTarget.DeletePartialMatch(match)
+	}
 }
 
 // RecordSaturationFreshness publishes the per-VA freshness signal for the

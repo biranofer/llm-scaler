@@ -162,6 +162,17 @@ type Engine struct {
 	// synchronize this map — the top-level per-model insert would race first.
 	lastGoodAnalysis map[string]map[string]time.Time
 
+	// lastAnalyzerSeries records, per model (keyed identically to
+	// lastGoodAnalysis), the wva_analyzer_demand / wva_analyzer_target series
+	// emitted on the previous cycle. Prometheus gauges have no way to enumerate
+	// their own children, so the engine tracks what it published in order to
+	// evict series it stops publishing. Absence is meaningful for these metrics
+	// — a role that disappears or an analyzer that stops running must drop its
+	// series rather than freeze at its last value — see pruneAnalyzerSeries.
+	// Unguarded for the same reason as lastGoodAnalysis: optimize cycles run
+	// sequentially in one goroutine and models are processed serially.
+	lastAnalyzerSeries map[string]analyzerSeries
+
 	// analyzers is the engine's analyzer registry, mutated only during setup
 	// (NewEngine + RegisterAnalyzer). After StartOptimizeLoop it is frozen —
 	// further RegisterAnalyzer calls return an error. The optimize goroutine reads
@@ -247,6 +258,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		saturationV2Analyzer:    satV2,
 		capacityStore:           capacityStore,
 		lastGoodAnalysis:        make(map[string]map[string]time.Time),
+		lastAnalyzerSeries:      make(map[string]analyzerSeries),
 		optimizer:               scalingOptimizer,
 		metricsEmitter:          metrics.NewMetricsEmitter(),
 		analyzers: []analyzerEntry{
@@ -841,6 +853,7 @@ func (e *Engine) optimizeV2(
 		activeKeys[utils.GetNamespacedKey(modelVAs[0].Namespace, modelVAs[0].Spec.ModelID)] = true
 	}
 	e.pruneLastGoodAnalysis(activeKeys)
+	e.pruneAnalyzerSeries(activeKeys)
 
 	// Stage 1: Collect ModelScalingRequests for all models
 	requests := make([]pipeline.ModelScalingRequest, 0, len(modelGroups))
