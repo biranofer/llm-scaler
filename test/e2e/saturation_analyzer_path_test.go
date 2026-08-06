@@ -19,10 +19,6 @@ import (
 	testutils "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
-// TODO(cleanup): Unify analyzer-path configuration across algorithms
-// (saturation config fields vs queueing-model config presence), then simplify
-// this spec to a single explicit analyzer selector contract.
-//
 // NOTE: V2 is the sole analysis path — the V1 analyzer was removed, so
 // analyzerName no longer selects between engines. The arcs that leave
 // analyzerName unset now assert that an unset value keeps processing on V2
