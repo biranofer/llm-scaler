@@ -81,6 +81,14 @@ type ReplicaMetricsCollector struct {
 	// cycle for each VA (keyed by namespace/name). Used for edge-triggered events.
 	metricsAvailableState map[string]bool
 	mu                    sync.Mutex
+
+	// cycleResults memoizes query results for the span of one optimize cycle,
+	// keyed by query name and parameters. The queries are namespace-scoped (the
+	// EPP flow-control ones cluster-scoped), so their key does not mention the
+	// model and every model in a namespace reads the first one's fetch.
+	// Nil outside a cycle — see BeginCycle.
+	cycleResults map[source.CacheKey]*source.MetricResult
+	cycleMu      sync.Mutex
 }
 
 // NewReplicaMetricsCollector creates a new replica metrics collector.
@@ -92,6 +100,94 @@ func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient cl
 		locator:               podLocator,
 		metricsAvailableState: make(map[string]bool),
 	}
+}
+
+// BeginCycle opens an optimize cycle, arming the memo that lets every model in a
+// namespace share one execution of the namespace-scoped queries. Pair it with
+// EndCycle.
+//
+// Sharing is deliberately opt-in per cycle rather than time-based: results are
+// reused only within the collection they were fetched for, never carried into
+// the next one. A caller that drives the collector without opening a cycle
+// leaves the memo nil and refreshes independently every time — correct, just
+// without the sharing.
+func (c *ReplicaMetricsCollector) BeginCycle() {
+	c.cycleMu.Lock()
+	defer c.cycleMu.Unlock()
+	c.cycleResults = make(map[source.CacheKey]*source.MetricResult)
+}
+
+// EndCycle closes the cycle opened by BeginCycle and releases the memoized
+// results.
+func (c *ReplicaMetricsCollector) EndCycle() {
+	c.cycleMu.Lock()
+	defer c.cycleMu.Unlock()
+	c.cycleResults = nil
+}
+
+// refreshShared executes queries, reusing any result already fetched in this
+// cycle for the same (query, params) pair.
+//
+// Only the queries missing from the memo are sent to the source, so the first
+// model in a namespace pays for the namespace-scoped queries and the rest read
+// them, while a mixed-engine namespace still fetches each engine's variant
+// exactly once.
+//
+// A result carrying a query error is memoized like any other: the query did
+// fail for this namespace this cycle, and re-running it once per model would
+// multiply a Prometheus outage by the number of models rather than surface it
+// once.
+//
+// params must contain exactly the parameters the queries take. Passing extra
+// ones (a modelID a namespace-scoped query ignores, say) does not change the
+// PromQL, but it does change the memo key and would silently defeat sharing.
+func (c *ReplicaMetricsCollector) refreshShared(
+	ctx context.Context,
+	queries []string,
+	params map[string]string,
+) (map[string]*source.MetricResult, error) {
+	results := make(map[string]*source.MetricResult, len(queries))
+	missing := queries
+
+	c.cycleMu.Lock()
+	if c.cycleResults != nil {
+		missing = make([]string, 0, len(queries))
+		for _, name := range queries {
+			// A memoized nil records a query the source returned nothing for;
+			// that is an answer, so it is not asked again this cycle.
+			if cached, ok := c.cycleResults[source.BuildCacheKey(name, params)]; ok {
+				if cached != nil {
+					results[name] = cached
+				}
+				continue
+			}
+			missing = append(missing, name)
+		}
+	}
+	c.cycleMu.Unlock()
+
+	if len(missing) == 0 {
+		return results, nil
+	}
+
+	fetched, err := c.source.Refresh(ctx, source.RefreshSpec{Queries: missing, Params: params})
+	if err != nil {
+		return nil, err
+	}
+
+	c.cycleMu.Lock()
+	for _, name := range missing {
+		result := fetched[name]
+		if result != nil {
+			results[name] = result
+		}
+		if c.cycleResults != nil {
+			c.cycleResults[source.BuildCacheKey(name, params)] = result
+		}
+	}
+	c.cycleMu.Unlock()
+
+	return results, nil
 }
 
 // recordUnattributedReadyPodsEvent emits a Warning/UnattributedReadyPods K8s event for va.
@@ -317,8 +413,9 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 ) ([]domain.ReplicaMetrics, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
+	// Every replica query is namespace-scoped: the model is selected from the
+	// returned series, not by a PromQL matcher, so the params carry no modelID.
 	params := map[string]string{
-		source.ParamModelID:   modelID,
 		source.ParamNamespace: namespace,
 	}
 
@@ -355,12 +452,11 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// - Throughput analyzer: generation token rate, instantaneous KV usage (k*), request rate
 	queries := buildEngineQueryList(engines, engineSpecificReplicaQueries, agnosticReplicaQueries)
 
-	// Execute the query with timing
+	// Execute the query with timing. refreshShared skips whatever another model
+	// in this namespace already fetched this cycle, so the timing observed here
+	// is the cost of the queries this collection actually issued.
 	startTime := time.Now()
-	results, err := c.source.Refresh(ctx, source.RefreshSpec{
-		Queries: queries,
-		Params:  params,
-	})
+	results, err := c.refreshShared(ctx, queries, params)
 	duration := time.Since(startTime).Seconds()
 	metrics.ObserveMetricsCollectionDuration(duration, constants.QueryTypeKVCache)
 	metrics.ObserveMetricsCollectionDuration(duration, constants.QueryTypeQueueLength)
@@ -380,6 +476,17 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// the per-engine series. The structural cache-config difference is handled by a
 	// dedicated SGLang pass after the vLLM cache-config block.
 	mergeEngineResults(results, engines, engineSpecificReplicaQueries)
+
+	// Take this model's slice of the namespace-wide series. Everything below
+	// operates on model-scoped results, as it did when the model was a PromQL
+	// matcher. The EPP dispatch rate is partitioned separately: its model
+	// identity is target_model_name with a model_name fallback, not model_name.
+	filterResultsToModel(results, engineSpecificReplicaQueries, modelID)
+	if r := results[registration.QuerySchedulerDispatchRate]; r != nil {
+		results[registration.QuerySchedulerDispatchRate] = filterSeries(r, func(labels map[string]string) bool {
+			return eppSeriesModel(labels) == modelID
+		})
+	}
 
 	// podMetricData holds per-pod metric values and timestamps
 	type podMetricData struct {
@@ -628,10 +735,17 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// numGpuBlocks × blockSize computation by setting blockSize = 1 and
 	// numGpuBlocks = capacity, so the downstream TotalKvCapacityTokens math is
 	// unchanged. Only runs when an SGLang variant is present for this model.
+	// Read through the physical key, which filterResultsToModel leaves alone
+	// (cache_config_info is unpartitioned because the vLLM variant has no model
+	// identity). The SGLang variant does carry model_name, so it is filtered
+	// here.
 	if containsEngine(engines, inferenceengine.EngineSGLang) {
 		sglangCacheKey := registration.EngineQuery(inferenceengine.EngineSGLang, registration.QueryCacheConfigInfo)
 		if result := results[sglangCacheKey]; result != nil && !result.HasError() {
 			for _, value := range result.Values {
+				if value.Labels[seriesModelLabel] != modelID {
+					continue
+				}
 				instanceKey, podName, _ := c.buildInstanceKey(ctx, namespace, value.Labels)
 				if instanceKey == "" {
 					continue
@@ -1006,25 +1120,23 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 // llm-d inference scheduler flow control layer. These metrics are not per-pod
 // but per-model, representing requests queued upstream before reaching the engine.
 // Returns nil (not an error) when flow control metrics are unavailable.
+//
+// The two queries take no parameters at all: the flow-control metrics have no
+// namespace label to scope them by (#2309) and are no longer filtered by model
+// either, so a single cluster-wide execution of each covers every model the
+// controller manages and this picks its own out of the result.
 func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
 	ctx context.Context,
 	modelID string,
 ) *domain.SchedulerQueueMetrics {
 	logger := ctrl.LoggerFrom(ctx)
 
-	params := map[string]string{
-		source.ParamModelID: modelID,
-	}
-
 	queries := []string{
 		registration.QuerySchedulerQueueSize,
 		registration.QuerySchedulerQueueBytes,
 	}
 
-	results, err := c.source.Refresh(ctx, source.RefreshSpec{
-		Queries: queries,
-		Params:  params,
-	})
+	results, err := c.refreshShared(ctx, queries, nil)
 	if err != nil {
 		logger.V(logging.DEBUG).Info("Scheduler queue metrics unavailable",
 			"modelID", modelID, "error", err)
@@ -1036,6 +1148,9 @@ func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
 
 	if result := results[registration.QuerySchedulerQueueSize]; result != nil && !result.HasError() {
 		for _, value := range result.Values {
+			if eppSeriesModel(value.Labels) != modelID {
+				continue
+			}
 			if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
 				queueSize += int64(value.Value)
 				hasData = true
@@ -1045,6 +1160,9 @@ func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
 
 	if result := results[registration.QuerySchedulerQueueBytes]; result != nil && !result.HasError() {
 		for _, value := range result.Values {
+			if eppSeriesModel(value.Labels) != modelID {
+				continue
+			}
 			if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) {
 				queueBytes += int64(value.Value)
 				hasData = true
@@ -1081,13 +1199,9 @@ func (c *ReplicaMetricsCollector) CollectModelArrivalRate(
 
 	params := map[string]string{
 		source.ParamNamespace: namespace,
-		source.ParamModelID:   modelID,
 	}
 
-	results, err := c.source.Refresh(ctx, source.RefreshSpec{
-		Queries: []string{registration.QueryModelArrivalRate},
-		Params:  params,
-	})
+	results, err := c.refreshShared(ctx, []string{registration.QueryModelArrivalRate}, params)
 	if err != nil {
 		// Categorize rather than swallow: a broken or misconfigured arrival query and
 		// genuine zero traffic both surface here as a zero rate, but only the former is a
@@ -1114,8 +1228,14 @@ func (c *ReplicaMetricsCollector) CollectModelArrivalRate(
 		return 0
 	}
 
+	// Strictly target_model_name, with no model_name fallback — see the note on
+	// QueryModelArrivalRate. The series for other models in this namespace are
+	// skipped here rather than in PromQL.
 	var arrivalRate float64
 	for _, value := range result.Values {
+		if value.Labels[seriesTargetModelLabel] != modelID {
+			continue
+		}
 		if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 {
 			arrivalRate += value.Value
 		}

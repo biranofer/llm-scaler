@@ -56,14 +56,14 @@ var _ = Describe("RegisterThroughputAnalyzerQueries", func() {
 			}
 		})
 
-		It("should build QueryGenerationTokenRate with namespace and model substituted", func() {
+		It("should build QueryGenerationTokenRate scoped to the namespace, grouped by model", func() {
 			rendered, err := queryList.Build(QueryGenerationTokenRate, map[string]string{
 				source.ParamNamespace: "test-ns",
-				source.ParamModelID:   "test-model",
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rendered).To(ContainSubstring(`namespace="test-ns"`))
-			Expect(rendered).To(ContainSubstring(`model_name="test-model"`))
+			Expect(rendered).To(ContainSubstring(`sum by (model_name,`))
+			Expect(rendered).NotTo(ContainSubstring(`model_name="`), "the model is partitioned in the collector, not matched in PromQL")
 			Expect(rendered).To(ContainSubstring(`[1m]`))
 			Expect(rendered).To(ContainSubstring(`vllm:request_generation_tokens_sum`))
 		})
@@ -71,25 +71,25 @@ var _ = Describe("RegisterThroughputAnalyzerQueries", func() {
 		It("should build QueryKvUsageInstant without max_over_time", func() {
 			rendered, err := queryList.Build(QueryKvUsageInstant, map[string]string{
 				source.ParamNamespace: "test-ns",
-				source.ParamModelID:   "test-model",
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rendered).To(ContainSubstring(`vllm:kv_cache_usage_perc`))
 			Expect(rendered).NotTo(ContainSubstring(`max_over_time`))
 			Expect(rendered).To(ContainSubstring(`namespace="test-ns"`))
-			Expect(rendered).To(ContainSubstring(`model_name="test-model"`))
+			Expect(rendered).To(ContainSubstring(`max by (model_name,`))
+			Expect(rendered).NotTo(ContainSubstring(`model_name="`), "the model is partitioned in the collector, not matched in PromQL")
 		})
 
 		It("should build QueryRequestRate with 1m window over token count", func() {
 			rendered, err := queryList.Build(QueryRequestRate, map[string]string{
 				source.ParamNamespace: "test-ns",
-				source.ParamModelID:   "test-model",
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rendered).To(ContainSubstring(`vllm:request_generation_tokens_count`))
 			Expect(rendered).To(ContainSubstring(`[1m]`))
 			Expect(rendered).To(ContainSubstring(`namespace="test-ns"`))
-			Expect(rendered).To(ContainSubstring(`model_name="test-model"`))
+			Expect(rendered).To(ContainSubstring(`sum by (model_name,`))
+			Expect(rendered).NotTo(ContainSubstring(`model_name="`), "the model is partitioned in the collector, not matched in PromQL")
 		})
 	})
 

@@ -585,6 +585,13 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	// Initialize vaEventTracker for this optimize cycle
 	e.vaEventTracker = make(map[string]bool)
 
+	// Open the collector's cycle so the models grouped below share one execution
+	// of each namespace-scoped query instead of one per model.
+	if e.ReplicaMetricsCollector != nil {
+		e.ReplicaMetricsCollector.BeginCycle()
+		defer e.ReplicaMetricsCollector.EndCycle()
+	}
+
 	// Collect accelerator inventory (only in limited mode AND only when the
 	// inventory-based limiter is active). In quota mode (an inline limiters: quota
 	// entry), the controller deliberately runs without consulting physical capacity —

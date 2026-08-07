@@ -48,6 +48,7 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 	{
 		name: "pod label present – vaName propagated",
 		labels: map[string]string{
+			seriesModelLabel:                    "test-model",
 			"pod":                               "pod-abc",
 			"instance":                          "10.0.0.1:8000",
 			constants.VariantLabelPrometheusKey: "my-va",
@@ -57,6 +58,7 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 	{
 		name: "pod_name fallback – vaName propagated",
 		labels: map[string]string{
+			seriesModelLabel:                    "test-model",
 			"pod_name":                          "pod-xyz",
 			"instance":                          "10.0.0.2:8000",
 			constants.VariantLabelPrometheusKey: "other-va",
@@ -68,8 +70,9 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 		// ("Skipping pod that doesn't match any scale target"), so no ReplicaMetrics is produced.
 		name: "llm_d_ai_variant label absent – pod skipped, no result",
 		labels: map[string]string{
-			"pod":      "pod-no-variant",
-			"instance": "10.0.0.3:8000",
+			seriesModelLabel: "test-model",
+			"pod":            "pod-no-variant",
+			"instance":       "10.0.0.3:8000",
 		},
 		wantSkipped: true,
 	},
@@ -77,6 +80,7 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 		// Same: empty string is treated the same as missing.
 		name: "llm_d_ai_variant label empty string – pod skipped, no result",
 		labels: map[string]string{
+			seriesModelLabel:                    "test-model",
 			"pod":                               "pod-empty-variant",
 			"instance":                          "10.0.0.4:8000",
 			constants.VariantLabelPrometheusKey: "",
@@ -86,6 +90,7 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 	{
 		name: "no pod identity labels – entry skipped entirely",
 		labels: map[string]string{
+			seriesModelLabel:                    "test-model",
 			constants.VariantLabelPrometheusKey: "irrelevant",
 		},
 		wantSkipped: true,
@@ -93,6 +98,7 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 	{
 		name: "instance-only (no pod name) – instance used as key, vaName propagated",
 		labels: map[string]string{
+			seriesModelLabel:                    "test-model",
 			"instance":                          "10.0.0.5:8000",
 			constants.VariantLabelPrometheusKey: "instance-va",
 		},

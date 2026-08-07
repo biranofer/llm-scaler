@@ -592,6 +592,7 @@ func TestCollectReplicaMetrics_ThroughputKeyMerge(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	podLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "pod-abc",
 		"instance":                          "10.0.0.1:8000",
 		constants.VariantLabelPrometheusKey: "va-1",
@@ -677,14 +678,16 @@ func TestCollectReplicaMetrics_ArrivalRatePerPodRetained(t *testing.T) {
 
 	// KV-cache side: keyed by pod+instance (buildInstanceKey derives "pod-known:8000").
 	kvLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "pod-known",
 		"instance":                          "10.0.0.1:8000",
 		constants.VariantLabelPrometheusKey: "va-1",
 	}
 	// Scheduler side: keyed by pod_name+port directly ("pod-known:8000" — same key).
 	schedulerLabels := map[string]string{
-		"pod_name": "pod-known",
-		"port":     "8000",
+		seriesTargetModelLabel: "test-model",
+		"pod_name":             "pod-known",
+		"port":                 "8000",
 	}
 	ts := time.Now()
 
@@ -749,6 +752,7 @@ func TestCollectReplicaMetrics_Freshness(t *testing.T) {
 		// buildInstanceKey) — include "port" so it resolves to the same instance
 		// key ("pod-abc:8000") as every other query below.
 		podLabels := map[string]string{
+			seriesModelLabel:                    "test-model",
 			"pod":                               "pod-abc",
 			"instance":                          "10.0.0.1:8000",
 			"port":                              "8000",
@@ -866,6 +870,7 @@ func TestCollectReplicaMetrics_SGLangCacheConfig(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	podLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "sglang-pod-0",
 		"instance":                          "10.0.0.3:8000",
 		constants.VariantLabelPrometheusKey: sglangVariantLabel,
@@ -936,6 +941,7 @@ func TestCollectReplicaMetrics_SGLangPrefixCacheHitRate(t *testing.T) {
 	}
 
 	podLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "sglang-pod-0",
 		"instance":                          "10.0.0.4:8000",
 		constants.VariantLabelPrometheusKey: sglangVariantLabel,
@@ -1012,8 +1018,8 @@ func TestCollectReplicaMetrics_MixedEngine(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	ts := time.Now()
 
-	vllmPod := map[string]string{"pod": mixedVLLMPodName, "instance": "10.0.1.1:8000", constants.VariantLabelPrometheusKey: "va-vllm"}
-	sglangPod := map[string]string{"pod": "sglang-0", "instance": "10.0.2.1:8000", constants.VariantLabelPrometheusKey: sglangVariantLabel}
+	vllmPod := map[string]string{seriesModelLabel: "test-model", "pod": mixedVLLMPodName, "instance": "10.0.1.1:8000", constants.VariantLabelPrometheusKey: "va-vllm"}
+	sglangPod := map[string]string{seriesModelLabel: "test-model", "pod": "sglang-0", "instance": "10.0.2.1:8000", constants.VariantLabelPrometheusKey: sglangVariantLabel}
 	vllmCacheLabels := map[string]string{"pod": mixedVLLMPodName, "instance": "10.0.1.1:8000", "num_gpu_blocks": "1000", "block_size": "16"}
 
 	const sglangCapacity = 100000.0
@@ -1101,6 +1107,7 @@ func TestCollectReplicaMetrics_UnattributedReadyPodsEvent(t *testing.T) {
 
 	// One pod attributed to "va-other", not to "va-target".
 	podLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "pod-other",
 		"instance":                          "10.0.0.2:8000",
 		constants.VariantLabelPrometheusKey: "va-other",
@@ -1178,12 +1185,14 @@ func TestCollectReplicaMetrics_ThroughputOrphanSkipped(t *testing.T) {
 
 	// KV-cache: only pod-known at 10.0.0.1:8000.
 	kvLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "pod-known",
 		"instance":                          "10.0.0.1:8000",
 		constants.VariantLabelPrometheusKey: "va-1",
 	}
 	// Throughput: pod-orphan at 10.0.0.2:8000 — NOT in the KV query results.
 	orphanLabels := map[string]string{
+		seriesModelLabel:                    "test-model",
 		"pod":                               "pod-orphan",
 		"instance":                          "10.0.0.2:8000",
 		constants.VariantLabelPrometheusKey: "va-1",
@@ -1611,13 +1620,13 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				"kv_cache_usage": {
 					Values: []source.MetricValue{
 						// Leader pods emit metrics
-						{Labels: map[string]string{"pod": "leader-0", "instance": "10.0.0.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.5, Timestamp: ts},
-						{Labels: map[string]string{"pod": "leader-1", "instance": "10.0.1.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.6, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "leader-0", "instance": "10.0.0.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.5, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "leader-1", "instance": "10.0.1.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.6, Timestamp: ts},
 						// Worker pods also emit metrics (should be filtered out)
-						{Labels: map[string]string{"pod": "worker-0-1", "instance": "10.0.0.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.7, Timestamp: ts},
-						{Labels: map[string]string{"pod": "worker-0-2", "instance": "10.0.0.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.8, Timestamp: ts},
-						{Labels: map[string]string{"pod": "worker-1-1", "instance": "10.0.1.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.9, Timestamp: ts},
-						{Labels: map[string]string{"pod": "worker-1-2", "instance": "10.0.1.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.95, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "worker-0-1", "instance": "10.0.0.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.7, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "worker-0-2", "instance": "10.0.0.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.8, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "worker-1-1", "instance": "10.0.1.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.9, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "worker-1-2", "instance": "10.0.1.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.95, Timestamp: ts},
 					},
 				},
 			}, nil
@@ -1794,9 +1803,9 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 			return map[string]*source.MetricResult{
 				"kv_cache_usage": {
 					Values: []source.MetricValue{
-						{Labels: map[string]string{"pod": "deploy-pod-abc123", "instance": "10.1.0.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.4, Timestamp: ts},
-						{Labels: map[string]string{"pod": "deploy-pod-def456", "instance": "10.1.0.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.5, Timestamp: ts},
-						{Labels: map[string]string{"pod": "deploy-pod-ghi789", "instance": "10.1.0.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.6, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "deploy-pod-abc123", "instance": "10.1.0.1:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.4, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "deploy-pod-def456", "instance": "10.1.0.2:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.5, Timestamp: ts},
+						{Labels: map[string]string{seriesModelLabel: "test-model", "pod": "deploy-pod-ghi789", "instance": "10.1.0.3:8000", constants.VariantLabelPrometheusKey: vaName}, Value: 0.6, Timestamp: ts},
 					},
 				},
 			}, nil
@@ -1876,4 +1885,170 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 		t.Errorf("expected %d pods in results, got %d - Deployment behavior changed!",
 			len(expectedPods), len(foundPods))
 	}
+}
+
+// namespaceSeriesLabels builds the label set a namespace-scoped engine query
+// returns for one instance: the model it serves plus the pod identity.
+func namespaceSeriesLabels(modelID, podName, instance, vaName string) map[string]string {
+	return map[string]string{
+		seriesModelLabel:                    modelID,
+		"pod":                               podName,
+		"instance":                          instance,
+		constants.VariantLabelPrometheusKey: vaName,
+	}
+}
+
+// TestCollectReplicaMetrics_NamespaceQueriesSharedAcrossModels covers both halves
+// of namespace-scoped collection: within one cycle the queries are executed once
+// for the namespace rather than once per model, and each model takes only its own
+// series out of the shared result.
+func TestCollectReplicaMetrics_NamespaceQueriesSharedAcrossModels(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	scheme := runtime.NewScheme()
+	require.NoError(t, llmdVariantAutoscalingV1alpha1.AddToScheme(scheme))
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	ts := time.Now()
+	refreshes := 0
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, spec source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			refreshes++
+			assert.NotContains(t, spec.Params, source.ParamModelID,
+				"a modelID in the params would key the memo per model and defeat sharing")
+			return map[string]*source.MetricResult{
+				"kv_cache_usage": {Values: []source.MetricValue{
+					{Labels: namespaceSeriesLabels("model-a", "pod-a", "10.0.0.1:8000", "va-a"), Value: 0.4, Timestamp: ts},
+					{Labels: namespaceSeriesLabels("model-b", "pod-b", "10.0.0.2:8000", "va-b"), Value: 0.6, Timestamp: ts},
+					// No model_name: not attributable to any model, so dropped by both.
+					{Labels: map[string]string{
+						"pod":                               "pod-unlabelled",
+						"instance":                          "10.0.0.3:8000",
+						constants.VariantLabelPrometheusKey: "va-a",
+					}, Value: 0.9, Timestamp: ts},
+				}},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil)
+	collect := func(modelID string) []domain.ReplicaMetrics {
+		t.Helper()
+		results, err := collector.CollectReplicaMetrics(
+			context.Background(), modelID, "test-ns",
+			make(map[string]scaletarget.ScaleTargetAccessor),
+			make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
+			nil,
+		)
+		require.NoError(t, err)
+		return results
+	}
+
+	collector.BeginCycle()
+	defer collector.EndCycle()
+
+	modelA := collect("model-a")
+	modelB := collect("model-b")
+
+	assert.Equal(t, 1, refreshes, "both models must be served by one execution of the namespace-scoped queries")
+
+	require.Len(t, modelA, 1, "model-a must see only its own replica")
+	assert.Equal(t, "pod-a", modelA[0].PodName)
+	require.Len(t, modelB, 1, "model-b must see only its own replica")
+	assert.Equal(t, "pod-b", modelB[0].PodName)
+}
+
+// TestCollectReplicaMetrics_WithoutCycleRefreshesPerCall pins the fallback: with
+// no cycle open the memo is disarmed, so every collection queries the source
+// itself rather than reading a result fetched for some other model.
+func TestCollectReplicaMetrics_WithoutCycleRefreshesPerCall(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	scheme := runtime.NewScheme()
+	require.NoError(t, llmdVariantAutoscalingV1alpha1.AddToScheme(scheme))
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	ts := time.Now()
+	refreshes := 0
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, _ source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			refreshes++
+			return map[string]*source.MetricResult{
+				"kv_cache_usage": {Values: []source.MetricValue{
+					{Labels: namespaceSeriesLabels("model-a", "pod-a", "10.0.0.1:8000", "va-a"), Value: 0.4, Timestamp: ts},
+				}},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil)
+	for i := 0; i < 2; i++ {
+		_, err := collector.CollectReplicaMetrics(
+			context.Background(), "model-a", "test-ns",
+			make(map[string]scaletarget.ScaleTargetAccessor),
+			make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
+			nil,
+		)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 2, refreshes)
+}
+
+// TestCollectSchedulerQueueMetrics_PicksItsModel checks the model selection that
+// moved out of the flow-control PromQL and into eppSeriesModel: target_model_name
+// identifies the series when set, model_name when it is empty, and another
+// model's series is not summed in.
+func TestCollectSchedulerQueueMetrics_PicksItsModel(t *testing.T) {
+	ts := time.Now()
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, spec source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			assert.Empty(t, spec.Params, "the flow-control metrics have no namespace or model to scope by")
+			return map[string]*source.MetricResult{
+				"scheduler_queue_size": {Values: []source.MetricValue{
+					{Labels: map[string]string{seriesTargetModelLabel: "model-a"}, Value: 3, Timestamp: ts},
+					// Routed to another model: target_model_name wins over model_name.
+					{Labels: map[string]string{seriesModelLabel: "model-a", seriesTargetModelLabel: "model-b"}, Value: 100, Timestamp: ts},
+					// No rewrite: model_name is the identity.
+					{Labels: map[string]string{seriesModelLabel: "model-a", seriesTargetModelLabel: ""}, Value: 4, Timestamp: ts},
+				}},
+				"scheduler_queue_bytes": {Values: []source.MetricValue{
+					{Labels: map[string]string{seriesTargetModelLabel: "model-a"}, Value: 2048, Timestamp: ts},
+					{Labels: map[string]string{seriesTargetModelLabel: "model-b"}, Value: 999, Timestamp: ts},
+				}},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil)
+	got := collector.CollectSchedulerQueueMetrics(context.Background(), "model-a")
+
+	require.NotNil(t, got)
+	assert.Equal(t, int64(7), got.QueueSize)
+	assert.Equal(t, int64(2048), got.QueueBytes)
+}
+
+// TestCollectModelArrivalRate_TargetModelOnly pins that the arrival rate keeps its
+// strict target_model_name identity — no model_name fallback, unlike the
+// flow-control queries — now that the choice is made in Go.
+func TestCollectModelArrivalRate_TargetModelOnly(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+
+	ts := time.Now()
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, _ source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			return map[string]*source.MetricResult{
+				"model_arrival_rate": {Values: []source.MetricValue{
+					{Labels: map[string]string{"namespace": "test-ns", seriesTargetModelLabel: "model-a"}, Value: 2.5, Timestamp: ts},
+					{Labels: map[string]string{"namespace": "test-ns", seriesTargetModelLabel: "model-b"}, Value: 7.5, Timestamp: ts},
+					// model_name alone must not count towards model-a.
+					{Labels: map[string]string{"namespace": "test-ns", seriesModelLabel: "model-a"}, Value: 100, Timestamp: ts},
+				}},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil)
+	assert.Equal(t, 2.5, collector.CollectModelArrivalRate(context.Background(), "model-a", "test-ns"))
 }

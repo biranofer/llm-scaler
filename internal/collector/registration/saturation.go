@@ -22,34 +22,53 @@ const (
 	QuerySchedulerQueueBytes = "scheduler_queue_bytes"
 )
 
+// Per-replica engine queries are registered NAMESPACE-scoped, not model-scoped.
+//
+// They carry no model_name matcher; instead model_name is part of the grouping
+// key, so one execution per namespace returns the series for every model in it
+// and the collector partitions them by model_name in Go (see
+// collector.filterResultsToModel). Previously each of these ran once per model
+// per cycle over an identical namespace filter, so a namespace hosting M models
+// paid M times the round trips to fetch the same set of series.
+//
+// Consequences to preserve when editing a template below:
+//
+//   - model_name MUST appear in the by()/grouping clause of any query the
+//     collector partitions by model, or every model's slice comes back empty.
+//   - A series with no model_name label cannot be attributed to a model and is
+//     dropped by the collector — exactly what the removed matcher did.
+//   - The rest of the grouping key is instance and pod: instance is IP:port,
+//     which distinguishes DP ranks sharing a pod, and pod drives the
+//     ownerReference walk that resolves the variant.
+//   - llm_d_ai_variant is deliberately NOT in the grouping (issue #1263).
+//     Neither vLLM nor SGLang emits it — it appears only where an operator
+//     relabels the llm-d.ai/variant pod label onto the series — so it was an
+//     empty column on every real deployment. Variant identity now comes from
+//     the PodLocator owner-walk delivered by PR #1260.
+
 // RegisterSaturationQueries registers queries used by the saturation analyzer.
 func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	registry := sourceRegistry.Get("prometheus").QueryList()
 
 	// KV cache usage per instance (peak over last minute)
 	// Uses max_over_time to catch saturation events between scrapes
-	// Preserves instance (IP:port, which distinguishes DP ranks sharing a pod), pod (for the
-	// ownerReference walk), and llm_d_ai_variant. That last label is NOT emitted by vLLM or
-	// SGLang: it exists only where an operator relabels the llm-d.ai/variant pod label onto
-	// the series, so it is normally empty and the collector resolves the variant via
-	// PodLocator instead. It stays in the grouping because shadow-pod layouts, where the
-	// ownerReference walk cannot reach the scaler, have no other linkage.
+	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryKvCacheUsage,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (max_over_time(vllm:kv_cache_usage_perc{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (max_over_time(vllm:kv_cache_usage_perc{namespace="{{.namespace}}"}[1m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Peak KV cache utilization per instance (0.0-1.0) over last minute",
 	})
 
 	// Queue length per instance (peak over last minute)
 	// Uses max_over_time to catch burst traffic
-	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
+	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryQueueLength,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (max_over_time(vllm:num_requests_waiting{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (max_over_time(vllm:num_requests_waiting{namespace="{{.namespace}}"}[1m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Peak queue length per instance over last minute",
 	})
 
@@ -58,86 +77,87 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	// Cache config info per instance (static labels with block size and GPU blocks count)
 	// Uses max to deduplicate when multiple series exist per instance with different label combinations
 	// Used by Saturation Analyzer V2 for token capacity computation
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), llm_d_ai_variant (for direct pod-to-VA mapping), and config labels
+	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and the config labels
 	//
 	// NOTE: vllm:cache_config_info is an info-style metric. Unlike vLLM's regular
 	// gauges/counters, it is NOT labeled with model_name — its label set is derived
 	// from CacheConfig fields (num_gpu_blocks, block_size, cache_dtype, ...) plus
-	// "engine". Filtering it by model_name would match nothing, so it is queried
-	// namespace-wide and the collector correlates the results to this model's pods
-	// by instance key (see CollectReplicaMetrics, which attaches cache config only
-	// to instances already discovered by the model-scoped KV/queue queries).
-	// Do not add a model_name matcher here.
+	// "engine". It therefore cannot be partitioned by model at all: the collector
+	// correlates the results to a model's pods by instance key instead, attaching
+	// cache config only to instances the KV/queue queries already discovered for
+	// that model. Do not add a model_name matcher or grouping label here.
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryCacheConfigInfo,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant, num_gpu_blocks, block_size) (vllm:cache_config_info{namespace="{{.namespace}}"})`,
+		Template:    `max by (instance, pod, num_gpu_blocks, block_size) (vllm:cache_config_info{namespace="{{.namespace}}"})`,
 		Params:      []string{source.ParamNamespace},
 		Description: "KV cache configuration info per instance (num_gpu_blocks and block_size as labels)",
 	})
 
 	// Average output (generation) tokens per completed request
 	// Used for output-length-dependent k2 estimation
-	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
+	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryAvgOutputTokens,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (rate(vllm:request_generation_tokens_sum{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(vllm:request_generation_tokens_count{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (rate(vllm:request_generation_tokens_sum{namespace="{{.namespace}}"}[5m]) / rate(vllm:request_generation_tokens_count{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Average output tokens per completed request (5m rate)",
 	})
 
 	// Average input (prompt) tokens per completed request
 	// Used in k2 derivation formula: k2 = N_max × (I + O/2)
-	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
+	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryAvgInputTokens,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (rate(vllm:request_prompt_tokens_sum{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(vllm:request_prompt_tokens_count{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (rate(vllm:request_prompt_tokens_sum{namespace="{{.namespace}}"}[5m]) / rate(vllm:request_prompt_tokens_count{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Average input tokens per completed request (5m rate)",
 	})
 
 	// Prefix cache hit rate per instance (5m rate)
 	// Used to reduce estimated input token demand for scheduler-queued requests.
 	// Returns 0..1 where 1 means all prefix lookups were cache hits.
-	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
+	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryPrefixCacheHitRate,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (rate(vllm:prefix_cache_hits{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(vllm:prefix_cache_queries{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (rate(vllm:prefix_cache_hits{namespace="{{.namespace}}"}[5m]) / rate(vllm:prefix_cache_queries{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Prefix cache hit rate per instance (0.0-1.0, 5m rate)",
 	})
 
 	// --- Scheduler flow control queries (model-level) ---
 	// These come from the llm-d inference scheduler, not engine pods.
-	// They use target_model_name when available, falling back to model_name.
-	// The "or" clause handles cases where target_model_name is not set.
+	//
+	// Like the engine queries above they carry no model matcher: both model
+	// identity labels stay in the grouping key and the collector picks the
+	// model per series — target_model_name when set, else model_name (see
+	// eppSeriesModel). That replaces the "or" clause the model-scoped versions
+	// used to need, and, since these metrics have no namespace label to scope
+	// them by either, one cluster-wide execution per cycle now serves every
+	// model the controller manages instead of two per model.
 	//
 	// TODO(#2309): These metrics currently lack a namespace label in the upstream
 	// gateway-api-inference-extension EPP. If the same model name exists in
-	// different namespaces, these queries will aggregate across all of them.
-	// Once the upstream adds a namespace label, these queries should filter by it.
+	// different namespaces, these queries aggregate across all of them. Once the
+	// upstream adds a namespace label, they should group by (and be scoped to) it.
 
 	// Number of requests queued in the scheduler's flow control layer
 	registry.MustRegister(source.QueryTemplate{
-		Name: QuerySchedulerQueueSize,
-		Type: source.QueryTypePromQL,
-		Template: `sum(inference_extension_flow_control_queue_size{target_model_name="{{.modelID}}"})` +
-			` or sum(inference_extension_flow_control_queue_size{model_name="{{.modelID}}",target_model_name=""})`,
-		Params:      []string{source.ParamModelID},
-		Description: "Total requests queued in scheduler flow control for this model",
+		Name:        QuerySchedulerQueueSize,
+		Type:        source.QueryTypePromQL,
+		Template:    `sum by (model_name, target_model_name) (inference_extension_flow_control_queue_size)`,
+		Description: "Requests queued in scheduler flow control, per model",
 	})
 
 	// Total bytes of request bodies queued in the scheduler's flow control layer
 	registry.MustRegister(source.QueryTemplate{
-		Name: QuerySchedulerQueueBytes,
-		Type: source.QueryTypePromQL,
-		Template: `sum(inference_extension_flow_control_queue_bytes{target_model_name="{{.modelID}}"})` +
-			` or sum(inference_extension_flow_control_queue_bytes{model_name="{{.modelID}}",target_model_name=""})`,
-		Params:      []string{source.ParamModelID},
-		Description: "Total bytes queued in scheduler flow control for this model",
+		Name:        QuerySchedulerQueueBytes,
+		Type:        source.QueryTypePromQL,
+		Template:    `sum by (model_name, target_model_name) (inference_extension_flow_control_queue_bytes)`,
+		Description: "Bytes queued in scheduler flow control, per model",
 	})
 
 	registerSGLangSaturationQueries(registry)
@@ -152,8 +172,8 @@ func registerSGLangSaturationQueries(registry *source.QueryList) {
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryKvCacheUsage,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (max_over_time(sglang:token_usage{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (max_over_time(sglang:token_usage{namespace="{{.namespace}}"}[1m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Peak KV cache utilization per instance (0.0-1.0) over last minute (SGLang)",
 	})
 
@@ -161,23 +181,24 @@ func registerSGLangSaturationQueries(registry *source.QueryList) {
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryQueueLength,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (max_over_time(sglang:num_queue_reqs{namespace="{{.namespace}}",model_name="{{.modelID}}"}[1m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (max_over_time(sglang:num_queue_reqs{namespace="{{.namespace}}"}[1m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Peak queue length per instance over last minute (SGLang)",
 	})
 
 	// Total KV-cache token capacity per instance.
 	//
 	// Structural difference from vLLM: SGLang exposes capacity directly via
-	// sglang:max_total_num_tokens (a model-labeled gauge), so this query can
-	// filter by model_name and returns the capacity as the value — there are no
-	// num_gpu_blocks/block_size labels. The collector converts this value into
-	// TotalKvCapacityTokens directly (see CollectReplicaMetrics).
+	// sglang:max_total_num_tokens (a model-labeled gauge), so — unlike
+	// vllm:cache_config_info — this one IS partitionable by model_name and
+	// returns the capacity as the value, with no num_gpu_blocks/block_size
+	// labels. The collector converts this value into TotalKvCapacityTokens
+	// directly (see CollectReplicaMetrics).
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryCacheConfigInfo,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (sglang:max_total_num_tokens{namespace="{{.namespace}}",model_name="{{.modelID}}"})`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (sglang:max_total_num_tokens{namespace="{{.namespace}}"})`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Total KV cache token capacity per instance (SGLang)",
 	})
 
@@ -185,8 +206,8 @@ func registerSGLangSaturationQueries(registry *source.QueryList) {
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryAvgOutputTokens,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (rate(sglang:generation_tokens_histogram_sum{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(sglang:generation_tokens_histogram_count{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (rate(sglang:generation_tokens_histogram_sum{namespace="{{.namespace}}"}[5m]) / rate(sglang:generation_tokens_histogram_count{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Average output tokens per completed request (5m rate) (SGLang)",
 	})
 
@@ -194,8 +215,8 @@ func registerSGLangSaturationQueries(registry *source.QueryList) {
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryAvgInputTokens,
 		Type:        source.QueryTypePromQL,
-		Template:    `max by (instance, pod, llm_d_ai_variant) (rate(sglang:prompt_tokens_histogram_sum{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]) / rate(sglang:prompt_tokens_histogram_count{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `max by (model_name, instance, pod) (rate(sglang:prompt_tokens_histogram_sum{namespace="{{.namespace}}"}[5m]) / rate(sglang:prompt_tokens_histogram_count{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Average input tokens per completed request (5m rate) (SGLang)",
 	})
 
@@ -211,13 +232,14 @@ func registerSGLangSaturationQueries(registry *source.QueryList) {
 	// counters do not share an identical label set — sglang:cached_tokens_total
 	// carries an extra cache_source label — so dividing the raw rates would leave
 	// the operator with no one-to-one matches and yield an empty vector. Summing
-	// each side down to the (instance, pod, llm_d_ai_variant) key first drops the
-	// differing labels and makes the division well-defined.
+	// each side down to the (model_name, instance, pod) key first drops the
+	// differing labels and makes the division well-defined. Both sides must
+	// carry model_name for the division to match per model.
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:        QueryPrefixCacheHitRate,
 		Type:        source.QueryTypePromQL,
-		Template:    `sum by (instance, pod, llm_d_ai_variant) (rate(sglang:cached_tokens_total{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m])) / sum by (instance, pod, llm_d_ai_variant) (rate(sglang:prompt_tokens_total{namespace="{{.namespace}}",model_name="{{.modelID}}"}[5m]))`,
-		Params:      []string{source.ParamNamespace, source.ParamModelID},
+		Template:    `sum by (model_name, instance, pod) (rate(sglang:cached_tokens_total{namespace="{{.namespace}}"}[5m])) / sum by (model_name, instance, pod) (rate(sglang:prompt_tokens_total{namespace="{{.namespace}}"}[5m]))`,
+		Params:      []string{source.ParamNamespace},
 		Description: "Prefix cache hit rate per instance (0.0-1.0, 5m rate) (SGLang)",
 	})
 }
