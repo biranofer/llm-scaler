@@ -234,7 +234,7 @@ cluster `wva-analyzers` ConfigMap; a policy entry's `name` resolves **built-in r
 the post-removal engine. If not yet removed, Phases 1–3 still work but must carry the extra switch
 arms; removal first is cleaner.
 
-**Phase 1 — Discovery type + producer (additive; no consumer switch).**
+**Phase 1 — Discovery type + producer (additive; no consumer switch). ✅ DONE.**
 Introduce `VariantMetadata` and a `DiscoverVariants(ctx) ([]VariantMetadata, error)` that consolidates
 `annotationSourcedVariants` + `BuildVariantStates` + role/accelerator resolvers. Produce it each cycle
 *alongside* the current path; log/assert it matches the identity the analyzer copies today. **No
@@ -287,7 +287,9 @@ briefly absent from a concurrent scrape.
 
 **Phase 5 — External-analyzer wrapper (#1455). ✅ DONE.** Delivered as §10 describes (catalog CM +
 per-engine bodies + runtime registry + per-cycle reconcile + built-in→catalog name resolution). Unit
-+ envtest coverage at every layer. Still pending: re-running the KEDA external-scaler **kind e2e**.
++ envtest coverage at every layer. The KEDA external-scaler **kind e2e** has since been run green
+(smoke 17/17, full 28/28), and the saturation suite was moved onto the external-scaler transport so
+the analyzer decision itself is exercised over gRPC, not only the wrapper.
 
 ---
 
