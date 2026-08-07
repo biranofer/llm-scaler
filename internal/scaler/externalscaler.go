@@ -16,6 +16,7 @@ import (
 	pb "github.com/kedacore/keda/v2/pkg/scalers/externalscaler"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -108,8 +109,8 @@ func (h *Handler) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) (*p
 }
 
 // IsActive reports the target active unless WVA has decided it needs zero
-// replicas. With no decision yet it reports active, so KEDA does not scale a
-// freshly discovered target to zero before the first optimization runs.
+// replicas; before the first decision it mirrors the target's current replica
+// count (see isActive).
 //
 // This is the poll path, used by a `type: external` trigger. A `type:
 // external-push` trigger uses StreamIsActive instead, which reports the same
@@ -126,12 +127,66 @@ func (h *Handler) IsActive(ctx context.Context, ref *pb.ScaledObjectRef) (*pb.Is
 
 // isActive is the shared activation predicate behind IsActive and
 // StreamIsActive: active unless WVA has decided the target needs zero replicas.
+//
+// Before the first decision exists the predicate falls back to the target's
+// CURRENT replica count, which is the only honest answer: reporting active
+// unconditionally would wake every workload parked at zero the moment KEDA
+// first asks — defeating scale-to-zero and pre-empting the scale-from-zero
+// engine, which never sees the workload as inactive. Reporting inactive
+// unconditionally would be worse, scaling a running workload to zero before WVA
+// has looked at it. So: a target already at zero stays asleep until a decision
+// (or the scale-from-zero engine) wakes it; a running target stays up.
 func (h *Handler) isActive(ctx context.Context, ref *pb.ScaledObjectRef) (bool, error) {
 	d, ok, err := h.desired(ctx, ref)
 	if err != nil {
 		return false, err
 	}
-	return !ok || d > 0, nil
+	if ok {
+		return d > 0, nil
+	}
+	return h.currentlyRunning(ctx, ref), nil
+}
+
+// currentlyRunning reports whether the scale target has replicas right now. It
+// is only consulted before WVA's first decision. Any failure to read the target
+// answers true — the safe direction, since a false negative would scale a
+// running workload to zero on the strength of a failed lookup.
+func (h *Handler) currentlyRunning(ctx context.Context, ref *pb.ScaledObjectRef) bool {
+	logger := log.FromContext(ctx)
+
+	var so kedav1alpha1.ScaledObject
+	nn := types.NamespacedName{Namespace: ref.GetNamespace(), Name: ref.GetName()}
+	if err := h.client.Get(ctx, nn, &so); err != nil || so.Spec.ScaleTargetRef == nil {
+		logger.V(1).Info("no decision yet and ScaledObject unreadable; reporting active",
+			"scaledObject", nn.String())
+		return true
+	}
+
+	target := &unstructured.Unstructured{}
+	apiVersion := so.Spec.ScaleTargetRef.APIVersion
+	if apiVersion == "" {
+		apiVersion = "apps/v1" // KEDA's own default for scaleTargetRef
+	}
+	kind := so.Spec.ScaleTargetRef.Kind
+	if kind == "" {
+		kind = "Deployment" // KEDA's own default for scaleTargetRef
+	}
+	target.SetAPIVersion(apiVersion)
+	target.SetKind(kind)
+	targetKey := types.NamespacedName{Namespace: ref.GetNamespace(), Name: so.Spec.ScaleTargetRef.Name}
+	if err := h.client.Get(ctx, targetKey, target); err != nil {
+		logger.V(1).Info("no decision yet and scale target unreadable; reporting active",
+			"target", targetKey.String(), "kind", kind)
+		return true
+	}
+
+	// An absent spec.replicas means the workload defaults to 1 (Deployment and
+	// LeaderWorkerSet both do), so absent reads as running.
+	replicas, found, err := unstructured.NestedInt64(target.Object, "spec", "replicas")
+	if err != nil || !found {
+		return true
+	}
+	return replicas > 0
 }
 
 // streamKeepalive bounds how long StreamIsActive stays silent. Activation is

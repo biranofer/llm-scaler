@@ -149,16 +149,21 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Creating annotated ScaledObject (both WVA discovery source and scaler)")
+		// WVA delivers its decision over the external-scaler gRPC contract, so the
+		// trigger points at the WVA scaler Service rather than querying Prometheus
+		// for wva_desired_replicas. The gauge is still emitted for observability;
+		// it is simply not how KEDA is fed.
 		err = fixtures.EnsureScaledObject(ctx, crClient, ns, scalerName, deploymentName, variantName, minReplicas, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithExternalScalerTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
 	})
 
-	It("should emit wva_desired_replicas consumed by KEDA", func() {
-		// WVA discovers the variant from the annotated ScaledObject and emits
-		// wva_desired_replicas to Prometheus. KEDA only populates the managed
-		// HPA's CurrentMetrics after a successful Prometheus query, so a non-empty
-		// CurrentMetrics proves the metric was emitted and consumed.
+	It("should serve WVA's decision to KEDA over the external-scaler contract", func() {
+		// WVA discovers the variant from the annotated ScaledObject and serves its
+		// desired-replica decision from GetMetrics. KEDA only populates the managed
+		// HPA's CurrentMetrics after a successful scaler query, so a non-empty
+		// CurrentMetrics proves KEDA reached WVA's gRPC scaler and got a value.
 		Eventually(func(g Gomega) {
 			hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(ns).List(ctx, metav1.ListOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
@@ -171,7 +176,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 			}
 			g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the deployment")
 			g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
-				"KEDA HPA should have CurrentMetrics populated from wva_desired_replicas")
+				"KEDA HPA should have CurrentMetrics populated from WVA's external scaler")
 		}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 

@@ -10,6 +10,7 @@ import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	pb "github.com/kedacore/keda/v2/pkg/scalers/externalscaler"
 	"google.golang.org/grpc"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -75,12 +76,24 @@ func scaledObjectFor(name, target string) *kedav1alpha1.ScaledObject {
 	}
 }
 
+// deploymentWithReplicas is the scale target backing a ScaledObject, used by the
+// specs that exercise the pre-first-decision fallback.
+func deploymentWithReplicas(name string, replicas int32) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: name},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+}
+
 var _ = Describe("External scaler StreamIsActive", func() {
 	var store *decision.Store
 
 	newHandler := func(objs ...client.Object) *scaler.Handler {
 		s := runtime.NewScheme()
 		Expect(kedav1alpha1.AddToScheme(s)).To(Succeed())
+		// apps/v1 so the handler can read a Deployment scale target when it
+		// falls back to the current replica count.
+		Expect(appsv1.AddToScheme(s)).To(Succeed())
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 		return scaler.NewHandler(c, store)
 	}
@@ -217,5 +230,34 @@ var _ = Describe("External scaler StreamIsActive", func() {
 
 		store.Set(testNamespace, "chat-decode-deploy", 1)
 		stream.expectNoPush()
+	})
+	It("keeps a target parked at zero asleep until a decision wakes it", func() {
+		// Regression guard for the defect that made the scale-from-zero e2e pass
+		// trivially: with no decision yet, reporting "active" woke every workload
+		// sitting at zero the moment KEDA first asked, so the scale-from-zero
+		// engine never saw it as inactive and the EPP signal was never exercised.
+		h := newHandler(
+			scaledObjectFor("chat-decode", "chat-decode-deploy"),
+			deploymentWithReplicas("chat-decode-deploy", 0),
+		)
+
+		stream, stop := runStream(h, ref("chat-decode", nil))
+		defer func() { Expect(stop()).To(Succeed()) }()
+		Expect(stream.nextPush()).To(BeFalse(), "no decision + zero replicas must stay inactive")
+
+		store.Set(testNamespace, "chat-decode-deploy", 1)
+		Expect(stream.nextPush()).To(BeTrue(), "the decision is what wakes it")
+	})
+
+	It("keeps a running target active before the first decision", func() {
+		// The other direction: a workload already serving must not be scaled to
+		// zero just because WVA has not looked at it yet.
+		h := newHandler(
+			scaledObjectFor("chat-decode", "chat-decode-deploy"),
+			deploymentWithReplicas("chat-decode-deploy", 2),
+		)
+		stream, stop := runStream(h, ref("chat-decode", nil))
+		defer func() { Expect(stop()).To(Succeed()) }()
+		Expect(stream.nextPush()).To(BeTrue())
 	})
 })
