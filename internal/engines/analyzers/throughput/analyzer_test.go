@@ -2036,8 +2036,11 @@ var _ = Describe("computeLocalDemand", func() {
 	})
 
 	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
+		// Negative, not zero: the accumulated term is KvUsageInstant × capacity / KVreq / ITL, so
+		// a zero capacity contributes 0 whether or not the guard fires. Only a negative capacity
+		// makes the unguarded contribution non-zero, so only it pins the skip.
 		noCapacity := replicaAt(0.5)
-		noCapacity.TotalKvCapacityTokens = 0
+		noCapacity.TotalKvCapacityTokens = -65536
 		total := computeLocalDemand([]domain.ReplicaMetrics{noCapacity}, shape, model)
 		Expect(total).To(Equal(0.0))
 	})
@@ -2137,11 +2140,16 @@ var _ = Describe("computeVariantSupply", func() {
 	}
 
 	It("aggregates supply across KV-capable replicas", func() {
+		// Differing capacities keep perReplica from being a copy of total, and the third replica
+		// carries no KV capacity so nKV (2) differs from len(metrics) (3) — that is what pins the
+		// mean to the KV-capable count rather than to the replica count.
 		total, perReplica, nKV := computeVariantSupply(
-			[]domain.ReplicaMetrics{replicaWithCap(65536)}, shape, itlSat)
-		Expect(nKV).To(Equal(1))
-		Expect(total).To(BeNumerically(">", 0))
-		Expect(perReplica).To(BeNumerically("~", total, 1e-9)) // single replica → mean == total
+			[]domain.ReplicaMetrics{replicaWithCap(65536), replicaWithCap(131072), replicaWithCap(0)},
+			shape, itlSat)
+		Expect(nKV).To(Equal(2))
+		// Σ_r DefaultKSat × KV_max_r / KVreq / itlSat over the KV-capable replicas.
+		Expect(total).To(BeNumerically("~", DefaultKSat*(65536+131072)/shape.KVreq/itlSat, 1e-6))
+		Expect(perReplica).To(BeNumerically("~", total/2, 1e-9))
 	})
 
 	It("skips a replica with non-positive TotalKvCapacityTokens", func() {
