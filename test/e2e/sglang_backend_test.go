@@ -38,13 +38,27 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 		decodeSuffix = "-decode"
 		// sglangEmulatorPort is the container/Service port the emitter serves on.
 		sglangEmulatorPort = 8000
+
+		// Saturation config this suite pins (see BeforeAll). Calibrated against the
+		// fixture's fixed operating point: token_usage=0.85 of
+		// sglang:max_total_num_tokens=100000 is 85000 tokens resident, against a
+		// usable ceiling of 100000 x 0.80 = 80000 — utilization ~1.06, clear of
+		// scaleUpThreshold. The spare triggers do not affect the V2 scale-up path;
+		// they carry safe values so config validation passes
+		// (kvCacheThreshold >= kvSpareTrigger).
+		sglangKVCacheThreshold     = 0.80
+		sglangQueueLengthThreshold = 1
+		sglangKVSpareTrigger       = 0.20
+		sglangQueueSpareTrigger    = 1
+		sglangScaleUpThreshold     = 0.85
+		sglangScaleDownBoundary    = 0.70
 	)
 	var (
 		ctx      = context.Background()
 		appLabel = baseName + decodeSuffix
 		modelID  = "e2ewva/sglang-model"
 
-		// Saturation ConfigMap snapshot for the V1 guard (see BeforeAll).
+		// Saturation ConfigMap snapshot, restored in AfterAll (see BeforeAll).
 		cmName          string
 		cmNamespace     string
 		cmOriginal      *corev1.ConfigMap
@@ -56,18 +70,21 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 			Skip("SGLang e2e uses a CPU-only metrics emitter; it runs in the kind-emulator environment (UseSimulator=true)")
 		}
 
-		// V1 guard (v0.9.0 V2-default flip): this suite relies on the shipped
-		// saturation ConfigMap, and its scale-up assertion is calibrated to the V1
-		// (percentage-based) analyzer. The fixture emits a fixed operating point
-		// (token_usage=0.85, num_queue_reqs=3) that deterministically saturates V1's
-		// default thresholds, but sits exactly at V2's scaleUpThreshold=0.85 (V2 must
-		// *exceed* it) — so under the new V2 default the scale-up is no longer
-		// deterministic. Pin this suite to V1 by overwriting the `default` entry with
-		// a V1 config, and restore the original in AfterAll. Analyzer selection is
-		// re-resolved from the watched ConfigMap each cycle, so no controller restart
-		// is needed.
-		// TODO(v2): recalibrate the SGLang fixture metrics + assertion for the V2
-		// (token/capacity-based) analyzer and drop this guard.
+		// Pin an explicit saturation config for this suite instead of inheriting the
+		// shipped ConfigMap, so the scale-up assertion cannot be invalidated by a
+		// change to the defaults. Restored in AfterAll; config is re-resolved from the
+		// watched ConfigMap each cycle, so no controller restart is needed.
+		//
+		// The calibration is deterministic under V2. The fixture emits a fixed
+		// operating point — token_usage=0.85 against sglang:max_total_num_tokens=100000,
+		// so 85000 tokens resident — while kvCacheThreshold=0.80 puts the usable
+		// ceiling at 80000. Utilization is therefore 85000/80000 ≈ 1.06, comfortably
+		// past scaleUpThreshold=0.85, and WVA scales out.
+		//
+		// (This replaces a "pin to V1" guard that predated the V1 removal. It claimed
+		// the fixture sat exactly at V2's 0.85 threshold, which only holds if the KV
+		// ceiling is ignored — applying it leaves the 25% margin above. The config it
+		// wrote already ran on V2 regardless, since V1 no longer exists.)
 		cmNamespace = cfg.WVANamespace
 		cmName = saturationConfigMapName()
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
@@ -79,8 +96,17 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 			// AfterAll delete the shared ConfigMap without recreating it.
 			Expect(err).NotTo(HaveOccurred(), "reading existing saturation configmap")
 		}
-		By("Pinning the saturation analyzer to V1 for this suite (V2 is the default since v0.9.0)")
-		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey, buildSaturationConfigYAML(""))).To(Succeed())
+		By("Pinning an explicit saturation config so the scale-up calibration is self-contained")
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey,
+			buildSaturationConfigYAMLWithThresholds(
+				"saturation",
+				sglangKVCacheThreshold,
+				sglangQueueLengthThreshold,
+				sglangKVSpareTrigger,
+				sglangQueueSpareTrigger,
+				sglangScaleUpThreshold,
+				sglangScaleDownBoundary,
+			))).To(Succeed())
 
 		By("Deploying the synthetic SGLang model server")
 		Expect(fixtures.CreateSGLangEmulator(ctx, k8sClient, cfg.LLMDNamespace, baseName, modelID, variantName)).To(Succeed())

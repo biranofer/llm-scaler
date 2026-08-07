@@ -41,9 +41,10 @@ import (
 //   - No-scale path (kvCache=1.00, queue=100): the looser target sizes ~25% more
 //     capacity per replica → utilization drops below 0.85 → no scale-up.
 //
-// The target must stay above the faked 0.30 usage in both arcs: below it there
-// is no headroom, per-replica capacity collapses to zero, and the analyzer
-// reports a shortfall it cannot size — so nothing scales at all.
+// Both arcs keep the target above the faked 0.30 usage. Setting it below would
+// put utilization over 1.0 from a standing start, which pins the no-scale arc to
+// a scale-up and makes the pair meaningless — the arcs must differ by where the
+// ceiling sits relative to the same occupancy, not by saturating both.
 //
 // --fake-metrics replaces simulator runtime emission entirely; service traffic
 // has no effect on the values the analyzer reads.
@@ -62,14 +63,12 @@ scaleDownBoundary: %.2f
 analyzerName: %q
 `
 
-	// Scale-up arc. kvCacheThreshold is V2's KV utilization *target*: it divides
-	// the measured usage to size per-replica capacity, so a tighter target means
-	// less capacity per replica, higher utilization, and a scale-up. It must stay
-	// ABOVE the faked 0.30 usage — a target below observed usage leaves no
-	// headroom and collapses per-replica capacity to zero, at which point the
-	// analyzer reports a shortfall it cannot size (supply 0, prc 0) and no
-	// scale-up is possible. 0.80 against kv=0.30 yields demand ≈ supply, i.e.
-	// utilization ≈ 1.0, comfortably past scaleUpThreshold.
+	// Scale-up arc. kvCacheThreshold is V2's KV utilization *ceiling*: capacity is
+	// the KV budget scaled by it, so a tighter ceiling means less capacity per
+	// replica and higher utilization for the same occupancy. Utilization is
+	// KvCacheUsage/kvCacheThreshold, so 0.30 occupancy against a 0.80 ceiling is
+	// 0.375 — which, with the queue term the fixture's waiting requests add on
+	// top, clears scaleUpThreshold.
 	saturationKVCacheThreshold     = 0.80
 	saturationQueueLengthThreshold = 1
 	saturationKVSpareTrigger       = 0.01
@@ -77,9 +76,10 @@ analyzerName: %q
 	saturationScaleUpThreshold     = 0.85
 	saturationScaleDownBoundary    = 0.70
 
-	// No-scale arc. The looser 1.00 target sizes ~25% more capacity per replica
-	// than the scale-up arc, dropping utilization below scaleUpThreshold so the
-	// engine sees no shortfall.
+	// No-scale arc. The looser 1.00 ceiling sizes 25% more capacity per replica
+	// than the scale-up arc (utilization 0.30 rather than 0.375) and the raised
+	// queue threshold removes the queue term, dropping the total below
+	// scaleUpThreshold so the engine sees no shortfall.
 	saturationNoScaleKVCacheThreshold     = 1.00
 	saturationNoScaleQueueLengthThreshold = 100
 	saturationNoScaleKVSpareTrigger       = 0.00
