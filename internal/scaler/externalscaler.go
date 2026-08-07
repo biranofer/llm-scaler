@@ -10,6 +10,7 @@ package scaler
 
 import (
 	"context"
+	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	pb "github.com/kedacore/keda/v2/pkg/scalers/externalscaler"
@@ -109,13 +110,102 @@ func (h *Handler) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) (*p
 // IsActive reports the target active unless WVA has decided it needs zero
 // replicas. With no decision yet it reports active, so KEDA does not scale a
 // freshly discovered target to zero before the first optimization runs.
+//
+// This is the poll path, used by a `type: external` trigger. A `type:
+// external-push` trigger uses StreamIsActive instead, which reports the same
+// predicate without waiting for a poll interval.
 func (h *Handler) IsActive(ctx context.Context, ref *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
-	d, ok, err := h.desired(ctx, ref)
+	active, err := h.isActive(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	active := !ok || d > 0
 	log.FromContext(ctx).V(1).Info("external scaler IsActive",
 		"namespace", ref.GetNamespace(), "scaledObject", ref.GetName(), "active", active)
 	return &pb.IsActiveResponse{Result: active}, nil
+}
+
+// isActive is the shared activation predicate behind IsActive and
+// StreamIsActive: active unless WVA has decided the target needs zero replicas.
+func (h *Handler) isActive(ctx context.Context, ref *pb.ScaledObjectRef) (bool, error) {
+	d, ok, err := h.desired(ctx, ref)
+	if err != nil {
+		return false, err
+	}
+	return !ok || d > 0, nil
+}
+
+// streamKeepalive bounds how long StreamIsActive stays silent. Activation is
+// driven by decision-store wake-ups, so this only re-asserts the current state
+// periodically — cheap insurance against a wake-up lost to a dropped stream or
+// a decision written before KEDA opened it.
+const streamKeepalive = 30 * time.Second
+
+// StreamIsActive pushes activation to KEDA for a `type: external-push` trigger.
+// It sends the current state immediately, then again whenever the target's
+// decision changes it — so a workload sitting at zero is activated as soon as
+// the decision lands, rather than up to one poll interval later. This is the
+// path scale-from-zero rides: the engine that spots pending requests writes a
+// non-zero decision, and that write wakes this stream.
+//
+// The stream lives until KEDA closes it (ctx cancellation), which returns nil —
+// a closed stream is normal, not a failure. Errors resolving the scale target
+// are returned, so KEDA surfaces a misconfigured ScaledObject instead of
+// silently never activating.
+func (h *Handler) StreamIsActive(ref *pb.ScaledObjectRef, stream pb.ExternalScaler_StreamIsActiveServer) error {
+	ctx := stream.Context()
+	logger := log.FromContext(ctx).WithValues(
+		"namespace", ref.GetNamespace(), "scaledObject", ref.GetName())
+
+	// Resolve the target once, up front: it is fixed for the life of the
+	// ScaledObject, and subscribing needs the resolved name.
+	name, err := h.targetName(ctx, ref)
+	if err != nil {
+		return err
+	}
+	updates, unsubscribe := h.store.Subscribe(ref.GetNamespace(), name)
+	defer unsubscribe()
+
+	// Send the opening state before waiting on anything, so KEDA is never left
+	// holding a stream that has said nothing.
+	active, err := h.isActive(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&pb.IsActiveResponse{Result: active}); err != nil {
+		return err
+	}
+	logger.V(1).Info("external scaler StreamIsActive opened", "active", active)
+
+	ticker := time.NewTicker(streamKeepalive)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.V(1).Info("external scaler StreamIsActive closed")
+			return nil
+		case <-updates:
+			next, err := h.isActive(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if next == active {
+				continue // nothing for KEDA to act on
+			}
+			active = next
+			if err := stream.Send(&pb.IsActiveResponse{Result: active}); err != nil {
+				return err
+			}
+			logger.V(1).Info("external scaler pushed activation change", "active", active)
+		case <-ticker.C:
+			next, err := h.isActive(ctx, ref)
+			if err != nil {
+				return err
+			}
+			active = next
+			if err := stream.Send(&pb.IsActiveResponse{Result: active}); err != nil {
+				return err
+			}
+		}
+	}
 }

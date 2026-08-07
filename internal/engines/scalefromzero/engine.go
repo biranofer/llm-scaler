@@ -25,21 +25,18 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	accel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/actuator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
@@ -47,7 +44,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
-	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
@@ -66,16 +62,13 @@ type Engine struct {
 	executor       executor.Executor
 	recorder       record.EventRecorder
 	Datastore      datastore.Datastore
-	DynamicClient  dynamic.Interface
-	Actuator       *actuator.DirectActuator
-	Mapper         meta.RESTMapper
 	maxConcurrency int
 	config         *config.Config // Unified configuration (injected from main.go)
 }
 
 // NewEngine creates a new instance of the scale-from-zero engine.
 // cfg must be non-nil (validated in main.go before engine creation).
-func NewEngine(client client.Client, recorder record.EventRecorder, mapper meta.RESTMapper, restConfig *rest.Config, ds datastore.Datastore, cfg *config.Config) (*Engine, error) {
+func NewEngine(client client.Client, recorder record.EventRecorder, ds datastore.Datastore, cfg *config.Config) (*Engine, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil in NewEngine - this should not happen")
 	}
@@ -85,23 +78,10 @@ func NewEngine(client client.Client, recorder record.EventRecorder, mapper meta.
 		return nil, fmt.Errorf("invalid scale-from-zero max concurrency: must be positive, got %d", maxConcurrency)
 	}
 
-	dynamicClient, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	actuator, err := actuator.NewDirectActuator(restConfig)
-	if err != nil {
-		return nil, err
-	}
-
 	engine := Engine{
 		client:         client,
 		recorder:       recorder,
 		Datastore:      ds,
-		DynamicClient:  dynamicClient,
-		Actuator:       actuator,
-		Mapper:         mapper,
 		maxConcurrency: maxConcurrency,
 		config:         cfg,
 	}
@@ -203,20 +183,8 @@ variantLoop:
 // ProcessInactiveVariant processes a single inactive VariantAutoscaling resource.
 func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[string]scaletarget.ScaleTargetAccessor, va wvav1alpha1.VariantAutoscaling, targetWorkloadReplicas int) error {
 	logger := log.FromContext(ctx)
-	objAPI := va.GetScaleTargetAPI()
 	objKind := va.GetScaleTargetKind()
 	objName := va.GetScaleTargetName()
-
-	// Parse Group, Version, Kind, Resource
-	gvr, err := poolutil.GetResourceForKind(e.Mapper, objAPI, objKind)
-	if err != nil {
-		return err
-	}
-
-	unstructuredObj, err := e.DynamicClient.Resource(gvr).Namespace(va.Namespace).Get(ctx, objName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
 
 	// Extract Labels for the pods created by the ScaleTarget object
 	// Use ScaleTargetAccessor to handle both Deployment and LeaderWorkerSet uniformly
@@ -224,6 +192,7 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 	scaleTarget, found := scaleTargets[key]
 	if !found {
 		// Fetch on-demand if not in the cache
+		var err error
 		scaleTarget, err = scaletarget.FetchScaleTarget(ctx, e.client, va.Name, objKind, objName, va.Namespace)
 		if err != nil {
 			return err
@@ -314,14 +283,14 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 		return nil
 	}
 
-	// 1.  Scale up from zero to one
+	// 1. Publish the activation decision. Writing the decision store is the whole
+	// actuation: it flips the external scaler's IsActive predicate to true and
+	// wakes any open StreamIsActive, so KEDA scales the target off zero. WVA does
+	// NOT patch the scale subresource itself — KEDA/HPA is the single writer, and
+	// a direct patch here would fight the HPA that owns the same field.
 	// TODO: Right now we are scaling all the VA for the same target model. We need to scale only the VA that has the lowest cost.
-	err = e.Actuator.ScaleTargetObject(ctx, unstructuredObj, int32(targetWorkloadReplicas))
-	if err != nil {
-		logger.Error(err, "Error scaling up Target Workload", "variant", va.Name, "target VA model", va.Spec.ModelID)
-		return err
-	}
-	logger.Info("Successfully scaled up Target Workload", "variant", va.Name, "target VA model", va.Spec.ModelID, "inferencepool", pool.EndpointPicker.ServiceName)
+	decision.Set(va.Namespace, objName, int32(targetWorkloadReplicas))
+	logger.Info("Published scale-from-zero activation for Target Workload", "variant", va.Name, "target VA model", va.Spec.ModelID, "inferencepool", pool.EndpointPicker.ServiceName)
 
 	// 2. Create or update VariantDecision
 	va.Status.Actuation.Applied = false

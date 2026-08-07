@@ -98,6 +98,28 @@ func WithExternalScalerTrigger(scalerAddress string) ScaledObjectOption {
 	}
 }
 
+// WithExternalScalerPushTrigger is WithExternalScalerTrigger's push variant: a
+// `external-push` trigger, which makes KEDA hold a StreamIsActive stream open so
+// WVA pushes activation instead of KEDA polling for it.
+//
+// Scale-from-zero needs this one. A workload parked at 0 replicas is woken only
+// by the activation signal, and WVA no longer patches the scale subresource
+// itself — KEDA is the sole writer — so the push stream is what carries
+// "requests are queued, wake up" from the scale-from-zero engine to KEDA.
+func WithExternalScalerPushTrigger(scalerAddress string) ScaledObjectOption {
+	return func(so *kedav1alpha1.ScaledObject) {
+		so.Spec.Triggers = []kedav1alpha1.ScaleTriggers{
+			{
+				Type: "external-push",
+				Name: "wva-external-scaler",
+				Metadata: map[string]string{
+					"scalerAddress": scalerAddress,
+				},
+			},
+		}
+	}
+}
+
 // CreateScaledObject creates a KEDA ScaledObject for WVA. Fails if it already exists.
 func CreateScaledObject(
 	ctx context.Context,

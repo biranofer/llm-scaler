@@ -27,27 +27,93 @@ type Decision struct {
 // Store keeps the latest Decision per scale target, keyed by namespace/name
 // (the Deployment/LWS name, equal to the former VariantAutoscaling name). It is
 // safe for concurrent use.
+//
+// Writers may also be observed: Subscribe returns a channel that is signalled
+// whenever a given target's decision is written, which the external scaler's
+// StreamIsActive uses to push activation to KEDA the moment a decision lands
+// rather than waiting for KEDA's next poll.
 type Store struct {
 	mu sync.RWMutex
 	m  map[string]Decision
+	// subs holds the notification channels per target key. The inner map is
+	// keyed by a monotonic id so a subscriber can remove exactly its own
+	// channel without identity comparison.
+	subs      map[string]map[uint64]chan struct{}
+	nextSubID uint64
 }
 
 // NewStore returns an empty Store.
 func NewStore() *Store {
-	return &Store{m: make(map[string]Decision)}
+	return &Store{
+		m:    make(map[string]Decision),
+		subs: make(map[string]map[uint64]chan struct{}),
+	}
 }
 
 func storeKey(namespace, name string) string {
 	return namespace + "/" + name
 }
 
-// Set records the latest desired replica count for a scale target.
+// Set records the latest desired replica count for a scale target and wakes any
+// subscribers watching it.
 func (s *Store) Set(namespace, name string, desiredReplicas int32) {
+	key := storeKey(namespace, name)
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[storeKey(namespace, name)] = Decision{
+	s.m[key] = Decision{
 		DesiredReplicas: desiredReplicas,
 		UpdatedAt:       time.Now(),
+	}
+	// Collect under the same lock that published the write, so a subscriber
+	// registered before this Set is guaranteed to be woken for it.
+	waiters := make([]chan struct{}, 0, len(s.subs[key]))
+	for _, ch := range s.subs[key] {
+		waiters = append(waiters, ch)
+	}
+	s.mu.Unlock()
+
+	// Signal outside the lock, and never block: the channels are buffered to 1
+	// and carry no payload, so a pending wake-up already covers this write.
+	// Subscribers re-read the current decision with Get when they wake.
+	for _, ch := range waiters {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Subscribe registers interest in a scale target and returns a channel that
+// receives a value whenever that target's decision is written, plus a cancel
+// func that unregisters it. Cancel must be called to avoid leaking the
+// registration; calling it more than once is safe.
+//
+// Wake-ups coalesce: the channel is buffered to 1 and signals carry no payload,
+// so a subscriber that is slow to read sees one wake-up covering every write it
+// missed, and reads the latest state with Get.
+func (s *Store) Subscribe(namespace, name string) (<-chan struct{}, func()) {
+	key := storeKey(namespace, name)
+	ch := make(chan struct{}, 1)
+
+	s.mu.Lock()
+	id := s.nextSubID
+	s.nextSubID++
+	if s.subs[key] == nil {
+		s.subs[key] = make(map[uint64]chan struct{})
+	}
+	s.subs[key][id] = ch
+	s.mu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.subs[key], id)
+			if len(s.subs[key]) == 0 {
+				delete(s.subs, key)
+			}
+		})
 	}
 }
 

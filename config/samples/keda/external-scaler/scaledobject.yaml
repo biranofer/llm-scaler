@@ -9,6 +9,13 @@
 # gRPC port (config/base/manager/external-scaler-service.yaml). With the deploy
 # overlay's namePrefix (wva-) it resolves to
 #   wva-external-scaler.workload-variant-autoscaler-system.svc:9090
+#
+# The trigger is `external-push`, so KEDA holds a StreamIsActive stream open and
+# WVA pushes activation the moment a decision lands. That is what makes
+# scale-from-zero react in ~the detection interval instead of waiting up to
+# pollingInterval: with minReplicaCount: 0, a workload parked at zero is woken by
+# the push, not by the next poll. A `type: external` trigger also works — KEDA
+# then polls IsActive instead — but scale-from-zero is correspondingly slower.
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -29,6 +36,9 @@ spec:
   pollingInterval: 5
   cooldownPeriod: 30
   initialCooldownPeriod: 30
+  # Park the workload at zero when WVA decides it needs no replicas; activation
+  # arrives over the push stream.
+  minReplicaCount: 0
   maxReplicaCount: 10
   fallback:
     failureThreshold: 3
@@ -58,7 +68,7 @@ spec:
             value: 5
             periodSeconds: 15
   triggers:
-  - type: external
+  - type: external-push
     name: wva-external-scaler
     metadata:
       # The WVA controller's external-scaler gRPC service (host:port).

@@ -23,6 +23,14 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
+// externalScalerAddress returns host:port of the WVA external-scaler gRPC
+// Service. Scale-from-zero rides that channel: WVA publishes the activation
+// decision and pushes it to KEDA, which is the only writer on the workload's
+// scale subresource.
+func externalScalerAddress() string {
+	return "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
+}
+
 // cleanupScaleFromZeroResources deletes all resources created by scale-from-zero tests to ensure clean state
 func cleanupScaleFromZeroResources() {
 	GinkgoWriter.Println("Cleaning up scale-from-zero test resources for clean state...")
@@ -259,7 +267,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		// wva_desired_replicas keyed by variantName.
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", variantName, 0, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		GinkgoWriter.Println("Scale-from-zero test setup complete with deployment at 0 replicas")
@@ -394,9 +403,10 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			GinkgoWriter.Println("Job pod is running and sending requests")
 
 			By("Monitoring deployment for scale-from-zero decision")
-			// The scale-from-zero engine detects pending requests and directly scales
-			// the target Deployment 0→1. We observe that through the Deployment's spec
-			// replicas rather than a VA status field (VA no longer exists).
+			// The scale-from-zero engine detects pending requests and publishes an
+			// activation decision; WVA pushes it to KEDA over StreamIsActive and KEDA
+			// scales the Deployment 0→1. WVA does not patch the scale subresource
+			// itself, so what we observe is KEDA's write to spec.replicas.
 			Eventually(func(g Gomega) {
 				deploy, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelServiceName+"-decode", metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
@@ -707,7 +717,8 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		// Register cleanup for scaler
@@ -847,9 +858,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			GinkgoWriter.Println("Job pod is running and sending requests")
 
 			By("Monitoring LWS for scale-from-zero decision")
-			// The scale-from-zero engine detects pending requests and directly scales
-			// the target LWS 0→1. We observe that through the LWS spec.replicas rather
-			// than a VA status field (VA no longer exists).
+			// The scale-from-zero engine detects pending requests and publishes an
+			// activation decision; WVA pushes it to KEDA over StreamIsActive and KEDA
+			// scales the LWS 0→1. WVA does not patch the scale subresource itself, so
+			// what we observe is KEDA's write to spec.replicas.
 			Eventually(func(g Gomega) {
 				lws := &unstructured.Unstructured{}
 				lws.SetAPIVersion("leaderworkerset.x-k8s.io/v1")
@@ -1069,7 +1081,8 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
 		// Register cleanup for scaler
@@ -1209,9 +1222,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			GinkgoWriter.Println("Job pod is running and sending requests")
 
 			By("Monitoring single-node LWS for scale-from-zero decision")
-			// The scale-from-zero engine detects pending requests and directly scales
-			// the target LWS 0→1. We observe that through the LWS spec.replicas rather
-			// than a VA status field (VA no longer exists).
+			// The scale-from-zero engine detects pending requests and publishes an
+			// activation decision; WVA pushes it to KEDA over StreamIsActive and KEDA
+			// scales the LWS 0→1. WVA does not patch the scale subresource itself, so
+			// what we observe is KEDA's write to spec.replicas.
 			Eventually(func(g Gomega) {
 				lws := &unstructured.Unstructured{}
 				lws.SetAPIVersion("leaderworkerset.x-k8s.io/v1")

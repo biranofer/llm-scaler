@@ -26,7 +26,6 @@ import (
 	appsV1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,7 +40,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	vav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 	unittestutil "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -151,14 +149,11 @@ func TestSingleInactiveVariant(t *testing.T) {
 			_ = appsV1.AddToScheme(scheme)
 			_ = corev1.AddToScheme(scheme)
 			fakeClientInitialObjs := []client.Object{pool1, dp, va, svc}
-			fakeDynamicClientInitialObject := []runtime.Object{dp}
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(fakeClientInitialObjs...).
 				Build()
-
-			fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
 
 			// Create a request for the existing resource.
 			namespacedName := types.NamespacedName{Name: pool1.Name, Namespace: pool1.Namespace}
@@ -185,7 +180,6 @@ func TestSingleInactiveVariant(t *testing.T) {
 			assert.Equal(t, len(ds.PoolList()), tt.datastoreSize, "There should be one EndpointPool in the datastore")
 
 			// (2) Create scalefromzero engine loop
-			mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
 			fakeRecorder := record.NewFakeRecorder(100)
 
 			engine := &Engine{
@@ -193,8 +187,6 @@ func TestSingleInactiveVariant(t *testing.T) {
 				executor:       nil,
 				recorder:       fakeRecorder,
 				Datastore:      ds,
-				DynamicClient:  fakeDynamicClient,
-				Mapper:         mapper,
 				maxConcurrency: 30,
 			}
 
@@ -241,14 +233,11 @@ func TestMultipleInactiveVariants(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	fakeClientInitialObjs := []client.Object{pool1, dp1, dp2, dp3, hpa1, hpa2, hpa3, svc}
-	fakeDynamicClientInitialObject := []runtime.Object{dp1, dp2, dp3}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(fakeClientInitialObjs...).
 		Build()
-
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
 
 	namespacedName := types.NamespacedName{Name: pool1.Name, Namespace: pool1.Namespace}
 	gknn := common.GKNN{
@@ -269,7 +258,6 @@ func TestMultipleInactiveVariants(t *testing.T) {
 		t.Errorf("Unexpected InferencePool reconcile error: %v", err)
 	}
 
-	mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
 	fakeRecorder := record.NewFakeRecorder(100)
 
 	engine := &Engine{
@@ -277,8 +265,6 @@ func TestMultipleInactiveVariants(t *testing.T) {
 		executor:       nil,
 		recorder:       fakeRecorder,
 		Datastore:      ds,
-		DynamicClient:  fakeDynamicClient,
-		Mapper:         mapper,
 		maxConcurrency: 30,
 	}
 
@@ -340,14 +326,11 @@ func TestEmptyInactiveVariants(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	fakeClientInitialObjs := []client.Object{pool1, dp, va, svc}
-	fakeDynamicClientInitialObject := []runtime.Object{dp}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(fakeClientInitialObjs...).
 		Build()
-
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
 
 	namespacedName := types.NamespacedName{Name: pool1.Name, Namespace: pool1.Namespace}
 	gknn := common.GKNN{
@@ -368,7 +351,6 @@ func TestEmptyInactiveVariants(t *testing.T) {
 		t.Errorf("Unexpected InferencePool reconcile error: %v", err)
 	}
 
-	mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
 	fakeRecorder := record.NewFakeRecorder(100)
 
 	engine := &Engine{
@@ -376,8 +358,6 @@ func TestEmptyInactiveVariants(t *testing.T) {
 		executor:       nil,
 		recorder:       fakeRecorder,
 		Datastore:      ds,
-		DynamicClient:  fakeDynamicClient,
-		Mapper:         mapper,
 		maxConcurrency: 30,
 	}
 
@@ -453,14 +433,11 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 			_ = corev1.AddToScheme(scheme)
 
 			fakeClientInitialObjs := []client.Object{pool, dp, va, svc}
-			fakeDynamicClientInitialObject := []runtime.Object{dp}
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(fakeClientInitialObjs...).
 				Build()
-
-			fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, fakeDynamicClientInitialObject...)
 
 			ctx := context.Background()
 			ds := datastore.NewDatastore(nil)
@@ -501,7 +478,6 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				require.NotNil(t, metricsSource, "Metrics source should be registered under namespaced key %s", namespacedPoolName)
 			}
 
-			mapper := testrestmapper.TestOnlyStaticRESTMapper(scheme, schema.GroupVersion{Group: "apps", Version: "v1"})
 			fakeRecorder := record.NewFakeRecorder(100)
 
 			engine := &Engine{
@@ -509,8 +485,6 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				executor:       nil,
 				recorder:       fakeRecorder,
 				Datastore:      ds,
-				DynamicClient:  fakeDynamicClient,
-				Mapper:         mapper,
 				maxConcurrency: 30,
 			}
 
