@@ -279,42 +279,6 @@ var _ = Describe("RecordSaturationMetrics", func() {
 		Expect(val).To(Equal(200000.0))
 	})
 
-	It("should distinguish binary and continuous required_capacity series via unit label", func() {
-		// Same variant, same namespace, different units → two series
-		emitter.RecordSaturationMetrics(ctx,
-			"variant-multi", "ns", "model-x", "h100", constants.UnitBinary,
-			0.5, 0.5, 1.0, 100, 200,
-		)
-		emitter.RecordSaturationMetrics(ctx,
-			"variant-multi", "ns", "model-x", "h100", constants.UnitContinuous,
-			0.5, 0.5, 8000.0, 100, 200,
-		)
-
-		mf := gatherMetric(registry, constants.WVARequiredCapacity)
-		Expect(mf).NotTo(BeNil())
-
-		v1Labels := map[string]string{
-			constants.LabelVariantName: "variant-multi",
-			constants.LabelNamespace:   "ns",
-			constants.LabelModelName:   "model-x",
-			constants.LabelUnit:        constants.UnitBinary,
-		}
-		v2Labels := map[string]string{
-			constants.LabelVariantName: "variant-multi",
-			constants.LabelNamespace:   "ns",
-			constants.LabelModelName:   "model-x",
-			constants.LabelUnit:        constants.UnitContinuous,
-		}
-
-		v1Val, ok := gaugeValue(mf, v1Labels)
-		Expect(ok).To(BeTrue())
-		Expect(v1Val).To(Equal(1.0))
-
-		v2Val, ok := gaugeValue(mf, v2Labels)
-		Expect(ok).To(BeTrue())
-		Expect(v2Val).To(Equal(8000.0))
-	})
-
 	It("should include controller_instance label when env var is set", func() {
 		// Re-init with controller instance set
 		resetMetrics()
@@ -360,7 +324,7 @@ var _ = Describe("RecordSaturationMetrics", func() {
 
 	It("should handle zero values correctly", func() {
 		emitter.RecordSaturationMetrics(ctx,
-			"variant-c", "ns", "model-z", "amd-mi300x", constants.UnitBinary,
+			"variant-c", "ns", "model-z", "amd-mi300x", constants.UnitContinuous,
 			0.0, 0.0, 0.0,
 			0, 0,
 		)
@@ -380,7 +344,7 @@ var _ = Describe("RecordSaturationMetrics", func() {
 			constants.LabelVariantName: "variant-c",
 			constants.LabelNamespace:   "ns",
 			constants.LabelModelName:   "model-z",
-			constants.LabelUnit:        constants.UnitBinary,
+			constants.LabelUnit:        constants.UnitContinuous,
 		}
 
 		// saturation_utilization is per-variant (accelerator-labeled).

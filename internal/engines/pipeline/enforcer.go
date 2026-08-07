@@ -191,9 +191,9 @@ func updateDecisionAction(d *domain.VariantDecision, optimizerName, policyType s
 	default:
 		action = domain.ActionNoChange
 	}
-	// Preserve the decision's original reason category (e.g. saturation-only on
-	// the V1 path) instead of hardcoding V2, so an enforced decision is not
-	// mis-attributed in the reason metric label. Fall back to V2 if it was unset.
+	// Preserve the decision's original reason category (e.g. rescale) instead of
+	// hardcoding V2, so an enforced decision is not mis-attributed in the reason
+	// metric label. Fall back to V2 if it was unset.
 	category := d.ReasonCategory()
 	if category == "" {
 		category = domain.DecisionReasonV2

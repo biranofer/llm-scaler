@@ -363,8 +363,8 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 // result is a copy of `available`.
 //
 // nsBudget != nil → the namespace is a CLOSED allowlist (namespace-scope
-// quota), mirroring the V1 tryAllocateNamespace contract: the model may use
-// ONLY the accelerator types the namespace lists. The result is therefore built
+// quota): the model may use ONLY the accelerator types the namespace lists,
+// as NamespaceResourcePools materialized them. The result is therefore built
 // from nsBudget alone — a type the namespace does not list is absent, and the
 // optimizer's gpusAvail==0 check denies it (no fall-through to the cluster
 // aggregate, which previously let one namespace draw on another's quota). For a

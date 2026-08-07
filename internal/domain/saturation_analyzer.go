@@ -202,38 +202,26 @@ type VariantDecision struct {
 
 	// --- Resource requirements (for resource limiting) ---
 	GPUsPerReplica int // GPUs required per replica
-	// SpareCapacity indicates how much spare capacity this variant has.
-	// V1: threshold-relative spare KV capacity (AvgSpareKvCapacity), a 0.0-1.0
-	//     fraction (0.0 = fully saturated, 1.0 = completely idle).
-	// V2: absolute spare in KV-cache tokens, max(0, TotalSupply - TotalDemand/scaleDownBoundary)
-	//     from AnalyzerResult — the scale-down companion to RequiredCapacity, in the same
-	//     token units (unit is "continuous", matching RequiredCapacityUnit).
+	// SpareCapacity is the variant's absolute spare in KV-cache tokens,
+	// max(0, TotalSupply - TotalDemand/scaleDownBoundary) from AnalyzerResult —
+	// the scale-down companion to RequiredCapacity, in the same token units.
 	SpareCapacity float64
-	// Utilization is the variant-level utilization ratio (0.0-1.0) reported for
-	// observability. The exact formula differs by analyzer because V1 and V2
-	// reason about saturation differently:
-	//   V1: mean of per-replica KvCacheUsage fractions (matches what V1's
-	//       per-replica threshold check operates on).
-	//   V2: TotalDemand / TotalCapacity from AnalyzerResult (token-demand-based).
-	// For uniform-capacity replicas the two are numerically equivalent; for
-	// mixed-capacity replicas V2's value is capacity-weighted.
+	// Utilization is the variant-level utilization ratio reported for
+	// observability: TotalDemand / TotalCapacity from AnalyzerResult. It is
+	// capacity-weighted, and unbounded above — a value > 1.0 means demand
+	// exceeds supply.
 	Utilization float64
 	// KvCacheTokensUsed is the sum of TokensInUse across this variant's replicas.
 	KvCacheTokensUsed int64
 	// KvCacheTokensCapacity is the sum of TotalKvCapacityTokens across this variant's replicas.
 	KvCacheTokensCapacity int64
-	// RequiredCapacity indicates whether scale-up is needed (>0 means yes).
-	// V1: binary (1.0 if shouldScaleUp, else 0.0), model-level.
-	// V2: continuous token-based deficit from AnalyzerResult — per-role for P/D
-	//     disaggregated models, model-level otherwise.
-	// Use RequiredCapacityUnit to disambiguate the units when consuming this field
-	// (or its corresponding Prometheus metric).
+	// RequiredCapacity indicates whether scale-up is needed (>0 means yes). It is
+	// the token-based deficit from AnalyzerResult — per-role for P/D
+	// disaggregated models, model-level otherwise.
 	RequiredCapacity float64
-	// RequiredCapacityUnit describes the unit of RequiredCapacity ("binary" or "continuous").
-	// Exposed as the `unit` Prometheus label on wva_required_capacity so dashboards
-	// can filter by semantics rather than by which analyzer produced the value.
-	//   "binary":     V1 path, value is 0.0 or 1.0
-	//   "continuous": V2 path, value is a token-demand magnitude
+	// RequiredCapacityUnit names the unit of RequiredCapacity, always
+	// constants.UnitContinuous (a token magnitude). Exposed as the `unit`
+	// Prometheus label on wva_required_capacity and wva_spare_capacity.
 	RequiredCapacityUnit string
 	// ScaleTargetRef references the Deployment/StatefulSet for scheduling constraints
 	ScaleTargetRef *autoscalingv2.CrossVersionObjectReference

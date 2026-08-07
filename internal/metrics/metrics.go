@@ -113,8 +113,8 @@ func InitMetrics(registry prometheus.Registerer) error {
 	satAccelLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelModelName, constants.LabelAcceleratorType}
 	// satModelLabels: per-variant model-level saturation metrics (no accelerator_type).
 	satModelLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelModelName}
-	// requiredCapacityLabels: satModelLabels + "unit" to disambiguate V1 (binary 0/1)
-	// vs V2 (continuous token demand) values of the wva_required_capacity gauge.
+	// requiredCapacityLabels: satModelLabels + "unit", naming the continuous
+	// token magnitude the wva_required_capacity gauge carries.
 	requiredCapacityLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelModelName, constants.LabelUnit}
 	// satFreshnessLabels: smallest cardinality shared across the five
 	// saturation/capacity gauges. Freshness is a per-VA property, so
@@ -175,21 +175,21 @@ func InitMetrics(registry prometheus.Registerer) error {
 	saturationUtilization = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: constants.WVASaturationUtilization,
-			Help: "Per-variant utilization ratio (0.0-1.0) from saturation analysis. V1 path: mean of per-replica KV-cache-usage fractions (matches the per-replica threshold V1 checks). V2 path: TotalDemand / TotalCapacity from the analyzer result. Numerically equivalent for uniform-capacity replicas; V2 is capacity-weighted for mixed-capacity cases.",
+			Help: "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Unbounded above — a value > 1.0 means demand exceeds supply.",
 		},
 		satAccelLabels,
 	)
 	spareCapacity = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: constants.WVASpareCapacity,
-			Help: fmt.Sprintf("Spare capacity; >0 indicates safe scale-down headroom (per-role for P/D-disaggregated models, model-level otherwise). The %q label (shared with wva_required_capacity) interprets the value: %q → token surplus from the Token-based analyzer, max(0, TotalSupply - TotalDemand/scaleDownBoundary); empty → a 0.0-1.0 threshold-relative fraction from the Percentage-based analyzer.", constants.LabelUnit, constants.UnitContinuous),
+			Help: fmt.Sprintf("Spare capacity; >0 indicates safe scale-down headroom (per-role for P/D-disaggregated models, model-level otherwise). Carries %s=%q (shared with wva_required_capacity): the token surplus max(0, TotalSupply - TotalDemand/scaleDownBoundary).", constants.LabelUnit, constants.UnitContinuous),
 		},
 		requiredCapacityLabels,
 	)
 	requiredCapacity = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: constants.WVARequiredCapacity,
-			Help: fmt.Sprintf("Required capacity; >0 indicates scale-up needed (per-role for P/D-disaggregated models, model-level otherwise). Use the %q label to interpret the value: %q → token demand from the Token-based analyzer, %q → 0/1 scale-up signal from the Percentage-based analyzer.", constants.LabelUnit, constants.UnitContinuous, constants.UnitBinary),
+			Help: fmt.Sprintf("Required capacity; >0 indicates scale-up needed (per-role for P/D-disaggregated models, model-level otherwise). Carries %s=%q: the token demand from the analyzer.", constants.LabelUnit, constants.UnitContinuous),
 		},
 		requiredCapacityLabels,
 	)
@@ -841,9 +841,9 @@ func SetMetricsFreshnessStatus(variantName, status string, count int) {
 // actively push these metrics — Prometheus scrapes them.
 //
 // modelID is exposed as the model_name label so dashboards can group/filter by
-// the model a variant serves. requiredCapacityUnit ("binary" or "continuous")
-// is used as the "unit" label on both wva_required_capacity and wva_spare_capacity
-// (they share the same label set) to describe how the value should be interpreted.
+// the model a variant serves. requiredCapacityUnit is used as the "unit" label
+// on both wva_required_capacity and wva_spare_capacity (they share the same
+// label set) to name the unit the value is expressed in.
 //
 // Callers MUST invoke InitMetrics before this method (the package-level
 // metric vars are nil otherwise, and the Set calls below would panic).

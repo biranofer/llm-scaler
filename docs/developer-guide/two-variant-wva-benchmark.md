@@ -220,7 +220,7 @@ kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \
   --tail=200 | grep "Processing model"
 ```
 
-You want `Processing model (V2)`, not `(V1)`.
+You should see `Processing model (V2)` lines — one per model per cycle.
 
 ### Step 4 — (Optional) Tune HPA scale-up
 
@@ -427,10 +427,6 @@ controller image are both at `v0.8.0-rc5` or newer
   → Variant label not propagated. Verify the chart pinned in the scenario
   yaml is `v0.8.0-rc5` or newer
   ([Required pieces #1](#1-wva-chart-and-controller-image-at-v080-rc5-or-newer)).
-- **`Processing model (V1)` instead of `(V2)`**
-  → Saturation configmap missing `analyzerName: saturation`. Run
-  `make benchmark-enable-v2-saturation BENCHMARK_NAMESPACE=$NS`
-  ([Step 3](#step-3--enable-saturation-v2)).
 - **Both variants scale to `maxReplicas` immediately under modest load**
   → V2 read fallback capacity, not real KV. Verify the controller image
   pinned in the scenario yaml is `v0.8.0-rc5` or newer (carries the

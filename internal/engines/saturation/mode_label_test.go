@@ -17,9 +17,9 @@ func TestModeLabelForAnalyzer(t *testing.T) {
 		analyzerName string
 		wantMode     string
 	}{
-		{"V2 saturation analyzer", domain.SaturationAnalyzerName, domain.SaturationAnalyzerName},
-		{"unset analyzer name falls back to V1 saturation-only", "", "saturation-only"},
-		{"unrecognized analyzer name falls back to V1 saturation-only", "not-a-real-analyzer", "saturation-only"},
+		{"named saturation analyzer", domain.SaturationAnalyzerName, domain.SaturationAnalyzerName},
+		{"unset analyzer name falls back to saturation-only", "", "saturation-only"},
+		{"unrecognized analyzer name falls back to saturation-only", "not-a-real-analyzer", "saturation-only"},
 	}
 
 	for _, tt := range tests {

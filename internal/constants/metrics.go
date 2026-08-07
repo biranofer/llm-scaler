@@ -241,17 +241,13 @@ const (
 
 	// WVASpareCapacity is a gauge that tracks spare capacity; >0 means scale-down
 	// headroom (per-role for P/D-disaggregated models, model-level otherwise).
-	// Value semantics differ by analyzer (use the "unit" label to distinguish):
-	//   - unit="continuous" (Token-based analyzer):       token surplus
-	//   - unit="" (empty)   (Percentage-based analyzer): 0.0-1.0 threshold-relative fraction
+	// The value is a token surplus, carrying unit="continuous".
 	// Labels: variant_name, namespace, model_name, unit
 	WVASpareCapacity = "wva_spare_capacity"
 
 	// WVARequiredCapacity is a gauge that tracks required capacity; >0 means scale-up
 	// needed (per-role for P/D-disaggregated models, model-level otherwise).
-	// Value semantics differ by analyzer (use the "unit" label to distinguish):
-	//   - unit="continuous" (Token-based analyzer):       token demand
-	//   - unit="binary"     (Percentage-based analyzer): 0.0 = no scale-up, 1.0 = scale-up
+	// The value is a token demand, carrying unit="continuous".
 	// Labels: variant_name, namespace, model_name, unit
 	WVARequiredCapacity = "wva_required_capacity"
 
@@ -311,10 +307,10 @@ const (
 	LabelLimiterEnabled     = "limiter_enabled"
 	LabelScaleToZeroEnabled = "scale_to_zero_enabled"
 	LabelQueryType          = "query_type"
-	// LabelUnit distinguishes the unit of a metric value when a single metric name
-	// carries values with different semantic units. Applied to wva_required_capacity
-	// and wva_spare_capacity, whose values are either a "binary" 0/1 signal (V1) or a
-	// "continuous" token magnitude (V2).
+	// LabelUnit names the unit of a metric value. Applied to
+	// wva_required_capacity and wva_spare_capacity, whose values are a
+	// "continuous" token magnitude. It is retained as a stable part of those
+	// series' identity so existing queries and alerts keep matching.
 	LabelUnit = "unit"
 )
 
@@ -328,9 +324,8 @@ const (
 	QueryTypeArrivalRate  = "arrival_rate"
 )
 
-// Values for the LabelUnit Prometheus label, describing how to interpret the
-// metric value ("binary" 0/1 vs. "continuous" absolute quantity).
+// Value for the LabelUnit Prometheus label: the metric carries an absolute
+// quantity rather than a normalized ratio.
 const (
-	UnitBinary     = "binary"
 	UnitContinuous = "continuous"
 )

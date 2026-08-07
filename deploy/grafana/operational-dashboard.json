@@ -973,7 +973,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Per-variant utilization ratio (0.0-1.0) from saturation analysis. V1 path: mean of per-replica KV-cache-usage fractions (matches the per-replica threshold V1 checks). V2 path: TotalDemand / TotalCapacity from the analyzer result. Numerically equivalent for uniform-capacity replicas; V2 is capacity-weighted for mixed-capacity cases. wva_saturation_utilization.",
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above — a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
       "fieldConfig": {
         "defaults": {
           "color": {

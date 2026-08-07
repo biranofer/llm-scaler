@@ -21,9 +21,8 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
-// runV2AnalysisOnly runs the V2 saturation analyzer and returns the raw AnalyzerResult
-// without building targets or converting to V1 types. The optimizer will handle
-// target building across all models.
+// runV2AnalysisOnly runs the saturation analyzer and returns the raw AnalyzerResult
+// without building targets. The optimizer handles target building across all models.
 func (e *Engine) runV2AnalysisOnly(
 	ctx context.Context,
 	modelID, namespace string,

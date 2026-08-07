@@ -275,11 +275,9 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		RetryBackoff: 100 * time.Millisecond,
 	})
 
-	// Register saturation queries in the metrics registry.
-	// Both V1 (percentage-based) and V2 (token-based) analyzers share the same
-	// base queries (kv_cache_usage, queue_length). V2-specific queries
-	// (cache_config_info, avg_output_tokens, etc.) are registered but unused
-	// when V1 is active — they're just query templates with no runtime cost.
+	// Register saturation queries in the metrics registry: the base queries
+	// (kv_cache_usage, queue_length) plus the token-based analyzer's own
+	// (cache_config_info, avg_output_tokens, etc.).
 	registration.RegisterSaturationQueries(metricsRegistry)
 
 	// Register scale-to-zero queries in the metrics registry
@@ -1067,7 +1065,7 @@ func scaleToZeroSupportedForEngines(scaleTargets map[string]scaletarget.ScaleTar
 //
 // Decisions are mutated in place; returns true if the model was scaled to zero.
 //
-// All three optimize paths (V1, V2, queueing-model) funnel their enforcement through
+// Both optimize paths (saturation, queueing-model) funnel their enforcement through
 // this one method so the gate lives in a single place — a caller cannot accidentally
 // invoke the enforcer ungated, and one test (engine_scale_to_zero_enforce_test.go)
 // locks the gate down for every path.
@@ -1176,7 +1174,7 @@ func variantNames(states []domain.VariantReplicaState) []string {
 	return names
 }
 
-// modelData holds the pre-processed data for a model, shared between V1 and V2 paths.
+// modelData holds the pre-processed data for a model, shared across optimize paths.
 type modelData struct {
 	modelID             string
 	namespace           string
@@ -1190,8 +1188,7 @@ type modelData struct {
 }
 
 // prepareModelData collects metrics and builds lookup maps for a model's VAs.
-// This is shared by both V1 and V2 paths.
-// Also shared by the Queueing Model Analyzer engine.
+// This is shared by the saturation path and the Queueing Model Analyzer engine.
 // Returns nil modelData (not error) when no metrics are available — caller should skip the model.
 func (e *Engine) prepareModelData(
 	ctx context.Context,

@@ -16,8 +16,7 @@ import (
 
 // SaturationAnalyzer implements the domain.Analyzer interface using a
 // token-based capacity model with memory-bound (k1) and compute-bound (k2)
-// constraints. It replaces the V1 percentage-based analyzer when
-// analyzerName is set to "saturation".
+// constraints. It is the sole saturation analysis path.
 type SaturationAnalyzer struct {
 	// mu protects computeCapacityHistory from concurrent access.
 	mu sync.Mutex

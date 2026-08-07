@@ -9,7 +9,7 @@ The Workload Variant Autoscaler supports saturation-based scaling using KV cache
 - ✅ **Efficient caching** with single read on startup (zero API calls during reconciliation)
 - ✅ **Automatic reload** via ConfigMap watch (immediate response to changes)
 - ✅ **Thread-safe** concurrent access with RWMutex
-- ✅ Graceful degradation if ConfigMap missing (V2 has hardcoded defaults; V1 requires ConfigMap — see [Default Configuration](#default-configuration))
+- ✅ Graceful degradation if ConfigMap missing (the analyzer has hardcoded defaults — see [Default Configuration](#default-configuration))
 
 ## Analyzer Selection
 
@@ -55,8 +55,8 @@ analyzers:
   `parameters`). Unknown keys are tolerated (forward-compatible); a wrongly-typed
   known key fails validation and the entry is skipped.
 
-**Opting out to V1 is unchanged:** delete the `analyzers:` section (and don't set
-`analyzerName: saturation`) — see [Analyzer Selection](#analyzer-selection-v1-vs-v2).
+There is nothing to opt out to: the token/capacity-based analyzer runs whether or
+not `analyzers:` is set — see [Analyzer Selection](#analyzer-selection).
 
 ### `scaleToZero`
 
@@ -133,7 +133,7 @@ These parameters apply when `analyzerName: "saturation"` is set or when the `ana
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `analyzerName` | string | Legacy selector for the V2 token-based analyzer: set to `"saturation"`. Empty string uses V1. Prefer the `analyzers:` list, which the shipped default uses. | `""` |
+| `analyzerName` | string | Legacy selector, retained for backward compatibility: `"saturation"` names the token-based analyzer, which also runs when the field is empty. Prefer the `analyzers:` list, which the shipped default uses. | `""` |
 | `priority` | float64 | Multiplier for this model's scaling urgency in fair-share GPU allocation | 1.0 |
 | `analyzers` | list | Multi-analyzer pipeline registration — see [Multi-Analyzer Registration](#multi-analyzer-registration) | `[{name: "saturation", score: 1.0}]` |
 
@@ -148,28 +148,18 @@ the `analyzers:` list:
 analyzers:
   - name: saturation
     score: 1.0
-# V2-only thresholds:
+# Scaling band:
 scaleUpThreshold: 0.85
 scaleDownBoundary: 0.70
-# Shared by V1 and V2:
-kvCacheThreshold: 0.80
-queueLengthThreshold: 5
-# V1-only (ignored by V2):
-```
-
-To opt out to the legacy **V1** (percentage-based) analyzer, remove the `analyzers:`
-section (and the V2-only thresholds); the remaining shared + V1-only thresholds drive V1:
-
-```yaml
+# Capacity sizing:
 kvCacheThreshold: 0.80
 queueLengthThreshold: 5
 ```
 
-> **Important:** The V1 threshold values are **not hardcoded** in the analyzer code.
-> If you opt out to V1 and the ConfigMap is missing or has no `default` entry, all V1
-> thresholds default to zero, which will cause every replica to appear saturated and
-> trigger continuous scale-up. Always deploy the ConfigMap with a `default` entry
-> containing valid thresholds. (V2 has hardcoded fallbacks for its own thresholds.)
+Every field has a hardcoded default, so a missing ConfigMap (or a missing
+`default` entry) degrades gracefully rather than pinning the analyzer at zero
+thresholds. Deploying the ConfigMap with a `default` entry is still recommended
+so the values are explicit and reviewable.
 
 ## Multi-Analyzer Registration
 
@@ -225,9 +215,10 @@ analyzers:
 ```
 
 When `analyzers:` is omitted **and** `analyzerName: "saturation"` is set, the list
-defaults to `[{name: "saturation", score: 1.0}]`. When both are omitted, no analyzer
-is selected and the engine falls back to V1 (see
-[Analyzer Selection](#analyzer-selection-v1-vs-v2)).
+defaults to `[{name: "saturation", score: 1.0}]`. When both are omitted the
+token-based analyzer still runs (see [Analyzer Selection](#analyzer-selection));
+the list is simply left empty, which also leaves the scaling band to be defaulted
+post-merge.
 
 ### AnalyzerScoreConfig Fields
 
@@ -567,9 +558,9 @@ kubectl logs -n production deployment/gaie-granite-13b-epp | grep -i "saturation
 
 ### 1. Using Default Configuration
 
-> **Warning:** For the V1 (percentage-based) analyzer, deploying without a ConfigMap will
-> result in zero-valued thresholds, causing all replicas to be marked as saturated.
-> Always deploy the ConfigMap with a `default` entry for V1.
+Deploying without a ConfigMap is safe — the analyzer falls back to its hardcoded
+defaults. Shipping a `default` entry is still recommended so the thresholds are
+explicit and reviewable.
 
 If the ConfigMap is missing, the system will log a warning:
 ```
@@ -578,9 +569,10 @@ WARN Saturation scaling ConfigMap not found
 
 ### 2. Customizing Global Defaults
 
-Edit `deploy/configmap-saturation-scaling.yaml`. Keep the `analyzers:` section to
-stay on the default **V2** analyzer — a `default` entry **without** it selects the
-legacy V1 analyzer (see [Analyzer Selection](#analyzer-selection-v1-vs-v2)):
+Edit `deploy/configmap-saturation-scaling.yaml`. Keeping the `analyzers:` section
+is recommended: it states the analyzer and its score explicitly, and it makes the
+entry V2-shaped so the scaling band is defaulted on the entry itself (see
+[Analyzer Selection](#analyzer-selection)):
 
 ```yaml
 apiVersion: v1
@@ -593,10 +585,10 @@ data:
     analyzers:
       - name: saturation
         score: 1.0
-    scaleUpThreshold: 0.85      # V2-only
-    scaleDownBoundary: 0.70     # V2-only
-    kvCacheThreshold: 0.75      # shared by V1 and V2
-    queueLengthThreshold: 10    # shared by V1 and V2
+    scaleUpThreshold: 0.85      # scaling band
+    scaleDownBoundary: 0.70     # scaling band
+    kvCacheThreshold: 0.75      # capacity sizing
+    queueLengthThreshold: 10    # capacity sizing
 ```
 
 Apply the ConfigMap:
@@ -788,8 +780,8 @@ WARN Invalid saturation scaling config entry, skipping key=my-config error=...
 WARN No 'default' entry in saturation scaling ConfigMap, using hardcoded defaults
 ```
 
-**Solution:** Add a `default` entry to the ConfigMap (keep the `analyzers:` section
-to stay on the default V2 analyzer; omitting it selects legacy V1):
+**Solution:** Add a `default` entry to the ConfigMap (keeping the `analyzers:`
+section states the analyzer explicitly):
 ```yaml
 data:
   default: |
@@ -852,7 +844,7 @@ data:
 WARN Failed to load initial saturation scaling config, will use defaults
 ```
 
-**Solution:** This is non-fatal. The controller continues with zero-valued V1 thresholds (V2 has hardcoded defaults). To fix:
+**Solution:** This is non-fatal. The controller continues with the analyzer's hardcoded defaults. To fix:
 
 1. Deploy the ConfigMap:
    ```bash
@@ -957,7 +949,7 @@ schema. See [ScalingPolicy Schema (Phase 1)](#scalingpolicy-schema-phase-1).
 
 **Methods:**
 - `Normalize() error` - Folds each analyzer's `parameters` into the typed fields; call at parse time before `ApplyDefaults()`/`Validate()`
-- `ApplyDefaults()` - Fills in zero-valued V2 fields with their defaults and seeds the `Analyzers` list when empty (V1 fields have no hardcoded defaults)
+- `ApplyDefaults()` - Fills in zero-valued fields with their defaults and seeds the `Analyzers` list when empty; the scaling band is defaulted only for V2-shaped entries, so a partial override cannot clobber a tuned global during `Merge()`
 - `Validate() error` - Validates configuration values (thresholds in range, consistency checks, per-analyzer overrides, analyzer/limiter types)
 - `EffectiveType()` (on `AnalyzerScoreConfig`) - Returns `Type`, or `Name` when `Type` is empty
 
@@ -984,7 +976,6 @@ The caching mechanism uses the following components:
 
 **Graceful Degradation:**
 - Controller starts successfully even if ConfigMap missing
-- V2 analyzer uses hardcoded defaults (`scaleUpThreshold: 0.85`, `scaleDownBoundary: 0.70`)
-- V1 analyzer has **no hardcoded defaults** — all thresholds will be zero without ConfigMap
+- The analyzer uses hardcoded defaults (`scaleUpThreshold: 0.85`, `scaleDownBoundary: 0.70`)
 - Automatically loads config once ConfigMap becomes available
 

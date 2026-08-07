@@ -460,7 +460,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 
 ### `wva_saturation_utilization`
 - **Type**: Gauge
-- **Description**: Per-variant utilization ratio from saturation analysis. V1 path: mean of per-replica KV-cache-usage fractions, bounded 0.0-1.0 (matches the per-replica threshold V1 checks). V2 path: TotalDemand / TotalCapacity from the analyzer result — **unbounded above**, where > 1.0 means demand exceeds supply. Numerically equivalent for uniform-capacity replicas; V2 is capacity-weighted for mixed-capacity cases.
+- **Description**: Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result — **unbounded above**, where > 1.0 means demand exceeds supply. The value is capacity-weighted, so it stays correct for mixed-capacity replicas.
 - **Labels**:
   - `variant_name`: Name of the variant
   - `namespace`: Kubernetes namespace
@@ -705,7 +705,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 
 ### `wva_optimizer_active`
 - **Type**: Gauge
-- **Description**: Indicates which optimizer is currently active. Value is 1 for the active optimizer and 0 for inactive optimizers. Only one optimizer should be active at a time. If the label `optimizer_name` is not in the metric, this means V1 saturation optimizer is currently active.
+- **Description**: Indicates which optimizer is currently active. Value is 1 for the active optimizer and 0 for inactive optimizers. Only one optimizer should be active at a time.
 - **Labels**:
   - `optimizer_name`: Name of the optimizer
 - **Use Case**: Track which optimization strategy is currently in use for scaling decisions
@@ -916,15 +916,16 @@ wva_saturation_utilization
 # KV cache utilization percentage
 (wva_kv_cache_tokens_used / wva_kv_cache_tokens_total) * 100
 
-# Variants requiring scale-up (V1 binary signal)
-wva_required_capacity{unit="binary"} > 0
+# Variants requiring scale-up (token deficit)
+wva_required_capacity{unit="continuous"} > 0
 
-# High utilization — scale-up likely (V1 and V2)
+# High utilization — scale-up likely
 wva_saturation_utilization > 0.85
 
-# Low spare capacity, V1 fractional signal only.
-# On V2 wva_spare_capacity is an absolute token count, not a 0-1 ratio — use utilization above.
-wva_spare_capacity{unit=""} < 0.2
+# Little scale-down headroom left. wva_spare_capacity is an absolute token
+# count, not a 0-1 ratio, so compare it against the utilization above rather
+# than a fixed fraction.
+wva_spare_capacity{unit="continuous"} == 0
 
 # Models processed over time
 wva_models_processed

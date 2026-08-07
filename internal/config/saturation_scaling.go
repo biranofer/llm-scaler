@@ -323,10 +323,9 @@ func (c *SaturationScalingConfig) ApplyDefaults() {
 // ApplyV2ThresholdDefaults fills zero-valued V2 thresholds (ScaleUpThreshold,
 // ScaleDownBoundary) with their defaults regardless of IsV2(). Call this only on a
 // FINAL resolved config (after base + override Merge), never on an individual stored
-// entry: analyzer selection is global, so a V1-style per-model/namespace entry may run
-// on the V2 path and must be calibrated — but defaulting these fields on the stored
-// entry would clobber a tuned global threshold during Merge(). Inert on the V1 path,
-// which never reads these fields.
+// entry: a partial per-model/namespace entry that omits the band must still be
+// calibrated once merged — but defaulting these fields on the stored entry would
+// clobber a tuned global threshold during Merge().
 func (c *SaturationScalingConfig) ApplyV2ThresholdDefaults() {
 	if c.ScaleUpThreshold == 0 {
 		c.ScaleUpThreshold = DefaultScaleUpThreshold
@@ -393,9 +392,9 @@ func (c *SaturationScalingConfig) Validate() error {
 	}
 
 	// V2 threshold range/consistency checks apply whenever the fields are set,
-	// regardless of IsV2(): analyzer selection is global, so a V1-style per-model or
-	// namespace entry's explicit scaleUpThreshold/scaleDownBoundary can still be
-	// merged onto the V2 default and consumed on the V2 path. Zero means "unset"
+	// regardless of IsV2(): a partial per-model or namespace entry's explicit
+	// scaleUpThreshold/scaleDownBoundary can still be merged onto the default and
+	// consumed by the analyzer. Zero means "unset"
 	// (defaulted elsewhere), so it is skipped here.
 	if c.ScaleUpThreshold != 0 && (c.ScaleUpThreshold < 0 || c.ScaleUpThreshold > 1) {
 		return fmt.Errorf("scaleUpThreshold must be in (0, 1], got %.2f", c.ScaleUpThreshold)
@@ -412,7 +411,7 @@ func (c *SaturationScalingConfig) Validate() error {
 		// A V2 config must have its thresholds set — ApplyDefaults fills them, so a
 		// zero here means the caller skipped ApplyDefaults, which is invalid. (The
 		// upper-bound and relational checks are handled by the non-zero global checks
-		// above; V1-style entries are only range-checked there when non-zero.)
+		// above; partial entries are only range-checked there when non-zero.)
 		if c.ScaleUpThreshold <= 0 {
 			return fmt.Errorf("scaleUpThreshold must be in (0, 1], got %.2f", c.ScaleUpThreshold)
 		}
