@@ -28,7 +28,12 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 
 	// KV cache usage per instance (peak over last minute)
 	// Uses max_over_time to catch saturation events between scrapes
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Preserves instance (IP:port, which distinguishes DP ranks sharing a pod), pod (for the
+	// ownerReference walk), and llm_d_ai_variant. That last label is NOT emitted by vLLM or
+	// SGLang: it exists only where an operator relabels the llm-d.ai/variant pod label onto
+	// the series, so it is normally empty and the collector resolves the variant via
+	// PodLocator instead. It stays in the grouping because shadow-pod layouts, where the
+	// ownerReference walk cannot reach the scaler, have no other linkage.
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryKvCacheUsage,
 		Type:        source.QueryTypePromQL,
@@ -39,7 +44,7 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 
 	// Queue length per instance (peak over last minute)
 	// Uses max_over_time to catch burst traffic
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryQueueLength,
 		Type:        source.QueryTypePromQL,
@@ -73,7 +78,7 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 
 	// Average output (generation) tokens per completed request
 	// Used for output-length-dependent k2 estimation
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryAvgOutputTokens,
 		Type:        source.QueryTypePromQL,
@@ -84,7 +89,7 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 
 	// Average input (prompt) tokens per completed request
 	// Used in k2 derivation formula: k2 = N_max × (I + O/2)
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryAvgInputTokens,
 		Type:        source.QueryTypePromQL,
@@ -96,7 +101,7 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	// Prefix cache hit rate per instance (5m rate)
 	// Used to reduce estimated input token demand for scheduler-queued requests.
 	// Returns 0..1 where 1 means all prefix lookups were cache hits.
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Grouping key: see the llm_d_ai_variant note on the kv_cache_usage query above
 	registry.MustRegister(source.QueryTemplate{
 		Name:        QueryPrefixCacheHitRate,
 		Type:        source.QueryTypePromQL,

@@ -46,7 +46,12 @@ func RegisterQueueingModelQueries(sourceRegistry *source.SourceRegistry) {
 	// Average inter-token latency per instance (seconds).
 	// Uses histogram rate(sum[1m]) / rate(count[1m]) over a 1m sliding window.
 	// Used by queueing model tuner as the observed ITL for Kalman filter updates.
-	// Preserves instance (IP:port for multi-instance pods), pod (for pod lookup), and llm_d_ai_variant (for direct pod-to-VA mapping)
+	// Preserves instance (IP:port, which distinguishes DP ranks sharing a pod), pod (for the
+	// ownerReference walk), and llm_d_ai_variant. That last label is NOT emitted by vLLM or
+	// SGLang: it exists only where an operator relabels the llm-d.ai/variant pod label onto
+	// the series, so it is normally empty and the collector resolves the variant via
+	// PodLocator instead. It stays in the grouping because shadow-pod layouts, where the
+	// ownerReference walk cannot reach the scaler, have no other linkage.
 	registry.MustRegister(source.QueryTemplate{
 		Name:     QueryAvgITL,
 		Type:     source.QueryTypePromQL,

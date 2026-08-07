@@ -159,6 +159,25 @@ values appear under the same pod label. `max` collapses them. Since duplicates c
 value, `max = avg` — the choice has no effect on correctness. This follows the convention used
 by every other per-pod query in this codebase.
 
+**`llm_d_ai_variant` is usually absent.** It appears in the grouping clause of every per-pod
+query in this codebase, but it is not a label vLLM or SGLang emit. It exists only when the
+operator has configured a `ServiceMonitor`/`PodMonitor` relabel that copies the pod label
+`llm-d.ai/variant` onto the scraped series — a WVA operator contract, not something llm-d
+stamps. In this repo only the simulator samples under `config/samples/simulator/` set it up.
+
+Grouping by a label that is not present is harmless in PromQL: every series simply carries an
+empty value for it, and the `(instance, pod)` pair already identifies an engine instance
+uniquely. What changes is how the collector attributes a series to a variant. With the label,
+`buildInstanceKey` reads the variant name straight off the series. Without it, the collector
+falls back to `PodLocator`, which walks the pod's `ownerReferences` up to the managed
+HPA/ScaledObject — a cached Kubernetes lookup per instance rather than a free label read.
+
+The label therefore cannot be removed from these queries, even though it is normally empty:
+for *shadow-pod* layouts — where the vLLM pod is not in the scaled target's `ownerReferences`
+chain — the ownerReference walk cannot work, and the label is the only linkage available. See
+"Prerequisites" in `docs/design/controller-behavior.md`. Pods that resolve by neither route are
+counted by `wva_pod_mapping_miss_total`.
+
 ---
 
 #### QueryRequestRate (`request_rate`)
