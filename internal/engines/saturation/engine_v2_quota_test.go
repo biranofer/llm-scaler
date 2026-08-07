@@ -66,7 +66,7 @@ var _ = Describe("gpuConstraintProviders", func() {
 			Name: name, Type: "quota", Scope: config.QuotaScopeCluster,
 			ClusterQuotas: map[string]int{"A100": 4},
 		})
-		return pipeline.NewDefaultLimiter(name, inv, pipeline.NewGreedyBySaturation())
+		return pipeline.NewDefaultLimiter(name, inv)
 	}
 
 	It("returns a DefaultLimiter (ConstraintProvider) as its own single provider", func() {

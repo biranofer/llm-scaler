@@ -7,7 +7,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
@@ -30,10 +29,6 @@ func (s *selectInventory) Refresh(context.Context) error {
 }
 
 func (s *selectInventory) SetUsed(map[string]int) {}
-
-func (s *selectInventory) CreateAllocator(context.Context) pipeline.ResourceAllocator {
-	return nil
-}
 
 func (s *selectInventory) GetResourcePools() map[string]pipeline.ResourcePool {
 	return s.pools
@@ -61,14 +56,11 @@ func (s *selectInventory) TotalAvailable() int {
 	return t
 }
 
-// selectLimiter is a pipeline.Limiter that is NOT the inventory-backed
-// DefaultLimiter, used to exercise the "limiter cannot be queried" branch.
+// selectLimiter is a pipeline.Limiter that is NOT a ConstraintProvider, used to
+// exercise the "limiter cannot be queried" branch.
 type selectLimiter struct{}
 
 func (selectLimiter) Name() string { return "select-limiter" }
-func (selectLimiter) Limit(context.Context, []*domain.VariantDecision) error {
-	return nil
-}
 
 var _ = Describe("selectV2Optimizer", func() {
 	var ctx context.Context
@@ -77,8 +69,7 @@ var _ = Describe("selectV2Optimizer", func() {
 
 	newInventoryLimiter := func(refreshErr error, pools map[string]pipeline.ResourcePool) *pipeline.DefaultLimiter {
 		return pipeline.NewDefaultLimiter("gpu-limiter",
-			&selectInventory{refreshErr: refreshErr, pools: pools},
-			pipeline.NewGreedyBySaturation())
+			&selectInventory{refreshErr: refreshErr, pools: pools})
 	}
 
 	It("falls back to the cost-aware (unlimited) optimizer when inventory refresh fails", func() {
@@ -136,7 +127,7 @@ var _ = Describe("selectV2Optimizer", func() {
 		inv := &selectInventory{refreshErr: errors.New("must not be called")}
 		e := &Engine{
 			optimizer:  pipeline.NewCostAwareOptimizer(),
-			GPULimiter: pipeline.NewDefaultLimiter("gpu-limiter", inv, pipeline.NewGreedyBySaturation()),
+			GPULimiter: pipeline.NewDefaultLimiter("gpu-limiter", inv),
 		}
 		opt, constraints := e.selectV2Optimizer(ctx, nil)
 		Expect(opt.Name()).To(Equal("cost-aware"))

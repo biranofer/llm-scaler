@@ -6,13 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	ctrl "sigs.k8s.io/controller-runtime"
-
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 )
 
 // TypeInventory tracks GPU capacity, usage, and availability per accelerator type (H100, A100, etc.).
@@ -118,7 +113,7 @@ func (i *TypeInventory) RefreshAll(ctx context.Context) error {
 // This aggregates GPU capacity across all nodes for each accelerator type.
 // Accelerator names are normalized from full model names (e.g., "NVIDIA-A100-PCIE-80GB")
 // to short names (e.g., "A100") to match VA label conventions.
-// Should be called before CreateAllocator to ensure fresh data.
+// Should be called before reading pools to ensure fresh data.
 // Note: This only updates limits; call SetUsed or RefreshAll to update usage.
 func (i *TypeInventory) Refresh(ctx context.Context) error {
 	// Discover node -> accelerator type -> count
@@ -150,7 +145,7 @@ func (i *TypeInventory) Refresh(ctx context.Context) error {
 }
 
 // SetUsed updates the used GPU counts per accelerator type.
-// This should be called with current usage (e.g., from replica counts) before creating an allocator.
+// This should be called with current usage (e.g., from replica counts) before reading pools.
 func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -163,34 +158,6 @@ func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 		total += count
 	}
 	i.totalUsed = total
-}
-
-// CreateAllocator returns a ResourceAllocator that allocates from type-specific pools.
-//
-// The returned allocator ensures that allocations for a given accelerator type
-// only consume GPUs from that type's pool.
-// Available GPUs = Limit - Used for each accelerator type.
-func (i *TypeInventory) CreateAllocator(ctx context.Context) ResourceAllocator {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-
-	// Compute available = limit - used for each type
-	remaining := make(map[string]int, len(i.limitByType))
-	total := 0
-	for accType, limit := range i.limitByType {
-		used := i.usedByType[accType]
-		available := limit - used
-		if available < 0 {
-			available = 0 // Don't go negative if over-allocated
-		}
-		remaining[accType] = available
-		total += available
-	}
-
-	return &typeAllocator{
-		remainingByType: remaining,
-		totalRemaining:  total,
-	}
 }
 
 // TotalLimit returns total GPU capacity across all types.
@@ -271,86 +238,5 @@ func (i *TypeInventory) AcceleratorTypes() []string {
 	return types
 }
 
-// typeAllocator implements ResourceAllocator with per-type tracking.
-//
-// This allocator is NOT thread-safe and must not be shared across goroutines.
-// Create a new allocator per scaling decision batch using TypeInventory.CreateAllocator().
-//
-// This allocator ensures that:
-// - Each accelerator type has its own independent pool
-// - Allocations are tracked per-type
-// - Cross-type allocation is prevented
-type typeAllocator struct {
-	remainingByType map[string]int
-	totalRemaining  int
-}
-
-// TryAllocate attempts to allocate GPUs from the type-specific pool.
-//
-// The accelerator type is determined from the decision's AcceleratorName field.
-// Returns the actual GPUs allocated (may be less than requested if the type's
-// pool is exhausted).
-func (a *typeAllocator) TryAllocate(ctx context.Context, decision *domain.VariantDecision, gpusRequested int) (int, error) {
-	if gpusRequested <= 0 {
-		return 0, nil
-	}
-
-	accType := decision.AcceleratorName
-	if !constants.IsAcceleratorResolved(accType) {
-		// Normally resolved by DefaultLimiter.resolveUnknownAccelerators before
-		// reaching here. This is a safety net for direct callers.
-		if len(a.remainingByType) == 1 {
-			for resolvedType := range a.remainingByType {
-				decision.AcceleratorName = resolvedType
-				accType = resolvedType
-			}
-		} else {
-			// Heterogeneous cluster — can't determine which pool to debit.
-			// Note: #995 proposed "treat as unlimited (return all requested GPUs)"
-			// but that allows the same physical GPUs to be double-allocated: once
-			// here for the unresolved decision, and again from a typed pool for a
-			// subsequent known-type decision. Returning 0 is safer — the variant
-			// keeps its current replicas without over-allocating. Operator must
-			// set nodeSelector or the VA label for scaling in mixed-GPU clusters.
-			ctrl.LoggerFrom(ctx).WithName("typeAllocator").V(logging.DEBUG).Info(
-				"Skipping allocation: accelerator unresolved in heterogeneous cluster — operator must set nodeSelector or VA label",
-				"variant", decision.VariantName,
-				"namespace", decision.Namespace,
-				"availableTypes", len(a.remainingByType),
-				"gpusRequested", gpusRequested)
-			return 0, nil
-		}
-	}
-
-	available := a.remainingByType[accType]
-	if available <= 0 {
-		return 0, nil // No GPUs available for this type
-	}
-
-	// Allocate up to what's available
-	allocated := gpusRequested
-	if allocated > available {
-		allocated = available
-	}
-
-	a.remainingByType[accType] -= allocated
-	a.totalRemaining -= allocated
-
-	return allocated, nil
-}
-
-// Remaining returns total remaining GPUs across all types.
-func (a *typeAllocator) Remaining() int {
-	return a.totalRemaining
-}
-
-// RemainingForType returns remaining GPUs for a specific accelerator type.
-func (a *typeAllocator) RemainingForType(accType string) int {
-	return a.remainingByType[accType]
-}
-
 // Ensure TypeInventory implements Inventory interface
 var _ Inventory = (*TypeInventory)(nil)
-
-// Ensure typeAllocator implements ResourceAllocator interface
-var _ ResourceAllocator = (*typeAllocator)(nil)

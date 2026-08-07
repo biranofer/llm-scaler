@@ -5,8 +5,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
 // namespaceAwareMockInventory extends mockInventory with SetUsedByNamespace
@@ -44,69 +42,30 @@ func (m *namespaceAwareMockInventory) NamespaceResourcePools(activeNamespaces []
 var _ NamespaceAwareInventory = (*namespaceAwareMockInventory)(nil)
 
 var _ = Describe("DefaultLimiter namespace-aware feature detection", func() {
-	var (
-		ctx       context.Context
-		algorithm *mockAlgorithm
-	)
+	var ctx context.Context
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		algorithm = &mockAlgorithm{name: "noop"}
-	})
-
-	It("calls SetUsedByNamespace on inventories that implement NamespaceAwareInventory", func() {
-		inv := newNamespaceAwareMockInventory(map[string]int{"H100": 100})
-		limiter := NewDefaultLimiter("test", inv, algorithm)
-
-		decisions := []*domain.VariantDecision{
-			{VariantName: "v1", Namespace: "team-a", AcceleratorName: "H100", CurrentReplicas: 2, GPUsPerReplica: 4},
-			{VariantName: "v2", Namespace: "team-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 2},
-			{VariantName: "v3", Namespace: "team-b", AcceleratorName: "A100", CurrentReplicas: 3, GPUsPerReplica: 1},
-		}
-		Expect(limiter.Limit(ctx, decisions)).To(Succeed())
-
-		Expect(inv.setUsedByNamespaceCalls).To(Equal(1))
-		Expect(inv.usedByNS).To(HaveKey("team-a"))
-		Expect(inv.usedByNS["team-a"]).To(HaveKeyWithValue("H100", 10), "2*4 + 1*2 = 10")
-		Expect(inv.usedByNS).To(HaveKey("team-b"))
-		Expect(inv.usedByNS["team-b"]).To(HaveKeyWithValue("A100", 3), "3*1 = 3")
-	})
-
-	It("skips decisions with empty namespace or accelerator in the namespace bucketing", func() {
-		// Heterogeneous inventory (>1 type) so resolveUnknownAccelerators cannot
-		// auto-resolve the empty-accelerator decision to a single type — it stays
-		// unresolved and must be skipped by the namespace bucketing.
-		inv := newNamespaceAwareMockInventory(map[string]int{"H100": 100, "A100": 100})
-		limiter := NewDefaultLimiter("test", inv, algorithm)
-
-		decisions := []*domain.VariantDecision{
-			{Namespace: "team-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
-			{Namespace: "", AcceleratorName: "H100", CurrentReplicas: 99, GPUsPerReplica: 99},   // skipped (empty ns)
-			{Namespace: "team-a", AcceleratorName: "", CurrentReplicas: 99, GPUsPerReplica: 99}, // skipped (empty type, unresolvable)
-		}
-		Expect(limiter.Limit(ctx, decisions)).To(Succeed())
-
-		Expect(inv.usedByNS).To(HaveLen(1))
-		Expect(inv.usedByNS["team-a"]).To(HaveKeyWithValue("H100", 1))
 	})
 
 	It("does NOT call SetUsedByNamespace on plain Inventory implementations", func() {
-		// The existing mockInventory does not implement NamespaceAwareInventory.
+		// The existing mockInventory does not implement NamespaceAwareInventory,
+		// so ComputeConstraints must fall through to the per-type path only.
 		inv := newMockInventory("plain", map[string]int{"H100": 100})
-		limiter := NewDefaultLimiter("test", inv, algorithm)
+		limiter := NewDefaultLimiter("test", inv)
 
-		decisions := []*domain.VariantDecision{
-			{Namespace: "team-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
-		}
-		Expect(limiter.Limit(ctx, decisions)).To(Succeed())
-		// usedByType is still populated by SetUsed (verified indirectly by inv.TotalUsed).
-		Expect(inv.TotalUsed()).To(Equal(1))
+		rc, err := limiter.ComputeConstraints(ctx,
+			map[string]int{"H100": 1},
+			map[string]map[string]int{"team-a": {"H100": 1}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rc.NamespacePools).To(BeNil(), "a plain inventory carries no namespace dimension")
+		Expect(rc.Pools).To(HaveKeyWithValue("H100", ResourcePool{Limit: 100, Used: 1}))
 	})
 
 	It("ComputeConstraints feeds namespace usage and exposes NamespacePools", func() {
 		inv := newNamespaceAwareMockInventory(map[string]int{"H100": 10})
 		inv.nsPools = map[string]map[string]ResourcePool{"team-a": {"H100": {Limit: 4, Used: 1}}}
-		limiter := NewDefaultLimiter("test", inv, algorithm)
+		limiter := NewDefaultLimiter("test", inv)
 
 		rc, err := limiter.ComputeConstraints(ctx,
 			map[string]int{"H100": 3},
@@ -123,7 +82,7 @@ var _ = Describe("DefaultLimiter namespace-aware feature detection", func() {
 		// team-a has current usage; team-b must NOT be queried/materialized.
 		inv := newNamespaceAwareMockInventory(map[string]int{"H100": 10})
 		inv.nsPools = map[string]map[string]ResourcePool{"team-a": {"H100": {Limit: 4}}}
-		limiter := NewDefaultLimiter("test", inv, algorithm)
+		limiter := NewDefaultLimiter("test", inv)
 
 		_, err := limiter.ComputeConstraints(ctx,
 			map[string]int{"H100": 1},
@@ -143,7 +102,7 @@ var _ = Describe("DefaultLimiter namespace-aware feature detection", func() {
 			"team-a": {"H100": {Limit: 4, Used: 1}},
 			"team-z": {"H100": {Limit: 2, Used: 0}},
 		}
-		limiter := NewDefaultLimiter("test", inv, algorithm)
+		limiter := NewDefaultLimiter("test", inv)
 
 		rc, err := limiter.ComputeConstraints(ctx,
 			map[string]int{"H100": 1},
@@ -160,7 +119,7 @@ var _ = Describe("DefaultLimiter namespace-aware feature detection", func() {
 		// per-type GetResourcePools result and NamespacePools is nil.
 		inv := newNamespaceAwareMockInventory(map[string]int{"H100": 8})
 		inv.nsPools = nil // NamespaceResourcePools returns empty
-		limiter := NewDefaultLimiter("test", inv, algorithm)
+		limiter := NewDefaultLimiter("test", inv)
 
 		rc, err := limiter.ComputeConstraints(ctx,
 			map[string]int{"H100": 2},

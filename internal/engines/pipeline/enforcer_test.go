@@ -231,9 +231,9 @@ var _ = Describe("Enforcer", func() {
 					"test-model": {EnableScaleToZero: boolPtr(true), RetentionPeriod: "10m"},
 				}
 
-				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, scaleToZeroConfig, nil, "greedy-by-saturation")
+				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, scaleToZeroConfig, nil, "greedy-by-score")
 
-				Expect(decisions[0].Reason()).To(ContainSubstring("greedy-by-saturation"))
+				Expect(decisions[0].Reason()).To(ContainSubstring("greedy-by-score"))
 				Expect(decisions[0].Reason()).To(ContainSubstring("enforced"))
 			})
 		})

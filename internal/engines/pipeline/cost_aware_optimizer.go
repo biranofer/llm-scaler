@@ -250,9 +250,7 @@ func buildDecisionsWithOptimizer(
 	decisions := make([]domain.VariantDecision, 0, len(targets))
 	// satNamed carries the model-level RequiredCapacity/SpareCapacity computed by
 	// applyUniversalThreshold; per-variant Utilization is on each VariantCapacity.
-	// These feed the saturation gauges (utilization/required/spare). SpareCapacity is
-	// additionally an input to the GPU limiter's GreedyBySaturation ordering, so setting
-	// it here also makes that ordering reflect real spare tokens on V2 (it was 0 before).
+	// These feed the saturation gauges (utilization/required/spare).
 	satNamed := saturationNamedEntry(req.AnalyzerResults)
 	for name, target := range targets {
 		state := stateMap[name]

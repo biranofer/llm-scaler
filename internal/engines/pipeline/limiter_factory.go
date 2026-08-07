@@ -14,12 +14,12 @@ import (
 // Config.EffectiveLimiterMode — the inline limiters: list on the saturation
 // "default" config, or the LimiterTypeInventory default when none is declared.
 //
-//   - LimiterTypeInventory: TypeInventoryWithUsage + GreedyBySaturation wrapped
-//     in a DefaultLimiter. Discovers physical GPUs via the GPU operator.
+//   - LimiterTypeInventory: a TypeInventoryWithUsage wrapped in a DefaultLimiter.
+//     Discovers physical GPUs via the GPU operator.
 //   - LimiterTypeQuota: builds one DefaultLimiter per Config.EffectiveQuotaEntries
-//     entry, each wrapping a QuotaInventory. Multiple entries are wrapped in a
-//     CompositeLimiter that runs them sequentially. Pure operator-declared caps —
-//     physical capacity is NOT consulted.
+//     entry, each wrapping a QuotaInventory. Multiple entries are grouped in a
+//     CompositeLimiter, and the engine computes constraints from each. Pure
+//     operator-declared caps — physical capacity is NOT consulted.
 //
 // The kubeClient is only used by the inventory path (for GPU operator
 // discovery); the quota path ignores it. Inline limiter entries are validated at
@@ -38,19 +38,17 @@ func NewLimiterFromConfig(cfg *config.Config, kubeClient client.Client) (Limiter
 }
 
 // newInventoryLimiter builds the physical-capacity GPU limiter: a
-// TypeInventoryWithUsage (GPUs discovered via the GPU operator) driven by the
-// GreedyBySaturation algorithm, wrapped in a DefaultLimiter.
+// TypeInventoryWithUsage (GPUs discovered via the GPU operator) wrapped in a
+// DefaultLimiter.
 func newInventoryLimiter(kubeClient client.Client) Limiter {
 	gpuDiscovery := discovery.NewK8sWithGpuOperator(kubeClient)
 	gpuInventory := NewTypeInventoryWithUsage("cluster-gpu-inventory", gpuDiscovery)
-	gpuAlgorithm := NewGreedyBySaturation()
-	return NewDefaultLimiter("gpu-limiter", gpuInventory, gpuAlgorithm)
+	return NewDefaultLimiter("gpu-limiter", gpuInventory)
 }
 
-// newQuotaLimiter builds one DefaultLimiter per QuotaLimiterConfig entry.
-// Each wraps a QuotaInventory with GreedyBySaturation. When more than one
-// entry is configured, the result is wrapped in a CompositeLimiter so they
-// run in declaration order against the shared decisions slice.
+// newQuotaLimiter builds one DefaultLimiter per QuotaLimiterConfig entry, each
+// wrapping a QuotaInventory. When more than one entry is configured, the result
+// is grouped in a CompositeLimiter so every entry's constraints are consulted.
 func newQuotaLimiter(cfg *config.Config) (Limiter, error) {
 	entries := cfg.EffectiveQuotaEntries()
 	if len(entries) == 0 {
@@ -59,11 +57,7 @@ func newQuotaLimiter(cfg *config.Config) (Limiter, error) {
 	}
 	constituents := make([]Limiter, 0, len(entries))
 	for _, entry := range entries {
-		inv := NewQuotaInventory(entry)
-		// One algorithm instance per constituent — GreedyBySaturation is
-		// stateless today, but a per-limiter instance avoids a shared-state
-		// surprise if that ever changes.
-		constituents = append(constituents, NewDefaultLimiter(entry.Name, inv, NewGreedyBySaturation()))
+		constituents = append(constituents, NewDefaultLimiter(entry.Name, NewQuotaInventory(entry)))
 	}
 	if len(constituents) == 1 {
 		return constituents[0], nil

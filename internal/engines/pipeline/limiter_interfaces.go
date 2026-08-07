@@ -1,143 +1,52 @@
-// Limiter interfaces for resource limiting algorithms.
+// Limiter interfaces for resource constraint discovery.
 //
 // # Design Rationale
 //
-// The limiter interfaces separate two orthogonal concerns:
+// Limiters supply CONSTRAINTS ONLY. They discover what resources exist and what
+// caps apply to them; they never decide how those resources are distributed.
+// Distribution is the optimizer's job, and it reads the constraints through
+// ConstraintProvider:
 //
-//  1. Inventory (Granularity): How resources are tracked and what constraints apply.
-//     Examples: cluster-wide pool, per-accelerator-type limits, node-level with scheduling.
+//   - ConstraintProvider: "Here are the limits" (hard facts)
+//   - ScalingOptimizer: "Here's what to do given those limits" (decision logic)
 //
-//  2. AllocationAlgorithm (Strategy): How resources are distributed across decisions.
-//     Examples: greedy by saturation, round-robin, priority-based, weighted fair share.
-//
-// This separation enables:
-//   - Algorithms work with ANY inventory - they don't care if resources are tracked
-//     at cluster, type, or node level
-//   - Inventories work with ANY algorithm - the distribution strategy is independent
-//   - Easy testing: algorithms can be tested with mock allocators
-//   - Runtime flexibility: swap algorithms via configuration without code changes
+// The split keeps a single decision-maker. An earlier design also let limiters
+// mutate decisions in place through an allocation algorithm; that half has been
+// removed, so a limiter can no longer contradict — or silently pre-empt — the
+// optimizer's allocation.
 //
 // # Interface Hierarchy
 //
-//	Limiter (public API)
+//	Limiter (the configured limiter slot; see NewLimiterFromConfig)
 //	   │
-//	   ├── Inventory (resource granularity)
-//	   │      └── creates ResourceAllocator
+//	   ├── Inventory (resource granularity: cluster pool, per-type, per-node)
 //	   │
-//	   └── AllocationAlgorithm (distribution strategy)
-//	          └── uses ResourceAllocator
+//	   └── ConstraintProvider (what the optimizer consumes)
 //
-// Users typically only interact with Limiter. The internal interfaces (Inventory,
-// AllocationAlgorithm, ResourceAllocator) are exposed for extensibility - custom
-// implementations can be plugged in without modifying the package.
-//
-// # Pipeline Model
-//
-// The limiter operates on VariantDecision as shared state. Following the pipeline
-// pattern, each stage reads and modifies the decision:
-//   - Input: VariantDecision with TargetReplicas set by previous stage (e.g., saturation analyzer)
-//   - Processing: Limiter may constrain TargetReplicas based on available resources
-//   - Output: Same VariantDecision with updated TargetReplicas, GPUsAllocated, WasLimited, etc.
-//
-// Each stage adds its contribution to DecisionSteps for observability.
+// DefaultLimiter implements all three: it wraps an Inventory and exposes its
+// availability as ResourceConstraints.
 //
 // The Inventory interface here is separate from collector's inventory because:
 //   - Collector inventory: knows how to collect metrics, track staleness, emit events
-//   - Limiter inventory: knows resource availability for allocation decisions
+//   - Limiter inventory: knows resource availability for scaling decisions
 //   - Different responsibilities, different lifecycles
 package pipeline
 
 import (
 	"context"
-
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
-// Limiter constrains scaling decisions based on resource availability.
+// Limiter is the configured limiter slot: whatever NewLimiterFromConfig built
+// for this deployment, held by the engine and handed to the optimizer path.
 //
-// This is the primary interface users interact with. It combines an Inventory
-// (resource granularity) with an AllocationAlgorithm (distribution strategy)
-// to constrain scaling decisions.
-//
-// The Limiter modifies VariantDecision in place, following the pipeline pattern
-// where each stage reads and writes to shared state:
-//   - Reads: TargetReplicas, GPUsPerReplica, AcceleratorName, SpareCapacity
-//   - Writes: TargetReplicas (may be reduced), GPUsAllocated, WasLimited, LimitedBy
-//   - Appends: DecisionSteps (adds limiting step)
-//
-// Example usage:
-//
-//	limiter := NewLimiter("prod", nodeInventory, greedyAlgorithm)
-//	err := limiter.Limit(ctx, decisions) // modifies decisions in place
+// A limiter supplies constraints only — it never mutates decisions. The
+// optimizer reaches its constraints by type-asserting to ConstraintProvider
+// (see gpuConstraintProviders), which is why this interface carries just an
+// identity: a limiter shape that provides no constraints (NoOpLimiter) is a
+// valid, inert value of the slot.
 type Limiter interface {
 	// Name returns limiter identifier for logging/metrics.
 	Name() string
-
-	// Limit applies resource constraints to scaling decisions.
-	// Modifies decisions in place - may reduce TargetReplicas based on available resources.
-	// Sets GPUsAllocated, WasLimited, LimitedBy fields and appends to DecisionSteps.
-	Limit(ctx context.Context, decisions []*domain.VariantDecision) error
-}
-
-// AllocationAlgorithm defines how to distribute limited resources across decisions.
-//
-// Algorithms are independent of resource granularity - they work with any Inventory
-// through the ResourceAllocator abstraction. This enables mixing any algorithm
-// with any inventory type.
-//
-// Built-in algorithms include:
-//   - GreedyBySaturation: allocates to most saturated (lowest spare capacity) first
-//   - RoundRobin: distributes evenly, one replica at a time
-//   - PriorityBased: allocates to highest priority first
-//   - WeightedFairShare: allocates proportionally based on weights
-//   - BinPacking: consolidates on fewer nodes (requires NodeAwareAllocator)
-type AllocationAlgorithm interface {
-	// Name returns algorithm identifier for logging/metrics.
-	Name() string
-
-	// Allocate distributes available resources across decisions.
-	// Modifies decisions in place - may reduce TargetReplicas and sets GPUsAllocated.
-	//
-	// The allocator parameter abstracts resource reservation - the algorithm
-	// doesn't need to know if resources are cluster-wide, per-type, or per-node.
-	//
-	// Algorithms read from decisions:
-	//   - TargetReplicas, CurrentReplicas: to determine GPUs needed
-	//   - GPUsPerReplica: to calculate total GPU requirement
-	//   - AcceleratorName: passed to allocator for type-aware allocation
-	//   - SpareCapacity: for ordering (GreedyBySaturation)
-	//
-	// Algorithms write to decisions:
-	//   - TargetReplicas: may be reduced if allocation is partial
-	//   - GPUsAllocated: number of GPUs actually allocated
-	Allocate(
-		ctx context.Context,
-		decisions []*domain.VariantDecision,
-		allocator ResourceAllocator,
-	) error
-}
-
-// ResourceAllocator abstracts resource reservation at different granularities.
-//
-// Created by Inventory to handle granularity-specific allocation logic.
-// Algorithms use this interface without knowing the underlying inventory type.
-//
-// For example:
-//   - ClusterInventory creates an allocator that tracks total GPUs
-//   - TypeInventory creates an allocator that tracks GPUs per accelerator type
-//   - NodeInventory creates an allocator that tracks GPUs per node with scheduling checks
-type ResourceAllocator interface {
-	// TryAllocate attempts to allocate GPUs for a decision.
-	// Returns actual GPUs allocated (may be less than requested if constrained).
-	//
-	// The decision parameter provides context (AcceleratorName, GPUsPerReplica,
-	// ScaleTargetRef) that some allocators need for type-aware or node-aware allocation.
-	// ctx carries the request-scoped logger so per-cycle traces emitted from the
-	// allocator are correlated with the rest of the engine cycle's structured logs.
-	TryAllocate(ctx context.Context, decision *domain.VariantDecision, gpusRequested int) (gpusAllocated int, err error)
-
-	// Remaining returns total remaining allocatable GPUs across all resources.
-	Remaining() int
 }
 
 // ResourcePool represents available resources for one accelerator type.
@@ -198,42 +107,35 @@ type ConstraintProvider interface {
 	ComputeConstraints(ctx context.Context, usageByType map[string]int, usageByNamespace map[string]map[string]int) (*ResourceConstraints, error)
 }
 
-// Inventory provides resource availability and creates allocators.
+// Inventory provides resource availability.
 //
 // Implementations define the granularity of resource tracking:
-//   - ClusterInventory: single pool of all GPUs
 //   - TypeInventory: separate pools per accelerator type (H100, A100, etc.)
-//   - NodeInventory: per-node tracking with scheduling constraint awareness
+//   - QuotaInventory: operator-declared caps, cluster- or namespace-scoped
 //
 // The Inventory tracks three values per resource pool:
-//   - Limit: total capacity (discovered from cluster)
+//   - Limit: total capacity (discovered from cluster, or operator-declared)
 //   - Used: currently allocated/in-use GPUs
 //   - Available: Limit - Used (what can still be allocated)
 //
 // The Inventory is responsible for:
 //   - Refreshing capacity data (limits) from the cluster
 //   - Tracking current usage
-//   - Creating ResourceAllocator instances that handle granularity-specific logic
 //
 // Note: This is separate from collector.Inventory which handles metrics collection.
-// The limiter Inventory focuses solely on resource availability for allocation.
+// The limiter Inventory focuses solely on reporting resource availability.
 type Inventory interface {
 	// Name returns inventory identifier for logging/metrics.
 	Name() string
 
 	// Refresh updates inventory limits from the cluster.
-	// Should be called before CreateAllocator to ensure fresh data.
+	// Should be called before reading pools to ensure fresh data.
 	Refresh(ctx context.Context) error
 
 	// SetUsed updates the used GPU counts.
-	// This should be called with current usage before creating an allocator.
+	// This should be called with current usage before reading pools.
 	// The usedByType map contains accelerator type -> used GPU count.
 	SetUsed(usedByType map[string]int)
-
-	// CreateAllocator returns a ResourceAllocator for this inventory.
-	// The allocator encapsulates granularity-specific allocation logic.
-	// Available GPUs = Limit - Used for each resource pool.
-	CreateAllocator(ctx context.Context) ResourceAllocator
 
 	// TotalLimit returns total GPU capacity across all resources.
 	TotalLimit() int
@@ -270,7 +172,7 @@ type NamespaceAwareInventory interface {
 
 	// SetUsedByNamespace updates the per-namespace usage map.
 	// Outer key: namespace; inner key: accelerator type.
-	// Should be called before CreateAllocator, alongside SetUsed.
+	// Should be called before reading pools, alongside SetUsed.
 	SetUsedByNamespace(usedByNS map[string]map[string]int)
 
 	// NamespaceResourcePools returns per-(namespace, accelerator type) pools

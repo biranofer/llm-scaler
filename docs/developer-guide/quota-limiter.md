@@ -175,7 +175,7 @@ controller restart — no `kubectl rollout restart` required.
 `NamespaceAwareInventory` extension. The lifecycle mirrors `TypeInventory`:
 
 1. The controller constructs `QuotaInventory` from a validated config entry.
-2. Before each cycle, `DefaultLimiter.Limit` unconditionally calls
+2. Before each cycle, `DefaultLimiter.ComputeConstraints` unconditionally calls
    `inventory.SetUsed(usedByType)` and, when the inventory satisfies
    `NamespaceAwareInventory`, additionally calls
    `SetUsedByNamespace(usedByNS)` via feature detection. Each
@@ -183,31 +183,16 @@ controller restart — no `kubectl rollout restart` required.
    (`SetUsed` is a no-op on namespace-scoped instances; `SetUsedByNamespace`
    is a no-op on cluster-scoped instances), so callers do not branch on
    scope.
-3. The controller calls `CreateAllocator` to obtain a per-cycle
-   `ResourceAllocator`.
-4. The allocation algorithm calls `TryAllocate` once per decision; the
-   allocator tracks per-cycle usage in its own snapshot and decrements
-   remaining quota in place.
+3. `ComputeConstraints` reads `GetResourcePools` (and, for namespace scope,
+   `NamespaceResourcePools`) and returns them as the `ResourceConstraints` the
+   optimizer allocates within.
+
+The limiter supplies **constraints only** — it never modifies scaling decisions.
+Enforcement happens in the optimizer, which is the single decision-maker (see
+*V2 enforcement* below).
 
 `Refresh` is a no-op: quotas are operator-declared and have no external
 source.
-
-### `TryAllocate` semantics
-
-`TryAllocate` returns the number of GPUs that may be allocated, which is
-`min(gpusRequested, remaining)`. Specifically:
-
-- **Unresolved accelerator** (empty `AcceleratorName`): **deny — fail closed**
-  (granted = 0, with a `WasConstrained` DecisionStep). The allocator cannot match
-  a per-type quota without a resolved type, and passing through would let an
-  unattributed request bypass the cap. `DefaultLimiter` runs accelerator
-  resolution first and resolves single-type inventories; a multi-type quota
-  config can still leave the type unresolved here, so denial is the safe default.
-- **Unlimited (`-1`)**: pass-through. No usage is recorded because there is no
-  finite budget to track.
-- **Cluster scope**: cap is `ClusterQuotas[type]`. Missing entry → 0.
-- **Namespace scope**: excluded namespace → pass-through; otherwise resolved
-  via the lookup rules above. Missing entry (after default fallback) → 0.
 
 ### `GetResourcePools` representation
 
@@ -232,8 +217,8 @@ totals.)
 
 The V2 (token-based saturation) analyzer — the default — drives scaling through
 the optimizer's `ResourceConstraints`, built from
-`DefaultLimiter.ComputeConstraints`. Namespace quota is enforced here with the
-**same closed-allowlist semantics as the V1 `Limit()` path** (`tryAllocateNamespace`):
+`DefaultLimiter.ComputeConstraints`. Namespace quota is enforced here with
+closed-allowlist semantics:
 
 - **Per-type / cluster** caps come from `GetResourcePools` (`ResourceConstraints.Pools`).
 - **Per-namespace** caps come from `NamespaceResourcePools`
@@ -247,7 +232,7 @@ the optimizer's `ResourceConstraints`, built from
   carried as a sentinel and bounds the model only by the cluster budget for that
   type (or is unbounded if the cluster does not cap it). An **excluded**
   namespace is omitted entirely, so it is "open" and bound only by the cluster
-  constraint — matching V1's pass-through.
+  constraint.
 - **Multi-entry (composite)** quota configs are fully consulted: the engine
   computes constraints from *each* constituent of a `CompositeLimiter`.
 
@@ -268,12 +253,11 @@ Remaining boundaries:
   fair-share loop stops when the finite cluster aggregate is zero). This is a
   benign under-provision, not an isolation breach; configure a finite cluster or
   per-namespace cap for any type you expect to scale under V2.
-- An **unlimited (`-1`) cluster-scope** quota scales up under V2:
-  `GetResourcePools` emits it as a sentinel pool that `mergeConstraints` carries
-  through as an unbounded budget, so the type allocates up to demand — matching
-  the V1 `Limit` pass-through. (This differs from the namespace-scope
-  purely-unlimited case above, whose cluster aggregate is derived from the finite
-  namespace caps only.)
+- An **unlimited (`-1`) cluster-scope** quota scales up: `GetResourcePools`
+  emits it as a sentinel pool that `mergeConstraints` carries through as an
+  unbounded budget, so the type allocates up to demand. (This differs from the
+  namespace-scope purely-unlimited case above, whose cluster aggregate is
+  derived from the finite namespace caps only.)
 
 ### Fair-share interaction
 
@@ -346,25 +330,6 @@ bounds at all — a deployment in quota mode will allocate beyond the cluster's
 actual capacity if the quota permits (the surplus simply yields `Pending` pods,
 not an isolation breach). Set quota caps at or below real capacity until
 composition with `TypeInventory` lands.
-
-## DecisionStep trace
-
-When `quotaAllocator.TryAllocate` caps a request (granted < requested), it
-appends a `DecisionStep` to the decision via `VariantDecision.AddDecisionStep`
-with the reason formatted as:
-
-- Cluster scope: `limited by quota[scope=cluster, type=H100]`
-- Namespace scope: `limited by quota[scope=namespace, namespace=team-a, type=H100]`
-
-The step's `Name` field is the limiter's `name` (e.g., `cluster-quota`) and
-`WasConstrained` is `true`. Pass-through paths (excluded namespace, unlimited
-quota) do **not** record a step because they did not constrain the decision. An
-**unresolved accelerator** is the exception among the "did not allocate" paths:
-it is a fail-closed **deny** and *does* record a `WasConstrained` step (reason
-`denied by quota[...]: accelerator type unresolved`). The chain's
-`updateDecisionMetadata` separately sets
-`WasLimited` / `LimitedBy` per limiter; the DecisionStep here carries the
-finer-grained scope/type detail.
 
 ## Selection & lifecycle
 
