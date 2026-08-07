@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -148,7 +149,13 @@ func expectAnalyzerPathLog(modelID string) {
 	}, time.Duration(cfg.EventuallyLongSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 }
 
-var _ = Describe("Saturation analyzer path and status propagation", Label("full"), Ordered, func() {
+// This suite covers the saturation analyzer's decision reaching a real workload
+// through the KEDA **external scaler** — KEDA fetches the decision from WVA's
+// gRPC service rather than reading the wva_desired_replicas gauge out of
+// Prometheus. The Prometheus transport is covered by smoke_keda_test.go and
+// saturation_v2_test.go; this suite is the saturation-decision half of the
+// external-scaler path, so both transports stay exercised.
+var _ = Describe("Saturation-driven scaling through the KEDA external scaler", Label("full"), Ordered, func() {
 	const (
 		poolName     = "saturation-path-pool"
 		modelSvcName = "saturation-path-ms"
@@ -157,14 +164,11 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		modelDecodeDeployment = modelSvcName + "-decode"
 		serviceName           = modelSvcName + "-service"
 		smName                = modelSvcName + "-monitor"
-		// scalerBaseName is the annotated scaler's logical base. WVA discovers the
-		// scaler and uses its OBJECT name as the variant_name label on
-		// wva_desired_replicas — that is base+"-so" for a KEDA ScaledObject and
-		// base+"-hpa" for an HPA. The decode pods must carry
-		// llm-d.ai/variant=<scaler object name> for metric attribution, so variantName is
-		// derived from the backend below.
+		// scalerBaseName is the annotated scaler's logical base; the KEDA ScaledObject
+		// object name is base+"-so". The decode pods must carry
+		// llm-d.ai/variant=<scaler object name> for metric attribution, so variantName
+		// is derived from it.
 		scalerBaseName = "saturation-path"
-		hpaObjectName  = scalerBaseName + "-hpa"
 		soObjectName   = scalerBaseName + "-so"
 	)
 
@@ -177,8 +181,11 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		cmNamespace     string
 		// variantName is the variant_name — the scaler's object name — stamped as the
 		// decode pods' llm-d.ai/variant label so the collector attributes their
-		// metrics to the variant. Set from the backend in BeforeAll.
+		// metrics to the variant.
 		variantName string
+		// scalerAddress is WVA's external-scaler gRPC Service, which KEDA's external
+		// trigger dials for this suite's decisions.
+		scalerAddress string
 	)
 
 	BeforeAll(func() {
@@ -188,6 +195,9 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}
 
 		variantName = soObjectName
+		// Matches config/base/manager/external-scaler-service.yaml under the deploy
+		// namePrefix (wva-).
+		scalerAddress = "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
 
 		modelID = cfg.ModelID
 		cmName = saturationConfigMapName()
@@ -222,13 +232,18 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 1))
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-		By("Registering the saturation-path deployment with WVA via an annotated ScaledObject")
+		By("Registering the saturation-path deployment with WVA via an annotated ScaledObject using an EXTERNAL trigger")
+		// The llm-d.ai/managed annotation drives WVA discovery and the saturation
+		// decision; the external trigger makes KEDA fetch that decision from WVA's
+		// external-scaler gRPC service rather than from Prometheus, so these specs
+		// exercise the analyzer and the external-scaler transport together.
 		// The ScaledObject's variantName matches the model service's variantName so the
-		// decode pods' llm-d.ai/variant label and wva_desired_replicas variant_name align.
+		// decode pods' llm-d.ai/variant label lines up for metric attribution.
 		// The 30 s scale-down stabilization window overrides the HPA default (300 s) so
 		// the "does not scale up" It can wait for minReplicas within EventuallyLongSec.
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"),
+			fixtures.WithExternalScalerTrigger(scalerAddress),
 			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })
@@ -262,46 +277,49 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, modelDecodeDeployment, metav1.DeleteOptions{})
 	})
 
-	It("uses V2 path when analyzerName is saturation", func() {
-		By("Writing model-specific saturation config with analyzerName=saturation")
-		err := upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, buildSaturationConfigYAML("saturation"))
-		Expect(err).NotTo(HaveOccurred())
+	// Two specs were deleted here rather than adapted. They asserted that
+	// analyzerName=saturation selected "the V2 path" and that an unset
+	// analyzerName selected "the V1 path", by grepping controller logs for a
+	// "Processing model (Vn)" marker. V1 is gone and V2 is the sole analysis
+	// path, so there is no selection left to observe — after the removal both
+	// specs could only assert that the model was processed at all, which every
+	// spec below already requires in order to reach an actuation assertion.
 
-		By("Waiting for controller logs to show V2 processing for this model")
-		expectAnalyzerPathLog(modelID)
-	})
+	It("delivers the saturation decision to KEDA through the external scaler", func() {
+		// WVA does not write VA .status; the decision leaves the controller either
+		// as the wva_desired_replicas gauge or, as here, over the external-scaler
+		// gRPC API. KEDA populates the managed HPA's CurrentMetrics only after a
+		// scaler returns a value, so a populated CurrentMetrics on a ScaledObject
+		// whose only trigger is the external one proves KEDA reached WVA's gRPC
+		// service and got the saturation analyzer's decision back.
+		By("Writing the model's saturation config")
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey,
+			buildSaturationConfigYAML("saturation"))).To(Succeed())
 
-	It("still uses the V2 path when analyzerName is unset", func() {
-		// V2 is the sole analysis path since the V1 analyzer was removed, so an
-		// unset analyzerName no longer selects a different engine — it must simply
-		// keep processing on V2 rather than stalling the model.
-		By("Updating model-specific saturation config with analyzerName unset")
-		err := upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, buildSaturationConfigYAML(""))
-		Expect(err).NotTo(HaveOccurred())
-
-		By("Waiting for controller logs to show V2 processing for this model")
-		expectAnalyzerPathLog(modelID)
-	})
-
-	It("propagates saturation results into wva_desired_replicas for the variant", func() {
-		// WVA no longer writes VA .status; its sole output is wva_desired_replicas.
-		// expectWVADesiredReplicasConsumed observes that through the KEDA-managed
-		// HPA's CurrentMetrics, which KEDA populates only after reading the metric
-		// from Prometheus.
-		By("Verifying wva_desired_replicas was emitted and consumed for the saturation-path variant")
+		By("Verifying the KEDA-managed HPA has CurrentMetrics populated from the external scaler")
 		Eventually(func(g Gomega) {
-			expectWVADesiredReplicasConsumed(g, cfg.LLMDNamespace, modelDecodeDeployment)
+			hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			var kedaHPA *autoscalingv2.HorizontalPodAutoscaler
+			for i := range hpaList.Items {
+				if hpaList.Items[i].Spec.ScaleTargetRef.Name == modelDecodeDeployment {
+					kedaHPA = &hpaList.Items[i]
+					break
+				}
+			}
+			g.Expect(kedaHPA).NotTo(BeNil(), "KEDA should have created an HPA for the saturation-path deployment")
+			g.Expect(kedaHPA.Status.CurrentMetrics).NotTo(BeEmpty(),
+				"KEDA HPA should have CurrentMetrics populated from WVA's external scaler")
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
-	It("does not scale the target deployment up for bounded below-threshold traffic", func() {
+	It("holds at minReplicas through the external scaler for below-threshold traffic", func() {
 		By("Configuring conservative saturation thresholds to avoid scale-up")
 		// Set thresholds before capturing the baseline so WVA has time to reconcile
-		// while we wait for KEDA to settle. With the KEDA Prometheus query now using
-		// exported_namespace (fixed), KEDA can act on wva_desired_replicas from the
-		// prior It (which may have left a scale-up recommendation in Prometheus). We
-		// must wait for WVA to re-evaluate and KEDA to read the new value before the
-		// Consistently window starts — otherwise the HPA would fire a scale-up.
+		// while we wait for KEDA to settle: the prior It may have left a scale-up
+		// decision that KEDA is still serving from the external scaler. We must wait
+		// for WVA to re-evaluate and KEDA to poll the new value before the stability
+		// window starts — otherwise the HPA would fire a scale-up mid-assertion.
 		err := upsertSaturationConfigEntry(
 			ctx,
 			cmNamespace,
@@ -319,16 +337,12 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Verifying controller is processing this model on the V2 path")
-		expectAnalyzerPathLog(modelID)
-
 		By("Waiting for the pipeline to converge to a sustained minReplicas (drain any in-flight scale-up)")
 		// A single Spec.Replicas <= 1 reading is NOT proof of convergence: the deployment
 		// starts at minReplicas, so that check passes on the pre-existing state while a
-		// scale-up recommendation left in flight by the prior It (default config:
-		// queueLengthThreshold=1 vs faked queue=2 → scale-up) is still working through
-		// WVA (≤15 s reconcile) → Prometheus → KEDA (5 s poll) → HPA. That stale
-		// recommendation actuates a scale-up mid-assertion unless it has fully drained.
+		// scale-up decision left in flight by the prior It is still working through
+		// WVA (≤15 s reconcile) → external scaler → KEDA (5 s poll) → HPA. That stale
+		// decision actuates a scale-up mid-assertion unless it has fully drained.
 		//
 		// Require the deployment to HOLD at <=1 continuously for stableWindow before
 		// trusting it: any bump resets the stability clock, and stableWindow outlasts the
@@ -379,7 +393,7 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		}, time.Duration(cfg.EventuallyMediumSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 	})
 
-	It("crosses the saturation threshold with bounded requests and raises wva_desired_replicas", func() {
+	It("scales up through the external scaler once saturation crosses the threshold", func() {
 		var baseline int32
 
 		By("Capturing baseline target deployment replicas before scale-up trigger")
@@ -409,16 +423,14 @@ var _ = Describe("Saturation analyzer path and status propagation", Label("full"
 		)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Verifying controller is processing this model on the V2 path")
-		expectAnalyzerPathLog(modelID)
-
 		By("Asserting KEDA actuates scale-up above baseline")
 		// A 0.80 KV target against faked kv=0.30 sizes per-replica capacity so that
 		// demand ≈ supply — utilization ≈ 1.0, past scaleUpThreshold=0.85 — which
-		// deterministically drives a scale-up; KEDA consumes
-		// wva_desired_replicas and drives the Deployment above its baseline. Assert the
-		// observable Deployment replica count — the ground truth — rather than the KEDA
-		// HPA CurrentMetrics surface, which only proves the metric was consumed.
+		// deterministically drives a scale-up. KEDA pulls that decision from WVA's
+		// external scaler and drives the Deployment above its baseline. Assert the
+		// observable Deployment replica count — the ground truth for the whole
+		// analyzer → external-scaler → KEDA → HPA chain — rather than the HPA
+		// CurrentMetrics surface, which only proves the decision was fetched.
 		Eventually(func(g Gomega) {
 			dep, getErr := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(getErr).NotTo(HaveOccurred())
