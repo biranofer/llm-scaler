@@ -1767,14 +1767,13 @@ var _ = Describe("aggregateByVariant DP>1 with pending replicas", func() {
 		ctx = context.Background()
 	})
 
-	It("converts pending pods to instance units in anticipated supply", func() {
-		// One ready pod hosts 8 DP-rank instances (8 ReplicaMetrics sharing a
-		// PodName). State: 1 ready + 1 pending pod → instances-per-pod = 8/1 = 8,
-		// so the pending pod must count as 8 instances, not 1.
-		metrics := make([]domain.ReplicaMetrics, 0, 8)
-		for i := 0; i < 8; i++ {
-			metrics = append(metrics, makeReplicaMetrics("pod-1", "decode-v1",
-				8000, 16000, 0, 100, 50))
+	It("keeps ready and pending counts in scale-target units on a DP>1 variant", func() {
+		// The collector merges a pod's DP ranks into one ReplicaMetrics, so a
+		// DP=8 pod arrives as a single record carrying the whole pod's capacity
+		// (8 × 16000). Ready and pending are then both pod counts and add
+		// directly — no instances-per-pod factor to reconcile.
+		metrics := []domain.ReplicaMetrics{
+			makeReplicaMetrics("pod-1", "decode-v1", 64000, 128000, 0, 100, 50),
 		}
 
 		input := makeAnalyzerInput(
@@ -1789,8 +1788,12 @@ var _ = Describe("aggregateByVariant DP>1 with pending replicas", func() {
 		Expect(result.VariantCapacities).To(HaveLen(1))
 
 		vc := result.VariantCapacities[0]
-		Expect(vc.ReplicaCount).To(Equal(8))    // 8 scraped instances
-		Expect(vc.PendingReplicas).To(Equal(8)) // 1 pending pod × 8 instances-per-pod
+		Expect(vc.ReplicaCount).To(Equal(1))    // one pod reported capacity
+		Expect(vc.PendingReplicas).To(Equal(1)) // one pod still coming up
+
+		// The per-replica capacity is the whole pod's, so dividing a demand by it
+		// yields a pod target — the unit the optimizer spends it in.
+		Expect(vc.PerReplicaCapacity).To(BeNumerically(">", 64000))
 
 		// TotalAnticipatedSupply = (ReplicaCount + PendingReplicas) × PerReplicaCapacity
 		want := float64(vc.ReplicaCount+vc.PendingReplicas) * vc.PerReplicaCapacity

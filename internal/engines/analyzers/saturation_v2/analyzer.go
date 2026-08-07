@@ -374,41 +374,25 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 
 		// replicaCount sets VariantCapacity.ReplicaCount, which aggregation.go uses
 		// to recompute supply totals, and divides totalDemand for the per-variant
-		// utilization. Defaults to readyCount (pod count) for the fallback branches,
-		// which have no per-instance data.
+		// utilization. It is in scale-target units (pods, or LWS groups) on every
+		// branch: readyCount is scale-target status, and len(replicas) counts the
+		// collector's per-pod rows, which merge a pod's engine instances into one
+		// replica (see collector.collapseToPods). pendingCount shares that unit,
+		// as SumTotalAnticipatedSupply adds the two.
 		replicaCount := readyCount
-		// pendingCount must match replicaCount's unit (SumTotalAnticipatedSupply
-		// adds them); converted to instances below when replicaCount switches.
 		pendingCount := vs.PendingReplicas
 
 		var capacityLabel string
 		if len(replicas) > 0 {
-			// len(replicas) counts vLLM engine instances (DP ranks), not pods: a DP=8
-			// pod hosts 8 independently-capacitied instances. Using the pod count would
-			// undercount TotalCapacity by the DP factor.
 			capacities := make([]int64, 0, len(replicas))
 			for _, rc := range replicas {
 				capacities = append(capacities, rc.EffectiveCapacity)
 				totalDemand += float64(rc.ReplicaDemand)
 			}
 			perReplicaCapacity = float64(median(capacities))
+			// Prefer the live count over readyCount: it is what actually reported
+			// capacity this cycle, where readyCount is (lagging) scale-target status.
 			replicaCount = len(replicas)
-			// Convert pending to instance units. readyCount and vs.PendingReplicas
-			// share the scale-target unit (pods for Deployment, groups for LWS), so
-			// len(replicas)/readyCount approximates the instances-per-unit (DP)
-			// factor. This is exact only in steady state: len(replicas) is live
-			// metrics while readyCount is (lagging) scale-target status, so during a
-			// scale-up — when new instances report metrics before their unit is
-			// counted ready — the ratio is inflated and pendingCount overshoots
-			// (understating RequiredCapacity). A metrics-derived instances-per-unit
-			// (grouping by pod/LWS group) would remove this skew; tracked as a
-			// follow-up. TODO: scale-from-zero (readyCount == 0) can't infer DP at
-			// all and is left unconverted here.
-			if readyCount > 0 {
-				if instancesPerUnit := len(replicas) / readyCount; instancesPerUnit > 1 {
-					pendingCount = vs.PendingReplicas * instancesPerUnit
-				}
-			}
 			capacityLabel = k2SourceLabel(replicas)
 		} else if rec := a.capacityStore.Get(namespace, modelID, vs.VariantName); rec != nil && rec.EffectiveCapacity > 0 {
 			// No ready replicas — use stored capacity, enhanced with k2 derivation

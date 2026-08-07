@@ -571,11 +571,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackTimestamp(data.avgITLTimestamp)
 	}
 
-	// freshnessSeverity orders freshness statuses from best to worst so
-	// worstFreshnessStatus can pick the single worst status across a pod's
-	// tracked timestamps.
-	freshnessSeverity := map[string]int{"fresh": 0, "stale": 1, "unavailable": 2, "missing": 3}
-
 	// worstFreshnessStatus returns the least-fresh status across data's *present*
 	// timestamps (the same set trackMetricFreshness uses) and the age of the oldest
 	// one, for the per-replica ReplicaMetricsMetadata.
@@ -1110,13 +1105,21 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
+	// Merge each pod's engine instances into one replica. Everything above works
+	// per instance because that is how the engine is scraped ("pod:port", one
+	// series per DP rank); everything below the collector counts in scale-target
+	// replicas. See collapseToPods.
+	instanceCount := len(replicaMetrics)
+	replicaMetrics = collapseToPods(replicaMetrics)
+
 	// Only set this after all pods have been processed, making sure not to include pods without metrics (which are skipped above).
 	// This ensures that the discovered pod count reflects only those pods that produced replica metrics.
 	metrics.SetMetricsPodsDiscovered(namespace, len(replicaMetrics))
 	logger.V(logging.DEBUG).Info("Collected replica metrics",
 		"modelID", modelID,
 		"namespace", namespace,
-		"replicaCount", len(replicaMetrics))
+		"replicaCount", len(replicaMetrics),
+		"engineInstances", instanceCount)
 
 	return replicaMetrics, nil
 }

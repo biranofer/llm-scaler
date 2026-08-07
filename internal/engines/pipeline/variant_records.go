@@ -17,11 +17,10 @@ import (
 // reached the optimizer only because the capacity builder had overlaid it back
 // onto the analyzer's copies.
 //
-// Note the embedded replica counts are in *scale-target* units (pods, or LWS
-// groups) — the same units the optimizer's targets and stateMap use. They are
-// deliberately NOT the units of domain.VariantCapacity.ReplicaCount, which
-// counts engine instances (DP ranks) and belongs to supply aggregation. Do not
-// cross the two.
+// The embedded replica counts are in *scale-target* units (pods, or LWS
+// groups) — the same units the optimizer's targets and stateMap use, and the
+// same units domain.VariantCapacity.ReplicaCount and PerReplicaCapacity are in,
+// since the collector merges a pod's engine instances into one replica.
 type variantRecord struct {
 	domain.VariantMetadata
 

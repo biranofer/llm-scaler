@@ -145,16 +145,18 @@ type VariantCapacity struct {
 	VariantName string
 	Role        string // "prefill", "decode", "both", "" (empty = non-disaggregated)
 
-	// ReplicaCount and PendingReplicas are in ENGINE-INSTANCE units (vLLM DP
-	// ranks), not scale-target units: saturation sets ReplicaCount to the number
-	// of per-instance ReplicaMetrics it saw, and a DP=8 pod hosts 8
-	// independently-capacitied instances. They pair with PerReplicaCapacity to
-	// give supply, and must not be crossed with VariantMetadata.CurrentReplicas
-	// (pods, or LWS groups), which is what replica *targets* are counted in.
+	// ReplicaCount and PendingReplicas are in SCALE-TARGET units (pods, or LWS
+	// groups) — the same units as VariantMetadata.CurrentReplicas and as the
+	// replica targets the optimizer produces. A pod running data parallelism
+	// hosts several engine instances, but the collector merges their metrics
+	// into one replica before an analyzer sees them, so there is one unit here
+	// and no DP factor for a consumer to reconcile.
 	ReplicaCount    int
 	PendingReplicas int
 
-	// PerReplicaCapacity is the representative capacity per replica.
+	// PerReplicaCapacity is the representative capacity per replica, in the same
+	// scale-target units as ReplicaCount — so demand / PerReplicaCapacity yields
+	// a replica target directly.
 	// For saturation V2: median(effectiveCapacity) in tokens across ready replicas.
 	PerReplicaCapacity float64
 

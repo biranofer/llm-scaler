@@ -41,19 +41,20 @@ const RolePrefill = "prefill"
 // RoleDecode represents the decode-only role in a P/D disaggregated deployment.
 const RoleDecode = "decode"
 
-// ReplicaMetrics holds one inference-engine instance's measured signal.
+// ReplicaMetrics holds one scale-target replica's measured signal.
 //
-// It is per *instance*, not per pod: a data-parallel pod exposes one metrics
-// endpoint per DP rank, and the collector keys them by pod_name:port. Anything
-// derived by counting these records is therefore in instance units, which is
-// the unit that pairs with a per-instance capacity. Scale-target units (pods,
-// or LWS groups) live on domain.VariantMetadata — do not cross the two.
-// For LWS, only leader pods (leaderworkerset.sigs.k8s.io/worker-index=0) emit
-// engine metrics, so there one record corresponds to one LWS replica.
+// It is per *replica*, in the same units as domain.VariantMetadata and as the
+// replica targets the optimizer produces: one record per pod, or for LWS per
+// group (only leader pods emit engine metrics, so a leader's record is its
+// group's). A data-parallel pod exposes one metrics endpoint per DP rank and is
+// scraped as several series keyed pod_name:port; the collector merges those
+// into this one record (collector.collapseToPods) so that counting these
+// records yields a replica count and the capacity derived from one is a
+// per-replica capacity.
 //
 // It carries *signal only*. Variant identity (cost, accelerator, role) belongs
 // to the discovery step and reaches consumers via domain.VariantMetadata; it is
-// not repeated on every instance record.
+// not repeated on every replica record.
 type ReplicaMetrics struct {
 	PodName      string
 	KvCacheUsage float64 // KV cache utilization (0.0-1.0)

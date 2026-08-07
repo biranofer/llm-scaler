@@ -608,9 +608,10 @@ func applyUniversalThreshold(nr *pipeline.NamedAnalyzerResult, scaleUp, scaleDow
 // gpuUsageByType accumulates a request's current GPU usage into perType.
 //
 // Accelerator identity comes from the request's discovery metadata, the only
-// place that carries it. Replica counts come from VariantReplicaState, in
-// scale-target units — the unit GPU accounting needs, and deliberately not
-// VariantCapacity.ReplicaCount, which counts engine instances.
+// place that carries it. Replica counts come from VariantReplicaState rather
+// than from the analyzer's VariantCapacity: both are in scale-target units, but
+// GPU accounting must reflect what is actually allocated, not what reported
+// metrics this cycle.
 func gpuUsageByType(req pipeline.ModelScalingRequest, perType map[string]int) {
 	stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
 	for _, s := range req.VariantStates {
