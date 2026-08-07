@@ -41,7 +41,6 @@ func TestLogAnalyzerResult_EmitsRequiredFields(t *testing.T) {
 				{
 					VariantName:        "primary",
 					PerReplicaCapacity: 50000,
-					Cost:               10,
 					Role:               domain.RoleDecode,
 					Reason:             "P2-hist",
 				},

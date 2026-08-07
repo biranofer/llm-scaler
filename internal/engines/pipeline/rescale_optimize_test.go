@@ -20,7 +20,7 @@ func rescaleReq(id, ns string, priority, demand float64, current int) ModelScali
 		ModelID:     id,
 		Namespace:   ns,
 		TotalDemand: demand,
-		VariantCapacities: []domain.VariantCapacity{
+		VariantCapacities: []vcFixture{
 			{VariantName: v, AcceleratorName: "A100", Cost: 5, ReplicaCount: current, PerReplicaCapacity: 1000},
 		},
 	}
@@ -42,7 +42,7 @@ func nsModelReq(modelID, ns, variant string, priority, demand float64, current i
 		ModelID:     modelID,
 		Namespace:   ns,
 		TotalDemand: demand,
-		VariantCapacities: []domain.VariantCapacity{
+		VariantCapacities: []vcFixture{
 			{VariantName: variant, AcceleratorName: "A100", Cost: 5, ReplicaCount: current, PerReplicaCapacity: 1000},
 		},
 	}
@@ -189,7 +189,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 				"prefill": {TotalDemand: 4000},
 				"decode":  {TotalDemand: 4000},
 			},
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "A-prefill", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "prefill", ReplicaCount: 4},
 				{VariantName: "A-decode", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "decode", ReplicaCount: 4},
 			},
@@ -228,7 +228,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 				"prefill": {TotalDemand: 6000},
 				"decode":  {TotalDemand: 2000},
 			},
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "A-prefill", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "prefill", ReplicaCount: 4},
 				{VariantName: "A-decode", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "decode", ReplicaCount: 4},
 			},
@@ -327,7 +327,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		max2 := 2
 		bAnalyzer := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "B-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 0},
 			},
 		}
@@ -377,7 +377,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 			ModelID:     "M",
 			Namespace:   "default",
 			TotalDemand: 8000,
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "M-a100", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 4},
 				{VariantName: "M-h100", AcceleratorName: "H100", Cost: 8, PerReplicaCapacity: 2000, ReplicaCount: 0},
 			},
@@ -458,7 +458,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 
 		aAnalyzer := &satEntryFixture{
 			ModelID: "A", Namespace: "default", TotalDemand: 8000,
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "A-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 4},
 			},
 		}
@@ -528,7 +528,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 				"prefill": {TotalDemand: 3000},
 				"decode":  {TotalDemand: 1000},
 			},
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "B-prefill", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "prefill", ReplicaCount: 0},
 				{VariantName: "B-decode", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "decode", ReplicaCount: 0},
 			},
@@ -584,7 +584,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 				"prefill": {TotalDemand: 6000},
 				"decode":  {TotalDemand: 2000},
 			},
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "B-prefill", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "prefill", ReplicaCount: 0},
 				{VariantName: "B-decode", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, Role: "decode", ReplicaCount: 0},
 			},
@@ -633,7 +633,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 
 		bAnalyzer := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
-			VariantCapacities: []domain.VariantCapacity{
+			VariantCapacities: []vcFixture{
 				{VariantName: "B-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 0},
 			},
 		}
@@ -662,7 +662,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		mk := func(id string, prio float64, cur int) ModelScalingRequest {
 			a := &satEntryFixture{
 				ModelID: id, Namespace: "default", TotalDemand: 8000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: id + "-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: cur},
 				},
 			}

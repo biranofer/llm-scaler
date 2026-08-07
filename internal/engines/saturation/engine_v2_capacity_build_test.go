@@ -101,9 +101,9 @@ var _ = Describe("buildCapacities", func() {
 		}
 		buildCapacities(ctx, r, meta, noScaleUp, noScaleDown)
 
+		// Only Role is joined now: cost and accelerator are not on VariantCapacity
+		// at all, and the optimizer reads them from VariantMetadata instead.
 		vc := r.Result.VariantCapacities[0]
-		Expect(vc.Cost).To(Equal(12.5))
-		Expect(vc.AcceleratorName).To(Equal("H100"))
 		Expect(vc.Role).To(Equal("decode"))
 	})
 

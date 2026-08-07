@@ -42,12 +42,12 @@ func (o *GreedyByScoreOptimizer) Name() string {
 // modelWork tracks per-model allocation state during fair-share iteration.
 type modelWork struct {
 	req       ModelScalingRequest
-	s         []NamedAnalyzerResult  // working slice; Remaining/Spare decremented in place
-	satEntry  *domain.AnalyzerResult // variant metadata keeper (Cost, AcceleratorName, Role)
-	ps        RolePairedState        // picker-local per-role demand (from initRoleState)
-	roles     []string               // active roles for this model
-	remaining float64                // fair-share priority metric (negative = fully satisfied)
-	targets   map[string]int         // variant name → target replicas (ALL variants)
+	s         []NamedAnalyzerResult // working slice; Remaining/Spare decremented in place
+	records   []variantRecord       // engine-built per-variant view (discovery identity + analyzer P)
+	ps        RolePairedState       // picker-local per-role demand (from initRoleState)
+	roles     []string              // active roles for this model
+	remaining float64               // fair-share priority metric (negative = fully satisfied)
+	targets   map[string]int        // variant name → target replicas (ALL variants)
 }
 
 // fairShareValue computes the fair-share priority metric for one model.
@@ -122,8 +122,8 @@ func (o *GreedyByScoreOptimizer) Optimize(
 		if handled[modelKey(req)] {
 			continue
 		}
-		satEntry := saturationEntry(req.AnalyzerResults)
-		if satEntry == nil {
+		records := recordsForRequest(req)
+		if records == nil {
 			continue
 		}
 
@@ -131,7 +131,7 @@ func (o *GreedyByScoreOptimizer) Optimize(
 		roles, ps := initRoleState(s)
 		fsv := fairShareValue(req.Priority, s, ps, roles)
 		if anyRoleNeedsScaleUp(ps, roles) || fsv > 0 {
-			w := o.buildScaleUpWork(req, satEntry, s, ps, roles, fsv)
+			w := o.buildScaleUpWork(req, records, s, ps, roles, fsv)
 			if w != nil {
 				scaleUpWork = append(scaleUpWork, w)
 			}
@@ -146,7 +146,7 @@ func (o *GreedyByScoreOptimizer) Optimize(
 
 	for _, w := range scaleUpWork {
 		stateMap := buildStateMap(w.req.VariantStates)
-		vcMap := buildCapacityMap(w.satEntry.VariantCapacities)
+		vcMap := buildCapacityMap(w.records)
 		decisions := buildDecisionsWithOptimizer(w.req, stateMap, vcMap, w.targets, "greedy-by-score")
 		logger.V(logging.DEBUG).Info("Greedy-by-score optimizer decisions (scale-up)",
 			"modelID", w.req.ModelID,
@@ -155,19 +155,19 @@ func (o *GreedyByScoreOptimizer) Optimize(
 	}
 
 	for _, req := range otherRequests {
-		satEntry := saturationEntry(req.AnalyzerResults)
-		if satEntry == nil {
+		records := recordsForRequest(req)
+		if records == nil {
 			continue
 		}
 
 		stateMap := buildStateMap(req.VariantStates)
-		vcMap := buildCapacityMap(satEntry.VariantCapacities)
+		vcMap := buildCapacityMap(records)
 		targets := initTargets(req.VariantStates)
 
 		// Unified scale-down path via scaleDownRoleIterated.
 		s := req.AnalyzerResults
 		_, _ = initRoleState(s) // populates RoleSpare for all roles
-		scaleDownRoleIterated(ctx, s, satEntry.VariantCapacities, targets, stateMap)
+		scaleDownRoleIterated(ctx, s, records, targets, stateMap)
 
 		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "greedy-by-score")
 		logger.V(logging.DEBUG).Info("Greedy-by-score optimizer decisions (other)",
@@ -181,14 +181,14 @@ func (o *GreedyByScoreOptimizer) Optimize(
 }
 
 // buildScaleUpWork creates a single work unit for a scale-up request.
-func (o *GreedyByScoreOptimizer) buildScaleUpWork(req ModelScalingRequest, satEntry *domain.AnalyzerResult, s []NamedAnalyzerResult, ps RolePairedState, roles []string, fsv float64) *modelWork {
+func (o *GreedyByScoreOptimizer) buildScaleUpWork(req ModelScalingRequest, records []variantRecord, s []NamedAnalyzerResult, ps RolePairedState, roles []string, fsv float64) *modelWork {
 	if fsv <= 0 {
 		return nil
 	}
 	return &modelWork{
 		req:       req,
 		s:         s,
-		satEntry:  satEntry,
+		records:   records,
 		ps:        ps,
 		roles:     roles,
 		remaining: fsv,
@@ -306,7 +306,7 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 	// Unified path: fairShareRolePick behind the RolePickFn interface.
 	// α logic removed in commit 3.
 	pick := fairShareRolePick(target, w.s, w.roles)
-	allocateForModelPaired(ctx, w.s, w.satEntry.VariantCapacities, stateMap, effAvail,
+	allocateForModelPaired(ctx, w.s, w.records, stateMap, effAvail,
 		w.targets, pick, ps, w.roles)
 
 	// Reconcile: apply what was consumed (before − after) to the cluster-wide
@@ -399,7 +399,7 @@ func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string) 
 	return func(
 		role string,
 		_ []NamedAnalyzerResult,
-		variants []domain.VariantCapacity,
+		variants []variantRecord,
 		stateMap map[string]domain.VariantReplicaState,
 		available map[string]int,
 		targets map[string]int,
@@ -466,7 +466,7 @@ func sortByRemainingDesc(active []*modelWork) {
 }
 
 // prcFromVCs returns the PerReplicaCapacity for variant v from a slice of VCs.
-func prcFromVCs(vcs []domain.VariantCapacity, v string) float64 {
+func prcFromVCs(vcs []variantRecord, v string) float64 {
 	for _, vc := range vcs {
 		if vc.VariantName == v {
 			return vc.PerReplicaCapacity
@@ -476,7 +476,7 @@ func prcFromVCs(vcs []domain.VariantCapacity, v string) float64 {
 }
 
 // accFromVCs returns the AcceleratorName for variant v from a slice of VCs.
-func accFromVCs(vcs []domain.VariantCapacity, v string) string {
+func accFromVCs(vcs []variantRecord, v string) string {
 	for _, vc := range vcs {
 		if vc.VariantName == v {
 			return vc.AcceleratorName

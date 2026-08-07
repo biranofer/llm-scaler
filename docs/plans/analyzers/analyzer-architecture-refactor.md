@@ -1,12 +1,16 @@
 # Design & Plan: Analyzer Architecture Refactor — Metadata Discovery + a Pure `(D, P)` Contract
 
-**Status:** Draft (for review)
+**Status:** Implemented — all six phases landed (see §5 for what deviated from this plan)
 **Area:** engines/analyzers
 **Related:** `docs/proposals/analyzer-metric-interface.md` (the `(demand, target)` contract & external analyzers), issue #1455 (external analyzers), #1444 (proposal, docs-only)
 
 ---
 
 ## 1. Motivation
+
+> The three problems below are the ones this plan set out to fix. All three are now fixed;
+> the present tense is kept as the historical record of why the work was done. §4 and §5
+> describe the code as built.
 
 WVA's analyzers carry three coupled problems:
 
@@ -209,22 +213,30 @@ cluster `wva-analyzers` ConfigMap; a policy entry's `name` resolves **built-in r
 
 ## 4. Data-model changes (summary)
 
-> **Status:** this table is the **target end-state**. As built, only the top three rows landed —
-> `VariantMetadata` (new, with `Engine`), `VariantReplicaState` gaining `Cost`/`AcceleratorName`/`Engine`,
-> and the analyzer no longer *emitting* `Cost`/`AcceleratorName`. The rest is **deferred** (see §5
-> Phase 3): `AnalyzerResult`/`VariantCapacity` are unchanged, `ReplicaMetrics` still *has* the `Cost`/
-> `AcceleratorName` fields (the analyzer just stopped reading them), and `saturationEntry` still exists.
+> **Status: as built**, with three deviations, each recorded in §5:
+>
+> 1. `AnalyzerResult` was trimmed to `{AnalyzerName, ModelID, Namespace, AnalyzedAt,
+>    VariantCapacities, TotalDemand, RoleDemand}`. The engine-owned fields moved to
+>    `pipeline.NamedAnalyzerResult` rather than being deleted outright — the optimizer needs
+>    them, it just must not receive them *from an analyzer*.
+> 2. `VariantCapacity` was trimmed in place rather than renamed to `VariantTarget`, and it
+>    **keeps `ReplicaCount`/`PendingReplicas`** (engine-instance units — see the boxed note
+>    under §5 increment 2; taking these from `VariantMetadata` would undercount supply on
+>    DP>1 deployments).
+> 3. `ReplicaMetrics` still carries `Cost`/`AcceleratorName`; the analyzer stopped reading
+>    them, but removing the fields is collector-side work outside this plan.
 
 | Type | Change |
 |---|---|
 | **`VariantMetadata`** (new) | authoritative per-variant identity+state; discovery output |
 | `domain.VariantReplicaState` | superseded by / folded into `VariantMetadata` (gains `Cost`, `AcceleratorName`) |
-| `domain.AnalyzerResult` | trimmed to `{TotalDemand, RoleDemand, Targets, Reason}` |
-| `domain.VariantCapacity` | replaced by `VariantTarget{VariantName, Role, PerReplicaCapacity}`; identity/engine fields removed |
-| `domain.RoleCapacity` / `RoleCapacities` | replaced by `RoleDemand map[string]float64` (demand) + engine-side per-role RC/SC on `NamedAnalyzerResult` |
-| `domain.ReplicaMetrics` | **loses `Cost` and `AcceleratorName`** — both are variant-level facts, resolved once per variant (`replica_metrics.go:983-1003`) and laundered onto every pod; discovery owns them. `ReplicaMetrics` becomes purely per-pod *signal* (KV usage, tokens, rates) + attribution keys (`PodName`/`VariantName`/`ModelID`/`Namespace`). Capacity-store keying already resolves accelerator directly (`engine_v2.go:48`), not from `ReplicaMetrics`. |
-| `NamedAnalyzerResult` (`optimizer_interfaces.go`) | gains the engine-owned `RequiredCapacity`/`SpareCapacity`/anticipated-supply (already has `Remaining`/`Spare`) |
-| `saturationEntry` | **deleted** |
+| `domain.AnalyzerResult` | ✅ trimmed to `{AnalyzerName, ModelID, Namespace, AnalyzedAt, VariantCapacities, TotalDemand, RoleDemand}` — the pure `(D, P)` |
+| `domain.VariantCapacity` | ✅ identity removed (`Cost`, `AcceleratorName`) and `TotalCapacity` deleted; kept the name, and kept `ReplicaCount`/`PendingReplicas` (instance units — deviation 2 above) |
+| `domain.RoleCapacity` / `RoleCapacities` | ✅ analyzers emit `RoleDemand map[string]float64`; the per-role RC/SC live on `NamedAnalyzerResult.RoleCapacities`, built by the engine |
+| `domain.ReplicaMetrics` | ⏳ *not done* (deviation 3) — would lose `Cost` and `AcceleratorName`. Both are variant-level facts, resolved once per variant (`replica_metrics.go:983-1003`) and laundered onto every pod; discovery owns them. `ReplicaMetrics` becomes purely per-pod *signal* (KV usage, tokens, rates) + attribution keys (`PodName`/`VariantName`/`ModelID`/`Namespace`). Capacity-store keying already resolves accelerator directly (`engine_v2.go:48`), not from `ReplicaMetrics`. |
+| `NamedAnalyzerResult` (`optimizer_interfaces.go`) | ✅ gained `TotalSupply`, `TotalAnticipatedSupply`, `Utilization`, `RequiredCapacity`, `SpareCapacity`, `RoleCapacities` |
+| `saturationEntry` | ✅ **deleted**; `saturationNamedEntry` remains, special only in that its `P` sizes replicas |
+| `variantRecord` (new, `pipeline/variant_records.go`) | ✅ the optimizer's per-variant view: embedded `VariantMetadata` (identity) + the analyzer's `PerReplicaCapacity`/`Utilization`. Built by `buildVariantRecords`, the single join point. |
 
 ---
 
@@ -249,7 +261,7 @@ identity that came from discovery, not the analyzer's copies. **Behavior-preserv
 today); no-op on paths that don't run discovery. `saturationEntry` deletion is deferred to Phase 3
 (it is still the variant-list/P source until analyzers emit pure `(D, P)`).
 
-**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`. ⚠️ PARTIAL — the behavioral split and the *result*-level type trim are done; the *per-variant* trim and `saturationEntry` remain.**
+**Phase 3 — Trim the contract; analyzers emit pure `(D, P)`; delete `saturationEntry`. ✅ DONE.**
 *Done:*
 - *(3.0)* `saturation_v2` stopped laundering per-pod `Cost`/`AcceleratorName` onto its output —
   identity now comes from discovery via the builder overlay.
@@ -274,10 +286,13 @@ today); no-op on paths that don't run discovery. `saturationEntry` deletion is d
   `buildNamedResult` constructs the entry, runs `buildCapacities`, then seeds the
   optimizer's mutable `Remaining`/`Spare` from the built RC/SC.
 
-*Deferred (not implemented):* the **per-variant** trim — replacing `VariantCapacity` with
-`VariantTarget` — and deleting `saturationEntry` (still at `analyzer_helpers.go`, still the
-per-variant metadata keeper) + the Phase-2 overlay. §3.2/§3.3/§4 describe that **target
-end-state**, not the current code.
+- *(3.5, increments 2-3)* **The per-variant trim and `saturationEntry` landed too.**
+  `VariantCapacity` lost `TotalCapacity`, `Cost` and `AcceleratorName`; the optimizer
+  reads identity from `VariantMetadata` through the engine-built `variantRecord`; the
+  Phase-2 overlay shrank to `Role`; `saturationEntry` is deleted. §3.2/§3.3/§4 now
+  describe the code as built, with one deviation: replica counts stay on the analyzer's
+  output (see the boxed note under increment 2) and the trimmed type keeps the name
+  `VariantCapacity` rather than becoming `VariantTarget`.
 
 #### Doing the type-level trim: recipe and pitfalls
 
@@ -364,11 +379,27 @@ hand-built literal left it false. `Live` is read only by `needsScaleDownForRole`
 `safeRemovalReplicasForRole`, so it is inert for scale-up fixtures — but check, don't assume.
 
 > **Correction (2026-08-07), from doing increment 1.** Two errors in the increment 2/3
-> sketch below were found and the ordering is now **3 before 2**. See the two boxed notes.
+> sketch below were found and the ordering became **3 before 2**. Both increments have
+> since landed in that order. The boxed notes are kept because they record constraints
+> that still bind anyone touching this code.
 
-**Increment 2 — analyzers emit `VariantTarget`.** ⚠️ **PARTIAL.** The dead `TotalCapacity`
-field is gone (written by all three analyzers, read by nothing in production — only
-`metrics.go`'s help text mentioned it). The rest is blocked on increment 3.
+**Increment 2 — trim the per-variant contract. ✅ DONE.** `domain.VariantCapacity` is now
+`{VariantName, Role, ReplicaCount, PendingReplicas, PerReplicaCapacity, Reason,
+TotalDemand, Utilization}` — the analyzer's per-variant `(D, P)` and nothing else:
+
+- `TotalCapacity` deleted (written by all three analyzers, read by nothing — only
+  `metrics.go`'s help text mentioned it).
+- `Cost` and `AcceleratorName` deleted. They are discovery's, and after increment 3
+  nothing read them here. The capacity builder's Phase-2 overlay shrank to `Role` alone.
+
+`Role` deliberately stays. It is not identity on this struct but the key the analyzer
+attributed demand by: `buildRoleCapacities` pairs `RoleDemand` with the per-role supply
+grouped from these entries, so both halves must be keyed the same way. The builder still
+overlays it from discovery so the two cannot drift.
+
+The type is not literally renamed to `VariantTarget` — the remaining fields are the
+target plus the replica counts that make it a supply, and `VariantCapacity` still
+describes that accurately.
 
 > **Do NOT take replica counts from `VariantMetadata`.** The original sketch said
 > "`aggregation` needs replica counts from metadata rather than from the analyzer output".
@@ -384,18 +415,36 @@ field is gone (written by all three analyzers, read by nothing in production —
 > (`Cost`, `AcceleratorName`) and the derived `Utilization` — and identity can only go once
 > increment 3 has re-keyed the optimizer, which is why 3 now comes first.
 
-**Increment 3 — delete `saturationEntry`.** This is the only increment that changes
-optimizer *logic*, and it is now the **next** one to do. De-risked by a finding from the
-attempt: `ModelScalingRequest.Variants` is populated at exactly one site (`engine_v2.go`)
-and **read by nothing** — Phase 2 threaded discovery through but the optimizer never
-consumed it; the overlay in `buildCapacities` is what actually makes identity
-authoritative. So the behavioural de-privileging is already done, and this increment is
-re-keying eight helpers (`rolesOf`, `variantsForRole`, `buildCapacityMap`,
+**Increment 3 — delete `saturationEntry`. ✅ DONE.** The only increment that changed
+optimizer *logic*. `saturationEntry` is gone; `saturationNamedEntry` remains, and what is
+still special about that entry is only that its `P` sizes replicas — the coordination
+math, deliberately unchanged per §2.
+
+**What made it a small diff.** Rather than thread `[]domain.VariantMetadata` and look `P`
+up separately at every site, the engine now *builds* the optimizer's per-variant view:
+
+```go
+type variantRecord struct {
+    domain.VariantMetadata          // identity, embedded — discovery's
+    PerReplicaCapacity float64      // the analyzer's P
+    Utilization        float64      // the analyzer's per-variant ratio
+}
+```
+
+Because the metadata is embedded, `vc.Cost`, `vc.AcceleratorName`, `vc.Role` and
+`vc.PerReplicaCapacity` all still resolve — so every helper *body* was unchanged and only
+the signatures moved from `[]domain.VariantCapacity` to `[]variantRecord` (37 mechanical
+substitutions across four files). `buildVariantRecords` in `variant_records.go` is the
+single join point, and `recordsForRequest` is what the optimizers call.
+
+Helpers re-keyed: `rolesOf`, `variantsForRole`, `buildCapacityMap`,
 `sortByCostEfficiencyAsc`, `accFromVCs`, `singleAccType`, `variantsOnType`,
-`modelRolesOnType`) onto `req.Variants` — about 23 `[]domain.VariantCapacity` threading
-sites in the pipeline package, plus the `RolePickFn` signature. Per §2, do **not** change
-which analyzer's `P` sizes replicas — that is the coordination math and an explicit
-non-goal.
+`modelRolesOnType`, plus `costEfficiency`, `scaleDownVariantSet`,
+`sortVariantsForScaleDown`, `anyHasReplicas`, `fillRole`, `reclaimRole`, the
+`RolePickFn` signature and `allocateForModelPaired`. `roleCurrentGPUs`/`roleFloorGPUs`
+now take the records and the state map instead of re-deriving both from the request.
+`computeCurrentGPUUsage`/`…ByNamespace` in the saturation engine were unified into
+`gpuUsageByType`, which reads accelerator from `req.Variants`.
 
 > **`prcForVariant` is not one of them.** The original list said nine helpers including
 > `prcForVariant`. `PerReplicaCapacity` is the analyzer's `P` — it is not on
@@ -406,6 +455,22 @@ output: `engine.go:1260-1262` derives `variantStates` from `variantMetadata` one
 and `saturation_v2` emits exactly one `VariantCapacity` per `variantState`. (This does not
 hold for *every* analyzer — throughput skips variants whose ITL model will not resolve —
 but the helpers read the saturation entry specifically.)
+
+**`req.Variants` is now required.** `buildVariantRecords` returns nil without it, so the
+optimizer skips the model. There is no fallback to the analyzer's copies: with identity
+gone from `VariantCapacity` such a fallback could supply neither cost nor accelerator, and
+running the cost-aware math on zero costs would pick arbitrarily while looking like a
+working decision. Metadata also *drives the result set* — a discovered variant the
+analyzer did not size gets a zero `P` (every consumer skips those) instead of vanishing,
+so the optimizer's view of the fleet no longer depends on which variants an analyzer
+happened to emit.
+
+**Test note.** Populating `req.Variants` in the fixtures is what makes the optimizer suite
+exercise the discovery path at all; without it every test would have silently run the
+no-discovery branch. After wiring `deriveVariants` into the `withSatEntry` helpers, the
+branch was made to `panic` and the suite re-run — it reached zero call sites, which is how
+the coverage was confirmed rather than assumed. `variant_records_test.go` covers the join,
+the metadata-drives-the-set rule, ordering, and the nil cases directly.
 
 **Phase 4 — `wva_analyzer_*` metrics. ✅ DONE.** `wva_analyzer_demand` (per model instance, per role
 when disaggregated) and `wva_analyzer_target` (per-replica P per variant) are emitted for every

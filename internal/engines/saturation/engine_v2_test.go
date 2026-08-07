@@ -14,17 +14,53 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
 
-// withSatEntryV2 adds a single-saturation AnalyzerResults to req from r.
-// Mirrors the helper in cost_aware_optimizer_test.go for use in the saturation package.
-func withSatEntryV2(r *pipeline.NamedAnalyzerResult, req pipeline.ModelScalingRequest) pipeline.ModelScalingRequest {
-	if r != nil {
-		nr := *r
-		nr.Name = domain.SaturationAnalyzerName
-		nr.Remaining = nr.RequiredCapacity
-		nr.Spare = nr.SpareCapacity
-		nr.Live = true
-		req.AnalyzerResults = []pipeline.NamedAnalyzerResult{nr}
+// v2Variant is one variant as these integration fixtures state it: the identity
+// discovery resolves and the capacity signal the analyzer measures, together in
+// one literal. withSatEntryV2 splits them the way the engine does.
+type v2Variant struct {
+	name        string
+	accelerator string
+	cost        float64
+	role        string
+	replicas    int
+	prc         float64
+}
+
+// v2Variants splits the fixture list into the two halves a ModelScalingRequest
+// carries, and returns them ready to attach.
+func v2Variants(vs []v2Variant) ([]domain.VariantMetadata, []domain.VariantCapacity) {
+	meta := make([]domain.VariantMetadata, 0, len(vs))
+	caps := make([]domain.VariantCapacity, 0, len(vs))
+	for _, v := range vs {
+		meta = append(meta, domain.VariantMetadata{
+			VariantName: v.name, AcceleratorName: v.accelerator, Cost: v.cost, Role: v.role,
+		})
+		caps = append(caps, domain.VariantCapacity{
+			VariantName: v.name, Role: v.role, ReplicaCount: v.replicas, PerReplicaCapacity: v.prc,
+		})
 	}
+	return meta, caps
+}
+
+// withSatEntryV2 attaches a single-saturation AnalyzerResults to req, along with
+// the discovery metadata the optimizer reads variant identity from.
+// Mirrors the helper in cost_aware_optimizer_test.go for use in this package.
+func withSatEntryV2(rc, sc float64, vs []v2Variant, req pipeline.ModelScalingRequest) pipeline.ModelScalingRequest {
+	meta, caps := v2Variants(vs)
+	req.Variants = meta
+	req.AnalyzerResults = []pipeline.NamedAnalyzerResult{{
+		Name: domain.SaturationAnalyzerName,
+		Result: &domain.AnalyzerResult{
+			ModelID:           req.ModelID,
+			Namespace:         req.Namespace,
+			VariantCapacities: caps,
+		},
+		RequiredCapacity: rc,
+		SpareCapacity:    sc,
+		Remaining:        rc,
+		Spare:            sc,
+		Live:             true,
+	}}
 	return req
 }
 
@@ -34,19 +70,12 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should scale up cheapest variant by cost-efficiency", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &pipeline.NamedAnalyzerResult{
-				RequiredCapacity: 5000,
-				Result: &domain.AnalyzerResult{
-					ModelID:   "model-1",
-					Namespace: "default",
-					VariantCapacities: []domain.VariantCapacity{
-						{VariantName: "variant-cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
-						{VariantName: "variant-expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
-					},
-				},
+			variants := []v2Variant{
+				{name: "variant-cheap", accelerator: "A100", cost: 5.0, replicas: 2, prc: 10000},
+				{name: "variant-expensive", accelerator: "H100", cost: 15.0, replicas: 1, prc: 20000},
 			}
 			requests := []pipeline.ModelScalingRequest{
-				withSatEntryV2(r, pipeline.ModelScalingRequest{
+				withSatEntryV2(5000, 0, variants, pipeline.ModelScalingRequest{
 					ModelID:   "model-1",
 					Namespace: "default",
 					VariantStates: []domain.VariantReplicaState{
@@ -67,19 +96,12 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should scale down most expensive variant", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &pipeline.NamedAnalyzerResult{
-				SpareCapacity: 25000,
-				Result: &domain.AnalyzerResult{
-					ModelID:   "model-1",
-					Namespace: "default",
-					VariantCapacities: []domain.VariantCapacity{
-						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
-						{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
-					},
-				},
+			variants := []v2Variant{
+				{name: "variant-cheap", cost: 5.0, replicas: 3, prc: 10000},
+				{name: "variant-expensive", cost: 15.0, replicas: 2, prc: 20000},
 			}
 			requests := []pipeline.ModelScalingRequest{
-				withSatEntryV2(r, pipeline.ModelScalingRequest{
+				withSatEntryV2(0, 25000, variants, pipeline.ModelScalingRequest{
 					ModelID:   "model-1",
 					Namespace: "default",
 					VariantStates: []domain.VariantReplicaState{
@@ -98,19 +120,12 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should protect cheapest variant at 1 during scale-down", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &pipeline.NamedAnalyzerResult{
-				SpareCapacity: 30000,
-				Result: &domain.AnalyzerResult{
-					ModelID:   "model-1",
-					Namespace: "default",
-					VariantCapacities: []domain.VariantCapacity{
-						{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
-						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
-					},
-				},
+			variants := []v2Variant{
+				{name: "variant-expensive", cost: 15.0, replicas: 1, prc: 20000},
+				{name: "variant-cheap", cost: 5.0, replicas: 1, prc: 10000},
 			}
 			requests := []pipeline.ModelScalingRequest{
-				withSatEntryV2(r, pipeline.ModelScalingRequest{
+				withSatEntryV2(0, 30000, variants, pipeline.ModelScalingRequest{
 					ModelID:   "model-1",
 					Namespace: "default",
 					VariantStates: []domain.VariantReplicaState{
@@ -129,19 +144,12 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should not skip variants with pending replicas", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &pipeline.NamedAnalyzerResult{
-				RequiredCapacity: 5000,
-				Result: &domain.AnalyzerResult{
-					ModelID:   "model-1",
-					Namespace: "default",
-					VariantCapacities: []domain.VariantCapacity{
-						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
-						{VariantName: "variant-mid", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
-					},
-				},
+			variants := []v2Variant{
+				{name: "variant-cheap", cost: 5.0, replicas: 2, prc: 10000},
+				{name: "variant-mid", cost: 10.0, replicas: 1, prc: 15000},
 			}
 			requests := []pipeline.ModelScalingRequest{
-				withSatEntryV2(r, pipeline.ModelScalingRequest{
+				withSatEntryV2(5000, 0, variants, pipeline.ModelScalingRequest{
 					ModelID:   "model-1",
 					Namespace: "default",
 					VariantStates: []domain.VariantReplicaState{

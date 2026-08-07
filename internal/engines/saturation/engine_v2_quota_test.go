@@ -9,15 +9,23 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
-// satReq builds a ModelScalingRequest with a saturation analyzer entry whose
-// variant capacities and replica states drive computeCurrentGPUUsageByNamespace.
-func satReq(namespace string, vcs []domain.VariantCapacity, states []domain.VariantReplicaState) pipeline.ModelScalingRequest {
+// satReq builds a ModelScalingRequest with a saturation analyzer entry, the
+// discovery metadata naming each variant's accelerator, and the replica states
+// counting its GPUs — the three inputs computeCurrentGPUUsageByNamespace joins.
+// Accelerator comes from the metadata because that is where identity lives; the
+// analyzer's per-variant entries no longer carry it.
+func satReq(namespace string, variants []domain.VariantMetadata, states []domain.VariantReplicaState) pipeline.ModelScalingRequest {
+	vcs := make([]domain.VariantCapacity, 0, len(variants))
+	for _, m := range variants {
+		vcs = append(vcs, domain.VariantCapacity{VariantName: m.VariantName, Role: m.Role})
+	}
 	return pipeline.ModelScalingRequest{
 		Namespace: namespace,
 		AnalyzerResults: []pipeline.NamedAnalyzerResult{{
 			Name:   domain.SaturationAnalyzerName,
 			Result: &domain.AnalyzerResult{Namespace: namespace, VariantCapacities: vcs},
 		}},
+		Variants:      variants,
 		VariantStates: states,
 	}
 }
@@ -26,10 +34,10 @@ var _ = Describe("computeCurrentGPUUsageByNamespace", func() {
 	It("sums currentReplicas*gpusPerReplica per (namespace, accelerator type)", func() {
 		usage := computeCurrentGPUUsageByNamespace([]pipeline.ModelScalingRequest{
 			satReq("team-a",
-				[]domain.VariantCapacity{{VariantName: "v", AcceleratorName: "A100"}},
+				[]domain.VariantMetadata{{VariantName: "v", AcceleratorName: "A100"}},
 				[]domain.VariantReplicaState{{VariantName: "v", CurrentReplicas: 2, GPUsPerReplica: 2}}),
 			satReq("team-b",
-				[]domain.VariantCapacity{{VariantName: "w", AcceleratorName: "H100"}},
+				[]domain.VariantMetadata{{VariantName: "w", AcceleratorName: "H100"}},
 				[]domain.VariantReplicaState{{VariantName: "w", CurrentReplicas: 1, GPUsPerReplica: 4}}),
 		})
 		Expect(usage["team-a"]).To(HaveKeyWithValue("A100", 4))
@@ -39,7 +47,7 @@ var _ = Describe("computeCurrentGPUUsageByNamespace", func() {
 	It("defaults GPUsPerReplica <= 0 to 1", func() {
 		usage := computeCurrentGPUUsageByNamespace([]pipeline.ModelScalingRequest{
 			satReq("team-a",
-				[]domain.VariantCapacity{{VariantName: "v", AcceleratorName: "A100"}},
+				[]domain.VariantMetadata{{VariantName: "v", AcceleratorName: "A100"}},
 				[]domain.VariantReplicaState{{VariantName: "v", CurrentReplicas: 3, GPUsPerReplica: 0}}),
 		})
 		Expect(usage["team-a"]).To(HaveKeyWithValue("A100", 3), "GPUsPerReplica defaulted to 1")

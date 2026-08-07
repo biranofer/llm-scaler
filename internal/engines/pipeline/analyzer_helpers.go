@@ -15,7 +15,7 @@ import (
 
 // rolesOf returns the distinct roles among the given variants, sorted for
 // determinism. A variant with no role is the synthetic RoleBoth.
-func rolesOf(vcs []domain.VariantCapacity) []string {
+func rolesOf(vcs []variantRecord) []string {
 	set := make(map[string]struct{}, len(vcs))
 	for _, vc := range vcs {
 		r := vc.Role
@@ -84,21 +84,13 @@ func applyAllocation(s []NamedAnalyzerResult, v string, n int) {
 	}
 }
 
-// saturationEntry returns the saturation analyzer's result from s, or nil if not present.
-// The saturation entry is the keeper of per-variant metadata (Cost, AcceleratorName, Role,
-// replica counts) that the optimizer uses for variant selection and GPU accounting.
-// TODO: remove the sat_v2 special role once all analyzers populate variant metadata.
-func saturationEntry(s []NamedAnalyzerResult) *domain.AnalyzerResult {
-	if nr := saturationNamedEntry(s); nr != nil {
-		return nr.Result
-	}
-	return nil
-}
-
-// saturationNamedEntry returns the saturation analyzer's full named entry from s,
-// or nil if not present. Callers that need the engine-owned capacity aggregates
-// (RequiredCapacity/SpareCapacity/RoleCapacities) use this rather than
-// saturationEntry, which exposes only the analyzer's own (D, P) signal.
+// saturationNamedEntry returns the saturation analyzer's entry from s, or nil if
+// not present.
+//
+// Saturation is no longer the keeper of per-variant metadata — the optimizer gets
+// identity from discovery via buildVariantRecords. What is still special about
+// this entry is that its P is the one that sizes replicas, which is the
+// coordination math and deliberately unchanged here.
 func saturationNamedEntry(s []NamedAnalyzerResult) *NamedAnalyzerResult {
 	for i := range s {
 		if s[i].Name == domain.SaturationAnalyzerName {
@@ -235,8 +227,8 @@ func anyRoleNeedsScaleUp(state RolePairedState, roles []string) bool {
 
 // variantsForRole returns the capacities whose role matches role exactly,
 // canonicalizing an empty Role to domain.RoleBoth.
-func variantsForRole(vcs []domain.VariantCapacity, role string) []domain.VariantCapacity {
-	out := make([]domain.VariantCapacity, 0, len(vcs))
+func variantsForRole(vcs []variantRecord, role string) []variantRecord {
+	out := make([]variantRecord, 0, len(vcs))
 	for _, vc := range vcs {
 		r := vc.Role
 		if r == "" {
@@ -331,7 +323,7 @@ func needsScaleDownForRole(s []NamedAnalyzerResult, role string) bool {
 type RolePickFn func(
 	role string,
 	s []NamedAnalyzerResult,
-	variants []domain.VariantCapacity,
+	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	available map[string]int,
 	targets map[string]int,
@@ -345,7 +337,7 @@ type RolePickFn func(
 func allocateForModelPaired(
 	ctx context.Context,
 	s []NamedAnalyzerResult,
-	variants []domain.VariantCapacity,
+	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	available map[string]int,
 	targets map[string]int,

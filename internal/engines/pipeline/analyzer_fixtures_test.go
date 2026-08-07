@@ -31,7 +31,7 @@ type satEntryFixture struct {
 	ModelID           string
 	Namespace         string
 	AnalyzedAt        time.Time
-	VariantCapacities []domain.VariantCapacity
+	VariantCapacities []vcFixture
 	TotalDemand       float64
 	RoleDemand        map[string]float64
 
@@ -42,6 +42,76 @@ type satEntryFixture struct {
 	RequiredCapacity       float64
 	SpareCapacity          float64
 	RoleCapacities         map[string]domain.RoleCapacity
+}
+
+// vcFixture is one variant as a test states it: identity and capacity signal in
+// a single literal, which is how a scenario reads most clearly at the call site.
+//
+// Production splits these across two owners — identity on domain.VariantMetadata
+// from discovery, the (D, P) signal on domain.VariantCapacity from the analyzer —
+// and deriveVariants/capacities below perform exactly that split, so fixtures
+// still drive the real two-source join rather than a shortcut around it.
+type vcFixture struct {
+	VariantName     string
+	AcceleratorName string
+	Cost            float64
+	Role            string
+
+	ReplicaCount       int
+	PendingReplicas    int
+	PerReplicaCapacity float64
+	Reason             string
+	TotalDemand        float64
+	Utilization        float64
+}
+
+// deriveVariants projects the identity half of a fixture onto the
+// domain.VariantMetadata slice the discovery step would have produced.
+func deriveVariants(f *satEntryFixture) []domain.VariantMetadata {
+	if f == nil {
+		return nil
+	}
+	out := make([]domain.VariantMetadata, 0, len(f.VariantCapacities))
+	for _, vc := range f.VariantCapacities {
+		out = append(out, domain.VariantMetadata{
+			VariantName:     vc.VariantName,
+			Role:            vc.Role,
+			Cost:            vc.Cost,
+			AcceleratorName: vc.AcceleratorName,
+		})
+	}
+	return out
+}
+
+// capacities projects the signal half of a fixture onto the per-variant records
+// an analyzer emits. Identity beyond the keying name and the role the analyzer
+// attributed demand by is deliberately absent — that is the trimmed contract.
+func (f *satEntryFixture) capacities() []domain.VariantCapacity {
+	out := make([]domain.VariantCapacity, 0, len(f.VariantCapacities))
+	for _, vc := range f.VariantCapacities {
+		out = append(out, domain.VariantCapacity{
+			VariantName:        vc.VariantName,
+			Role:               vc.Role,
+			ReplicaCount:       vc.ReplicaCount,
+			PendingReplicas:    vc.PendingReplicas,
+			PerReplicaCapacity: vc.PerReplicaCapacity,
+			Reason:             vc.Reason,
+			TotalDemand:        vc.TotalDemand,
+			Utilization:        vc.Utilization,
+		})
+	}
+	return out
+}
+
+// rec builds one variantRecord for the tests that drive a per-variant helper
+// (variantsForRole, sortByCostEfficiencyAsc, …) directly rather than through an
+// optimizer. Spelling out the embedded VariantMetadata at each of those call
+// sites buries the one or two fields the test actually cares about.
+func rec(name, role string, cost, prc float64) variantRecord {
+	return variantRecord{
+		VariantMetadata:    domain.VariantMetadata{VariantName: name, Role: role, Cost: cost},
+		PerReplicaCapacity: prc,
+	}
 }
 
 // withScore sets the fair-share weight the engine would have resolved from
@@ -61,7 +131,7 @@ func (f *satEntryFixture) result() *domain.AnalyzerResult {
 		ModelID:           f.ModelID,
 		Namespace:         f.Namespace,
 		AnalyzedAt:        f.AnalyzedAt,
-		VariantCapacities: f.VariantCapacities,
+		VariantCapacities: f.capacities(),
 		TotalDemand:       f.TotalDemand,
 		RoleDemand:        f.RoleDemand,
 	}

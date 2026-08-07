@@ -126,14 +126,31 @@ type AnalyzerResult struct {
 	RoleDemand map[string]float64
 }
 
-// VariantCapacity holds per-variant capacity data in analyzer-specific units.
-// For saturation: units are tokens. For throughput: tokens/sec. For SLO: latency-constrained capacity.
+// VariantCapacity is one variant's entry in an analyzer's (D, P) signal, in
+// analyzer-specific units. For saturation: tokens. For throughput: tokens/sec.
+// For SLO: latency-constrained capacity.
+//
+// It carries no variant identity beyond the name that keys it. Cost and
+// accelerator are discovery's, and the optimizer reads them from
+// VariantMetadata; an analyzer has no business restating them, and when it did,
+// the values reached the optimizer only because the capacity builder overlaid
+// the authoritative ones back on top.
+//
+// Role is the exception, and it stays because it is not identity here but the
+// key the analyzer attributed demand by: the capacity builder pairs RoleDemand
+// with the per-role supply grouped from these entries, so both halves must be
+// keyed the same way. The builder still overlays it from discovery so the two
+// cannot drift.
 type VariantCapacity struct {
-	VariantName     string
-	AcceleratorName string
-	Cost            float64
-	Role            string // "prefill", "decode", "both", "" (empty = non-disaggregated)
+	VariantName string
+	Role        string // "prefill", "decode", "both", "" (empty = non-disaggregated)
 
+	// ReplicaCount and PendingReplicas are in ENGINE-INSTANCE units (vLLM DP
+	// ranks), not scale-target units: saturation sets ReplicaCount to the number
+	// of per-instance ReplicaMetrics it saw, and a DP=8 pod hosts 8
+	// independently-capacitied instances. They pair with PerReplicaCapacity to
+	// give supply, and must not be crossed with VariantMetadata.CurrentReplicas
+	// (pods, or LWS groups), which is what replica *targets* are counted in.
 	ReplicaCount    int
 	PendingReplicas int
 

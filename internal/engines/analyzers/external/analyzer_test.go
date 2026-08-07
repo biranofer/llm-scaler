@@ -131,8 +131,6 @@ var _ = Describe("external.Analyzer", func() {
 			// the wrapper emits only (D, P). Assert the supply the builder derives.
 			Expect(aggregation.SumTotalSupply(res.VariantCapacities)).To(Equal(6.0))
 			Expect(aggregation.SumTotalAnticipatedSupply(res.VariantCapacities)).To(Equal(8.0))
-			Expect(vc.Cost).To(BeZero())
-			Expect(vc.AcceleratorName).To(BeEmpty())
 		})
 
 		It("copies each variant's role onto its capacity", func() {

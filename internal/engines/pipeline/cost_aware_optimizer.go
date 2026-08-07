@@ -45,13 +45,13 @@ func (o *CostAwareOptimizer) Optimize(
 	var allDecisions []domain.VariantDecision
 
 	for _, req := range requests {
-		satEntry := saturationEntry(req.AnalyzerResults)
-		if satEntry == nil {
+		records := recordsForRequest(req)
+		if records == nil {
 			continue
 		}
 
 		stateMap := buildStateMap(req.VariantStates)
-		vcMap := buildCapacityMap(satEntry.VariantCapacities)
+		vcMap := buildCapacityMap(records)
 		targets := initTargets(req.VariantStates)
 
 		// Unified dispatch: one path for all models via (model, role) math.
@@ -59,10 +59,10 @@ func (o *CostAwareOptimizer) Optimize(
 		s := req.AnalyzerResults
 		roles, ps := initRoleState(s)
 		if anyRoleNeedsScaleUp(ps, roles) {
-			allocateForModelPaired(ctx, s, satEntry.VariantCapacities, stateMap, nil, targets,
+			allocateForModelPaired(ctx, s, records, stateMap, nil, targets,
 				costGreedyRolePick, ps, roles)
 		} else {
-			scaleDownRoleIterated(ctx, s, satEntry.VariantCapacities, targets, stateMap)
+			scaleDownRoleIterated(ctx, s, records, targets, stateMap)
 		}
 
 		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "cost-aware")
@@ -81,7 +81,7 @@ func (o *CostAwareOptimizer) Optimize(
 func costGreedyRolePick(
 	role string,
 	_ []NamedAnalyzerResult,
-	variants []domain.VariantCapacity,
+	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	_ map[string]int,
 	targets map[string]int,
@@ -110,11 +110,11 @@ func costGreedyRolePick(
 // onRemove is invoked after committing n so the caller can update its spare bookkeeping.
 func scaleDownVariantSet(
 	ctx context.Context,
-	sortedVariants []domain.VariantCapacity,
+	sortedVariants []variantRecord,
 	targets map[string]int,
 	states map[string]domain.VariantReplicaState,
-	maxRemovable func(vc domain.VariantCapacity) int,
-	onRemove func(vc domain.VariantCapacity, n int),
+	maxRemovable func(vc variantRecord) int,
+	onRemove func(vc variantRecord, n int),
 ) {
 	logger := ctrl.LoggerFrom(ctx)
 	for i, vc := range sortedVariants {
@@ -158,7 +158,7 @@ func scaleDownVariantSet(
 //
 // With a single analyzer (Score=1) this reduces to Cost-desc then PRC-asc, i.e.
 // #1237's existing tie-break.
-func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []domain.VariantCapacity) []domain.VariantCapacity {
+func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []variantRecord) []variantRecord {
 	weighted := func(name string) float64 {
 		sum := 0.0
 		for _, e := range s {
@@ -169,7 +169,7 @@ func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []domain.VariantC
 		}
 		return sum
 	}
-	out := append([]domain.VariantCapacity(nil), roleVCs...)
+	out := append([]variantRecord(nil), roleVCs...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Cost != out[j].Cost {
 			return out[i].Cost > out[j].Cost
@@ -184,7 +184,7 @@ func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []domain.VariantC
 }
 
 // anyHasReplicas reports whether any of the given variants has a positive target.
-func anyHasReplicas(variants []domain.VariantCapacity, targets map[string]int) bool {
+func anyHasReplicas(variants []variantRecord, targets map[string]int) bool {
 	for _, vc := range variants {
 		if targets[vc.VariantName] > 0 {
 			return true
@@ -203,8 +203,8 @@ func buildStateMap(states []domain.VariantReplicaState) map[string]domain.Varian
 }
 
 // buildCapacityMap creates a lookup map from variant name to VariantCapacity.
-func buildCapacityMap(capacities []domain.VariantCapacity) map[string]domain.VariantCapacity {
-	m := make(map[string]domain.VariantCapacity, len(capacities))
+func buildCapacityMap(capacities []variantRecord) map[string]variantRecord {
+	m := make(map[string]variantRecord, len(capacities))
 	for _, vc := range capacities {
 		m[vc.VariantName] = vc
 	}
@@ -221,8 +221,8 @@ func initTargets(states []domain.VariantReplicaState) map[string]int {
 }
 
 // sortByCostEfficiencyAsc returns variants sorted by cost/perReplicaCapacity ascending.
-func sortByCostEfficiencyAsc(capacities []domain.VariantCapacity) []domain.VariantCapacity {
-	sorted := make([]domain.VariantCapacity, len(capacities))
+func sortByCostEfficiencyAsc(capacities []variantRecord) []variantRecord {
+	sorted := make([]variantRecord, len(capacities))
 	copy(sorted, capacities)
 	sort.Slice(sorted, func(i, j int) bool {
 		return costEfficiency(sorted[i]) < costEfficiency(sorted[j])
@@ -231,7 +231,7 @@ func sortByCostEfficiencyAsc(capacities []domain.VariantCapacity) []domain.Varia
 }
 
 // costEfficiency returns the cost per unit of capacity.
-func costEfficiency(vc domain.VariantCapacity) float64 {
+func costEfficiency(vc variantRecord) float64 {
 	if vc.PerReplicaCapacity <= 0 {
 		return math.MaxFloat64
 	}
@@ -243,7 +243,7 @@ func costEfficiency(vc domain.VariantCapacity) float64 {
 func buildDecisionsWithOptimizer(
 	req ModelScalingRequest,
 	stateMap map[string]domain.VariantReplicaState,
-	vcMap map[string]domain.VariantCapacity,
+	vcMap map[string]variantRecord,
 	targets map[string]int,
 	optimizerName string,
 ) []domain.VariantDecision {
@@ -421,7 +421,7 @@ func tighterBudget(a, b int) int {
 func scaleDownRoleIterated(
 	ctx context.Context,
 	s []NamedAnalyzerResult,
-	variants []domain.VariantCapacity,
+	variants []variantRecord,
 	targets map[string]int,
 	stateMap ...map[string]domain.VariantReplicaState,
 ) {
@@ -441,10 +441,10 @@ func scaleDownRoleIterated(
 		}
 		sorted := sortVariantsForScaleDown(s, roleVCs)
 		scaleDownVariantSet(ctx, sorted, targets, states,
-			func(vc domain.VariantCapacity) int {
+			func(vc variantRecord) int {
 				return safeRemovalReplicasForRole(s, vc.VariantName, role)
 			},
-			func(vc domain.VariantCapacity, n int) {
+			func(vc variantRecord, n int) {
 				applyDeallocationForRole(s, vc.VariantName, role, n)
 			},
 		)

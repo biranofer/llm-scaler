@@ -605,6 +605,27 @@ func applyUniversalThreshold(nr *pipeline.NamedAnalyzerResult, scaleUp, scaleDow
 	}
 }
 
+// gpuUsageByType accumulates a request's current GPU usage into perType.
+//
+// Accelerator identity comes from the request's discovery metadata, the only
+// place that carries it. Replica counts come from VariantReplicaState, in
+// scale-target units — the unit GPU accounting needs, and deliberately not
+// VariantCapacity.ReplicaCount, which counts engine instances.
+func gpuUsageByType(req pipeline.ModelScalingRequest, perType map[string]int) {
+	stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
+	for _, s := range req.VariantStates {
+		stateMap[s.VariantName] = s
+	}
+	for _, m := range req.Variants {
+		state := stateMap[m.VariantName]
+		gpusPerReplica := state.GPUsPerReplica
+		if gpusPerReplica <= 0 {
+			gpusPerReplica = 1
+		}
+		perType[m.AcceleratorName] += state.CurrentReplicas * gpusPerReplica
+	}
+}
+
 // computeCurrentGPUUsage iterates over model scaling requests to compute the
 // current GPU usage per accelerator type. Used to provide current usage to
 // the ConstraintProvider when building GPU constraints for the optimizer.
@@ -621,18 +642,7 @@ func computeCurrentGPUUsage(requests []pipeline.ModelScalingRequest) map[string]
 		if satEntry == nil {
 			continue
 		}
-		stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
-		for _, s := range req.VariantStates {
-			stateMap[s.VariantName] = s
-		}
-		for _, vc := range satEntry.VariantCapacities {
-			state := stateMap[vc.VariantName]
-			gpusPerReplica := state.GPUsPerReplica
-			if gpusPerReplica <= 0 {
-				gpusPerReplica = 1
-			}
-			usage[vc.AcceleratorName] += state.CurrentReplicas * gpusPerReplica
-		}
+		gpuUsageByType(req, usage)
 	}
 	return usage
 }
@@ -660,18 +670,7 @@ func computeCurrentGPUUsageByNamespace(requests []pipeline.ModelScalingRequest) 
 		if satEntry == nil {
 			continue
 		}
-		stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
-		for _, s := range req.VariantStates {
-			stateMap[s.VariantName] = s
-		}
-		for _, vc := range satEntry.VariantCapacities {
-			state := stateMap[vc.VariantName]
-			gpusPerReplica := state.GPUsPerReplica
-			if gpusPerReplica <= 0 {
-				gpusPerReplica = 1
-			}
-			perType[vc.AcceleratorName] += state.CurrentReplicas * gpusPerReplica
-		}
+		gpuUsageByType(req, perType)
 	}
 	return usage
 }
@@ -788,12 +787,14 @@ func buildCapacities(ctx context.Context, nr *pipeline.NamedAnalyzerResult, meta
 		return
 	}
 	result := nr.Result
-	// (1) Join authoritative discovery identity onto the per-variant capacities.
+	// (1) Align the analyzer's role attribution with discovery's. Only Role is
+	// joined now: cost and accelerator left VariantCapacity entirely, and the
+	// optimizer reads them from VariantMetadata. Role stays because the per-role
+	// supply grouped below must be keyed the same way discovery keys the fleet,
+	// or RoleDemand and that supply would pair up wrongly.
 	if len(metaByVariant) > 0 {
 		for i := range result.VariantCapacities {
 			if m, ok := metaByVariant[result.VariantCapacities[i].VariantName]; ok {
-				result.VariantCapacities[i].Cost = m.Cost
-				result.VariantCapacities[i].AcceleratorName = m.AcceleratorName
 				result.VariantCapacities[i].Role = m.Role
 			}
 		}

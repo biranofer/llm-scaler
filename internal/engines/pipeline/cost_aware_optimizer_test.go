@@ -11,11 +11,21 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
-// withSatEntry adds a single-saturation AnalyzerResults to req, initialised from r.
-// Used by test fixtures so CostAwareOptimizer can find the saturation entry.
+// withSatEntry adds a single-saturation AnalyzerResults to req, initialised from r,
+// and — unless the caller set them explicitly — the discovery metadata the engine
+// would have threaded alongside it.
+//
+// Populating req.Variants matters: it is what the optimizer reads variant identity
+// from, so leaving it empty would silently exercise buildVariantRecords' no-discovery
+// fallback instead of the path production takes. Fixtures still *write* identity on
+// the VariantCapacities because that is the readable place to state it; deriveVariants
+// moves it to where the optimizer now looks.
 func withSatEntry(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 	if r != nil {
 		req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+		if req.Variants == nil {
+			req.Variants = deriveVariants(r)
+		}
 	}
 	return req
 }
@@ -44,7 +54,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 				Namespace:        "default",
 				AnalyzedAt:       time.Now(),
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -77,7 +87,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 				Namespace:        "default",
 				RequiredCapacity: 5000,
 				SpareCapacity:    1200,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000, Utilization: 0.42},
 				},
 			}
@@ -107,7 +117,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 					"prefill": {Role: "prefill", RequiredCapacity: 100, SpareCapacity: 10},
 					"decode":  {Role: "decode", RequiredCapacity: 200, SpareCapacity: 20},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "p", Role: "prefill", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000, Utilization: 0.3},
 					{VariantName: "d", Role: "decode", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000, Utilization: 0.6},
 				},
@@ -141,7 +151,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 				RoleCapacities: map[string]domain.RoleCapacity{
 					"both": {Role: "both", RequiredCapacity: 300, SpareCapacity: 30},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", Role: "", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000, Utilization: 0.5},
 				},
 			}
@@ -163,7 +173,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should not skip variants with pending replicas", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 					{VariantName: "mid", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
@@ -191,7 +201,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should skip variants with zero capacity", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "zero-cap", Cost: 1.0, ReplicaCount: 0, PerReplicaCapacity: 0},
 					{VariantName: "normal", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -217,7 +227,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should spread across multiple variants when needed", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 25000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "mid", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
@@ -247,7 +257,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should remove from most expensive variant first", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 15000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
 				},
@@ -275,7 +285,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should protect cheapest variant at 1 replica", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -303,7 +313,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should remove cheap variant when expensive replica capacity exceeds spare", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 15000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -331,7 +341,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should cascade scale-down across variants", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
 					{VariantName: "mid", Cost: 10.0, ReplicaCount: 2, PerReplicaCapacity: 15000},
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -368,7 +378,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// scale-down must leave the saturated prefill untouched and shed decode.
 			r := &satEntryFixture{
 				SpareCapacity: 20000, // aggregate (decode's spare) — gates scale-down
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill", Role: "prefill", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 					{VariantName: "decode", Role: "decode", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -404,7 +414,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// its own per-role spare, not the aggregate.
 			r := &satEntryFixture{
 				SpareCapacity: 30000, // aggregate — gates scale-down
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill", Role: "prefill", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 					{VariantName: "decode", Role: "decode", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -439,7 +449,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// keep the cheapest decode variant at one replica.
 			r := &satEntryFixture{
 				SpareCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "decode-exp", Role: "decode", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "decode-cheap", Role: "decode", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -474,7 +484,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// if that assumption is violated: the orphan is left as-is.
 			r := &satEntryFixture{
 				SpareCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill", Role: "prefill", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 					{VariantName: "decode", Role: "decode", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 					{VariantName: "orphan", Role: "", Cost: 20.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -515,7 +525,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 0,
 				SpareCapacity:    0,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 				},
 			}
@@ -551,13 +561,13 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should process models independently", func() {
 			r1 := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "m1-v1", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			r2 := &satEntryFixture{
 				SpareCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "m2-v1", Cost: 10.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 				},
 			}
@@ -593,7 +603,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should set model ID, namespace, and cost on decisions", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -623,7 +633,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should respect maxReplicas during scale-up (spillover to next variant)", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -651,7 +661,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should respect minReplicas during scale-down", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 3, PerReplicaCapacity: 20000},
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -679,7 +689,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should scale minReplicas=0 variant to zero while keeping minReplicas>0 sibling", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 80000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "keep-alive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
 					{VariantName: "expendable", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -706,7 +716,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 0,
 				SpareCapacity:    0,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 				},
 			}
@@ -735,6 +745,9 @@ var _ = Describe("CostAwareOptimizer", func() {
 			if r != nil {
 				req.Disaggregated = true
 				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				if req.Variants == nil {
+					req.Variants = deriveVariants(r)
+				}
 			}
 			return req
 		}
@@ -744,7 +757,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// D=α×P=20000 (α=1), PRC_D=10000 → n_D=2
 			r := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", Cost: 5.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", Cost: 5.0, Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -778,7 +791,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// α=1; P-RC=10000, PRC=10000 → n_P=1 on cheap-p; n_D=1 on cheap-d
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap-p", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "expensive-p", Cost: 15.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "cheap-d", Cost: 5.0, Role: "decode", PerReplicaCapacity: 10000},
@@ -822,6 +835,9 @@ var _ = Describe("CostAwareOptimizer", func() {
 			if r != nil {
 				req.Disaggregated = true
 				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				if req.Variants == nil {
+					req.Variants = deriveVariants(r)
+				}
 			}
 			return req
 		}
@@ -829,7 +845,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should scale up only decode when only D has demand (RC_P=0, RC_D>0)", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", Cost: 5.0, Role: "decode", PerReplicaCapacity: 10000},
 				},
@@ -865,6 +881,9 @@ var _ = Describe("CostAwareOptimizer", func() {
 			if r != nil {
 				req.Disaggregated = true
 				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				if req.Variants == nil {
+					req.Variants = deriveVariants(r)
+				}
 			}
 			return req
 		}
@@ -873,7 +892,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// P-Spare=20000, PRC_P=10000 → n_P=2; D-Spare=10000, PRC_D=10000 → n_D=1
 			r := &satEntryFixture{
 				SpareCapacity: 20000, // model-level (unused in disaggregated path)
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap-p", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "expensive-p", Cost: 15.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", Cost: 5.0, Role: "decode", PerReplicaCapacity: 10000},
@@ -909,10 +928,10 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Helper Functions", func() {
 
 		It("sortByCostEfficiencyAsc should order by cost/capacity", func() {
-			capacities := []domain.VariantCapacity{
-				{VariantName: "expensive", Cost: 15.0, PerReplicaCapacity: 10000},
-				{VariantName: "cheap", Cost: 5.0, PerReplicaCapacity: 10000},
-				{VariantName: "mid", Cost: 10.0, PerReplicaCapacity: 10000},
+			capacities := []variantRecord{
+				rec("expensive", "", 15.0, 10000),
+				rec("cheap", "", 5.0, 10000),
+				rec("mid", "", 10.0, 10000),
 			}
 
 			sorted := sortByCostEfficiencyAsc(capacities)

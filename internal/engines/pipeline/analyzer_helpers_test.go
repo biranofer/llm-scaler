@@ -64,19 +64,19 @@ var _ = Describe("analyzer helpers", func() {
 		})
 	})
 
-	Describe("saturationEntry", func() {
-		It("returns the saturation result from the slice", func() {
+	Describe("saturationNamedEntry", func() {
+		It("returns the saturation entry from the slice", func() {
 			satResult := &domain.AnalyzerResult{TotalDemand: 42}
 			s := []NamedAnalyzerResult{
 				{Name: domain.SaturationAnalyzerName, Result: satResult},
 				makeNamed("ta", 10, 0),
 			}
-			Expect(saturationEntry(s)).To(BeIdenticalTo(satResult))
+			Expect(saturationNamedEntry(s).Result).To(BeIdenticalTo(satResult))
 		})
 
 		It("returns nil when saturation is absent", func() {
 			s := []NamedAnalyzerResult{makeNamed("ta", 10, 0)}
-			Expect(saturationEntry(s)).To(BeNil())
+			Expect(saturationNamedEntry(s)).To(BeNil())
 		})
 	})
 
@@ -292,10 +292,10 @@ var _ = Describe("paired helpers", func() {
 
 	Describe("variantsForRole", func() {
 		It("filters variants by exact role match", func() {
-			vcs := []domain.VariantCapacity{
-				{VariantName: "pf", Role: "prefill"},
-				{VariantName: "dc", Role: "decode"},
-				{VariantName: "both", Role: "both"},
+			vcs := []variantRecord{
+				rec("pf", "prefill", 0, 0),
+				rec("dc", "decode", 0, 0),
+				rec("both", "both", 0, 0),
 			}
 			Expect(variantsForRole(vcs, "prefill")).To(HaveLen(1))
 			Expect(variantsForRole(vcs, "prefill")[0].VariantName).To(Equal("pf"))
@@ -303,11 +303,11 @@ var _ = Describe("paired helpers", func() {
 		})
 
 		It("matches 'both' query against both explicit 'both' and empty-role variants", func() {
-			vcs := []domain.VariantCapacity{
-				{VariantName: "pf", Role: "prefill"},
-				{VariantName: "dc", Role: "decode"},
-				{VariantName: "all", Role: "both"},
-				{VariantName: "also-both"}, // empty Role → canonicalized to "both" by variantsForRole
+			vcs := []variantRecord{
+				rec("pf", "prefill", 0, 0),
+				rec("dc", "decode", 0, 0),
+				rec("all", "both", 0, 0),
+				rec("also-both", "", 0, 0), // empty Role → canonicalized to "both" by variantsForRole
 			}
 			result := variantsForRole(vcs, "both")
 			Expect(result).To(HaveLen(2))

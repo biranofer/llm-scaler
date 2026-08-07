@@ -141,13 +141,19 @@ var _ = Describe("roleDemandGPUs", func() {
 				ModelID:     "A",
 				TotalDemand: 8500,
 				VariantCapacities: []domain.VariantCapacity{
-					{VariantName: "A-v", AcceleratorName: "A100", PerReplicaCapacity: 1000},
+					{VariantName: "A-v", PerReplicaCapacity: 1000},
 				},
 			},
 		}
 		stateMap := map[string]domain.VariantReplicaState{
 			"A-v": {VariantName: "A-v", GPUsPerReplica: 1},
 		}
-		Expect(roleDemandGPUs(sat, stateMap, "A100", domain.RoleBoth)).To(Equal(9))
+		req := ModelScalingRequest{
+			Variants: []domain.VariantMetadata{
+				{VariantName: "A-v", AcceleratorName: "A100"},
+			},
+		}
+		records := buildVariantRecords(req, sat.Result)
+		Expect(roleDemandGPUs(sat, records, stateMap, "A100", domain.RoleBoth)).To(Equal(9))
 	})
 })

@@ -65,7 +65,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 		build := func() []ModelScalingRequest {
 			r := &satEntryFixture{
 				ModelID: "m", Namespace: "ns", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -86,7 +86,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 		build := func() []ModelScalingRequest {
 			r := &satEntryFixture{
 				ModelID: "m", Namespace: "ns", RequiredCapacity: 25000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "pricey", AcceleratorName: "H100", Cost: 15, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -113,7 +113,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 		mk := func(id, variant, accel string, req float64, prio float64) ModelScalingRequest {
 			r := &satEntryFixture{
 				ModelID: id, Namespace: "ns", RequiredCapacity: req,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: variant, AcceleratorName: accel, Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}

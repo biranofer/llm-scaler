@@ -35,7 +35,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				Namespace:        "default",
 				AnalyzedAt:       time.Now(),
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -77,7 +77,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				AnalyzedAt:       time.Now(),
 				RequiredCapacity: 5000,
 				SpareCapacity:    1200,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000, Utilization: 0.42},
 				},
 			}
@@ -103,7 +103,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should handle GPU exhaustion with partial allocation", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -136,13 +136,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should give GPUs to most starved model first", func() {
 			rA := &satEntryFixture{
 				RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
 			}
 			rB := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
 			}
@@ -179,19 +179,19 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should verify 3-model walkthrough from design doc", func() {
 			rA := &satEntryFixture{
 				RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
 			}
 			rB := &satEntryFixture{
 				RequiredCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
 			}
 			rC := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "c-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
 				},
 			}
@@ -235,13 +235,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should distribute evenly with equal RequiredCapacity", func() {
 			rX := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "x-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rY := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "y-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -280,13 +280,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should respect per-accelerator-type limits", func() {
 			rH := &satEntryFixture{
 				RequiredCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "h100-v", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
 			}
 			rA := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a100-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -323,7 +323,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should handle mixed accelerator types across variants", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a100-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "h100-v", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -355,7 +355,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should not allocate when zero GPU budget", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -383,7 +383,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should not allocate when nil constraints", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -416,7 +416,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Namespace:        "default",
 					AnalyzedAt:       time.Now(),
 					RequiredCapacity: 40000,
-					VariantCapacities: []domain.VariantCapacity{
+					VariantCapacities: []vcFixture{
 						{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					},
 				}
@@ -453,7 +453,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				r := &satEntryFixture{
 					ModelID: id, Namespace: "default", AnalyzedAt: time.Now(),
 					RequiredCapacity: 25000,
-					VariantCapacities: []domain.VariantCapacity{
+					VariantCapacities: []vcFixture{
 						{VariantName: variant, AcceleratorName: accel, Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					},
 				}
@@ -488,7 +488,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should apply role-iterated scale-down for scale-down models", func() {
 			r := &satEntryFixture{
 				SpareCapacity: 15000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
 				},
@@ -514,13 +514,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should handle mixed scale-up and scale-down models", func() {
 			rUp := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "up-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rDown := &satEntryFixture{
 				SpareCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "down-v1", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 				},
 			}
@@ -562,7 +562,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should allocate to most cost-efficient variant regardless of pending replicas", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap-pending", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 					{VariantName: "expensive-ready", AcceleratorName: "A100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -605,7 +605,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should skip variants with zero capacity", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "zero-cap", AcceleratorName: "A100", Cost: 1.0, ReplicaCount: 0, PerReplicaCapacity: 0},
 					{VariantName: "normal", AcceleratorName: "A100", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -637,7 +637,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 0,
 				SpareCapacity:    0,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
 				},
 			}
@@ -666,7 +666,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should default GPUsPerReplica to 1 when not specified", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -697,7 +697,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should set correct model ID, namespace, and cost on decisions", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -728,7 +728,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should contain greedy-by-score in reason strings", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -759,13 +759,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should give GPUs to higher-score model first", func() {
 			rLow := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "low-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rHigh := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "high-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -816,13 +816,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// produces equal fsv and non-deterministic ordering.
 			rA := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rB := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -832,6 +832,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Namespace:       "default",
 					Priority:        1.0,
 					AnalyzerResults: []NamedAnalyzerResult{rA.named("").withScore(1.0)}, // explicit: mirrors engine-populated value
+					Variants:        deriveVariants(rA),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "a-v1", CurrentReplicas: 1, GPUsPerReplica: 2},
 					},
@@ -841,6 +842,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Namespace:       "default",
 					Priority:        5.0,
 					AnalyzerResults: []NamedAnalyzerResult{rB.named("").withScore(1.0)}, // explicit: mirrors engine-populated value
+					Variants:        deriveVariants(rB),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "b-v1", CurrentReplicas: 1, GPUsPerReplica: 2},
 					},
@@ -874,13 +876,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// available replicas; B gets none.
 			rA := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rB := &satEntryFixture{
 				RequiredCapacity: 20000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b-v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -895,6 +897,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 						// its RC signal adds to the fair-share weight.
 						(&satEntryFixture{RequiredCapacity: 20000}).named("throughput").withScore(2.0),
 					},
+					Variants: deriveVariants(rA),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "a-v1", CurrentReplicas: 1, GPUsPerReplica: 2},
 					},
@@ -904,6 +907,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Namespace:       "default",
 					Priority:        1.0,
 					AnalyzerResults: []NamedAnalyzerResult{rB.named("").withScore(1.0)},
+					Variants:        deriveVariants(rB),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "b-v1", CurrentReplicas: 1, GPUsPerReplica: 2},
 					},
@@ -936,7 +940,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					"prefill": {Role: "prefill", RequiredCapacity: 15000, TotalDemand: 15000},
 					"decode":  {Role: "decode", RequiredCapacity: 5000, TotalDemand: 5000},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", AcceleratorName: "A100", Cost: 5.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", AcceleratorName: "A100", Cost: 5.0, Role: "decode", ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -976,7 +980,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					"prefill": {Role: "prefill", RequiredCapacity: 10000, TotalDemand: 10000},
 					"decode":  {Role: "decode", RequiredCapacity: 10000, TotalDemand: 10000},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", AcceleratorName: "A100", Cost: 5.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", AcceleratorName: "A100", Cost: 5.0, Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -1015,7 +1019,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					"prefill": {Role: "prefill", RequiredCapacity: 10000, TotalDemand: 10000},
 					"decode":  {Role: "decode", RequiredCapacity: 0, TotalDemand: 0},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", AcceleratorName: "A100", Cost: 5.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "decode-v", AcceleratorName: "A100", Cost: 5.0, Role: "decode", ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -1055,7 +1059,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					"prefill": {Role: "prefill", RequiredCapacity: 10000, TotalDemand: 10000},
 					"decode":  {Role: "decode", RequiredCapacity: 10000, TotalDemand: 10000},
 				},
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "prefill-v", AcceleratorName: "H100", Cost: 15.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 20000},
 					{VariantName: "decode-v", AcceleratorName: "A100", Cost: 5.0, Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
@@ -1091,7 +1095,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("should handle non-disaggregated model with Score", func() {
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1163,7 +1167,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				Namespace:        "default",
 				AnalyzedAt:       time.Now(),
 				RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 					{VariantName: "expensive", AcceleratorName: "A100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
 				},
@@ -1195,7 +1199,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				Namespace:     "default",
 				AnalyzedAt:    time.Now(),
 				SpareCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "expensive", AcceleratorName: "A100", Cost: 15.0, ReplicaCount: 3, PerReplicaCapacity: 20000},
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -1226,7 +1230,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				Namespace:     "default",
 				AnalyzedAt:    time.Now(),
 				SpareCapacity: 80000, // enough to remove all
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "keep-alive", AcceleratorName: "A100", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
 					{VariantName: "expendable", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
 				},
@@ -1273,7 +1277,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// route the model to scale-down. anyRoleNeedsScaleUp fires on D demand.
 			r := &satEntryFixture{
 				RequiredCapacity: 0,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "pf", AcceleratorName: "A100", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "dc", AcceleratorName: "A100", Cost: 5.0, Role: "decode", PerReplicaCapacity: 10000},
 				},
@@ -1289,6 +1293,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Disaggregated:   true,
 					Priority:        1.0,
 					AnalyzerResults: []NamedAnalyzerResult{r.named("").withScore(1.0)},
+					Variants:        deriveVariants(r),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "pf", CurrentReplicas: 2, GPUsPerReplica: 2},
 						{VariantName: "dc", CurrentReplicas: 1, GPUsPerReplica: 2},
@@ -1317,7 +1322,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// Result: prefill+1, decode+3 — same Δ_util=1.0 for both.
 			r := &satEntryFixture{
 				RequiredCapacity: 10000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "pf", AcceleratorName: "A100", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
 					{VariantName: "dc", AcceleratorName: "A100", Cost: 5.0, Role: "decode", PerReplicaCapacity: 10000},
 				},
@@ -1333,6 +1338,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 					Disaggregated:   true,
 					Priority:        1.0,
 					AnalyzerResults: []NamedAnalyzerResult{r.named("").withScore(1.0)},
+					Variants:        deriveVariants(r),
 					VariantStates: []domain.VariantReplicaState{
 						{VariantName: "pf", CurrentReplicas: 1, GPUsPerReplica: 2},
 						{VariantName: "dc", CurrentReplicas: 1, GPUsPerReplica: 2},
@@ -1359,7 +1365,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 				ModelID:          "m",
 				Namespace:        "team-a",
 				RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1392,13 +1398,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("enforces independent per-namespace budgets across models", func() {
 			rA := &satEntryFixture{
 				ModelID: "mA", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rB := &satEntryFixture{
 				ModelID: "mB", Namespace: "team-b", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1435,13 +1441,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("shares one namespace budget across same-namespace models, higher priority first", func() {
 			rHi := &satEntryFixture{
 				ModelID: "hi", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "hi-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rLo := &satEntryFixture{
 				ModelID: "lo", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "lo-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1483,13 +1489,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// would not catch a priority inversion here.
 			rHi := &satEntryFixture{
 				ModelID: "hi", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "hi-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rLo := &satEntryFixture{
 				ModelID: "lo", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "lo-v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1527,13 +1533,13 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 			// isolation breach the closed-allowlist model closes.
 			rA := &satEntryFixture{
 				ModelID: "mA", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "a", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
 			rB := &satEntryFixture{
 				ModelID: "mB", Namespace: "team-b", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "b", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1567,7 +1573,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("denies all scale-up for a closed namespace with no listed types (deny-all)", func() {
 			r := &satEntryFixture{
 				ModelID: "m", Namespace: "team-x", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1594,7 +1600,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("honors an unlimited (-1) per-namespace cap, bounding only by the cluster budget", func() {
 			r := &satEntryFixture{
 				ModelID: "m", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
@@ -1628,7 +1634,7 @@ var _ = Describe("GreedyByScoreOptimizer", func() {
 		It("does not scale a purely-unlimited namespace config with no finite cluster cap (documented V2 limitation)", func() {
 			r := &satEntryFixture{
 				ModelID: "m", Namespace: "team-a", RequiredCapacity: 50000,
-				VariantCapacities: []domain.VariantCapacity{
+				VariantCapacities: []vcFixture{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
