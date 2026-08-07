@@ -270,6 +270,71 @@ simply leave them zero), and deleting `saturationEntry` (still at `analyzer_help
 per-variant metadata keeper) + the Phase-2 overlay. §3.2/§3.3/§4 describe that **target end-state**,
 not the current code.
 
+#### Doing the type-level trim: recipe and pitfalls
+
+Attempted 2026-08-07 and reverted. The production-side change worked and all analyzer
+tests passed; it was reverted because the **test-fixture migration** was done with regex
+and silently corrupted fixture values. Recording what was learned so the next attempt is
+cheap. Split it into three increments, landing each green:
+
+**Increment 1 — engine-owned fields off `AnalyzerResult`** (~30 min of production code):
+
+- Delete `TotalSupply`, `TotalAnticipatedSupply`, `Utilization`, `RequiredCapacity`,
+  `SpareCapacity`, `RoleCapacities` from `domain.AnalyzerResult`; add them to
+  `pipeline.NamedAnalyzerResult`.
+- `buildCapacities`, `applyUniversalThreshold` and `warnUnsizableShortfall` take
+  `*pipeline.NamedAnalyzerResult` instead of `*domain.AnalyzerResult`.
+- `runAnalyzersAndScore` constructs the `NamedAnalyzerResult` *before* calling
+  `buildCapacities(&nr, ...)`, then seeds `Remaining`/`Spare` from `nr.RequiredCapacity`/
+  `nr.SpareCapacity` (they are the optimizer's mutable copies, so they can only be set
+  after the build step).
+- Add `saturationNamedEntry(s) *NamedAnalyzerResult` beside `saturationEntry`; four
+  optimizer sites need it (`cost_aware_optimizer.go` decision loop, `rescale.go`
+  `roleDemandGPUs`/`modelDemandGPUs`/`rescaleInputsForGroup`). `roleDemandGPUs` and
+  `modelDemandGPUs` change signature to take the named result.
+
+**The hard part is the fixtures, not the code.** ~160 field sites across six
+`internal/engines/pipeline/*_test.go` files set these fields inside
+`domain.AnalyzerResult` literals. They appear in **four** shapes, and a regex that
+handles one corrupts another:
+
+1. `x := &domain.AnalyzerResult{` … `}` with one field per line (the common case);
+2. comma-joined on one line — `ModelID: id, Namespace: "ns", RequiredCapacity: req,`;
+3. inline — `Result: &domain.AnalyzerResult{RequiredCapacity: 20000},`;
+4. nested inside a `NamedAnalyzerResult{Result: &domain.AnalyzerResult{…}}` literal
+   (`analyzer_helpers_test.go`), where the fields hoist to the *outer* literal.
+
+Plus: multi-line `RoleCapacities: map[string]domain.RoleCapacity{…}` blocks (21 of them),
+and trailing `// comments` on a field line, which fold into the rest of the line if the
+block is collapsed to one line.
+
+**Gate the migration on a positional verifier.** Compare each rewritten fixture against
+`git show HEAD:<path>`, matching the Nth `AnalyzerResult` literal to the Nth rewritten
+signal literal *in document order*, per file. Collapsing by variable name gives false
+positives (many blocks are all named `r`), and a global `str.replace` of a
+`fooSig := satSignals{}` placeholder will copy one block's value onto every other block —
+that is exactly what went wrong. Values that are expressions (`req`, not `25000`) must
+survive verbatim.
+
+Given the above, hand-migrate the fixtures or use an AST rewrite (`go/ast` +
+`go/printer`); regex is not sufficient here.
+
+**Increment 2 — analyzers emit `VariantTarget`.** Blocked on nothing, but note the
+builder must then construct the optimizer's per-variant records from `VariantMetadata` +
+targets, and `aggregation` needs replica counts from metadata rather than from the
+analyzer output.
+
+**Increment 3 — delete `saturationEntry`.** This is the only increment that changes
+optimizer *logic*. De-risked by a finding from the attempt: `ModelScalingRequest.Variants`
+is populated at exactly one site (`engine_v2.go`) and **read by nothing** — Phase 2
+threaded discovery through but the optimizer never consumed it; the overlay in
+`buildCapacities` is what actually makes identity authoritative. So the behavioural
+de-privileging is already done, and this increment is re-keying nine helpers
+(`rolesOf`, `variantsForRole`, `buildCapacityMap`, `sortByCostEfficiencyAsc`,
+`accFromVCs`, `singleAccType`, `variantsOnType`, `modelRolesOnType`, `prcForVariant`)
+onto `req.Variants`. Per §2, do **not** change which analyzer's `P` sizes replicas —
+that is the coordination math and an explicit non-goal.
+
 **Phase 4 — `wva_analyzer_*` metrics. ✅ DONE.** `wva_analyzer_demand` (per model instance, per role
 when disaggregated) and `wva_analyzer_target` (per-replica P per variant) are emitted for every
 analyzer that runs each cycle, straight from the `(D, P)` it produced — see `recordAnalyzerMetrics`
