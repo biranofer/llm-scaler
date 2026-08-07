@@ -265,7 +265,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		}
 		available := map[string]int{"A100": 5}                          // cluster free
 		availableByNS := map[string]map[string]int{"team": {"A100": 2}} // team free = 2
-		_, handled := o.applyRescale(context.Background(), reqs, available, availableByNS)
+		_, handled := o.applyRescale(context.Background(), reqs, nil, available, availableByNS)
 
 		Expect(handled).To(HaveKeyWithValue("team/B", true))
 		Expect(availableByNS["team"]["A100"]).To(Equal(0), "team quota debited by the 2-GPU fill")
@@ -286,7 +286,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		}
 		available := map[string]int{"A100": 1}                          // cluster physically tight
 		availableByNS := map[string]map[string]int{"team": {"A100": 5}} // quota looser than physical
-		_, handled := o.applyRescale(context.Background(), reqs, available, availableByNS)
+		_, handled := o.applyRescale(context.Background(), reqs, nil, available, availableByNS)
 
 		Expect(handled).To(HaveKeyWithValue("team/B", true))
 		Expect(available["A100"]).To(Equal(0), "fill bounded by the 1 physical GPU; budget not driven negative")
@@ -308,7 +308,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		}
 		available := map[string]int{"A100": 2}                          // shared physical free
 		availableByNS := map[string]map[string]int{"team": {"A100": 5}} // team quota looser
-		decisions, _ := o.applyRescale(context.Background(), reqs, available, availableByNS)
+		decisions, _ := o.applyRescale(context.Background(), reqs, nil, available, availableByNS)
 		dm := decisionMap(decisions)
 
 		Expect(dm["X-v"].TargetReplicas).To(Equal(2), "cluster group processed first, takes the 2 physical GPUs")
@@ -488,7 +488,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 			rescaleReq("B", "default", 3, 8000, 0),
 		}
 		available := map[string]int{"A100": math.MaxInt} // unlimited budget for this type
-		decisions, handled := o.applyRescale(context.Background(), reqs, available, nil)
+		decisions, handled := o.applyRescale(context.Background(), reqs, nil, available, nil)
 
 		Expect(handled).To(BeEmpty(), "unlimited budget: nothing rescaled")
 		Expect(hasRescaleReason(decisionMap(decisions))).To(BeFalse())
@@ -506,7 +506,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 			rescaleReq("B", "default", 3, 8000, 0),
 		}
 		available := map[string]int{"A100": -2} // Used exceeds Limit
-		decisions, handled := o.applyRescale(context.Background(), reqs, available, nil)
+		decisions, handled := o.applyRescale(context.Background(), reqs, nil, available, nil)
 
 		Expect(handled).To(BeEmpty(), "over-subscribed budget: nothing rescaled")
 		Expect(hasRescaleReason(decisionMap(decisions))).To(BeFalse())

@@ -209,6 +209,7 @@ func apportionLeftover(out map[string]int, remainder map[string]float64, leftove
 func (o *GreedyByScoreOptimizer) applyRescale(
 	ctx context.Context,
 	requests []ModelScalingRequest,
+	constraints []*ResourceConstraints,
 	available map[string]int,
 	availableByNS map[string]map[string]int,
 ) ([]domain.VariantDecision, map[string]bool) {
@@ -304,7 +305,7 @@ func (o *GreedyByScoreOptimizer) applyRescale(
 
 		freeThisCycle := fillable
 		for _, req := range reqs {
-			d := o.rescaleModelDecisions(ctx, req, k.accType, targets[modelKey(req)], &freeThisCycle)
+			d := o.rescaleModelDecisions(ctx, req, constraints, k.accType, targets[modelKey(req)], &freeThisCycle)
 			decisions = append(decisions, d...)
 			handled[modelKey(req)] = true
 		}
@@ -335,6 +336,7 @@ func (o *GreedyByScoreOptimizer) applyRescale(
 func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 	ctx context.Context,
 	req ModelScalingRequest,
+	constraints []*ResourceConstraints,
 	accType string,
 	targetGPUs int,
 	freeThisCycle *int,
@@ -359,6 +361,7 @@ func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 	}
 	tgtByRole := distributeGPUsByWeight(targetGPUs, roles, demByRole, curByRole, floorByRole)
 
+	limited := make(gpuLimitTracker)
 	for _, role := range roles {
 		rt, rc := tgtByRole[role], curByRole[role]
 		switch {
@@ -366,14 +369,22 @@ func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 			reclaimRole(ctx, req.AnalyzerResults, records, role, stateMap, targets, rc-rt)
 		case rt > rc:
 			want := rt - rc
-			if want > *freeThisCycle {
+			// The role's rescale target needs more GPUs than this cycle can
+			// free (reclaims only free capacity for the NEXT cycle), so the
+			// fill lands short. That is scarcity, not a user ceiling.
+			gpuCapped := want > *freeThisCycle
+			if gpuCapped {
 				want = *freeThisCycle
 			}
 			*freeThisCycle -= fillRole(records, role, stateMap, targets, want)
+			if gpuCapped {
+				markRoleGPULimited(records, role, stateMap, targets, limited)
+			}
 		}
 	}
 
 	decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "rescale")
+	applyGPULimitAttribution(decisions, limited, constraints)
 	for i := range decisions {
 		if decisions[i].Action == domain.ActionScaleDown {
 			decisions[i].SetDecisionReason(domain.ActionScaleDown, domain.DecisionReasonRescale,
@@ -441,6 +452,33 @@ func fillRole(
 		}
 	}
 	return spent
+}
+
+// markRoleGPULimited records the variant that would have received the GPUs a
+// short fill could not get: the cheapest role candidate still under its
+// MaxReplicas ceiling, i.e. the one fillRole would grow next given more budget.
+// Called after the fill so `targets` reflects what was actually placed.
+//
+// Candidates already at their ceiling are skipped — they are bounded by user
+// intent, not by scarcity, and crediting them would be a false alarm.
+func markRoleGPULimited(
+	variants []variantRecord,
+	role string,
+	stateMap map[string]domain.VariantReplicaState,
+	targets map[string]int,
+	limited gpuLimitTracker,
+) {
+	for _, vc := range sortByCostEfficiencyAsc(variantsForRole(variants, role)) {
+		if vc.PerReplicaCapacity <= 0 {
+			continue
+		}
+		st := stateMap[vc.VariantName]
+		if st.MaxReplicas != nil && *st.MaxReplicas > 0 && targets[vc.VariantName] >= *st.MaxReplicas {
+			continue
+		}
+		limited.mark(vc.VariantName)
+		return
+	}
 }
 
 // singleAccType returns the accelerator type shared by all variants, or false if

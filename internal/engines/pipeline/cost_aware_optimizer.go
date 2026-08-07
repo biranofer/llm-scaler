@@ -274,6 +274,15 @@ func buildDecisionsWithOptimizer(
 			detailedReason = string(decisionReason)
 		}
 
+		// GPUs the target commits for this variant. Unlike the replica counts it
+		// is a resource figure, so it reports the WHOLE footprint at the target,
+		// not the delta. An unset GPUsPerReplica reads as the 1-GPU default that
+		// the rest of the optimizer assumes (gpusPerReplicaFromState).
+		gpusPerReplica := state.GPUsPerReplica
+		if gpusPerReplica <= 0 {
+			gpusPerReplica = 1
+		}
+
 		decision := domain.VariantDecision{
 			VariantName:     name,
 			ModelID:         req.ModelID,
@@ -283,6 +292,8 @@ func buildDecisionsWithOptimizer(
 			Role:            state.Role,
 			CurrentReplicas: state.CurrentReplicas,
 			TargetReplicas:  target,
+			GPUsPerReplica:  gpusPerReplica,
+			GPUsAllocated:   target * gpusPerReplica,
 			MinReplicas:     state.MinReplicas,
 			MaxReplicas:     state.MaxReplicas,
 		}

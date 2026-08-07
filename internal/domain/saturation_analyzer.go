@@ -265,11 +265,16 @@ type VariantDecision struct {
 	CurrentAllocation *Allocation
 
 	// --- Resource limiting results ---
-	// GPUsAllocated is the number of GPUs allocated by the resource limiter
+	// GPUsAllocated is the total GPU footprint the target commits for this
+	// variant (TargetReplicas × GPUsPerReplica), not the scale-up delta.
 	GPUsAllocated int
-	// WasLimited indicates if the target was constrained by resource limits
+	// WasLimited indicates that the optimizer wanted to scale this variant
+	// further but a GPU budget ran out. It is set only for genuine scarcity —
+	// a target held back by the variant's own MaxReplicas ceiling is user
+	// intent and leaves this false.
 	WasLimited bool
-	// LimitedBy identifies which limiter constrained the decision (if any)
+	// LimitedBy names the constraint provider whose pool bound the decision
+	// (empty when no provider imposes a finite bound).
 	LimitedBy string
 
 	// --- Replica bounds ---

@@ -48,6 +48,7 @@ type modelWork struct {
 	roles     []string              // active roles for this model
 	remaining float64               // fair-share priority metric (negative = fully satisfied)
 	targets   map[string]int        // variant name → target replicas (ALL variants)
+	limited   gpuLimitTracker       // variants the GPU budget cut short (see applyGPULimitAttribution)
 }
 
 // fairShareValue computes the fair-share priority metric for one model.
@@ -112,7 +113,7 @@ func (o *GreedyByScoreOptimizer) Optimize(
 	var rescaleDecisions []domain.VariantDecision
 	var handled map[string]bool
 	if o.Rescale.any() {
-		rescaleDecisions, handled = o.applyRescale(ctx, requests, available, availableByNS)
+		rescaleDecisions, handled = o.applyRescale(ctx, requests, constraints, available, availableByNS)
 	}
 
 	var scaleUpWork []*modelWork
@@ -148,6 +149,7 @@ func (o *GreedyByScoreOptimizer) Optimize(
 		stateMap := buildStateMap(w.req.VariantStates)
 		vcMap := buildCapacityMap(w.records)
 		decisions := buildDecisionsWithOptimizer(w.req, stateMap, vcMap, w.targets, "greedy-by-score")
+		applyGPULimitAttribution(decisions, w.limited, constraints)
 		logger.V(logging.DEBUG).Info("Greedy-by-score optimizer decisions (scale-up)",
 			"modelID", w.req.ModelID,
 			"decisions", len(decisions))
@@ -193,6 +195,7 @@ func (o *GreedyByScoreOptimizer) buildScaleUpWork(req ModelScalingRequest, recor
 		roles:     roles,
 		remaining: fsv,
 		targets:   initTargets(req.VariantStates),
+		limited:   make(gpuLimitTracker),
 	}
 }
 
@@ -305,7 +308,7 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 
 	// Unified path: fairShareRolePick behind the RolePickFn interface.
 	// α logic removed in commit 3.
-	pick := fairShareRolePick(target, w.s, w.roles)
+	pick := fairShareRolePick(target, w.s, w.roles, w.limited)
 	allocateForModelPaired(ctx, w.s, w.records, stateMap, effAvail,
 		w.targets, pick, ps, w.roles)
 
@@ -393,7 +396,11 @@ func effectiveAvailable(available, nsBudget map[string]int) map[string]int {
 // fairShareRolePick returns a RolePickFn for the unified allocateForModelPaired loop.
 // Each role receives the same target fair-share budget. The joint Δ_util commit
 // inside allocateForModelPaired enforces P/D coupling — α is no longer needed.
-func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string) RolePickFn {
+//
+// limited collects the variants the GPU budget cut short, so the decisions built
+// afterwards can carry WasLimited / LimitedBy. A variant stopped by its own
+// MaxReplicas ceiling is never recorded: that is user intent, not scarcity.
+func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string, limited gpuLimitTracker) RolePickFn {
 	_ = s     // slice available for future multi-analyzer demand inspection
 	_ = roles // roles available for future per-role budget splitting
 	return func(
@@ -405,6 +412,11 @@ func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string) 
 		targets map[string]int,
 	) (string, int) {
 		roleVCs := variantsForRole(variants, role)
+		// Variants the GPU budget could not fit even one replica of. They only
+		// count as constrained if the role goes unserved below — a variant
+		// skipped while a cheaper sibling still satisfies the role's demand was
+		// not the thing scarcity held back.
+		var gpuBlocked []string
 		for _, vc := range sortByCostEfficiencyAsc(roleVCs) {
 			if vc.PerReplicaCapacity <= 0 {
 				continue
@@ -416,10 +428,12 @@ func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string) 
 			}
 			gpusAvail := available[vc.AcceleratorName]
 			if gpusAvail < gpusPR {
+				gpuBlocked = append(gpuBlocked, vc.VariantName)
 				continue
 			}
 			fairShareCap := int(math.Ceil(target / vc.PerReplicaCapacity))
-			capN := min(fairShareCap, gpusAvail/gpusPR)
+			gpuCap := gpusAvail / gpusPR
+			capN := min(fairShareCap, gpuCap)
 			if state.MaxReplicas != nil && *state.MaxReplicas > 0 {
 				headroom := *state.MaxReplicas - targets[vc.VariantName]
 				if headroom <= 0 {
@@ -428,8 +442,19 @@ func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string) 
 				capN = min(capN, headroom)
 			}
 			if capN > 0 {
+				// The variant grew, but short of the fair share it asked for
+				// because the GPU budget ran out first. capN != gpuCap means
+				// MaxReplicas was the tighter bound, which is not scarcity.
+				if gpuCap < fairShareCap && capN == gpuCap {
+					limited.mark(vc.VariantName)
+				}
 				return vc.VariantName, capN
 			}
+		}
+		// The role goes unserved this pass: whatever the GPU budget locked out
+		// really was held back by scarcity.
+		for _, v := range gpuBlocked {
+			limited.mark(v)
 		}
 		return "", 0
 	}
