@@ -10,6 +10,25 @@ kind: ConfigMap
 # Adding, changing, or removing an entry takes effect on the next optimize cycle
 # — no controller restart is needed.
 #
+# UNITS: `query` returns the model's TOTAL demand D — every series it returns is
+# summed into one number — and `threshold` is what ONE scale-target replica can
+# serve: one pod, or one LWS group, the same replica the Deployment/ScaledObject
+# counts. It is NOT one engine instance; a data-parallel pod runs several, and
+# the threshold is the whole pod's figure.
+#
+# A `sum(...)`-shaped query needs nothing more, whatever granularity the metric
+# has: summing across a pod's DP ranks and summing across pods give the same
+# total. Queries whose value depends on how MANY series exist do need care —
+# `count()` counts DP ranks and `avg()` averages over them, so both measure in
+# instances while the threshold is in pods. Collapse them first:
+#
+#     count(count by (pod) (...))
+#     avg(avg by (pod) (...))
+#
+# The controller cannot fix this up for you: unlike the built-in analyzers,
+# these queries run straight against Prometheus and never pass through the
+# collector's per-pod merge.
+#
 # SECURITY: the query body is trusted config, run as-is (like a KEDA ScaledObject
 # query). The trust boundary is RBAC on THIS ConfigMap — treat editing it as a
 # privileged operation. The interpolated {{.modelID}}/{{.namespace}} are escaped

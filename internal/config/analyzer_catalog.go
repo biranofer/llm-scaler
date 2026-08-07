@@ -24,6 +24,12 @@ func AnalyzerCatalogConfigMapName() string {
 // ExternalAnalyzerBody is one inference engine's query and per-replica target in
 // a catalog definition. The field names mirror KEDA's Prometheus scaler
 // (threshold is a string, e.g. "0.5").
+//
+// query must resolve to the model's TOTAL demand (every series it returns is
+// summed) and threshold is what ONE scale-target replica — a pod, or an LWS
+// group — can serve, not one engine instance. A sum-shaped query is safe at any
+// granularity; count() and avg() are not, since they measure in DP ranks. See
+// external.Body for the full note.
 type ExternalAnalyzerBody struct {
 	Query     string `yaml:"query"`
 	Threshold string `yaml:"threshold"`

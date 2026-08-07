@@ -39,13 +39,39 @@ const engineAgnostic = ""
 
 // Body is one engine's query and per-replica target for an external analyzer.
 // The field names mirror KEDA's Prometheus scaler.
+//
+// # Units
+//
+// D and P must agree, and that agreement is the operator's to get right: it
+// cannot be checked here, since PromQL semantics are not inspectable.
+//
+// Query returns D, the model's TOTAL demand — every series it returns is summed
+// into one number. Threshold is P, what ONE scale-target replica (a pod, or an
+// LWS group) can serve. desired = ceil(D / P), so P must be the whole pod's
+// figure and not one engine instance's: a data-parallel pod runs several.
+//
+// A sum-shaped query needs nothing further, whatever granularity the underlying
+// series have — summing across a pod's DP ranks and summing across pods give
+// the same total. What breaks is a query whose value depends on how many series
+// exist: count() counts DP ranks and avg() averages over them, so both measure
+// in instances while P is in pods. Collapse to pod granularity first:
+//
+//	count(count by (pod) (...))
+//	avg(avg by (pod) (...))
+//
+// The built-in analyzers get this for free: their per-replica figures come from
+// domain.ReplicaMetrics, which the collector has already merged to one record
+// per pod (collector.collapseToPods). Query runs straight against the metrics
+// source and never passes through that merge.
 type Body struct {
 	// Query is a PromQL expression for the total demand D. It may reference
 	// {{.namespace}} and {{.modelID}}; the metrics source escapes both before
-	// substitution.
+	// substitution. All returned series are summed, so it must resolve to the
+	// model's total demand and not to a per-replica breakdown of it.
 	Query string
-	// Threshold is the per-replica target P — the demand a single replica can
-	// serve. desired = ceil(D / threshold). Must be > 0.
+	// Threshold is the per-replica target P — the demand a single scale-target
+	// replica can serve (see the Units note above). desired = ceil(D / threshold).
+	// Must be > 0.
 	Threshold float64
 }
 
