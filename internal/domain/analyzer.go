@@ -148,12 +148,9 @@ type VariantCapacity struct {
 	// "T2-pinned", "T2-default", "T2-failed".
 	Reason string
 
-	// TotalCapacity is ReplicaCount × PerReplicaCapacity.
-	TotalCapacity float64
-
 	// TotalDemand is the aggregate demand on this variant.
 	TotalDemand float64
 
-	// Utilization is TotalDemand / TotalCapacity (0.0-1.0).
+	// Utilization is TotalDemand / (ReplicaCount × PerReplicaCapacity), 0.0-1.0.
 	Utilization float64
 }

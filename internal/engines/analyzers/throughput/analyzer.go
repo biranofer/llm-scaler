@@ -375,7 +375,6 @@ func (a *ThroughputAnalyzer) Analyze(
 			ReplicaCount:       nKV,
 			PendingReplicas:    pending,
 			PerReplicaCapacity: perReplicaSupply,
-			TotalCapacity:      totalCapacity,
 			TotalDemand:        demand,
 			Utilization:        safeDivide(demand, totalCapacity),
 			Reason:             reason,

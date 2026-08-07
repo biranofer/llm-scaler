@@ -398,8 +398,9 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			vc := result.VariantCapacities[0]
 			Expect(vc.ReplicaCount).To(Equal(1), "only the KV-capable replica counts toward ReplicaCount")
 			Expect(vc.PendingReplicas).To(Equal(1), "the not-ready booting replica is tracked as pending")
-			Expect(vc.TotalCapacity).To(BeNumerically("~", vc.PerReplicaCapacity, vc.PerReplicaCapacity*1e-6),
-				"TotalCapacity is the measured supply over KV-capable replicas only")
+			Expect(float64(vc.ReplicaCount)*vc.PerReplicaCapacity).
+				To(BeNumerically("~", vc.PerReplicaCapacity, vc.PerReplicaCapacity*1e-6),
+					"the variant's supply is measured over KV-capable replicas only")
 			// TotalSupply (drives SpareCapacity) counts only the KV-capable replica — not inflated.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically("~", muSat, muSat*0.10))
 			// TotalAnticipatedSupply (drives RequiredCapacity) still counts the booting replica

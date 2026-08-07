@@ -900,8 +900,8 @@ var _ = Describe("aggregateRoleDemand", func() {
 
 	It("should return nil when all variants are role 'both'", func() {
 		vcs := []domain.VariantCapacity{
-			{VariantName: "v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
-			{VariantName: "v2", Role: "", TotalCapacity: 20000, TotalDemand: 10000, ReplicaCount: 1, PerReplicaCapacity: 20000},
+			{VariantName: "v1", Role: "both", TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "v2", Role: "", TotalDemand: 10000, ReplicaCount: 1, PerReplicaCapacity: 20000},
 		}
 		result := analyzer.aggregateRoleDemand(vcs, nil)
 		Expect(result).To(BeNil())
@@ -911,7 +911,7 @@ var _ = Describe("aggregateRoleDemand", func() {
 		// Empty role canonicalizes to "both", so this is still non-disaggregated
 		// and must not produce a per-role breakdown.
 		vcs := []domain.VariantCapacity{
-			{VariantName: "v1", Role: "", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "v1", Role: "", TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 		}
 		Expect(analyzer.aggregateRoleDemand(vcs, nil)).To(BeNil())
 	})
@@ -920,7 +920,7 @@ var _ = Describe("aggregateRoleDemand", func() {
 		// Even with queue demand present, an all-"both" fleet stays model-level:
 		// the queue term is already folded into the model-level TotalDemand.
 		vcs := []domain.VariantCapacity{
-			{VariantName: "v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "v1", Role: "both", TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 		}
 		queueByRole := map[string]float64{"prefill": 1000, "decode": 1500}
 		Expect(analyzer.aggregateRoleDemand(vcs, queueByRole)).To(BeNil())
@@ -928,8 +928,8 @@ var _ = Describe("aggregateRoleDemand", func() {
 
 	It("should compute per-role demand for a P/D disaggregated model", func() {
 		vcs := []domain.VariantCapacity{
-			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 9000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
-			{VariantName: "decode-v1", Role: "decode", TotalCapacity: 20000, TotalDemand: 5000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
+			{VariantName: "prefill-v1", Role: "prefill", TotalDemand: 9000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
+			{VariantName: "decode-v1", Role: "decode", TotalDemand: 5000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
 		}
 		result := analyzer.aggregateRoleDemand(vcs, nil)
 		Expect(result).NotTo(BeNil())
@@ -951,8 +951,8 @@ var _ = Describe("aggregateRoleDemand", func() {
 
 	It("should handle mixed roles including 'both'", func() {
 		vcs := []domain.VariantCapacity{
-			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 9000, ReplicaCount: 1, PerReplicaCapacity: 10000},
-			{VariantName: "both-v1", Role: "both", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "prefill-v1", Role: "prefill", TotalDemand: 9000, ReplicaCount: 1, PerReplicaCapacity: 10000},
+			{VariantName: "both-v1", Role: "both", TotalDemand: 5000, ReplicaCount: 1, PerReplicaCapacity: 10000},
 		}
 		result := analyzer.aggregateRoleDemand(vcs, nil)
 		// Has disaggregation because prefill-v1 has role != "both"; the "both"
@@ -977,8 +977,8 @@ var _ = Describe("aggregateRoleDemand", func() {
 
 	It("should add scheduler queue demand to per-role demand", func() {
 		vcs := []domain.VariantCapacity{
-			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 2000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
-			{VariantName: "decode-v1", Role: "decode", TotalCapacity: 20000, TotalDemand: 3000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
+			{VariantName: "prefill-v1", Role: "prefill", TotalDemand: 2000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
+			{VariantName: "decode-v1", Role: "decode", TotalDemand: 3000, ReplicaCount: 2, PendingReplicas: 0, PerReplicaCapacity: 10000},
 		}
 		queueByRole := map[string]float64{
 			"prefill": 1000, // inputTokens only
@@ -994,7 +994,7 @@ var _ = Describe("aggregateRoleDemand", func() {
 
 	It("should skip queue demand for roles with no variants", func() {
 		vcs := []domain.VariantCapacity{
-			{VariantName: "prefill-v1", Role: "prefill", TotalCapacity: 10000, TotalDemand: 5000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
+			{VariantName: "prefill-v1", Role: "prefill", TotalDemand: 5000, ReplicaCount: 1, PendingReplicas: 0, PerReplicaCapacity: 10000},
 		}
 		// Queue demand for decode, but no decode variants exist
 		queueByRole := map[string]float64{

@@ -142,7 +142,6 @@ func (a *Analyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*do
 			ReplicaCount:       readyCount,
 			PendingReplicas:    vs.PendingReplicas,
 			PerReplicaCapacity: body.Threshold,
-			TotalCapacity:      float64(readyCount) * body.Threshold,
 			Reason:             reasonConstantTarget,
 		})
 	}

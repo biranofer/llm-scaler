@@ -364,10 +364,10 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 			readyCount = 0
 		}
 
-		// replicaCount multiplies perReplicaCapacity to form TotalCapacity. It also
-		// sets VariantCapacity.ReplicaCount, which aggregation.go uses to recompute
-		// supply totals — so both must stay in sync. Defaults to readyCount (pod
-		// count) for the fallback branches, which have no per-instance data.
+		// replicaCount sets VariantCapacity.ReplicaCount, which aggregation.go uses
+		// to recompute supply totals, and divides totalDemand for the per-variant
+		// utilization. Defaults to readyCount (pod count) for the fallback branches,
+		// which have no per-instance data.
 		replicaCount := readyCount
 		// pendingCount must match replicaCount's unit (SumTotalAnticipatedSupply
 		// adds them); converted to instances below when replicaCount switches.
@@ -431,7 +431,6 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 			ReplicaCount:       replicaCount,
 			PendingReplicas:    pendingCount,
 			PerReplicaCapacity: perReplicaCapacity,
-			TotalCapacity:      totalCapacity,
 			TotalDemand:        totalDemand,
 			Utilization:        utilization,
 			Reason:             capacityLabel,
