@@ -63,7 +63,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 
 	It("single model, single variant: identical", func() {
 		build := func() []ModelScalingRequest {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID: "m", Namespace: "ns", RequiredCapacity: 50000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "v", AcceleratorName: "A100", Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -84,7 +84,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 
 	It("single model, multiple variants (cost-efficiency selection): identical", func() {
 		build := func() []ModelScalingRequest {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID: "m", Namespace: "ns", RequiredCapacity: 25000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -111,7 +111,7 @@ var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func(
 
 	It("multiple models scaling up at once: report both", func() {
 		mk := func(id, variant, accel string, req float64, prio float64) ModelScalingRequest {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID: id, Namespace: "ns", RequiredCapacity: req,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: variant, AcceleratorName: accel, Cost: 5, ReplicaCount: 1, PerReplicaCapacity: 10000},

@@ -248,12 +248,12 @@ func buildDecisionsWithOptimizer(
 	optimizerName string,
 ) []domain.VariantDecision {
 	decisions := make([]domain.VariantDecision, 0, len(targets))
-	// satEntry carries the model-level RequiredCapacity/SpareCapacity computed by
+	// satNamed carries the model-level RequiredCapacity/SpareCapacity computed by
 	// applyUniversalThreshold; per-variant Utilization is on each VariantCapacity.
 	// These feed the saturation gauges (utilization/required/spare). SpareCapacity is
 	// additionally an input to the GPU limiter's GreedyBySaturation ordering, so setting
 	// it here also makes that ordering reflect real spare tokens on V2 (it was 0 before).
-	satEntry := saturationEntry(req.AnalyzerResults)
+	satNamed := saturationNamedEntry(req.AnalyzerResults)
 	for name, target := range targets {
 		state := stateMap[name]
 		vc := vcMap[name]
@@ -300,13 +300,13 @@ func buildDecisionsWithOptimizer(
 		// For P/D-disaggregated models use the variant's per-role capacity; otherwise
 		// fall back to the model-level totals.
 		decision.Utilization = vc.Utilization
-		if satEntry != nil {
-			reqCap, spareCap := satEntry.RequiredCapacity, satEntry.SpareCapacity
+		if satNamed != nil {
+			reqCap, spareCap := satNamed.RequiredCapacity, satNamed.SpareCapacity
 			role := state.Role
 			if role == "" {
 				role = domain.RoleBoth
 			}
-			if rc, ok := satEntry.RoleCapacities[role]; ok {
+			if rc, ok := satNamed.RoleCapacities[role]; ok {
 				reqCap, spareCap = rc.RequiredCapacity, rc.SpareCapacity
 			}
 			decision.RequiredCapacity = reqCap

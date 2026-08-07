@@ -53,13 +53,14 @@ func namedResult(name string, roleDemand map[string]float64, total float64, vari
 	for _, v := range variants {
 		r.VariantCapacities = append(r.VariantCapacities, domain.VariantCapacity{VariantName: v, PerReplicaCapacity: 1})
 	}
+	nr := pipeline.NamedAnalyzerResult{Name: name, Result: r}
 	if len(roleDemand) > 0 {
-		r.RoleCapacities = make(map[string]domain.RoleCapacity, len(roleDemand))
+		nr.RoleCapacities = make(map[string]domain.RoleCapacity, len(roleDemand))
 		for role, d := range roleDemand {
-			r.RoleCapacities[role] = domain.RoleCapacity{Role: role, TotalDemand: d}
+			nr.RoleCapacities[role] = domain.RoleCapacity{Role: role, TotalDemand: d}
 		}
 	}
-	return pipeline.NamedAnalyzerResult{Name: name, Result: r}
+	return nr
 }
 
 // Absence is meaningful for the analyzer metrics: a series that stops being

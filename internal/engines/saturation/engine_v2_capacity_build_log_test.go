@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
 const orphanRoleDemandMsg = "analyzer attributed demand to a role with no variants"
@@ -21,14 +22,16 @@ const orphanRoleDemandMsg = "analyzer attributed demand to a role with no varian
 func TestBuildRoleCapacities_LogsDemandForRoleWithNoVariants(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		ModelID:      "m1",
-		Namespace:    "ns1",
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 4000},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			ModelID:      "m1",
+			Namespace:    "ns1",
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 4000},
+			},
+			RoleDemand: map[string]float64{"decode": 2000, "prefill": 1500},
 		},
-		RoleDemand: map[string]float64{"decode": 2000, "prefill": 1500},
 	}
 	buildCapacities(ctx, r, nil, 1.0, 1.0)
 
@@ -55,13 +58,15 @@ func TestBuildRoleCapacities_LogsDemandForRoleWithNoVariants(t *testing.T) {
 func TestBuildRoleCapacities_QuietWhenEveryRoleHasVariants(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 5000},
-			{VariantName: "d1", Role: "decode", ReplicaCount: 2, PerReplicaCapacity: 4000},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "p1", Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 5000},
+				{VariantName: "d1", Role: "decode", ReplicaCount: 2, PerReplicaCapacity: 4000},
+			},
+			RoleDemand: map[string]float64{"prefill": 4000, "decode": 8000},
 		},
-		RoleDemand: map[string]float64{"prefill": 4000, "decode": 8000},
 	}
 	buildCapacities(ctx, r, nil, 1.0, 1.0)
 
@@ -73,10 +78,12 @@ func TestBuildRoleCapacities_QuietWhenNonDisaggregated(t *testing.T) {
 	// inspecting roles, so there is nothing to warn about.
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "v1", Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 5000},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "v1", Role: domain.RoleBoth, ReplicaCount: 1, PerReplicaCapacity: 5000},
+			},
 		},
 	}
 	buildCapacities(ctx, r, nil, 1.0, 1.0)
@@ -91,12 +98,14 @@ func TestBuildRoleCapacities_QuietWhenOrphanRoleHasZeroDemand(t *testing.T) {
 	// log every reconcile cycle.
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 4000},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "d1", Role: "decode", ReplicaCount: 1, PerReplicaCapacity: 4000},
+			},
+			RoleDemand: map[string]float64{"decode": 2000, "prefill": 0},
 		},
-		RoleDemand: map[string]float64{"decode": 2000, "prefill": 0},
 	}
 	buildCapacities(ctx, r, nil, 1.0, 1.0)
 
@@ -113,14 +122,16 @@ const unsizableShortfallMsg = "analyzer needs capacity but no variant has a per-
 func TestWarnUnsizableShortfall_LogsWhenNoVariantCanBeSized(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		ModelID:      "m1",
-		Namespace:    "ns1",
-		TotalDemand:  2,
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "vB", ReplicaCount: 1, PerReplicaCapacity: 0},
-			{VariantName: "vA", ReplicaCount: 1, PerReplicaCapacity: 0},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			ModelID:      "m1",
+			Namespace:    "ns1",
+			TotalDemand:  2,
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "vB", ReplicaCount: 1, PerReplicaCapacity: 0},
+				{VariantName: "vA", ReplicaCount: 1, PerReplicaCapacity: 0},
+			},
 		},
 	}
 	// scaleUp=0.85 with zero supply leaves RequiredCapacity > 0.
@@ -142,12 +153,14 @@ func TestWarnUnsizableShortfall_QuietWhenAnyVariantCanAbsorbIt(t *testing.T) {
 	// One sizable variant is enough: the optimizer has something to divide by.
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		TotalDemand:  10000,
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "dead", ReplicaCount: 1, PerReplicaCapacity: 0},
-			{VariantName: "live", ReplicaCount: 1, PerReplicaCapacity: 100},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			TotalDemand:  10000,
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "dead", ReplicaCount: 1, PerReplicaCapacity: 0},
+				{VariantName: "live", ReplicaCount: 1, PerReplicaCapacity: 100},
+			},
 		},
 	}
 	buildCapacities(ctx, r, nil, 0.85, 0.70)
@@ -161,11 +174,13 @@ func TestWarnUnsizableShortfall_QuietWhenThereIsNoShortfall(t *testing.T) {
 	// asked for; an idle model with no demand must not log every cycle.
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{
-		AnalyzerName: "saturation",
-		TotalDemand:  0,
-		VariantCapacities: []domain.VariantCapacity{
-			{VariantName: "v1", ReplicaCount: 1, PerReplicaCapacity: 0},
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{
+			AnalyzerName: "saturation",
+			TotalDemand:  0,
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "v1", ReplicaCount: 1, PerReplicaCapacity: 0},
+			},
 		},
 	}
 	buildCapacities(ctx, r, nil, 0.85, 0.70)
@@ -179,7 +194,9 @@ func TestWarnUnsizableShortfall_QuietWhenThereAreNoVariants(t *testing.T) {
 	// naming zero variants in the log would say nothing useful.
 	ctx, logs := zapObserverCtx(t)
 
-	r := &domain.AnalyzerResult{AnalyzerName: "saturation", TotalDemand: 5}
+	r := &pipeline.NamedAnalyzerResult{
+		Result: &domain.AnalyzerResult{AnalyzerName: "saturation", TotalDemand: 5},
+	}
 	buildCapacities(ctx, r, nil, 0.85, 0.70)
 
 	assert.Zero(t, logs.FilterMessage(unsizableShortfallMsg).Len())

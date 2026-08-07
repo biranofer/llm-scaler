@@ -6,15 +6,21 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
-// NamedAnalyzerResult pairs an analyzer's name with its result and mutable
-// working counters for the optimizer's allocation loop.
+// NamedAnalyzerResult pairs an analyzer's name with its result, the engine-owned
+// capacity aggregates derived from that result, and mutable working counters for
+// the optimizer's allocation loop.
 // It is the per-entry type of ModelScalingRequest.AnalyzerResults and is
 // only used inside the engine→optimizer contract; it is not a general-purpose
 // interfaces type.
 //
-// Remaining and Spare are initialised from Result.RequiredCapacity and
-// Result.SpareCapacity by the engine (model scope) and decremented in place by
-// applyAllocation as the optimizer allocates replicas.
+// The split of ownership is the point: Result carries the analyzer's pure
+// (D, P) signal, and every field below it is written by the engine's
+// capacity-build step from that signal. Nothing an analyzer returns can
+// contradict the supply or the scaling signals the optimizer acts on.
+//
+// Remaining and Spare are initialised from RequiredCapacity and SpareCapacity
+// by the engine (model scope) and decremented in place by applyAllocation as
+// the optimizer allocates replicas.
 // For disaggregated (P/D) models, the optimizer calls initRoleState
 // to populate RoleSpare per role and initialize picker-local demand.
 // The original Result values are never mutated.
@@ -27,6 +33,31 @@ type NamedAnalyzerResult struct {
 	RoleSpare         map[string]float64 // per-role mutable spare; set by initRoleState; nil for non-disaggregated
 	ScaleUpThreshold  float64            // resolved scale-up threshold used to compute RC
 	ScaleDownBoundary float64            // resolved scale-down boundary used to compute SC
+
+	// Model-level supply aggregates — written by the engine's capacity-build
+	// step. They are derived from Result.VariantCapacities so the linearity
+	// invariant (supply = Σ_v replicas × per-replica P) holds by construction:
+	//   TotalSupply            = Σ_v ReplicaCount × PerReplicaCapacity
+	//   TotalAnticipatedSupply = Σ_v (ReplicaCount + PendingReplicas) × PerReplicaCapacity
+	//   Utilization            = Result.TotalDemand / TotalSupply (0 when TotalSupply == 0)
+	// TotalAnticipatedSupply counts pending replicas so they offset demand,
+	// preventing double-scaling.
+	TotalSupply            float64
+	TotalAnticipatedSupply float64
+	Utilization            float64
+
+	// Scaling signals — written by the engine's capacity-build step; read by the
+	// optimizer:
+	//   RC = max(0, Result.TotalDemand/scaleUp − TotalAnticipatedSupply)
+	//   SC = max(0, TotalSupply                − Result.TotalDemand/scaleDown)
+	RequiredCapacity float64 // >0 means scale-up needed
+	SpareCapacity    float64 // >0 means scale-down possible
+
+	// RoleCapacities holds per-role capacity aggregation for P/D disaggregated
+	// models. nil when no disaggregation is active (all variants are role
+	// "both"). Assembled by the engine's capacity-build step from
+	// Result.RoleDemand + per-variant supply.
+	RoleCapacities map[string]domain.RoleCapacity
 
 	// Live indicates the analyzer produced a non-error, informative result within the
 	// staleness window. Set by the engine each cycle. Non-live analyzers are excluded

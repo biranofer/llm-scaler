@@ -16,15 +16,14 @@ import (
 
 // withSatEntryV2 adds a single-saturation AnalyzerResults to req from r.
 // Mirrors the helper in cost_aware_optimizer_test.go for use in the saturation package.
-func withSatEntryV2(r *domain.AnalyzerResult, req pipeline.ModelScalingRequest) pipeline.ModelScalingRequest {
+func withSatEntryV2(r *pipeline.NamedAnalyzerResult, req pipeline.ModelScalingRequest) pipeline.ModelScalingRequest {
 	if r != nil {
-		req.AnalyzerResults = []pipeline.NamedAnalyzerResult{{
-			Name:      domain.SaturationAnalyzerName,
-			Result:    r,
-			Remaining: r.RequiredCapacity,
-			Spare:     r.SpareCapacity,
-			Live:      true,
-		}}
+		nr := *r
+		nr.Name = domain.SaturationAnalyzerName
+		nr.Remaining = nr.RequiredCapacity
+		nr.Spare = nr.SpareCapacity
+		nr.Live = true
+		req.AnalyzerResults = []pipeline.NamedAnalyzerResult{nr}
 	}
 	return req
 }
@@ -35,13 +34,15 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should scale up cheapest variant by cost-efficiency", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &domain.AnalyzerResult{
-				ModelID:          "model-1",
-				Namespace:        "default",
+			r := &pipeline.NamedAnalyzerResult{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
-					{VariantName: "variant-cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
-					{VariantName: "variant-expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
+				Result: &domain.AnalyzerResult{
+					ModelID:   "model-1",
+					Namespace: "default",
+					VariantCapacities: []domain.VariantCapacity{
+						{VariantName: "variant-cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
+						{VariantName: "variant-expensive", AcceleratorName: "H100", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
+					},
 				},
 			}
 			requests := []pipeline.ModelScalingRequest{
@@ -66,13 +67,15 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should scale down most expensive variant", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &domain.AnalyzerResult{
-				ModelID:       "model-1",
-				Namespace:     "default",
+			r := &pipeline.NamedAnalyzerResult{
 				SpareCapacity: 25000,
-				VariantCapacities: []domain.VariantCapacity{
-					{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
-					{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
+				Result: &domain.AnalyzerResult{
+					ModelID:   "model-1",
+					Namespace: "default",
+					VariantCapacities: []domain.VariantCapacity{
+						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
+						{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
+					},
 				},
 			}
 			requests := []pipeline.ModelScalingRequest{
@@ -95,13 +98,15 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should protect cheapest variant at 1 during scale-down", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &domain.AnalyzerResult{
-				ModelID:       "model-1",
-				Namespace:     "default",
+			r := &pipeline.NamedAnalyzerResult{
 				SpareCapacity: 30000,
-				VariantCapacities: []domain.VariantCapacity{
-					{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
-					{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
+				Result: &domain.AnalyzerResult{
+					ModelID:   "model-1",
+					Namespace: "default",
+					VariantCapacities: []domain.VariantCapacity{
+						{VariantName: "variant-expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
+						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
+					},
 				},
 			}
 			requests := []pipeline.ModelScalingRequest{
@@ -124,13 +129,15 @@ var _ = Describe("V2 Engine Integration", func() {
 
 		It("should not skip variants with pending replicas", func() {
 			optimizer := pipeline.NewCostAwareOptimizer()
-			r := &domain.AnalyzerResult{
-				ModelID:          "model-1",
-				Namespace:        "default",
+			r := &pipeline.NamedAnalyzerResult{
 				RequiredCapacity: 5000,
-				VariantCapacities: []domain.VariantCapacity{
-					{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
-					{VariantName: "variant-mid", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
+				Result: &domain.AnalyzerResult{
+					ModelID:   "model-1",
+					Namespace: "default",
+					VariantCapacities: []domain.VariantCapacity{
+						{VariantName: "variant-cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
+						{VariantName: "variant-mid", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 15000},
+					},
 				},
 			}
 			requests := []pipeline.ModelScalingRequest{
@@ -388,7 +395,7 @@ var _ = Describe("runAnalyzersAndScore disabled-analyzer gate", func() {
 	It("disabled analyzer is not appended and its Analyze is never called", func() {
 		fakeSat := &fakeAnalyzerWithResult{
 			analyzerName: domain.SaturationAnalyzerName,
-			result:       &domain.AnalyzerResult{SpareCapacity: 1000},
+			result:       &domain.AnalyzerResult{},
 		}
 		spy := &spyAnalyzer{name: "spy"}
 		e := &Engine{

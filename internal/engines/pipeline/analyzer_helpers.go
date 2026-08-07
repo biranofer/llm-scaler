@@ -89,9 +89,20 @@ func applyAllocation(s []NamedAnalyzerResult, v string, n int) {
 // replica counts) that the optimizer uses for variant selection and GPU accounting.
 // TODO: remove the sat_v2 special role once all analyzers populate variant metadata.
 func saturationEntry(s []NamedAnalyzerResult) *domain.AnalyzerResult {
-	for _, e := range s {
-		if e.Name == domain.SaturationAnalyzerName {
-			return e.Result
+	if nr := saturationNamedEntry(s); nr != nil {
+		return nr.Result
+	}
+	return nil
+}
+
+// saturationNamedEntry returns the saturation analyzer's full named entry from s,
+// or nil if not present. Callers that need the engine-owned capacity aggregates
+// (RequiredCapacity/SpareCapacity/RoleCapacities) use this rather than
+// saturationEntry, which exposes only the analyzer's own (D, P) signal.
+func saturationNamedEntry(s []NamedAnalyzerResult) *NamedAnalyzerResult {
+	for i := range s {
+		if s[i].Name == domain.SaturationAnalyzerName {
+			return &s[i]
 		}
 	}
 	return nil
@@ -118,8 +129,9 @@ func prcForVariant(r *domain.AnalyzerResult, v string) float64 {
 //   - Disaggregated (RoleCapacities != nil): roles = sorted keys of RoleCapacities;
 //     per-role RC → pickerState[i][role]; per-role SC → s[i].RoleSpare[role].
 //   - Non-disaggregated (RoleCapacities == nil): one synthetic role "both" using
-//     the engine-calibrated model-level RC/SC (Result.RequiredCapacity / SpareCapacity).
-//     No re-aggregation — the engine already summed all variants into those scalars.
+//     the engine-calibrated model-level RC/SC (via the Remaining/Spare working
+//     copies). No re-aggregation — the engine already summed all variants into
+//     those scalars.
 //
 // Returns the list of active roles and the picker-local RolePairedState.
 // Remaining/Spare scalars on NamedAnalyzerResult are read-only after this call;
@@ -133,12 +145,12 @@ func initRoleState(s []NamedAnalyzerResult) (roles []string, pickerState RolePai
 		if e.Result == nil {
 			continue
 		}
-		if e.Result.RoleCapacities != nil {
+		if e.RoleCapacities != nil {
 			// Disaggregated: per-role RC/SC from engine-calibrated RoleCapacities.
 			if s[i].RoleSpare == nil {
-				s[i].RoleSpare = make(map[string]float64, len(e.Result.RoleCapacities))
+				s[i].RoleSpare = make(map[string]float64, len(e.RoleCapacities))
 			}
-			for role, rc := range e.Result.RoleCapacities {
+			for role, rc := range e.RoleCapacities {
 				pickerState[i][role] = rc.RequiredCapacity
 				s[i].RoleSpare[role] = rc.SpareCapacity
 				roleSet[role] = struct{}{}

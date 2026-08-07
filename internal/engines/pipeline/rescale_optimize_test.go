@@ -16,7 +16,7 @@ import (
 // priority, demand and GPU counts, not on the cost score.
 func rescaleReq(id, ns string, priority, demand float64, current int) ModelScalingRequest {
 	v := id + "-v"
-	r := &domain.AnalyzerResult{
+	r := &satEntryFixture{
 		ModelID:     id,
 		Namespace:   ns,
 		TotalDemand: demand,
@@ -38,7 +38,7 @@ func rescaleReq(id, ns string, priority, demand float64, current int) ModelScali
 // variant name — so a caller can place the same ModelID in two namespaces with distinct
 // variants (the real multi-tenant shape) to exercise (namespace, ModelID) keying.
 func nsModelReq(modelID, ns, variant string, priority, demand float64, current int) ModelScalingRequest {
-	r := &domain.AnalyzerResult{
+	r := &satEntryFixture{
 		ModelID:     modelID,
 		Namespace:   ns,
 		TotalDemand: demand,
@@ -181,7 +181,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		a := &domain.AnalyzerResult{
+		a := &satEntryFixture{
 			ModelID:     "A",
 			Namespace:   "default",
 			TotalDemand: 8000,
@@ -220,7 +220,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		a := &domain.AnalyzerResult{
+		a := &satEntryFixture{
 			ModelID:     "A",
 			Namespace:   "default",
 			TotalDemand: 8000,
@@ -325,7 +325,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o.Rescale = RescaleFlags{Cluster: true}
 
 		max2 := 2
-		bAnalyzer := &domain.AnalyzerResult{
+		bAnalyzer := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
 			VariantCapacities: []domain.VariantCapacity{
 				{VariantName: "B-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 0},
@@ -373,7 +373,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		m := &domain.AnalyzerResult{
+		m := &satEntryFixture{
 			ModelID:     "M",
 			Namespace:   "default",
 			TotalDemand: 8000,
@@ -456,7 +456,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		aAnalyzer := &domain.AnalyzerResult{
+		aAnalyzer := &satEntryFixture{
 			ModelID: "A", Namespace: "default", TotalDemand: 8000,
 			VariantCapacities: []domain.VariantCapacity{
 				{VariantName: "A-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 4},
@@ -522,7 +522,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o.Rescale = RescaleFlags{Cluster: true}
 
 		prefMax := 1
-		bAnalyzer := &domain.AnalyzerResult{
+		bAnalyzer := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
 			RoleCapacities: map[string]domain.RoleCapacity{
 				"prefill": {TotalDemand: 3000},
@@ -578,7 +578,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		b := &domain.AnalyzerResult{
+		b := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
 			RoleCapacities: map[string]domain.RoleCapacity{
 				"prefill": {TotalDemand: 6000},
@@ -631,7 +631,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 		o := NewGreedyByScoreOptimizer()
 		o.Rescale = RescaleFlags{Cluster: true}
 
-		bAnalyzer := &domain.AnalyzerResult{
+		bAnalyzer := &satEntryFixture{
 			ModelID: "B", Namespace: "default", TotalDemand: 8000,
 			VariantCapacities: []domain.VariantCapacity{
 				{VariantName: "B-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: 0},
@@ -660,7 +660,7 @@ var _ = Describe("GreedyByScoreOptimizer rescale", func() {
 
 		min4 := 4
 		mk := func(id string, prio float64, cur int) ModelScalingRequest {
-			a := &domain.AnalyzerResult{
+			a := &satEntryFixture{
 				ModelID: id, Namespace: "default", TotalDemand: 8000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: id + "-v", AcceleratorName: "A100", Cost: 5, PerReplicaCapacity: 1000, ReplicaCount: cur},

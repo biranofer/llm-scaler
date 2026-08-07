@@ -135,11 +135,14 @@ var _ = Describe("roleDemandGPUs", func() {
 	It("rounds token demand up to whole replicas (ceil)", func() {
 		// 8500 tokens / 1000 per-replica capacity = 8.5 -> ceil = 9 replicas (9 GPUs).
 		// Guards against a regression to floor (which would under-count demand at 8).
-		sat := &domain.AnalyzerResult{
-			ModelID:     "A",
-			TotalDemand: 8500,
-			VariantCapacities: []domain.VariantCapacity{
-				{VariantName: "A-v", AcceleratorName: "A100", PerReplicaCapacity: 1000},
+		sat := &NamedAnalyzerResult{
+			Name: domain.SaturationAnalyzerName,
+			Result: &domain.AnalyzerResult{
+				ModelID:     "A",
+				TotalDemand: 8500,
+				VariantCapacities: []domain.VariantCapacity{
+					{VariantName: "A-v", AcceleratorName: "A100", PerReplicaCapacity: 1000},
+				},
 			},
 		}
 		stateMap := map[string]domain.VariantReplicaState{

@@ -224,8 +224,10 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ReplicaMetrics: metrics,
 			}
 			result, _ := analyzer.Analyze(ctx, input)
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			// With no rate to charge, the analyzer attributes no demand — the
+			// half of the contract it owns. RC/SC are the engine's and are not
+			// on AnalyzerResult at all.
+			Expect(result.TotalDemand).To(Equal(0.0))
 		})
 
 		It("updates internal state on each Analyze call", func() {
@@ -315,8 +317,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("returns SpareCapacity > 0 when μ_dec_total exceeds λ_dec with EPP deployed (scale down)", func() {
@@ -334,14 +334,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as SC>0.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
-			Expect(result.SpareCapacity).To(Equal(0.0))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 
-		It("returns zero SpareCapacity when EPP is not deployed (ArrivalRate==0)", func() {
+		It("attributes zero demand when EPP is not deployed (ArrivalRate==0)", func() {
 			buildReadyWindow()
 
-			// ArrivalRate=0, RequestRate=0 → isEPP=false → no scale-down signal
+			// ArrivalRate=0, RequestRate=0 → isEPP=false → nothing to charge.
 			replica := baseReplica(0)
 			input := domain.AnalyzerInput{
 				ModelID:        modelID,
@@ -350,7 +348,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			Expect(result.TotalDemand).To(Equal(0.0))
 		})
 
 		It("populates VariantCapacities and TotalSupply/TotalDemand", func() {
@@ -368,7 +366,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(result.TotalDemand).To(BeNumerically("~", 1000.0, 1.0))
 			// Utilization is derived downstream by the engine's capacity-build step
 			// from TotalDemand/TotalSupply; the analyzer leaves it zero.
-			Expect(result.Utilization).To(BeZero())
 		})
 
 		It("excludes booting (KV=0) replicas from ReplicaCount and TotalSupply", func() {
@@ -483,7 +480,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 
 		It("sets Reason to T2-default when no prior tier-1 fit exists", func() {
@@ -582,8 +578,10 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ReplicaMetrics: []domain.ReplicaMetrics{idleReplica},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			// No usable per-replica capacity could be estimated, so the analyzer
+			// emits no P — which is what "zero signal" means under the (D, P)
+			// contract. (The engine reads an unsizable shortfall and logs it.)
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(Equal(0.0))
 		})
 
 		It("still emits no signal after prior observations when OLS window is cleared by shape change and replicas go idle", func() {
@@ -625,8 +623,8 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				}},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			// Neither tier resolved, so no per-replica capacity is emitted.
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(Equal(0.0))
 		})
 	})
 
@@ -717,8 +715,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			// anticipated = 2 × μ_sat ≈ 5564 > λ_dec = 3000 → no scale-up
-			Expect(result.RequiredCapacity).To(Equal(0.0))
+			// anticipated = 2 × μ_sat ≈ 5564 > λ_dec = 3000 → no scale-up.
+			// Asserted as the raw inequality the engine turns into RC = 0: the
+			// pending replica is counted into anticipated supply, so it offsets
+			// demand and prevents a second scale-up while it is still launching.
+			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).
+				To(BeNumerically(">", result.TotalDemand))
 		})
 
 		It("still emits RequiredCapacity when pending replicas are insufficient", func() {
@@ -749,7 +751,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 	})
 
@@ -927,14 +928,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// Model-level: no EPP and no queue → TotalDemand is 0 by design (not a
 			// regression — see DEFERRED note above), so RC/SC both stay zero.
 			Expect(result.TotalDemand).To(Equal(0.0))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
-		It("emits no SpareCapacity from k* even when k* is low (scale-down requires EPP)", func() {
+		It("reports demand far below supply when k* is low", func() {
 			injectWindowObs(analyzer, ctx, modelID, namespace, "v1", il, ol, prefix, kvMax, B, kValues)
 
-			// Low k* → λ_local << μ_sat, but no EPP → no scale-down.
+			// Low k* → λ_local << μ_sat.
 			replica := domain.ReplicaMetrics{
 				VariantName: "v1", KvCacheUsage: 0.20, KvUsageInstant: 0.20,
 				AvgITL: A*0.20 + B, AvgInputTokens: il, AvgOutputTokens: ol,
@@ -945,13 +944,17 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ReplicaMetrics: []domain.ReplicaMetrics{replica},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			// The EPP gate that used to suppress SC here is dropped (#1261), and
+			// SC is the engine's to compute regardless. Assert the raw inequality
+			// the engine reads as SC > 0.
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).
+				To(BeNumerically(">", result.TotalDemand))
 		})
 
-		It("emits zero RequiredCapacity when OL is below the decode-dominated threshold", func() {
+		It("attributes zero demand when OL is below the decode-dominated threshold", func() {
 			// OL=5 < DefaultMinDecodeOLForLocalDemand(20): the k*-based formula must not fire.
 			// EPP and vLLM paths are also absent (no ArrivalRate, no RequestRate).
-			// Expected: demand=0, RC=0, SC=0.
+			// Expected: demand=0.
 			const lowOL = 5.0
 			injectWindowObs(analyzer, ctx, modelID, namespace, "v1", il, lowOL, prefix, kvMax, B, kValues)
 
@@ -971,8 +974,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ReplicaMetrics: []domain.ReplicaMetrics{replica},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			Expect(result.TotalDemand).To(Equal(0.0))
 		})
 	})
 
@@ -1019,8 +1021,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// AvgOutputTokens==0, so warm-up does not zero out avgOL (see analyzer.go).
 			Expect(result.TotalDemand).To(BeNumerically(">", 0),
 				"warm-up replica must have non-zero demand via tracked-shape avgOL")
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("still uses EPP path when ArrivalRate>0 and AvgOutputTokens>0", func() {
@@ -1047,8 +1047,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// Model-level demand = 10×200 = 2000 tok/s; TotalDemand must reflect that.
 			Expect(result.TotalDemand).To(BeNumerically("~", 2000.0, 1.0))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 	})
 
@@ -1094,7 +1092,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 
 		It("emits no RequiredCapacity when SchedulerQueue is nil", func() {
@@ -1107,8 +1104,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			}
 			result, err := analyzer.Analyze(ctx, noQueue)
 			Expect(err).NotTo(HaveOccurred())
-			// λ_local ≈ 2618 < μ_sat ≈ 2782 → no RC without queue
-			Expect(result.RequiredCapacity).To(Equal(0.0))
+			// λ_local ≈ 2618 < μ_sat ≈ 2782 → no RC without queue. Asserted as the
+			// raw inequality the engine turns into RC = 0: without a SchedulerQueue
+			// there is no queued work to add to demand, so demand stays under supply.
+			Expect(result.TotalDemand).
+				To(BeNumerically("<", aggregation.SumTotalSupply(result.VariantCapacities)))
 		})
 	})
 
@@ -1149,11 +1149,9 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// Model-level: totalDemand=3200 < totalAnticipated≈5564 → no scale-up needed.
 			// TA leaves RC/SC zero. Assert the raw inequality: TotalDemand ≤ TotalAnticipatedSupply.
 			Expect(result.TotalDemand).To(BeNumerically("<=", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 			// EPP deployed (ArrivalRate>0) and totalSupply >> totalDemand → engine posts SC>0.
 			// TA leaves SC zero; assert the raw inequality the engine interprets as SC>0.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("emits only RequiredCapacity (not SpareCapacity) when both variants are overloaded", func() {
@@ -1178,8 +1176,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// TA leaves RC/SC zero; engine post-step computes them. Assert the raw
 			// supply/demand inequality that the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 	})
 
@@ -1702,7 +1698,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("GPS deviates > 15% at k* ≥ DefaultGPSMinKForVerification — fixture for future SC suppression", func() {
@@ -1715,7 +1710,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ReplicaMetrics: []domain.ReplicaMetrics{replicaG(kStar, 2, gps)},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SpareCapacity).To(Equal(0.0))
+			// GPS gate is dropped — the mismatch does not change the emitted (D, P).
+			// Assert the raw inequality the engine interprets as SC>0, so restoring
+			// the gate (#1261) has a fixture that shows what it must suppress.
+			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).
+				To(BeNumerically(">", result.TotalDemand))
 		})
 
 		It("GPS deviates but k* < DefaultGPSMinKForVerification — fixture for future SC pass-through", func() {
@@ -1731,7 +1730,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("GenerationTokenRate is zero (metric absent) — fixture for future SC pass-through", func() {
@@ -1746,7 +1744,6 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			// GPS gate is dropped — TA always leaves SC=0; engine post-step computes it.
 			// Assert the raw inequality the engine interprets as SC>0.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand))
-			Expect(result.SpareCapacity).To(Equal(0.0))
 		})
 
 		It("RC remains nonzero under GPS mismatch — fixture for future SC suppression", func() {
@@ -1761,10 +1758,8 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				ArrivalRate:    20, // model-level, mirrors the single replica's per-pod rate
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.SpareCapacity).To(Equal(0.0))
 			// TA leaves RC zero; assert the raw inequality the engine interprets as RC>0.
 			Expect(result.TotalDemand).To(BeNumerically(">", aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(Equal(0.0))
 		})
 	})
 

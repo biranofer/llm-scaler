@@ -31,12 +31,12 @@ func TestLogAnalyzerResult_EmitsRequiredFields(t *testing.T) {
 		Name:              "saturation",
 		ScaleUpThreshold:  1.2,
 		ScaleDownBoundary: 0.7,
+		TotalSupply:       100000,
+		Utilization:       0.8,
+		RequiredCapacity:  0,
+		SpareCapacity:     20000,
 		Result: &domain.AnalyzerResult{
-			TotalSupply:      100000,
-			TotalDemand:      80000,
-			Utilization:      0.8,
-			RequiredCapacity: 0,
-			SpareCapacity:    20000,
+			TotalDemand: 80000,
 			VariantCapacities: []domain.VariantCapacity{
 				{
 					VariantName:        "primary",
@@ -113,11 +113,11 @@ func TestLogAnalyzerResult_EmptyVariants(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 
 	nr := pipeline.NamedAnalyzerResult{
-		Name: "throughput",
+		Name:             "throughput",
+		TotalSupply:      0,
+		RequiredCapacity: 15000,
 		Result: &domain.AnalyzerResult{
-			TotalSupply:       0,
 			TotalDemand:       0,
-			RequiredCapacity:  15000,
 			VariantCapacities: []domain.VariantCapacity{},
 		},
 	}

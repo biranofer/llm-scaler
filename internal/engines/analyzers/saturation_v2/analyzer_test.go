@@ -241,9 +241,9 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 			// readyCount = 2 - 1 = 1; anticipated = (1 + 1) × PRC
-			// RC/SC are left zero by the analyzer; engine post-step sets them.
+			// RC/SC are not on the analyzer contract at all; the engine's
+			// capacity-build step derives them from this (D, P).
 			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(BeNumerically(">", aggregation.SumTotalSupply(result.VariantCapacities)))
-			Expect(result.RequiredCapacity).To(BeZero())
 		})
 
 		It("should NOT include pending replicas in scale-down calculation", func() {
@@ -260,9 +260,9 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 			// TotalSupply uses ready replicas only; TotalAnticipatedSupply includes pending.
-			// RC/SC are left zero by the analyzer; engine post-step sets them.
+			// RC/SC are not on the analyzer contract at all; the engine's
+			// capacity-build step derives them from this (D, P).
 			Expect(aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)).To(BeNumerically(">", aggregation.SumTotalSupply(result.VariantCapacities)))
-			Expect(result.SpareCapacity).To(BeZero())
 		})
 	})
 
@@ -496,12 +496,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 			// demand is high relative to supply — TotalDemand > TotalAnticipatedSupply.
-			// The analyzer no longer publishes supply, so compare against the supply
-			// the engine's capacity-build step derives from the same variant capacities.
-			// RC/SC are left zero by the analyzer; engine post-step sets them.
+			// The analyzer emits only (D, P), so compare against the supply the
+			// engine's capacity-build step derives from the same variant capacities;
+			// that comparison is exactly what makes the engine's RC positive.
 			Expect(result.TotalDemand).To(BeNumerically(">",
 				aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)*0.85))
-			Expect(result.RequiredCapacity).To(BeZero())
 		})
 
 		It("should signal scale-down when utilization is below boundary", func() {
@@ -519,11 +518,9 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			// Very low utilization — TotalSupply well above TotalDemand/scaleDown.
-			// RC/SC are left zero by the analyzer; engine post-step sets them.
+			// Very low utilization — TotalSupply well above TotalDemand/scaleDown,
+			// which is what makes the engine's SC positive.
 			Expect(aggregation.SumTotalSupply(result.VariantCapacities)).To(BeNumerically(">", result.TotalDemand/0.70))
-			Expect(result.SpareCapacity).To(BeZero())
-			Expect(result.RequiredCapacity).To(BeZero())
 		})
 
 		It("should signal steady state when utilization is between thresholds", func() {
@@ -540,9 +537,12 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			// utilization = 10000/12800 = 0.78 — between 0.70 and 0.85
-			Expect(result.RequiredCapacity).To(Equal(float64(0)))
-			Expect(result.SpareCapacity).To(Equal(float64(0)))
+			// utilization = 10000/12800 = 0.78 — between the 0.70 boundary and the
+			// 0.85 threshold, so the engine derives RC = SC = 0 from this (D, P).
+			// Asserted on the derived utilization because the analyzer emits neither.
+			supply := aggregation.SumTotalSupply(result.VariantCapacities)
+			Expect(supply).To(BeNumerically(">", 0))
+			Expect(result.TotalDemand / supply).To(BeNumerically("~", 0.78, 0.01))
 		})
 	})
 

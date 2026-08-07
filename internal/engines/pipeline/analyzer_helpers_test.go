@@ -24,13 +24,13 @@ func makeNamed(name string, rc, sc float64, vcs ...any) NamedAnalyzerResult {
 	return NamedAnalyzerResult{
 		Name: name,
 		Result: &domain.AnalyzerResult{
-			RequiredCapacity:  rc,
-			SpareCapacity:     sc,
 			VariantCapacities: caps,
 		},
-		Remaining: rc,
-		Spare:     sc,
-		Live:      true,
+		RequiredCapacity: rc,
+		SpareCapacity:    sc,
+		Remaining:        rc,
+		Spare:            sc,
+		Live:             true,
 	}
 }
 
@@ -46,8 +46,9 @@ var _ = Describe("analyzer helpers", func() {
 			applyAllocation(s, "v", 2)
 			Expect(s[0].Remaining).To(BeNumerically("~", 300.0, 1e-9))
 			Expect(s[1].Remaining).To(BeNumerically("~", 100.0, 1e-9))
-			// Result.RequiredCapacity is not mutated
-			Expect(s[0].Result.RequiredCapacity).To(Equal(500.0))
+			// The engine-built RequiredCapacity is not mutated — Remaining is the
+			// optimizer's working copy of it.
+			Expect(s[0].RequiredCapacity).To(Equal(500.0))
 		})
 
 		It("clamps Remaining to 0", func() {
@@ -65,7 +66,7 @@ var _ = Describe("analyzer helpers", func() {
 
 	Describe("saturationEntry", func() {
 		It("returns the saturation result from the slice", func() {
-			satResult := &domain.AnalyzerResult{RequiredCapacity: 42}
+			satResult := &domain.AnalyzerResult{TotalDemand: 42}
 			s := []NamedAnalyzerResult{
 				{Name: domain.SaturationAnalyzerName, Result: satResult},
 				makeNamed("ta", 10, 0),
@@ -122,10 +123,10 @@ func makeNamedPD(name string, pRC, dRC, pSC, dSC float64, pDemand, dDemand float
 				{VariantName: "pf", Role: "prefill", PerReplicaCapacity: vPPRC},
 				{VariantName: "dc", Role: "decode", PerReplicaCapacity: vDPRC},
 			},
-			RoleCapacities: map[string]domain.RoleCapacity{
-				"prefill": {Role: "prefill", RequiredCapacity: pRC, SpareCapacity: pSC, TotalDemand: pDemand},
-				"decode":  {Role: "decode", RequiredCapacity: dRC, SpareCapacity: dSC, TotalDemand: dDemand},
-			},
+		},
+		RoleCapacities: map[string]domain.RoleCapacity{
+			"prefill": {Role: "prefill", RequiredCapacity: pRC, SpareCapacity: pSC, TotalDemand: pDemand},
+			"decode":  {Role: "decode", RequiredCapacity: dRC, SpareCapacity: dSC, TotalDemand: dDemand},
 		},
 		Remaining: pRC, // P-scope after initDisaggregatedRemaining
 		RoleSpare: map[string]float64{"prefill": pSC, "decode": dSC},

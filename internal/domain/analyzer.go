@@ -76,11 +76,13 @@ type SchedulerQueueMetrics struct {
 }
 
 // RoleCapacity holds per-role capacity aggregation for P/D disaggregated models.
-// Analyzers never populate this struct: they emit per-role demand as
-// AnalyzerResult.RoleDemand, and the engine's capacity-build step pairs that with
-// the per-role supply it derives from the variant capacities. Supply is assembled
-// by buildRoleCapacities and RequiredCapacity/SpareCapacity by the universal
-// threshold post-step, so a zero is a literal value here, never a sentinel.
+// Analyzers cannot populate this struct — it does not appear on AnalyzerResult.
+// They emit per-role demand as AnalyzerResult.RoleDemand, and the engine's
+// capacity-build step pairs that with the per-role supply it derives from the
+// variant capacities, writing the result to the engine-owned
+// NamedAnalyzerResult.RoleCapacities. Supply is assembled by buildRoleCapacities
+// and RequiredCapacity/SpareCapacity by the universal threshold post-step, so a
+// zero is a literal value here, never a sentinel.
 type RoleCapacity struct {
 	Role                   string
 	TotalSupply            float64
@@ -90,8 +92,17 @@ type RoleCapacity struct {
 	SpareCapacity          float64
 }
 
-// AnalyzerResult is the common output produced by all analyzers.
-// The engine consumes these results to build scaling plans.
+// AnalyzerResult is the common output produced by all analyzers: the pure
+// (D, P) signal and nothing else. Demand is the analyzer's — it owns demand
+// attribution, at the model level (TotalDemand) and per role (RoleDemand).
+// Per-replica capacity P is the analyzer's too, on each VariantCapacity.
+//
+// Everything derived from those two — model and per-role supply, utilization,
+// and the RequiredCapacity/SpareCapacity scaling signals — belongs to the
+// engine's capacity-build step and lives on pipeline.NamedAnalyzerResult, not
+// here. An analyzer therefore cannot write a supply or a scaling signal that
+// contradicts its own (D, P): the linearity invariant
+// (supply = Σ_v replicas × per-replica P) holds by construction.
 type AnalyzerResult struct {
 	// AnalyzerName identifies which analyzer produced this result.
 	AnalyzerName string
@@ -107,39 +118,11 @@ type AnalyzerResult struct {
 	// Analyzer-supplied: the analyzer owns demand attribution.
 	TotalDemand float64
 
-	// Model-level supply aggregates — written by the engine's capacity-build
-	// step, not by analyzers. They are derived from VariantCapacities so the
-	// linearity invariant (supply = Σ_v replicas × per-replica P) holds by
-	// construction:
-	//   TotalSupply            = Σ_v ReplicaCount × PerReplicaCapacity
-	//   TotalAnticipatedSupply = Σ_v (ReplicaCount + PendingReplicas) × PerReplicaCapacity
-	//   Utilization            = TotalDemand / TotalSupply (0 when TotalSupply == 0)
-	// TotalAnticipatedSupply counts pending replicas so they offset demand,
-	// preventing double-scaling. Analyzer-written values are discarded;
-	// analyzers should leave these zero.
-	TotalSupply            float64
-	TotalAnticipatedSupply float64
-	Utilization            float64
-
-	// Scaling signals — written by the engine post-step; read by the optimizer.
-	// The engine overwrites both fields after each analyzer's Analyze() returns:
-	//   RC = max(0, TotalDemand/scaleUp − TotalAnticipatedSupply)
-	//   SC = max(0, TotalSupply    − TotalDemand/scaleDown)
-	// Analyzer-written values are discarded; analyzers should leave these zero.
-	RequiredCapacity float64 // >0 means scale-up needed
-	SpareCapacity    float64 // >0 means scale-down possible
-
-	// RoleCapacities holds per-role capacity aggregation for P/D disaggregated models.
-	// nil when no disaggregation is active (all variants are role "both").
-	// Assembled by the engine's capacity-build step from RoleDemand + per-variant
-	// supply; analyzers do not populate it directly.
-	RoleCapacities map[string]RoleCapacity
-
 	// RoleDemand is the analyzer's per-role demand D for P/D disaggregated models
 	// (nil when non-disaggregated). It is the demand half of the contract — the
 	// analyzer owns demand attribution (e.g. saturation charges waiting per role,
 	// throughput charges arrival+queue per role); the capacity builder pairs it
-	// with per-role supply to assemble RoleCapacities.
+	// with per-role supply to assemble NamedAnalyzerResult.RoleCapacities.
 	RoleDemand map[string]float64
 }
 

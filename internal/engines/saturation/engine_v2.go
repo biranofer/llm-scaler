@@ -121,10 +121,7 @@ func (e *Engine) runAnalyzersAndScore(
 		return nil, err
 	}
 
-	// Capacity-build step for saturation: join discovery metadata and compute the
-	// engine-owned scaling signals (RC/SC) with the resolved per-analyzer threshold.
 	satUp, satDown := resolveThresholds(domain.SaturationAnalyzerName, config)
-	buildCapacities(ctx, baseResult, metaByVariant, satUp, satDown)
 
 	// Build AnalyzerInput once; shared by all non-saturation analyzers.
 	// Note: &config has had saturation's per-entry threshold overrides applied
@@ -145,15 +142,13 @@ func (e *Engine) runAnalyzersAndScore(
 
 	// Collect per-analyzer results. Saturation is first; each non-saturation
 	// analyzer is run, calibrated with its resolved thresholds, and appended.
-	namedResults := []pipeline.NamedAnalyzerResult{{
-		Name:              domain.SaturationAnalyzerName,
-		Result:            baseResult,
-		Score:             scoreForAnalyzer(domain.SaturationAnalyzerName, config),
-		Remaining:         baseResult.RequiredCapacity,
-		Spare:             baseResult.SpareCapacity,
-		ScaleUpThreshold:  satUp,
-		ScaleDownBoundary: satDown,
-	}}
+	//
+	// The capacity-build step writes the engine-owned aggregates onto the named
+	// entry, so each entry is constructed *before* the build and its mutable
+	// Remaining/Spare counters are seeded from the built RC/SC afterwards.
+	namedResults := []pipeline.NamedAnalyzerResult{
+		buildNamedResult(ctx, domain.SaturationAnalyzerName, baseResult, config, metaByVariant, satUp, satDown),
+	}
 	for _, entry := range e.analyzerRunEntries() {
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
@@ -166,16 +161,8 @@ func (e *Engine) runAnalyzersAndScore(
 			continue
 		}
 		up, down := resolveThresholds(entry.name, config)
-		buildCapacities(ctx, result, metaByVariant, up, down)
-		namedResults = append(namedResults, pipeline.NamedAnalyzerResult{
-			Name:              entry.name,
-			Result:            result,
-			Score:             scoreForAnalyzer(entry.name, config),
-			Remaining:         result.RequiredCapacity,
-			Spare:             result.SpareCapacity,
-			ScaleUpThreshold:  up,
-			ScaleDownBoundary: down,
-		})
+		namedResults = append(namedResults,
+			buildNamedResult(ctx, entry.name, result, config, metaByVariant, up, down))
 	}
 	e.updateLivenessAndSetLive(ctx, namespace, modelID, namedResults)
 	e.recordAnalyzerMetrics(namespace, modelID, namedResults)
@@ -234,8 +221,8 @@ func (e *Engine) recordAnalyzerMetrics(namespace, modelID string, results []pipe
 		if nr.Result == nil {
 			continue
 		}
-		if len(nr.Result.RoleCapacities) > 0 {
-			for role, rc := range nr.Result.RoleCapacities {
+		if len(nr.RoleCapacities) > 0 {
+			for role, rc := range nr.RoleCapacities {
 				e.metricsEmitter.RecordAnalyzerDemand(nr.Name, namespace, modelID, role, rc.TotalDemand)
 				current.demand[analyzerDemandSeries{analyzer: nr.Name, role: role}] = struct{}{}
 			}
@@ -578,27 +565,28 @@ func runRegisteredAnalyzer(
 // scope — model-level and each RoleCapacity entry. There are no per-role
 // threshold overrides. A non-positive scaleUp or scaleDown leaves the
 // corresponding signal unchanged.
-func applyUniversalThreshold(r *domain.AnalyzerResult, scaleUp, scaleDown float64) {
-	if r == nil {
+func applyUniversalThreshold(nr *pipeline.NamedAnalyzerResult, scaleUp, scaleDown float64) {
+	if nr == nil || nr.Result == nil {
 		return
 	}
+	demand := nr.Result.TotalDemand
 
 	if scaleUp > 0 {
-		rc := r.TotalDemand/scaleUp - r.TotalAnticipatedSupply
+		rc := demand/scaleUp - nr.TotalAnticipatedSupply
 		if rc < 0 {
 			rc = 0
 		}
-		r.RequiredCapacity = rc
+		nr.RequiredCapacity = rc
 	}
 	if scaleDown > 0 {
-		sc := r.TotalSupply - r.TotalDemand/scaleDown
+		sc := nr.TotalSupply - demand/scaleDown
 		if sc < 0 {
 			sc = 0
 		}
-		r.SpareCapacity = sc
+		nr.SpareCapacity = sc
 	}
 
-	for role, rc := range r.RoleCapacities {
+	for role, rc := range nr.RoleCapacities {
 		if scaleUp > 0 {
 			v := rc.TotalDemand/scaleUp - rc.TotalAnticipatedSupply
 			if v < 0 {
@@ -613,7 +601,7 @@ func applyUniversalThreshold(r *domain.AnalyzerResult, scaleUp, scaleDown float6
 			}
 			rc.SpareCapacity = v
 		}
-		r.RoleCapacities[role] = rc
+		nr.RoleCapacities[role] = rc
 	}
 }
 
@@ -760,6 +748,33 @@ func metadataByVariant(variantMetadata []domain.VariantMetadata) map[string]doma
 	return byName
 }
 
+// buildNamedResult wraps one analyzer's raw (D, P) result in the optimizer-facing
+// entry: it runs the capacity-build step to derive the engine-owned aggregates,
+// then seeds the optimizer's mutable allocation counters from the built signals.
+//
+// Ordering matters — Remaining/Spare are the optimizer's working copies of RC/SC,
+// so they can only be seeded after buildCapacities has computed them.
+func buildNamedResult(
+	ctx context.Context,
+	name string,
+	result *domain.AnalyzerResult,
+	config config.SaturationScalingConfig,
+	metaByVariant map[string]domain.VariantMetadata,
+	scaleUp, scaleDown float64,
+) pipeline.NamedAnalyzerResult {
+	nr := pipeline.NamedAnalyzerResult{
+		Name:              name,
+		Result:            result,
+		Score:             scoreForAnalyzer(name, config),
+		ScaleUpThreshold:  scaleUp,
+		ScaleDownBoundary: scaleDown,
+	}
+	buildCapacities(ctx, &nr, metaByVariant, scaleUp, scaleDown)
+	nr.Remaining = nr.RequiredCapacity
+	nr.Spare = nr.SpareCapacity
+	return nr
+}
+
 // buildCapacities is the dedicated capacity-building step between the analyzers
 // and the optimizer. For one analyzer's result it (1) joins the authoritative
 // per-variant identity (cost, accelerator, role) from the discovery step onto the
@@ -768,10 +783,11 @@ func metadataByVariant(variantMetadata []domain.VariantMetadata) map[string]doma
 // analyzer supplies only the measured signal (demand + per-replica capacity); the
 // builder assembles the structure the optimizer consumes. The metadata join is a
 // no-op when metaByVariant is empty (paths without discovery keep analyzer values).
-func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByVariant map[string]domain.VariantMetadata, scaleUp, scaleDown float64) {
-	if result == nil {
+func buildCapacities(ctx context.Context, nr *pipeline.NamedAnalyzerResult, metaByVariant map[string]domain.VariantMetadata, scaleUp, scaleDown float64) {
+	if nr == nil || nr.Result == nil {
 		return
 	}
+	result := nr.Result
 	// (1) Join authoritative discovery identity onto the per-variant capacities.
 	if len(metaByVariant) > 0 {
 		for i := range result.VariantCapacities {
@@ -784,20 +800,20 @@ func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByV
 	}
 	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P), and
 	// the model-level utilization from demand vs supply.
-	result.TotalSupply = aggregation.SumTotalSupply(result.VariantCapacities)
-	result.TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)
-	if result.TotalSupply > 0 {
-		result.Utilization = result.TotalDemand / result.TotalSupply
+	nr.TotalSupply = aggregation.SumTotalSupply(result.VariantCapacities)
+	nr.TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)
+	if nr.TotalSupply > 0 {
+		nr.Utilization = result.TotalDemand / nr.TotalSupply
 	} else {
-		result.Utilization = 0
+		nr.Utilization = 0
 	}
 	// (3) Assemble per-role capacities: supply grouped by role, demand from the
 	// analyzer's per-role attribution (RoleDemand).
-	result.RoleCapacities = buildRoleCapacities(ctx, result)
+	nr.RoleCapacities = buildRoleCapacities(ctx, result)
 	// (4) Engine-owned scaling signals (RC/SC) from demand vs supply.
-	applyUniversalThreshold(result, scaleUp, scaleDown)
+	applyUniversalThreshold(nr, scaleUp, scaleDown)
 	// (5) Flag a shortfall the optimizer cannot act on.
-	warnUnsizableShortfall(ctx, result)
+	warnUnsizableShortfall(ctx, nr)
 }
 
 // warnUnsizableShortfall logs when an analyzer reports that more capacity is
@@ -810,8 +826,9 @@ func buildCapacities(ctx context.Context, result *domain.AnalyzerResult, metaByV
 // The usual cause is configuration rather than load — a KvCacheThreshold small
 // enough that the usable-capacity estimate rounds away, or a variant whose
 // capacity was never learned — so the log names the variants involved.
-func warnUnsizableShortfall(ctx context.Context, result *domain.AnalyzerResult) {
-	if result.RequiredCapacity <= 0 || len(result.VariantCapacities) == 0 {
+func warnUnsizableShortfall(ctx context.Context, nr *pipeline.NamedAnalyzerResult) {
+	result := nr.Result
+	if nr.RequiredCapacity <= 0 || len(result.VariantCapacities) == 0 {
 		return
 	}
 	for _, vc := range result.VariantCapacities {
@@ -826,7 +843,7 @@ func warnUnsizableShortfall(ctx context.Context, result *domain.AnalyzerResult) 
 	sort.Strings(names)
 	ctrl.LoggerFrom(ctx).Info("analyzer needs capacity but no variant has a per-replica capacity to scale with",
 		"modelID", result.ModelID, "namespace", result.Namespace,
-		"analyzer", result.AnalyzerName, "requiredCapacity", result.RequiredCapacity,
+		"analyzer", result.AnalyzerName, "requiredCapacity", nr.RequiredCapacity,
 		"variants", names,
 		"hint", "check kvCacheThreshold: a value small enough to round the usable-capacity estimate to zero makes the shortfall unsizable")
 }
@@ -924,11 +941,11 @@ func logAnalyzerResult(ctx context.Context, modelID, namespace string, nr pipeli
 		"modelID", modelID,
 		"namespace", namespace,
 		"analyzer", nr.Name,
-		"supply", nr.Result.TotalSupply,
+		"supply", nr.TotalSupply,
 		"demand", nr.Result.TotalDemand,
-		"util", nr.Result.Utilization,
-		"rc", nr.Result.RequiredCapacity,
-		"sc", nr.Result.SpareCapacity,
+		"util", nr.Utilization,
+		"rc", nr.RequiredCapacity,
+		"sc", nr.SpareCapacity,
 		"scaleUpThreshold", nr.ScaleUpThreshold,
 		"scaleDownBoundary", nr.ScaleDownBoundary,
 		"variants", variants,

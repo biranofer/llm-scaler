@@ -13,15 +13,9 @@ import (
 
 // withSatEntry adds a single-saturation AnalyzerResults to req, initialised from r.
 // Used by test fixtures so CostAwareOptimizer can find the saturation entry.
-func withSatEntry(r *domain.AnalyzerResult, req ModelScalingRequest) ModelScalingRequest {
+func withSatEntry(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 	if r != nil {
-		req.AnalyzerResults = []NamedAnalyzerResult{{
-			Name:      domain.SaturationAnalyzerName,
-			Result:    r,
-			Remaining: r.RequiredCapacity,
-			Spare:     r.SpareCapacity,
-			Live:      true,
-		}}
+		req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
 	}
 	return req
 }
@@ -45,7 +39,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Scale-Up", func() {
 
 		It("should add replicas to most cost-efficient variant", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID:          "model-1",
 				Namespace:        "default",
 				AnalyzedAt:       time.Now(),
@@ -78,7 +72,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("populates decision observability fields (utilization/required/spare) from the analyzer result", func() {
 			// Regression: these three feed wva_saturation_utilization / wva_required_capacity /
 			// wva_spare_capacity. If buildDecisionsWithOptimizer stops copying them, the gauges read 0.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID:          "model-1",
 				Namespace:        "default",
 				RequiredCapacity: 5000,
@@ -104,7 +98,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("uses per-role required/spare capacity for P/D-disaggregated models", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID:          "model-1",
 				Namespace:        "default",
 				RequiredCapacity: 9999, // model-level; must NOT be used for role-scoped variants
@@ -139,7 +133,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("maps an empty-role variant to the \"both\" RoleCapacities entry", func() {
 			// Role "" normalizes to RoleBoth, so the "both" entry (not the model-level
 			// totals) must be used. Model-level 9999/8888 are decoys.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				ModelID:          "model-1",
 				Namespace:        "default",
 				RequiredCapacity: 9999,
@@ -167,7 +161,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should not skip variants with pending replicas", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 5000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -195,7 +189,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should skip variants with zero capacity", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 5000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "zero-cap", Cost: 1.0, ReplicaCount: 0, PerReplicaCapacity: 0},
@@ -221,7 +215,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should spread across multiple variants when needed", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 25000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -251,7 +245,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Scale-Down", func() {
 
 		It("should remove from most expensive variant first", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 15000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
@@ -279,7 +273,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should protect cheapest variant at 1 replica", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 30000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
@@ -307,7 +301,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should remove cheap variant when expensive replica capacity exceeds spare", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 15000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 1, PerReplicaCapacity: 20000},
@@ -335,7 +329,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should cascade scale-down across variants", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 50000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
@@ -372,7 +366,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// decode has spare. Model-level SpareCapacity aggregates both roles, so a
 			// role-blind scale-down would trim the expensive prefill. Role-aware
 			// scale-down must leave the saturated prefill untouched and shed decode.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 20000, // aggregate (decode's spare) — gates scale-down
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "prefill", Role: "prefill", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -408,7 +402,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should shed each role by its own spare when both have slack", func() {
 			// Both roles have spare, but different amounts. Each role must shed by
 			// its own per-role spare, not the aggregate.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 30000, // aggregate — gates scale-down
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "prefill", Role: "prefill", Cost: 5.0, ReplicaCount: 3, PerReplicaCapacity: 10000},
@@ -443,7 +437,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// Only decode has a RoleCapacities entry (e.g. a prefill data-collection
 			// gap). The one-iteration path must shed decode against its own spare and
 			// keep the cheapest decode variant at one replica.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 20000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "decode-exp", Role: "decode", Cost: 10.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -478,7 +472,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// prefill/decode RoleCapacities map — so the per-role sheds never include it.
 			// The design assumes one role per variant; this pins the defensive behavior
 			// if that assumption is violated: the orphan is left as-is.
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 20000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "prefill", Role: "prefill", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -518,7 +512,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Steady State", func() {
 
 		It("should return no-change when no scaling signal", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 0,
 				SpareCapacity:    0,
 				VariantCapacities: []domain.VariantCapacity{
@@ -555,13 +549,13 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Multi-Model", func() {
 
 		It("should process models independently", func() {
-			r1 := &domain.AnalyzerResult{
+			r1 := &satEntryFixture{
 				RequiredCapacity: 5000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "m1-v1", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
 				},
 			}
-			r2 := &domain.AnalyzerResult{
+			r2 := &satEntryFixture{
 				SpareCapacity: 10000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "m2-v1", Cost: 10.0, ReplicaCount: 2, PerReplicaCapacity: 10000},
@@ -597,7 +591,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Decision Metadata", func() {
 
 		It("should set model ID, namespace, and cost on decisions", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 5000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "v1", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -627,7 +621,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		intPtr := func(n int) *int { return &n }
 
 		It("should respect maxReplicas during scale-up (spillover to next variant)", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 30000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap", AcceleratorName: "A100", Cost: 5.0, ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -655,7 +649,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should respect minReplicas during scale-down", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 50000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "expensive", Cost: 15.0, ReplicaCount: 3, PerReplicaCapacity: 20000},
@@ -683,7 +677,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should scale minReplicas=0 variant to zero while keeping minReplicas>0 sibling", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 80000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "keep-alive", Cost: 15.0, ReplicaCount: 2, PerReplicaCapacity: 20000},
@@ -709,7 +703,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		})
 
 		It("should propagate MinReplicas/MaxReplicas to VariantDecision", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 0,
 				SpareCapacity:    0,
 				VariantCapacities: []domain.VariantCapacity{
@@ -737,16 +731,10 @@ var _ = Describe("CostAwareOptimizer", func() {
 	Context("Disaggregated (P/D) Scale-Up", func() {
 
 		// withSatEntryPD builds a request with a disaggregated saturation result.
-		withSatEntryPD := func(r *domain.AnalyzerResult, req ModelScalingRequest) ModelScalingRequest {
+		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{{
-					Name:      domain.SaturationAnalyzerName,
-					Result:    r,
-					Remaining: r.RequiredCapacity,
-					Spare:     r.SpareCapacity,
-					Live:      true,
-				}}
+				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
 			}
 			return req
 		}
@@ -754,7 +742,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		It("should allocate paired (n_P, n_D) replicas for cheapest prefill + decode pair", func() {
 			// P-Remaining=20000, PRC_P=10000 → n_P=2
 			// D=α×P=20000 (α=1), PRC_D=10000 → n_D=2
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 20000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "prefill-v", Cost: 5.0, Role: "prefill", ReplicaCount: 1, PerReplicaCapacity: 10000},
@@ -788,7 +776,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 			// Two prefill variants: cheap-p (cost 5) and expensive-p (cost 15)
 			// Two decode variants: cheap-d (cost 5) and expensive-d (cost 15)
 			// α=1; P-RC=10000, PRC=10000 → n_P=1 on cheap-p; n_D=1 on cheap-d
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 10000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap-p", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
@@ -830,22 +818,16 @@ var _ = Describe("CostAwareOptimizer", func() {
 	// (anyRoleNeedsScaleUp) correctly fires on decode demand.
 	Context("Disaggregated (P/D) D-only scale-up", func() {
 
-		withSatEntryPD := func(r *domain.AnalyzerResult, req ModelScalingRequest) ModelScalingRequest {
+		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{{
-					Name:      domain.SaturationAnalyzerName,
-					Result:    r,
-					Remaining: r.RequiredCapacity,
-					Spare:     r.SpareCapacity,
-					Live:      true,
-				}}
+				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
 			}
 			return req
 		}
 
 		It("should scale up only decode when only D has demand (RC_P=0, RC_D>0)", func() {
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				RequiredCapacity: 10000,
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "prefill-v", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
@@ -879,23 +861,17 @@ var _ = Describe("CostAwareOptimizer", func() {
 
 	Context("Disaggregated (P/D) Scale-Down", func() {
 
-		withSatEntryPD := func(r *domain.AnalyzerResult, req ModelScalingRequest) ModelScalingRequest {
+		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{{
-					Name:      domain.SaturationAnalyzerName,
-					Result:    r,
-					Remaining: r.RequiredCapacity,
-					Spare:     r.SpareCapacity,
-					Live:      true,
-				}}
+				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
 			}
 			return req
 		}
 
 		It("should remove from most expensive prefill and decode variants", func() {
 			// P-Spare=20000, PRC_P=10000 → n_P=2; D-Spare=10000, PRC_D=10000 → n_D=1
-			r := &domain.AnalyzerResult{
+			r := &satEntryFixture{
 				SpareCapacity: 20000, // model-level (unused in disaggregated path)
 				VariantCapacities: []domain.VariantCapacity{
 					{VariantName: "cheap-p", Cost: 5.0, Role: "prefill", PerReplicaCapacity: 10000},
