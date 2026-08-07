@@ -209,7 +209,7 @@ func (c *ReplicaMetricsCollector) recordUnattributedReadyPodsEvent(
 	}
 	c.recorder.Event(va, corev1.EventTypeWarning, constants.K8SEventUnattributedReadyPods,
 		fmt.Sprintf("%s has %d ready pod(s) but none attributed; "+
-			"verify the llm-d.ai/variant pod label on the scale target equals %q",
+			"verify the pods' ownerReferences reach the scale target %q drives",
 			va.Name, readyCount, va.Name))
 	if vaEventTracker != nil {
 		vaEventTracker[key] = true
@@ -326,18 +326,23 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 }
 
 // buildInstanceKey returns (instanceKey, podName, vaName) for a series's labels.
-// vaName comes from the llm_d_ai_variant label when present (the legacy /
-// shadow-pod fast path). When absent and a pod label is present, falls back
-// to the locator's owner-walk for Deployment / LWS layouts. Returns
-// vaName="" when neither path resolves; the caller treats that as "skip".
+//
+// vaName is resolved by walking the pod's ownerReferences to the managed scaler
+// that drives it, and is the scaler's name. That walk is the only source of
+// variant identity: the llm_d_ai_variant metric label used to short-circuit it,
+// but neither vLLM nor SGLang emits that label, so on a real deployment it only
+// ever appeared where an operator had relabelled it in — and it is no longer
+// carried in the query groupings either (#1263).
+//
+// Returns vaName="" when the pod has no managed scaler above it; the caller
+// treats that as "skip".
 func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespace string, labels map[string]string) (instanceKey, podName, vaName string) {
 	podName = labels["pod"]
 	if podName == "" {
 		podName = labels["pod_name"]
 	}
 
-	vaName = labels[constants.VariantLabelPrometheusKey]
-	if vaName == "" && podName != "" && c.locator != nil {
+	if podName != "" && c.locator != nil {
 		ms, err := c.locator.Locate(ctx, namespace, podName)
 		switch {
 		case err != nil:
@@ -491,7 +496,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	// podMetricData holds per-pod metric values and timestamps
 	type podMetricData struct {
 		podName        string // Actual pod name for K8s API lookups
-		vaName         string // VariantAutoscaling name extracted from llm_d_ai_variant label
+		vaName         string // scaler name the pod's ownerReference walk resolved to
 		kvUsage        float64
 		kvTimestamp    time.Time
 		hasKv          bool
@@ -988,8 +993,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			podName = instanceKey
 		}
 
-		// Extract VA name directly from metrics (llm_d_ai_variant label)
-		// This replaces the previous ownership traversal approach
+		// The scaler this pod belongs to, resolved by buildInstanceKey's
+		// ownerReference walk.
 		vaName := data.vaName
 
 		// Skip pods that have no metrics at all. This can happen when the query returns pods that

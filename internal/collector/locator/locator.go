@@ -51,15 +51,22 @@ type PodLocator interface {
 	// Locate finds the managed scaler whose scale-target chain contains the
 	// given pod. Returns (nil, nil) when the pod is unmanaged or when its
 	// ownerReferences chain does not reach a Deployment / LeaderWorkerSet
-	// (e.g. shadow pod — use LocateByVariant). Errors only on infrastructure
-	// failures or invariant violations (cycle, depth exceeded, both an HPA
-	// and a ScaledObject managing the same scale target).
+	// (e.g. shadow pod). Errors only on infrastructure failures or invariant
+	// violations (cycle, depth exceeded, both an HPA and a ScaledObject
+	// managing the same scale target).
+	//
+	// This is the collector's only source of variant identity, so a pod it
+	// cannot attribute contributes no replica metrics.
 	Locate(ctx context.Context, namespace, podName string) (*ManagedScaler, error)
 
 	// LocateByVariant resolves the managed scaler by variant name (the
 	// value of the llm_d_ai_variant metric label, equal to the scaler's
-	// metadata.name). Use this for shadow-pod layouts where the pod's
-	// ownerReferences chain does not reach the scaler's scaleTargetRef.
+	// metadata.name), for shadow-pod layouts where the pod's ownerReferences
+	// chain does not reach the scaler's scaleTargetRef.
+	//
+	// Nothing calls this today: the collector stopped reading that label when
+	// it left the query groupings (#1263), and no engine emits it. It is kept
+	// as the entry point a shadow-pod layout would need.
 	LocateByVariant(ctx context.Context, namespace, variantName string) (*ManagedScaler, error)
 
 	// ResolveScaleTarget returns the top-level Deployment / LWS scale target
