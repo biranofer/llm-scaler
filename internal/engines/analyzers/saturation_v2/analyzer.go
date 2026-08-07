@@ -174,8 +174,6 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		effectiveCapacity = k2
 	}
 
-	isSaturated := replicaDemand >= effectiveCapacity
-
 	// Update capacity store with live data, preserving EngineParams from any
 	// existing record (parsed from deployment args and needed for FindCompatible).
 	var existingParams *EngineParams
@@ -203,7 +201,6 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		ComputeBoundCapacity:  k2,
 		K2Priority:            k2Priority,
 		EffectiveCapacity:     effectiveCapacity,
-		IsSaturated:           isSaturated,
 		ReplicaDemand:         replicaDemand,
 	}
 }
@@ -265,8 +262,6 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	// not adjusting this line.
 	replicaDemand += waitingQueueDemand(rm, role)
 
-	isSaturated := replicaDemand >= effectiveCapacity
-
 	return &ReplicaCapacity{
 		PodName:               rm.PodName,
 		VariantName:           rm.VariantName,
@@ -277,7 +272,6 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 		ComputeBoundCapacity:  effectiveCapacity,
 		K2Priority:            k2SrcFallback,
 		EffectiveCapacity:     effectiveCapacity,
-		IsSaturated:           isSaturated,
 		ReplicaDemand:         replicaDemand,
 	}
 }

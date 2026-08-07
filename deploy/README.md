@@ -336,9 +336,9 @@ VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not cont
 | `LWS_NAMESPACE` | Namespace for LeaderWorkerSet installation | `lws-system` |
 | `LWS_CHART_VERSION` | LeaderWorkerSet Helm chart version | `0.8.0` |
 
-#### Optional: capacity thresholds after `make deploy-e2e-infra`
+#### Optional: scaling band after `make deploy-e2e-infra`
 
-If `KV_SPARE_TRIGGER` and/or `QUEUE_SPARE_TRIGGER` are set in the environment, the Makefile patches the `wva-saturation-scaling-config` ConfigMap after install.
+If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment, the Makefile patches the `wva-saturation-scaling-config` ConfigMap after install. Note the patch replaces the whole `default` entry, so it writes `analyzerName: saturation` alongside the band.
 
 ## Post-Deployment
 

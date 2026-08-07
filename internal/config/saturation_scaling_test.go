@@ -23,74 +23,34 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("valid default config", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 			}, false),
 			Entry("valid custom config", SaturationScalingConfig{
 				KvCacheThreshold:     0.75,
 				QueueLengthThreshold: 10,
-				KvSpareTrigger:       0.15,
-				QueueSpareTrigger:    5,
 			}, false),
 			Entry("invalid KvCacheThreshold too high", SaturationScalingConfig{
 				KvCacheThreshold:     1.5,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    3,
 			}, true),
 			Entry("invalid KvCacheThreshold negative", SaturationScalingConfig{
 				KvCacheThreshold:     -0.1,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    3,
 			}, true),
 			Entry("invalid QueueLengthThreshold negative", SaturationScalingConfig{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: -1,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    3,
-			}, true),
-			Entry("invalid KvSpareTrigger too high", SaturationScalingConfig{
-				KvCacheThreshold:     0.8,
-				QueueLengthThreshold: 5,
-				KvSpareTrigger:       1.5,
-				QueueSpareTrigger:    3,
-			}, true),
-			Entry("invalid KvSpareTrigger negative", SaturationScalingConfig{
-				KvCacheThreshold:     0.8,
-				QueueLengthThreshold: 5,
-				KvSpareTrigger:       -0.1,
-				QueueSpareTrigger:    3,
-			}, true),
-			Entry("invalid QueueSpareTrigger negative", SaturationScalingConfig{
-				KvCacheThreshold:     0.8,
-				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    -1,
-			}, true),
-			Entry("invalid KvCacheThreshold less than KvSpareTrigger", SaturationScalingConfig{
-				KvCacheThreshold:     0.5,
-				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.6,
-				QueueSpareTrigger:    3,
 			}, true),
 			Entry("edge case: zero values are valid", SaturationScalingConfig{
 				KvCacheThreshold:     0.0,
 				QueueLengthThreshold: 0,
-				KvSpareTrigger:       0.0,
-				QueueSpareTrigger:    0,
 			}, false),
 			Entry("edge case: max values are valid", SaturationScalingConfig{
 				KvCacheThreshold:     1.0,
 				QueueLengthThreshold: 1000,
-				KvSpareTrigger:       1.0,
-				QueueSpareTrigger:    1000,
 			}, false),
 			Entry("V2 valid config with explicit thresholds (old-style analyzerName)", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.90,
 				ScaleDownBoundary:    0.60,
@@ -98,8 +58,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V2 valid config with analyzers list (new-style)", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				ScaleUpThreshold:     0.90,
 				ScaleDownBoundary:    0.60,
 				Analyzers: []AnalyzerScoreConfig{
@@ -109,8 +67,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V2 invalid: scaleUpThreshold > 1", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     1.5,
 				ScaleDownBoundary:    0.70,
@@ -118,8 +74,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V2 invalid: scaleUpThreshold <= scaleDownBoundary", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.60,
 				ScaleDownBoundary:    0.70,
@@ -127,8 +81,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V2 thresholds ignored when not V2", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     0,
 				ScaleDownBoundary:    0,
@@ -139,16 +91,12 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V1-style entry with out-of-range explicit scaleUpThreshold is rejected", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     1.5,
 			}, true),
 			Entry("V1-style entry with inverted explicit V2 thresholds is rejected", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     0.60,
 				ScaleDownBoundary:    0.70,
@@ -156,8 +104,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("V1-style entry with valid explicit V2 thresholds is accepted", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     0.90,
 				ScaleDownBoundary:    0.60,
@@ -165,15 +111,11 @@ var _ = Describe("SaturationScalingConfig", func() {
 			Entry("valid priority", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				Priority:             5.0,
 			}, false),
 			Entry("invalid negative priority", SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				Priority:             -1.0,
 			}, true),
 			Entry("V2 valid per-analyzer threshold override", SaturationScalingConfig{
@@ -251,8 +193,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			config.ApplyDefaults()
 			Expect(config.KvCacheThreshold).To(Equal(DefaultKvCacheThreshold))
 			Expect(config.QueueLengthThreshold).To(Equal(DefaultQueueLengthThreshold))
-			Expect(config.KvSpareTrigger).To(Equal(DefaultKvSpareTrigger))
-			Expect(config.QueueSpareTrigger).To(Equal(DefaultQueueSpareTrigger))
 			// V2 thresholds stay zero for a V1-style entry: defaulting them on the stored
 			// entry would let a V1-style override clobber a tuned global during Merge.
 			Expect(config.ScaleUpThreshold).To(Equal(0.0))
@@ -282,14 +222,10 @@ var _ = Describe("SaturationScalingConfig", func() {
 			config := SaturationScalingConfig{
 				KvCacheThreshold:     0.75,
 				QueueLengthThreshold: 10,
-				KvSpareTrigger:       0.15,
-				QueueSpareTrigger:    5,
 			}
 			config.ApplyDefaults()
 			Expect(config.KvCacheThreshold).To(Equal(0.75))
 			Expect(config.QueueLengthThreshold).To(Equal(10.0))
-			Expect(config.KvSpareTrigger).To(Equal(0.15))
-			Expect(config.QueueSpareTrigger).To(Equal(5.0))
 		})
 
 		It("should apply default priority when zero", func() {
@@ -334,8 +270,6 @@ var _ = Describe("SaturationScalingConfig", func() {
 			config := SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
 				},
@@ -351,41 +285,30 @@ var _ = Describe("SaturationScalingConfig", func() {
 			base := SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 			}
 			override := SaturationScalingConfig{
 				KvCacheThreshold: 0.85,
-				KvSpareTrigger:   0.15,
 			}
 			base.Merge(override)
 			Expect(base.KvCacheThreshold).To(Equal(0.85))
-			Expect(base.KvSpareTrigger).To(Equal(0.15))
 			// Unset fields in override should not change base
 			Expect(base.QueueLengthThreshold).To(Equal(5.0))
-			Expect(base.QueueSpareTrigger).To(Equal(3.0))
 		})
 
 		It("should overlay all fields when all are set", func() {
 			base := SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				Priority:             1.0,
 			}
 			override := SaturationScalingConfig{
 				KvCacheThreshold:     0.90,
 				QueueLengthThreshold: 15,
-				KvSpareTrigger:       0.05,
-				QueueSpareTrigger:    2,
 				Priority:             5.0,
 			}
 			base.Merge(override)
 			Expect(base.KvCacheThreshold).To(Equal(0.90))
 			Expect(base.QueueLengthThreshold).To(Equal(15.0))
-			Expect(base.KvSpareTrigger).To(Equal(0.05))
-			Expect(base.QueueSpareTrigger).To(Equal(2.0))
 			Expect(base.Priority).To(Equal(5.0))
 		})
 
@@ -393,15 +316,11 @@ var _ = Describe("SaturationScalingConfig", func() {
 			base := SaturationScalingConfig{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 			}
 			override := SaturationScalingConfig{}
 			base.Merge(override)
 			Expect(base.KvCacheThreshold).To(Equal(0.80))
 			Expect(base.QueueLengthThreshold).To(Equal(5.0))
-			Expect(base.KvSpareTrigger).To(Equal(0.10))
-			Expect(base.QueueSpareTrigger).To(Equal(3.0))
 		})
 
 		It("should overlay V2 fields", func() {

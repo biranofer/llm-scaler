@@ -30,8 +30,6 @@ const extScalerFakeMetricsJSON = `{"kv-cache-usage":0.3,"running-requests":1,"wa
 const (
 	extScalerKvCacheThreshold     = 0.80
 	extScalerQueueLengthThreshold = 50
-	extScalerKvSpareTrigger       = 0.10
-	extScalerQueueSpareTrigger    = 5
 
 	extScalerScaleUpThreshold  = 0.30
 	extScalerScaleDownBoundary = 0.20
@@ -122,7 +120,6 @@ var _ = Describe("KEDA external scaler", Label("smoke", "full"), Ordered, func()
 		cfgYAML := buildSaturationConfigYAMLWithThresholds(
 			"saturation",
 			extScalerKvCacheThreshold, extScalerQueueLengthThreshold,
-			extScalerKvSpareTrigger, extScalerQueueSpareTrigger,
 			extScalerScaleUpThreshold, extScalerScaleDownBoundary,
 		)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, cfgYAML)).To(Succeed())

@@ -163,8 +163,6 @@ jobs:
           IMG: ${{ steps.build-image.outputs.image }}
           SKIP_BUILD: "true"
           DELETE_CLUSTER: "true"
-          KV_SPARE_TRIGGER: "0.5"
-          QUEUE_SPARE_TRIGGER: "4.5"
         run: |
           make test-e2e-smoke-with-setup
 
@@ -220,7 +218,5 @@ jobs:
           SKIP_BUILD: "true"
           DELETE_CLUSTER: "false"
           # Same simulator saturation tuning as smoke — defaults are too high for reliable scale-up signals.
-          KV_SPARE_TRIGGER: "0.5"
-          QUEUE_SPARE_TRIGGER: "4.5"
         run: |
           make test-e2e-full-with-setup

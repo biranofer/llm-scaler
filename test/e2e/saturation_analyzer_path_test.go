@@ -56,8 +56,6 @@ model_id: ""
 namespace: ""
 kvCacheThreshold: %.2f
 queueLengthThreshold: %d
-kvSpareTrigger: %.2f
-queueSpareTrigger: %d
 scaleUpThreshold: %.2f
 scaleDownBoundary: %.2f
 analyzerName: %q
@@ -71,8 +69,6 @@ analyzerName: %q
 	// top, clears scaleUpThreshold.
 	saturationKVCacheThreshold     = 0.80
 	saturationQueueLengthThreshold = 1
-	saturationKVSpareTrigger       = 0.01
-	saturationQueueSpareTrigger    = 1
 	saturationScaleUpThreshold     = 0.85
 	saturationScaleDownBoundary    = 0.70
 
@@ -82,23 +78,19 @@ analyzerName: %q
 	// scaleUpThreshold so the engine sees no shortfall.
 	saturationNoScaleKVCacheThreshold     = 1.00
 	saturationNoScaleQueueLengthThreshold = 100
-	saturationNoScaleKVSpareTrigger       = 0.00
-	saturationNoScaleQueueSpareTrigger    = 0
 )
 
 // buildSaturationConfigYAML builds a valid saturation config entry for the requested analyzer mode.
 func buildSaturationConfigYAML(analyzerName string) string {
-	return fmt.Sprintf(saturationConfigTemplate, 0.80, 1, 0.20, 1, 0.85, 0.70, analyzerName)
+	return fmt.Sprintf(saturationConfigTemplate, 0.80, 1, 0.85, 0.70, analyzerName)
 }
 
 // buildSaturationConfigYAMLWithThresholds builds a valid saturation config entry with explicit thresholds.
-func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThreshold float64, queueLengthThreshold int, kvSpareTrigger float64, queueSpareTrigger int, scaleUpThreshold float64, scaleDownBoundary float64) string {
+func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThreshold float64, queueLengthThreshold int, scaleUpThreshold float64, scaleDownBoundary float64) string {
 	return fmt.Sprintf(
 		saturationConfigTemplate,
 		kvCacheThreshold,
 		queueLengthThreshold,
-		kvSpareTrigger,
-		queueSpareTrigger,
 		scaleUpThreshold,
 		scaleDownBoundary,
 		analyzerName,
@@ -329,8 +321,6 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 				"",
 				saturationNoScaleKVCacheThreshold,
 				saturationNoScaleQueueLengthThreshold,
-				saturationNoScaleKVSpareTrigger,
-				saturationNoScaleQueueSpareTrigger,
 				saturationScaleUpThreshold,
 				saturationScaleDownBoundary,
 			),
@@ -415,8 +405,6 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 				"",
 				saturationKVCacheThreshold,
 				saturationQueueLengthThreshold,
-				saturationKVSpareTrigger,
-				saturationQueueSpareTrigger,
 				saturationScaleUpThreshold,
 				saturationScaleDownBoundary,
 			),

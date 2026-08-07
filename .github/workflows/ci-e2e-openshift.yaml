@@ -502,8 +502,6 @@ jobs:
           MONITORING_NAMESPACE: openshift-user-workload-monitoring
           WVA_METRICS_SECURE: "false"
           ENABLE_SCALE_TO_ZERO: "true"
-          KV_SPARE_TRIGGER: "0.5"
-          QUEUE_SPARE_TRIGGER: "4.5"
           VLLM_SVC_PORT: "8000"
           ACCELERATOR_TYPE: ${{ env.ACCELERATOR_TYPE }}
           GAIE_VERSION: ${{ env.GAIE_VERSION }}

@@ -88,8 +88,6 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 				newSatConfig["test-accelerator"] = SaturationScalingConfig{
 					KvCacheThreshold:     0.8,
 					QueueLengthThreshold: 5,
-					KvSpareTrigger:       0.1,
-					QueueSpareTrigger:    3,
 				}
 				cfg.UpdateSaturationConfig(newSatConfig)
 
@@ -320,8 +318,6 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 		"default": {
 			KvCacheThreshold:     0.80,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.10,
-			QueueSpareTrigger:    3,
 		},
 	}
 	cfg.UpdateSaturationConfig(globalSatConfig)
@@ -356,8 +352,6 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 			"default": {
 				KvCacheThreshold:     0.70, // Different from global (0.80)
 				QueueLengthThreshold: 3,    // Different from global (5)
-				KvSpareTrigger:       0.20, // Different from global (0.10)
-				QueueSpareTrigger:    5,    // Different from global (3)
 			},
 		}
 		cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)
@@ -405,8 +399,6 @@ func TestConfig_NamespaceConfigDeletion(t *testing.T) {
 		"default": {
 			KvCacheThreshold:     0.80,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.10,
-			QueueSpareTrigger:    3,
 		},
 	}
 	cfg.UpdateSaturationConfig(globalSatConfig)
@@ -428,8 +420,6 @@ func TestConfig_NamespaceConfigDeletion(t *testing.T) {
 		"default": {
 			KvCacheThreshold:     0.70,
 			QueueLengthThreshold: 3,
-			KvSpareTrigger:       0.20,
-			QueueSpareTrigger:    5,
 		},
 	}
 	cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)

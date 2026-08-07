@@ -58,7 +58,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 				Namespace: systemNamespace,
 			},
 			Data: map[string]string{
-				"default": "kvCacheThreshold: 0.70\nqueueLengthThreshold: 8\nkvSpareTrigger: 0.15\nqueueSpareTrigger: 5",
+				"default": "kvCacheThreshold: 0.70\nqueueLengthThreshold: 8\n",
 			},
 		}
 		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, saturationCM))).To(Succeed())

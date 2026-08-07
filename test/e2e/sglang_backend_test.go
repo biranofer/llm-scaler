@@ -45,11 +45,8 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 		// usable ceiling of 100000 x 0.80 = 80000 — utilization ~1.06, clear of
 		// scaleUpThreshold. The spare triggers do not affect the V2 scale-up path;
 		// they carry safe values so config validation passes
-		// (kvCacheThreshold >= kvSpareTrigger).
 		sglangKVCacheThreshold     = 0.80
 		sglangQueueLengthThreshold = 1
-		sglangKVSpareTrigger       = 0.20
-		sglangQueueSpareTrigger    = 1
 		sglangScaleUpThreshold     = 0.85
 		sglangScaleDownBoundary    = 0.70
 	)
@@ -102,8 +99,6 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 				"saturation",
 				sglangKVCacheThreshold,
 				sglangQueueLengthThreshold,
-				sglangKVSpareTrigger,
-				sglangQueueSpareTrigger,
 				sglangScaleUpThreshold,
 				sglangScaleDownBoundary,
 			))).To(Succeed())
@@ -125,7 +120,7 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 	})
 
 	AfterAll(func() {
-		By("Restoring the saturation ConfigMap (V1 guard teardown)")
+		By("Restoring the saturation ConfigMap")
 		restoreSaturationConfigMap(ctx, cmNamespace, cmName, cmOriginal, cmExistedBefore)
 	})
 

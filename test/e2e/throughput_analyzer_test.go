@@ -23,7 +23,7 @@ import (
 
 // Saturation config YAML strings for multi-analyzer (V2) mode.
 // Both use the same threshold values; only the analyzers list differs.
-// The saturation thresholds (kvCacheThreshold, kvSpareTrigger, etc.) are set to
+// The saturation thresholds (kvCacheThreshold, queueLengthThreshold, etc.) are set to
 // values that reliably cross with the simulator's kv-cache-size=1 setup.
 const (
 	throughputBothEnabledConfig = `
@@ -31,8 +31,6 @@ model_id: ""
 namespace: ""
 kvCacheThreshold: 0.80
 queueLengthThreshold: 5
-kvSpareTrigger: 0.10
-queueSpareTrigger: 2
 scaleUpThreshold: 0.85
 scaleDownBoundary: 0.70
 analyzers:
@@ -49,8 +47,6 @@ model_id: ""
 namespace: ""
 kvCacheThreshold: 0.80
 queueLengthThreshold: 5
-kvSpareTrigger: 0.10
-queueSpareTrigger: 2
 scaleUpThreshold: 0.85
 scaleDownBoundary: 0.70
 analyzers:

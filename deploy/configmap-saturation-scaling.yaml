@@ -11,8 +11,6 @@ kind: ConfigMap
 # Threshold definitions:
 # - kvCacheThreshold: Replica saturated if KV cache utilization >= threshold (0.0-1.0)
 # - queueLengthThreshold: Replica saturated if queue length >= threshold (integer)
-# - kvSpareTrigger: Scale-up signal if avg spare KV capacity < trigger (0.0-1.0)
-# - queueSpareTrigger: Scale-up signal if avg spare queue capacity < trigger (integer)
 #
 metadata:
   name: wva-saturation-scaling-config
@@ -39,12 +37,10 @@ data:
     # V2-only thresholds:
     scaleUpThreshold: 0.85
     scaleDownBoundary: 0.70
-    # Shared by V1 and V2:
+    # Size each replica's capacity: usable KV is the physical budget scaled by
+    # kvCacheThreshold, and queueLengthThreshold gates the compute-bound estimate.
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    # V1-only (ignored by V2):
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 3
     # Enable GPU limiter to constrain scaling based on available cluster resources
     # When true, scale-up decisions are limited by available GPU capacity
     enableLimiter: false
@@ -56,11 +52,9 @@ data:
     # that namespace's quota budget. Has no effect without a same-scope GPU budget.
     enableRescale: false
 
-  # Per-model overrides inherit the default's analyzer selection (V2) via
-  # field-level merge, so they only need the thresholds they change. Under V2,
-  # kvCacheThreshold/queueLengthThreshold apply; kvSpareTrigger/queueSpareTrigger
-  # are V1-only and are ignored (they take effect only if the default is opted
-  # back to V1 by removing its `analyzers:` section).
+  # Per-model overrides inherit the default entry via field-level merge, so they
+  # only need the fields they change (kvCacheThreshold, queueLengthThreshold,
+  # scaleUpThreshold, scaleDownBoundary, priority).
 
   # An override entry's DATA KEY must be "{modelID}#{namespace}" — the engine looks
   # up overrides by that key; the inner model_id/namespace fields are informational.

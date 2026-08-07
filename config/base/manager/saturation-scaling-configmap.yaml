@@ -35,12 +35,10 @@ data:
     # V2-only thresholds:
     scaleUpThreshold: 0.85
     scaleDownBoundary: 0.70
-    # Shared by V1 and V2:
+    # Size each replica's capacity: usable KV is the physical budget scaled by
+    # kvCacheThreshold, and queueLengthThreshold gates the compute-bound estimate.
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    # V1-only (ignored by V2):
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 3
     # Enable GPU limiter to constrain scaling based on available cluster resources
     # When true, scale-up decisions are limited by available GPU capacity
     enableLimiter: false

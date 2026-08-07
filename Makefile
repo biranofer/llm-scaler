@@ -27,8 +27,8 @@ DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
 LLM_D_ROUTER_VERSION        ?= v0.9.0
 GAIE_VERSION                ?= v1.5.0
-KV_SPARE_TRIGGER           ?=
-QUEUE_SPARE_TRIGGER         ?=
+SCALE_UP_THRESHOLD          ?=
+SCALE_DOWN_BOUNDARY         ?=
 E2E_MONITORING_NAMESPACE    ?= workload-variant-autoscaler-monitoring
 E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
 E2E_KEDA_NAMESPACE          ?= keda-system
@@ -230,11 +230,11 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		./deploy/install-epp.sh
 	@NS=$${WVA_NS:-workload-variant-autoscaler-system}; \
-	if [ -n "$(KV_SPARE_TRIGGER)" ] || [ -n "$(QUEUE_SPARE_TRIGGER)" ]; then \
-		echo "Applying optional WVA capacity threshold overrides (KV_SPARE_TRIGGER / QUEUE_SPARE_TRIGGER)..."; \
+	if [ -n "$(SCALE_UP_THRESHOLD)" ] || [ -n "$(SCALE_DOWN_BOUNDARY)" ]; then \
+		echo "Applying optional WVA scaling-band overrides (SCALE_UP_THRESHOLD / SCALE_DOWN_BOUNDARY)..."; \
 		$(KUBECTL) patch configmap wva-saturation-scaling-config \
 			-n "$$NS" --type=merge \
-			-p "{\"data\":{\"default\":\"kvSpareTrigger: $(KV_SPARE_TRIGGER)\\nqueueSpareTrigger: $(QUEUE_SPARE_TRIGGER)\\n\"}}"; \
+			-p "{\"data\":{\"default\":\"analyzerName: saturation\\nscaleUpThreshold: $(SCALE_UP_THRESHOLD)\\nscaleDownBoundary: $(SCALE_DOWN_BOUNDARY)\\n\"}}"; \
 	fi
 
 

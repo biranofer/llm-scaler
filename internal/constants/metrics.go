@@ -217,12 +217,6 @@ const (
 	// Labels: analyzer_name, limiter_enabled, scale_to_zero_enabled
 	WVAConfigInfo = "wva_config_info"
 
-	// WVAConfigKvSpareThreshold is a gauge that tracks the KV cache spare threshold configuration.
-	WVAConfigKvSpareThreshold = "wva_config_kv_spare_threshold"
-
-	// WVAConfigQueueSpareThreshold is a gauge that tracks the queue spare threshold configuration.
-	WVAConfigQueueSpareThreshold = "wva_config_queue_spare_threshold"
-
 	// WVAConfigOptimizationIntervalSeconds is a gauge that tracks the optimization interval in seconds.
 	WVAConfigOptimizationIntervalSeconds = "wva_config_optimization_interval_seconds"
 	// WVAMetricsCollectionDurationSeconds is a histogram that tracks the duration of metrics collection operations.

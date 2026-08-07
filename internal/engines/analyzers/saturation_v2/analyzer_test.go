@@ -844,8 +844,6 @@ func makeAnalyzerInput(
 	config := &config.SaturationScalingConfig{
 		KvCacheThreshold:     0.8,
 		QueueLengthThreshold: 5,
-		KvSpareTrigger:       0.1,
-		QueueSpareTrigger:    3,
 		AnalyzerName:         "saturation",
 		ScaleUpThreshold:     0.85,
 		ScaleDownBoundary:    0.70,
@@ -1024,8 +1022,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		cfg = &config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 			ScaleUpThreshold:     0.85,
 			ScaleDownBoundary:    0.70,
@@ -1157,7 +1153,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// sides and cancel, making utilization equal KvCacheUsage regardless of it.
 		Expect(result.ReplicaDemand).To(Equal(int64(6000)))
 		// utilization = 6000/8000 = 0.75 = KvCacheUsage/KvCacheThreshold, as the main path.
-		Expect(result.IsSaturated).To(BeFalse()) // 6000 < 8000
 	})
 
 	It("should detect saturation at KvCacheUsage >= KvCacheThreshold", func() {
@@ -1179,7 +1174,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 1.0 * 10000 = 10000 >= 8000
 		Expect(result.ReplicaDemand).To(Equal(int64(10000)))
-		Expect(result.IsSaturated).To(BeTrue())
 	})
 
 	It("should detect saturation when KvCacheUsage exceeds threshold (matching main path behavior)", func() {
@@ -1209,7 +1203,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// short of 100% could ever cross the ceiling.
 		Expect(result.EffectiveCapacity).To(Equal(int64(8000)))
 		Expect(result.ReplicaDemand).To(Equal(int64(9000)))
-		Expect(result.IsSaturated).To(BeTrue())
 	})
 
 	It("should add queue-based demand when avg input tokens available", func() {
@@ -1234,7 +1227,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		// demand = 0.5 * 10000 + 3 * 500 = 5000 + 1500 = 6500
 		Expect(result.ReplicaDemand).To(Equal(int64(6500)))
-		Expect(result.IsSaturated).To(BeFalse())
 	})
 
 	It("should not add queue demand when token metrics are unavailable", func() {
@@ -1320,7 +1312,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// demand = 0.10 * 8192 + 2 * (200 + 100) = 819 + 600 = 1419
 		Expect(result.EffectiveCapacity).To(Equal(int64(6553)))
 		Expect(result.ReplicaDemand).To(Equal(int64(1419)))
-		Expect(result.IsSaturated).To(BeFalse())
 	})
 
 	It("should populate all ReplicaCapacity fields correctly", func() {
@@ -1458,8 +1449,6 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 		satCfg = &config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 			ScaleUpThreshold:     0.85,
 			ScaleDownBoundary:    0.70,
@@ -1643,8 +1632,6 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 			Config: &config.SaturationScalingConfig{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.85,
 				ScaleDownBoundary:    0.70,
@@ -1688,8 +1675,6 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 			Config: &config.SaturationScalingConfig{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.1,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.85,
 				ScaleDownBoundary:    0.70,
@@ -1707,8 +1692,6 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 		cfg := config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 		}
 
@@ -1723,8 +1706,6 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 		cfg := config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 		}
 
@@ -1736,8 +1717,6 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 		cfg := config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 			ScaleUpThreshold:     0.9,
 			ScaleDownBoundary:    0.6,
@@ -1756,8 +1735,6 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 		cfg := config.SaturationScalingConfig{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
-			KvSpareTrigger:       0.1,
-			QueueSpareTrigger:    3,
 			AnalyzerName:         "saturation",
 		}
 
@@ -1784,7 +1761,7 @@ var _ = Describe("aggregateByVariant capacity Reason", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "v1", CurrentReplicas: 0, PendingReplicas: 0},
 			},
-			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9, KvSpareTrigger: 0.2, QueueLengthThreshold: 5},
+			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9},
 		}
 		result, err := a.Analyze(context.Background(), input)
 		Expect(err).NotTo(HaveOccurred())
@@ -1803,7 +1780,7 @@ var _ = Describe("aggregateByVariant capacity Reason", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "v1", CurrentReplicas: 0, PendingReplicas: 0},
 			},
-			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9, KvSpareTrigger: 0.2, QueueLengthThreshold: 5},
+			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9},
 		}
 		result, err := a.Analyze(context.Background(), input)
 		Expect(err).NotTo(HaveOccurred())

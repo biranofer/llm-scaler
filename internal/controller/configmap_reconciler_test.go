@@ -70,7 +70,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{
-					"default": "kvCacheThreshold: 0.75\nqueueLengthThreshold: 5\nkvSpareTrigger: 0.10\nqueueSpareTrigger: 3",
+					"default": "kvCacheThreshold: 0.75\nqueueLengthThreshold: 5\n",
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cm))).To(Succeed())
@@ -141,8 +141,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 	})
 
 	Context("Reconcile - Throughput Analyzer Registration Divergence", func() {
-		const satConfigBase = "kvCacheThreshold: 0.75\nqueueLengthThreshold: 5\n" +
-			"kvSpareTrigger: 0.10\nqueueSpareTrigger: 3\n"
+		const satConfigBase = "kvCacheThreshold: 0.75\nqueueLengthThreshold: 5\n"
 		const satConfigTAEnabled = satConfigBase + "analyzers:\n  - name: throughput\n"
 		const satConfigTAOmitted = satConfigBase + "analyzers:\n  - name: saturation\n"
 
@@ -300,7 +299,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 					Namespace: testNamespace,
 				},
 				Data: map[string]string{
-					"default": "kvCacheThreshold: 0.60\nqueueLengthThreshold: 10\nkvSpareTrigger: 0.15\nqueueSpareTrigger: 5",
+					"default": "kvCacheThreshold: 0.60\nqueueLengthThreshold: 10\n",
 				},
 			}
 			Expect(k8sClient.Create(ctx, cm)).To(Succeed())
@@ -380,7 +379,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 					Namespace: testNamespace,
 				},
 				Data: map[string]string{
-					"default": "kvCacheThreshold: 0.60\nqueueLengthThreshold: 10\nkvSpareTrigger: 0.15\nqueueSpareTrigger: 5",
+					"default": "kvCacheThreshold: 0.60\nqueueLengthThreshold: 10\n",
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cm))).NotTo(HaveOccurred())

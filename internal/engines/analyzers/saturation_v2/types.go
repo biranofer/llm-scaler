@@ -44,7 +44,6 @@ type ReplicaCapacity struct {
 	ComputeBoundCapacity  int64    // k2: compute/scheduling-limited capacity
 	K2Priority            k2Source // how k2 was computed
 	EffectiveCapacity     int64    // min(k1, k2)
-	IsSaturated           bool
 	// ReplicaDemand is the replica's resident KV tokens — TokensInUse on the main
 	// path, kvCacheUsage * effectiveCapacity on the fallback path — plus the
 	// role-aware waiting-queue footprint: queueLength * avgInputTokens for

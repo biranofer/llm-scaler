@@ -132,78 +132,6 @@ func TestSetConfigInfo_OnlyLatestConfigPresent(t *testing.T) {
 	}
 }
 
-func TestSetConfigKvSpareThreshold(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	if err := InitMetrics(registry); err != nil {
-		t.Fatalf("InitMetrics failed: %v", err)
-	}
-
-	// Set KV spare threshold (gauge should reflect the last value)
-	SetConfigKvSpareThreshold(0.05)
-	SetConfigKvSpareThreshold(0.10)
-
-	// Verify the gauge
-	metrics, err := registry.Gather()
-	if err != nil {
-		t.Fatalf("Failed to gather metrics: %v", err)
-	}
-
-	var found bool
-	for _, mf := range metrics {
-		if mf.GetName() == constants.WVAConfigKvSpareThreshold {
-			found = true
-			if len(mf.GetMetric()) != 1 {
-				t.Errorf("Expected 1 metric series, got %d", len(mf.GetMetric()))
-			}
-			g := mf.GetMetric()[0].GetGauge()
-			if g == nil {
-				t.Error("Expected gauge metric")
-			} else if g.GetValue() != 0.10 {
-				t.Errorf("Expected gauge value 0.10 (last set), got %f", g.GetValue())
-			}
-		}
-	}
-	if !found {
-		t.Errorf("Metric %s not found in gathered metrics", constants.WVAConfigKvSpareThreshold)
-	}
-}
-
-func TestSetConfigQueueSpareThreshold(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	if err := InitMetrics(registry); err != nil {
-		t.Fatalf("InitMetrics failed: %v", err)
-	}
-
-	// Set queue spare threshold (gauge should reflect the last value)
-	SetConfigQueueSpareThreshold(2.0)
-	SetConfigQueueSpareThreshold(5.0)
-
-	// Verify the gauge
-	metrics, err := registry.Gather()
-	if err != nil {
-		t.Fatalf("Failed to gather metrics: %v", err)
-	}
-
-	var found bool
-	for _, mf := range metrics {
-		if mf.GetName() == constants.WVAConfigQueueSpareThreshold {
-			found = true
-			if len(mf.GetMetric()) != 1 {
-				t.Errorf("Expected 1 metric series, got %d", len(mf.GetMetric()))
-			}
-			g := mf.GetMetric()[0].GetGauge()
-			if g == nil {
-				t.Error("Expected gauge metric")
-			} else if g.GetValue() != 5.0 {
-				t.Errorf("Expected gauge value 5.0 (last set), got %f", g.GetValue())
-			}
-		}
-	}
-	if !found {
-		t.Errorf("Metric %s not found in gathered metrics", constants.WVAConfigQueueSpareThreshold)
-	}
-}
-
 func TestSetConfigOptimizationInterval(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	if err := InitMetrics(registry); err != nil {
@@ -243,26 +171,18 @@ func TestSetConfigOptimizationInterval(t *testing.T) {
 func TestConfigStateMetrics_NilSafety(t *testing.T) {
 	// Save the package-level vars and set to nil to simulate uninitialized state
 	savedConfigInfo := configInfoGauge
-	savedKvThreshold := configKvSpareThresholdGauge
-	savedQueueThreshold := configQueueSpareThresholdGauge
 	savedInterval := configOptimizationIntervalSecsGauge
 
 	configInfoGauge = nil
-	configKvSpareThresholdGauge = nil
-	configQueueSpareThresholdGauge = nil
 	configOptimizationIntervalSecsGauge = nil
 
 	defer func() {
 		configInfoGauge = savedConfigInfo
-		configKvSpareThresholdGauge = savedKvThreshold
-		configQueueSpareThresholdGauge = savedQueueThreshold
 		configOptimizationIntervalSecsGauge = savedInterval
 	}()
 
 	// Should not panic when metrics are not initialized
 	SetConfigInfo("test_analyzer", true, false)
-	SetConfigKvSpareThreshold(0.05)
-	SetConfigQueueSpareThreshold(2.0)
 	SetConfigOptimizationInterval(30.0)
 }
 
@@ -274,8 +194,6 @@ func TestConfigStateMetrics_AllMetricsRegistered(t *testing.T) {
 
 	// Set all config metrics
 	SetConfigInfo("saturation_analyzer_v2", true, true)
-	SetConfigKvSpareThreshold(0.10)
-	SetConfigQueueSpareThreshold(5.0)
 	SetConfigOptimizationInterval(60.0)
 
 	// Gather all metrics
@@ -287,8 +205,6 @@ func TestConfigStateMetrics_AllMetricsRegistered(t *testing.T) {
 	// Check that all 4 config metrics are present
 	expectedMetrics := map[string]bool{
 		constants.WVAConfigInfo:                        false,
-		constants.WVAConfigKvSpareThreshold:            false,
-		constants.WVAConfigQueueSpareThreshold:         false,
 		constants.WVAConfigOptimizationIntervalSeconds: false,
 	}
 

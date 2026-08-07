@@ -205,8 +205,6 @@ var _ = Describe("resolveSaturationConfig", func() {
 			"default": {
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 				AnalyzerName:         "saturation",
 			},
 			"llama-70b#production": {
@@ -220,8 +218,6 @@ var _ = Describe("resolveSaturationConfig", func() {
 		Expect(cfg.Priority).To(Equal(5.0))
 		// Inherited from default
 		Expect(cfg.QueueLengthThreshold).To(Equal(5.0))
-		Expect(cfg.KvSpareTrigger).To(Equal(0.10))
-		Expect(cfg.QueueSpareTrigger).To(Equal(3.0))
 		Expect(cfg.AnalyzerName).To(Equal("saturation"))
 	})
 
@@ -243,8 +239,6 @@ var _ = Describe("resolveSaturationConfig", func() {
 		Expect(cfg.Priority).To(Equal(config.DefaultPriority))
 		Expect(cfg.KvCacheThreshold).To(Equal(config.DefaultKvCacheThreshold))
 		Expect(cfg.QueueLengthThreshold).To(Equal(config.DefaultQueueLengthThreshold))
-		Expect(cfg.KvSpareTrigger).To(Equal(config.DefaultKvSpareTrigger))
-		Expect(cfg.QueueSpareTrigger).To(Equal(config.DefaultQueueSpareTrigger))
 	})
 
 	It("should apply defaults on model-specific config", func() {
@@ -266,8 +260,6 @@ var _ = Describe("resolveSaturationConfig", func() {
 			"default": {
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
-				KvSpareTrigger:       0.10,
-				QueueSpareTrigger:    3,
 			},
 			"model-1#ns-1": {
 				KvCacheThreshold: 0.90,
@@ -276,8 +268,6 @@ var _ = Describe("resolveSaturationConfig", func() {
 		cfg := resolveSaturationConfig(configMap, "model-1", "ns-1")
 		Expect(cfg.KvCacheThreshold).To(Equal(0.90))
 		Expect(cfg.QueueLengthThreshold).To(Equal(5.0))
-		Expect(cfg.KvSpareTrigger).To(Equal(0.10))
-		Expect(cfg.QueueSpareTrigger).To(Equal(3.0))
 		// A V1-style entry stays V1 (selection is decided globally, not here), but the
 		// RESOLVED config is calibrated post-merge so that if the global default routes
 		// this model to the V2 path it runs with valid thresholds rather than zeros

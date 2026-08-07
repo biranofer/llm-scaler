@@ -231,56 +231,6 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   }
   ```
 
-### `wva_config_kv_spare_threshold`
-- **Type**: Gauge
-- **Description**: KV cache spare threshold configuration value
-- **Labels**: None (global configuration)
-- **Use Case**: Monitor the configured KV cache spare threshold used in scaling decisions
-- **Example**:
-  ```
-  {
-    "metric": {
-      "__name__": "wva_config_kv_spare_threshold",
-      "container": "manager",
-      "endpoint": "https",
-      "instance": "10.244.2.55:8443",
-      "job": "workload-variant-autoscaler-metrics",
-      "namespace": "workload-variant-autoscaler-system",
-      "pod": "workload-variant-autoscaler-controller-manager-6ddfbddf57-l5ptf",
-      "service": "workload-variant-autoscaler-metrics"
-    },
-    "value": [
-      1778846184.925,
-      "0.1"
-    ]
-  }
-  ```
-
-### `wva_config_queue_spare_threshold`
-- **Type**: Gauge
-- **Description**: Queue spare threshold configuration value
-- **Labels**: None (global configuration)
-- **Use Case**: Monitor the configured queue spare threshold used in scaling decisions
-- **Example**:
-  ```
-  {
-    "metric": {
-      "__name__": "wva_config_queue_spare_threshold",
-      "container": "manager",
-      "endpoint": "https",
-      "instance": "10.244.2.55:8443",
-      "job": "workload-variant-autoscaler-metrics",
-      "namespace": "workload-variant-autoscaler-system",
-      "pod": "workload-variant-autoscaler-controller-manager-6ddfbddf57-l5ptf",
-      "service": "workload-variant-autoscaler-metrics"
-    },
-    "value": [
-      1778846184.925,
-      "3"
-    ]
-  }
-  ```
-
 ### `wva_config_optimization_interval_seconds`
 - **Type**: Gauge
 - **Description**: Optimization interval in seconds
@@ -999,12 +949,6 @@ wva_config_info
 
 # Check if limiter is enabled
 wva_config_info{limiter_enabled="true"}
-
-# Current KV cache spare threshold
-wva_config_kv_spare_threshold
-
-# Current queue spare threshold
-wva_config_queue_spare_threshold
 
 # Optimization loop interval
 wva_config_optimization_interval_seconds

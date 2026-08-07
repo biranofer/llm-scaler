@@ -62,8 +62,6 @@ var wvaMetricNames = []string{
 	constants.WVAOptimizerActive,
 	constants.WVAErrorsTotal,
 	constants.WVAConfigInfo,
-	constants.WVAConfigKvSpareThreshold,
-	constants.WVAConfigQueueSpareThreshold,
 	constants.WVAConfigOptimizationIntervalSeconds,
 	constants.WVAMetricsCollectionDurationSeconds,
 	constants.WVAMetricsCollectionErrorsTotal,

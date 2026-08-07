@@ -45,15 +45,12 @@ import (
 //	https://github.com/llm-d/llm-d-inference-sim/blob/main/docs/configuration.md
 const v2SmokeFakeMetricsJSON = `{"kv-cache-usage":0.3,"running-requests":1,"waiting-requests":0}`
 
-// V2 saturation config knobs. The kvCacheThreshold / queueLength* /
-// *SpareTrigger fields are V1-specific and have no effect on the V2
-// token-based path; they are filled with safe defaults to satisfy
-// buildSaturationConfigYAMLWithThresholds.
+// Saturation config knobs. kvCacheThreshold sizes each replica's usable KV and
+// queueLengthThreshold gates the compute-bound estimate; both are held at safe
+// values here so the scaling band below is what the specs actually vary.
 const (
 	v2SmokeKvCacheThreshold     = 0.80
 	v2SmokeQueueLengthThreshold = 50
-	v2SmokeKvSpareTrigger       = 0.10
-	v2SmokeQueueSpareTrigger    = 5
 
 	// Aggressive on scale-up, conservative on scale-down so the path-selection
 	// and scale-up tests are stable. The scale-down test raises
@@ -162,7 +159,6 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		cfgYAML := buildSaturationConfigYAMLWithThresholds(
 			"saturation",
 			v2SmokeKvCacheThreshold, v2SmokeQueueLengthThreshold,
-			v2SmokeKvSpareTrigger, v2SmokeQueueSpareTrigger,
 			v2SmokeScaleUpThreshold, v2SmokeScaleDownBoundary,
 		)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, cfgYAML)).To(Succeed())
@@ -268,7 +264,6 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		cfgYAML := buildSaturationConfigYAMLWithThresholds(
 			"saturation",
 			v2SmokeKvCacheThreshold, v2SmokeQueueLengthThreshold,
-			v2SmokeKvSpareTrigger, v2SmokeQueueSpareTrigger,
 			0.95, 0.85,
 		)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey, cfgYAML)).To(Succeed())

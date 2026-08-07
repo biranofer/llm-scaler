@@ -37,12 +37,6 @@ type SaturationScalingConfig struct {
 	// QueueLengthThreshold: Replica is saturated if queue length >= this threshold
 	QueueLengthThreshold float64 `yaml:"queueLengthThreshold"`
 
-	// KvSpareTrigger: Scale-up if average spare KV cache capacity < this value (0.0-1.0)
-	KvSpareTrigger float64 `yaml:"kvSpareTrigger"`
-
-	// QueueSpareTrigger: Scale-up if average spare queue capacity < this value
-	QueueSpareTrigger float64 `yaml:"queueSpareTrigger"`
-
 	// EnableLimiter: When true, includes the GPU limiter in the scaling pipeline
 	// to constrain scaling decisions based on available cluster resources.
 	// Default is false (limiter disabled).
@@ -60,10 +54,12 @@ type SaturationScalingConfig struct {
 	// (see docs/plans/engine/rescale-alpha.md).
 	EnableRescale bool `yaml:"enableRescale,omitempty"`
 
-	// AnalyzerName selects which saturation analyzer to use.
-	// "saturation" uses the V2 token-based analyzer.
-	// Empty string (default) uses the V1 percentage-based analyzer.
-	// To use the queueing model analyzer, deploy wva-queueing-model-config instead.
+	// AnalyzerName names the saturation analyzer. "saturation" is the only
+	// built-in value and selects the token-based analyzer, which is also what an
+	// empty value gets — the V1 percentage-based analyzer it used to select was
+	// removed, so this no longer chooses between engines. It is retained because
+	// it still marks an entry as V2-shaped (see IsV2) and appears on the
+	// wva_config_info metric.
 	AnalyzerName string `yaml:"analyzerName,omitempty"`
 
 	// ScaleUpThreshold is the utilization threshold above which scale-up is triggered.
@@ -87,8 +83,9 @@ type SaturationScalingConfig struct {
 	// When empty and AnalyzerName is "saturation", defaults to
 	// [{Name: "saturation", Score: 1.0, Enabled: true}].
 	//
-	// Deleting the analyzers section (and not setting analyzerName: saturation)
-	// opts this entry out to the legacy V1 engine — see IsV2.
+	// An entry with neither an analyzers section nor analyzerName is not
+	// V2-shaped (see IsV2), which now only means the scaling band is left to be
+	// resolved post-merge — it no longer routes to a different engine.
 	Analyzers []AnalyzerScoreConfig `yaml:"analyzers,omitempty"`
 
 	// ScaleToZero optionally enables/disables scaling to zero replicas for this
@@ -241,19 +238,20 @@ func (c *SaturationScalingConfig) GetAnalyzerName() string {
 	return c.AnalyzerName
 }
 
-// IsV2 returns true if this config selects the V2 token-based analyzer path.
-// V2 is active when either the Analyzers list is populated (new-style) or
-// AnalyzerName is "saturation" (old-style, backward compat).
+// IsV2 reports whether the entry is V2-shaped: it populates the Analyzers list
+// (new-style) or sets AnalyzerName to "saturation" (old-style). Since the V1
+// analyzer was removed this no longer selects an engine — the token-based
+// analyzer runs either way. It survives only as the gate on defaulting the
+// scaling band in ApplyDefaults, so a partial entry does not clobber a tuned
+// global value during Merge.
 func (c *SaturationScalingConfig) IsV2() bool {
 	return len(c.Analyzers) > 0 || c.AnalyzerName == "saturation"
 }
 
-// V1 analyzer default thresholds, applied when fields are omitted from YAML config.
+// Capacity-sizing default thresholds, applied when fields are omitted from YAML config.
 const (
 	DefaultKvCacheThreshold     = 0.80
 	DefaultQueueLengthThreshold = 5.0
-	DefaultKvSpareTrigger       = 0.10
-	DefaultQueueSpareTrigger    = 3.0
 )
 
 // V2 analyzer default thresholds, applied when fields are omitted from YAML config.
@@ -275,30 +273,25 @@ func (c *SaturationScalingConfig) Normalize() error {
 }
 
 // ApplyDefaults fills in zero-valued fields with their defaults.
-// V1 thresholds (KvCacheThreshold, QueueLengthThreshold, KvSpareTrigger, QueueSpareTrigger)
-// are always defaulted when zero. V2 thresholds (ScaleUpThreshold, ScaleDownBoundary) and
-// the Analyzers list are defaulted only for V2 configs, so that a V1-style entry keeps its
-// V2 thresholds zero — this is deliberate: entries are ApplyDefaults()'d individually at
-// parse time, and defaulting V2 thresholds on a V1-style override would clobber a tuned
-// global value during Merge(). The final resolved config is instead calibrated post-merge
-// via ApplyV2ThresholdDefaults(). Must be called before Validate() to handle omitempty
-// zero-values correctly.
+// The capacity thresholds (KvCacheThreshold, QueueLengthThreshold) are always
+// defaulted when zero — the analyzer needs them to size per-replica capacity.
+// The scaling band (ScaleUpThreshold, ScaleDownBoundary) and the Analyzers list
+// are defaulted only for V2-shaped configs, so that an entry which does not set
+// them keeps them zero — this is deliberate: entries are ApplyDefaults()'d
+// individually at parse time, and defaulting the band on a partial override
+// would clobber a tuned global value during Merge(). The final resolved config
+// is instead calibrated post-merge via ApplyV2ThresholdDefaults(). Must be
+// called before Validate() to handle omitempty zero-values correctly.
 func (c *SaturationScalingConfig) ApplyDefaults() {
 	if c.Priority == 0 {
 		c.Priority = DefaultPriority
 	}
-	// V1 defaults — apply unconditionally (V2 also inherits these for saturation checks)
+	// Capacity thresholds — always defaulted; the analyzer needs them to size capacity.
 	if c.KvCacheThreshold == 0 {
 		c.KvCacheThreshold = DefaultKvCacheThreshold
 	}
 	if c.QueueLengthThreshold == 0 {
 		c.QueueLengthThreshold = DefaultQueueLengthThreshold
-	}
-	if c.KvSpareTrigger == 0 {
-		c.KvSpareTrigger = DefaultKvSpareTrigger
-	}
-	if c.QueueSpareTrigger == 0 {
-		c.QueueSpareTrigger = DefaultQueueSpareTrigger
 	}
 	if c.IsV2() {
 		if c.ScaleUpThreshold == 0 {
@@ -353,12 +346,6 @@ func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
 	if override.QueueLengthThreshold != 0 {
 		c.QueueLengthThreshold = override.QueueLengthThreshold
 	}
-	if override.KvSpareTrigger != 0 {
-		c.KvSpareTrigger = override.KvSpareTrigger
-	}
-	if override.QueueSpareTrigger != 0 {
-		c.QueueSpareTrigger = override.QueueSpareTrigger
-	}
 	if override.AnalyzerName != "" {
 		c.AnalyzerName = override.AnalyzerName
 	}
@@ -401,20 +388,8 @@ func (c *SaturationScalingConfig) Validate() error {
 	if c.QueueLengthThreshold < 0 {
 		return fmt.Errorf("queueLengthThreshold must be >= 0, got %.1f", c.QueueLengthThreshold)
 	}
-	if c.KvSpareTrigger < 0 || c.KvSpareTrigger > 1 {
-		return fmt.Errorf("kvSpareTrigger must be between 0 and 1, got %.2f", c.KvSpareTrigger)
-	}
-	if c.QueueSpareTrigger < 0 {
-		return fmt.Errorf("queueSpareTrigger must be >= 0, got %.1f", c.QueueSpareTrigger)
-	}
 	if c.Priority < 0 {
 		return fmt.Errorf("priority must be >= 0, got %.2f", c.Priority)
-	}
-
-	// KV cache threshold should be greater than spare trigger (otherwise contradictory)
-	if c.KvCacheThreshold < c.KvSpareTrigger {
-		return fmt.Errorf("kvCacheThreshold (%.2f) should be >= kvSpareTrigger (%.2f)",
-			c.KvCacheThreshold, c.KvSpareTrigger)
 	}
 
 	// V2 threshold range/consistency checks apply whenever the fields are set,

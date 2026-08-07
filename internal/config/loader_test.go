@@ -282,8 +282,6 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 		"test": {
 			KvCacheThreshold:     0.9,
 			QueueLengthThreshold: 10,
-			KvSpareTrigger:       0.2,
-			QueueSpareTrigger:    5,
 		},
 	}
 	cfg.UpdateSaturationConfig(satConfig)

@@ -11,50 +11,23 @@ The Workload Variant Autoscaler supports saturation-based scaling using KV cache
 - ✅ **Thread-safe** concurrent access with RWMutex
 - ✅ Graceful degradation if ConfigMap missing (V2 has hardcoded defaults; V1 requires ConfigMap — see [Default Configuration](#default-configuration))
 
-## Analyzer Selection (V1 vs V2)
+## Analyzer Selection
 
-There are two saturation analyzers:
-
-- **V2** (token/capacity-based) — **the default since v0.9.0**. Selected whenever
-  the config carries a non-empty `analyzers:` list (or `analyzerName: "saturation"`).
-- **V1** (percentage/spare-capacity-based) — legacy. Selected when no analyzer is
-  specified (empty `analyzers:` **and** empty `analyzerName`).
-
-The shipped `default` entry (`deploy/configmap-saturation-scaling.yaml` and
-`config/base/manager/saturation-scaling-configmap.yaml`) includes an `analyzers:`
-section, so a fresh install runs V2. **To opt out to V1, remove the `analyzers:`
-section** (and the V2-only thresholds) from the `default` entry. No code change or
-image rebuild is required — selection is driven entirely by config.
-
-> This is a behavioral change introduced in v0.9.0. See the repository README
-> "Upgrading to v0.9.0" note for migration guidance.
-
-> **Analyzer selection is global; thresholds are per-model/namespace.** Selection
-> is resolved once from the **global** `default` entry, while thresholds are
-> resolved from the per-model override and namespace-local ConfigMap when present.
-> Because these can disagree, the engine defaults the V2-only `scaleUpThreshold` /
-> `scaleDownBoundary` on the **final resolved config** (after merging the override
-> onto the base), so a per-model override or namespace-local entry written V1-style
-> (no `analyzers:`) still runs **calibrated** when the global selection routes it to
-> V2. Defaulting happens post-merge — not on the stored entries — so a V1-style
-> override does not clobber a tuned global threshold. To use non-default V2
-> thresholds for a specific model or namespace, set `scaleUpThreshold` /
-> `scaleDownBoundary` explicitly in that entry; the explicit value is honored
-> regardless of whether the entry carries an `analyzers:` section.
+There is one saturation analyzer: the token/capacity-based analyzer. The V1
+percentage/spare-capacity analyzer was removed, so `analyzerName` and the
+`analyzers:` list no longer select between engines — see the note on
+`analyzerName` in `internal/config/saturation_scaling.go`.
 
 ### Threshold ownership
 
-Not every threshold applies to both analyzers. When switching between V1 and V2,
-keep the fields that the target analyzer actually reads:
+What each threshold controls:
 
-| Threshold | V1 | V2 | Notes |
-|-----------|----|----|-------|
-| `kvCacheThreshold` | ✅ | ✅ | Shared — replica saturated when KV cache ≥ threshold |
-| `queueLengthThreshold` | ✅ | ✅ | Shared — replica saturated when queue length ≥ threshold |
-| `kvSpareTrigger` | ✅ | — | **V1-only** — ignored by V2 |
-| `queueSpareTrigger` | ✅ | — | **V1-only** — ignored by V2 |
-| `scaleUpThreshold` | — | ✅ | **V2-only** — engine post-step (default 0.85) |
-| `scaleDownBoundary` | — | ✅ | **V2-only** — engine post-step (default 0.70) |
+| Threshold | Notes |
+|-----------|-------|
+| `kvCacheThreshold` | Ceiling on usable KV: capacity is the physical budget scaled by this (default 0.80) |
+| `queueLengthThreshold` | Queue depth at which the compute-bound capacity estimate is taken |
+| `scaleUpThreshold` | Utilization above which scale-up triggers — engine post-step (default 0.85) |
+| `scaleDownBoundary` | Utilization below which scale-down is safe — engine post-step (default 0.70) |
 
 ## ScalingPolicy Schema (Phase 1)
 
@@ -151,8 +124,6 @@ The saturation scaling configuration is stored in a ConfigMap named `wva-saturat
 |-----------|------|-------------|-------------|
 | `kvCacheThreshold` | float64 | Replica is considered saturated if KV cache utilization ≥ threshold (0.0-1.0) | 0.80 |
 | `queueLengthThreshold` | float64 | Replica is considered saturated if queue length ≥ threshold | 5 |
-| `kvSpareTrigger` | float64 | Scale-up signal if average spare KV capacity < trigger (0.0-1.0) | 0.10 |
-| `queueSpareTrigger` | float64 | Scale-up signal if average spare queue capacity < trigger | 3 |
 | `scaleUpThreshold` | float64 | Model-level utilization threshold above which scale-up is triggered (0.0-1.0). Applied by the engine post-step to every analyzer's result. | 0.85 |
 | `scaleDownBoundary` | float64 | Model-level utilization boundary below which scale-down is safe (0.0-1.0). Applied by the engine post-step to every analyzer's result. | 0.70 |
 
@@ -184,8 +155,6 @@ scaleDownBoundary: 0.70
 kvCacheThreshold: 0.80
 queueLengthThreshold: 5
 # V1-only (ignored by V2):
-kvSpareTrigger: 0.1
-queueSpareTrigger: 3
 ```
 
 To opt out to the legacy **V1** (percentage-based) analyzer, remove the `analyzers:`
@@ -194,8 +163,6 @@ section (and the V2-only thresholds); the remaining shared + V1-only thresholds 
 ```yaml
 kvCacheThreshold: 0.80
 queueLengthThreshold: 5
-kvSpareTrigger: 0.1
-queueSpareTrigger: 3
 ```
 
 > **Important:** The V1 threshold values are **not hardcoded** in the analyzer code.
@@ -203,46 +170,6 @@ queueSpareTrigger: 3
 > thresholds default to zero, which will cause every replica to appear saturated and
 > trigger continuous scale-up. Always deploy the ConfigMap with a `default` entry
 > containing valid thresholds. (V2 has hardcoded fallbacks for its own thresholds.)
-
-### How Scale-Up Triggers Work
-
-> **Applies to V1 only.** The spare-capacity / `kvSpareTrigger` / `queueSpareTrigger`
-> model described here is the legacy **V1** analyzer's logic. The default **V2**
-> analyzer uses a token/capacity model driven by `scaleUpThreshold` /
-> `scaleDownBoundary` and ignores the spare triggers (see
-> [Analyzer Selection](#analyzer-selection-v1-vs-v2)).
-
-The V1 saturation analyzer uses a **spare capacity model** to determine when to scale up. Instead of waiting for replicas to become fully saturated, WVA proactively scales when the average spare capacity across non-saturated replicas falls below configured thresholds.
-
-**Scale-up logic:**
-
-1. **Calculate spare capacity** for each non-saturated replica:
-   - Spare KV capacity = `kvCacheThreshold - current_kv_usage`
-   - Spare queue capacity = `queueLengthThreshold - current_queue_length`
-
-2. **Average across non-saturated replicas**:
-   - WVA computes the average spare capacity across all healthy (non-saturated) replicas
-
-3. **Trigger scale-up when spare capacity is low**:
-   - If `avg_spare_kv < kvSpareTrigger` **OR** `avg_spare_queue < queueSpareTrigger`
-   - Scale-up is triggered to add capacity before existing replicas saturate
-
-4. **Cascade scaling prevention**:
-   - Variants with pending replicas (pods that exist but aren't ready yet) are skipped during scale-up
-   - This prevents repeatedly scaling the same variant while previous scale-up operations complete
-   - Pod startup can take 2-7 minutes (model loading, health checks)
-
-**Example scenario:**
-- `kvCacheThreshold = 0.80`, `kvSpareTrigger = 0.10`
-- Replica A: 65% KV cache usage → Spare capacity: 0.15
-- Replica B: 72% KV cache usage → Spare capacity: 0.08
-- Average spare KV: (0.15 + 0.08) / 2 = **0.115**
-- Since 0.115 ≥ 0.10, no scale-up yet (trigger uses strict `<`)
-- If Replica B increases to 76%: Average spare = (0.15 + 0.04) / 2 = **0.095** → 0.095 < 0.10 → **Scale-up triggered**
-
-This proactive approach ensures adequate headroom and prevents request drops by scaling before saturation occurs.
-
-**For detailed implementation, see:** [Saturation Analyzer Documentation](user-guide/saturation-analyzer.md)
 
 ## Multi-Analyzer Registration
 
@@ -519,8 +446,6 @@ data:
         score: 1.0
     kvCacheThreshold: 0.80        # Should match EPP kvCacheUtilThreshold
     queueLengthThreshold: 5       # Should match EPP queueDepthThreshold
-    kvSpareTrigger: 0.10          # WVA-specific scale-up trigger (V1-only, ignored by V2)
-    queueSpareTrigger: 3          # WVA-specific scale-up trigger (V1-only, ignored by V2)
 ```
 
 #### EPP Saturation Detector Configuration
@@ -550,9 +475,7 @@ saturationDetector:
 |---------|-----------|-----------|-----------------|-------------|
 | **KV Cache Saturation** | `kvCacheThreshold` | `kvCacheUtilThreshold` | **0.80** (80%) | Replica is saturated when KV cache ≥ threshold |
 | **Queue Saturation** | `queueLengthThreshold` | `queueDepthThreshold` | **5** | Replica is saturated when queue length ≥ threshold |
-| **Scale-Up Trigger (KV)** | `kvSpareTrigger` | *(not applicable)* | **0.10** (10%) | WVA-only: Trigger scale-up when spare KV < threshold |
-| **Scale-Up Trigger (Queue)** | `queueSpareTrigger` | *(not applicable)* | **3** | WVA-only: Trigger scale-up when spare queue < threshold |
-
+| **Scale-Up Trigger (KV)** | **Scale-Up Trigger (Queue)** 
 ### Configuration Workflow
 
 #### Step 1: Define Thresholds
@@ -633,11 +556,6 @@ kubectl logs -n production deployment/gaie-granite-13b-epp | grep -i "saturation
    - Document the threshold mapping for each model deployment
    - Example: If `ibm/granite-13b` uses `kvCacheThreshold: 0.85` in WVA, its dedicated EPP must use `kvCacheUtilThreshold: 0.85`
 
-3. **WVA-Specific Parameters** (`kvSpareTrigger`, `queueSpareTrigger`):
-   - These control WVA's scale-up aggressiveness
-   - Should be set **lower** than saturation thresholds
-   - Provide headroom before replicas become saturated
-   - Recommended: `kvSpareTrigger = kvCacheThreshold - 0.1 to 0.2`
 
 4. **Testing Threshold Changes**:
    - Test in development environment first
@@ -679,8 +597,6 @@ data:
     scaleDownBoundary: 0.70     # V2-only
     kvCacheThreshold: 0.75      # shared by V1 and V2
     queueLengthThreshold: 10    # shared by V1 and V2
-    kvSpareTrigger: 0.15        # V1-only (ignored by V2)
-    queueSpareTrigger: 5        # V1-only (ignored by V2)
 ```
 
 Apply the ConfigMap:
@@ -717,22 +633,17 @@ data:
     scaleDownBoundary: 0.70
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 3
 
   # Override for granite model in production namespace. Overrides inherit the
   # default's analyzer selection (V2) via field-level merge, so they only list the
   # thresholds they change.
   "ibm/granite-13b#production": |
     kvCacheThreshold: 0.85
-    kvSpareTrigger: 0.15
 
   # Override for llama model in lab namespace
   "meta/llama-70b#lab": |
     kvCacheThreshold: 0.80
     queueLengthThreshold: 20
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 10
 ```
 
 **Key points:**
@@ -748,7 +659,7 @@ replace values from `default`, and any field you omit inherits from `default`. T
 just one threshold, specify only that field:
 
 ```yaml
-  # Inherits queueLengthThreshold, kvSpareTrigger, queueSpareTrigger from `default`
+  # Inherits queueLengthThreshold from `default`
   "my-org/my-model#my-namespace": |
     kvCacheThreshold: 0.90
 ```
@@ -757,8 +668,7 @@ just one threshold, specify only that field:
 > a field to its zero value — the override is treated as "unset" and inherits from
 > `default` instead. This affects every field type, not just numeric thresholds:
 >
-> - `kvSpareTrigger: 0` → inherits from `default` (cannot zero out a numeric threshold)
-> - `enableLimiter: false` → inherits from `default` (cannot disable a limiter that's enabled by default)
+> - `> - `enableLimiter: false` → inherits from `default` (cannot disable a limiter that's enabled by default)
 > - `analyzers: []` → inherits from `default` (cannot clear a non-empty analyzer list)
 >
 > See `Merge()` in `internal/config/saturation_scaling.go`.
@@ -771,9 +681,6 @@ The controller validates all configuration entries on load. Invalid entries are 
 
 1. **KvCacheThreshold:** Must be between 0.0 and 1.0
 2. **QueueLengthThreshold:** Must be ≥ 0
-3. **KvSpareTrigger:** Must be between 0.0 and 1.0
-4. **QueueSpareTrigger:** Must be ≥ 0
-5. **Consistency:** `kvCacheThreshold` must be ≥ `kvSpareTrigger`
 6. **Priority:** Must be ≥ 0
 7. **V2 thresholds** (when set): `scaleUpThreshold` and `scaleDownBoundary` must be in (0, 1],
    and `scaleUpThreshold` must be > `scaleDownBoundary`. Per-analyzer overrides are range-checked too.
@@ -893,8 +800,6 @@ data:
     scaleDownBoundary: 0.70
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 3
 ```
 
 ### Override Not Applied
@@ -980,8 +885,6 @@ data:
     scaleDownBoundary: 0.70
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    kvSpareTrigger: 0.1
-    queueSpareTrigger: 3
 
   # High-priority production workload - scale aggressively.
   # Per-model overrides inherit the default's analyzer selection (V2 here) via
@@ -989,15 +892,11 @@ data:
   "ibm/granite-13b#production": |
     kvCacheThreshold: 0.70
     queueLengthThreshold: 3
-    kvSpareTrigger: 0.20
-    queueSpareTrigger: 5
 
   # Development workload - allow higher saturation
   "meta/llama-70b#development": |
     kvCacheThreshold: 0.90
     queueLengthThreshold: 15
-    kvSpareTrigger: 0.05
-    queueSpareTrigger: 2
 ```
 
 Apply the configuration:
@@ -1022,8 +921,6 @@ type SaturationScalingConfig struct {
     Namespace            string                `yaml:"namespace,omitempty"`
     KvCacheThreshold     float64               `yaml:"kvCacheThreshold"`
     QueueLengthThreshold float64               `yaml:"queueLengthThreshold"`
-    KvSpareTrigger       float64               `yaml:"kvSpareTrigger"`
-    QueueSpareTrigger    float64               `yaml:"queueSpareTrigger"`
     EnableLimiter        bool                  `yaml:"enableLimiter,omitempty"`
     EnableRescale        bool                  `yaml:"enableRescale,omitempty"`
     AnalyzerName         string                `yaml:"analyzerName,omitempty"`
