@@ -140,6 +140,21 @@ WVA provides a **single consolidated E2E suite** that runs on multiple environme
 
 E2E is intended to be a **deterministic correctness signal**: resource wiring, reconciliation, and stable invariants (e.g., CRs reconcile, status conditions are set, scalers are created and point at the right targets/metrics). Traffic generation and performance/benchmarking scenarios should live outside `test/e2e/`.
 
+### Controller state between runs
+
+`BeforeSuite` restarts the WVA controller before anything else runs. This is required for determinism, not hygiene.
+
+The saturation analyzer's capacity knowledge store is **in-memory and lives for the process lifetime**. It is keyed by `(namespace, model, variant)`, and the suites all reuse the same model ID, so a per-replica capacity learned by one suite — or by an earlier run against the same cluster — survives into the next and is preferred over live observation (the `P2-hist` capacity source in the `analyzer-result` log line).
+
+Without the restart, results depend on run history rather than on the code. A degenerate learned capacity has been observed to pin utilization at `1.0`, at which point the engine *correctly* refuses to scale down and a scale-down spec fails against code that is fine — reproducibly on a reused pod, and not at all on a fresh one.
+
+Two consequences worth knowing:
+
+- Re-running the suite against an already-deployed controller is only trustworthy because of that restart. If you invoke specs some other way and skip `BeforeSuite`, expect history-dependent results.
+- Redeploying with the **same image tag** does not restart the pod (`imagePullPolicy: IfNotPresent` plus an unchanged pod spec), so rebuilt code silently does not run. Bump the tag when redeploying — check the pod's name/age, not just the image string.
+
+The restart is best-effort: if patching the Deployment is not permitted, the suite warns and continues rather than failing.
+
 ### E2E shared fixtures
 
 Code lives under `test/e2e/fixtures`. The `fixtures` package holds reusable helpers to create, ensure (idempotent setup), and delete Kubernetes objects used by the e2e suite (VariantAutoscaling, HPA, KEDA ScaledObject, model services, Services, ServiceMonitors, InferenceObjective, etc.). Package-level documentation and naming conventions (`Create*` / `Ensure*` / `Delete*`, `baseName` vs full resource names) live in the package doc:

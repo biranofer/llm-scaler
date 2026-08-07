@@ -159,6 +159,26 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred(), "KEDA ScaledObject CRD should be installed")
 	}, time.Duration(cfg.EventuallyShortSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed(), "KEDA should be available")
 
+	By("Restarting the WVA controller so the suite starts from a clean analyzer state")
+	// The capacity knowledge store is in-memory and accumulates learned per-replica
+	// capacities for the lifetime of the process. It is keyed by (namespace, model,
+	// variant) and every suite here reuses the same model ID, so a value learned by
+	// an earlier suite — or an earlier run against this cluster — survives into the
+	// next one and is preferred over live observation (the P2-hist capacity source).
+	//
+	// That makes results depend on run history rather than on the code. A degenerate
+	// learned capacity has been seen to pin utilization at 1.0, at which point the
+	// engine correctly refuses to scale down and a scale-down spec fails against
+	// code that is fine. Restarting once per suite run drops the store, so each run
+	// re-learns from the fixtures' own metrics.
+	//
+	// Best-effort: a restricted environment may not permit patching the Deployment.
+	// Warn rather than fail, since the suite can still run — just not reproducibly.
+	if err := restartWVAController(ctx); err != nil {
+		GinkgoWriter.Printf("WARNING: could not restart the WVA controller (%v).\n"+
+			"The in-memory capacity store carries over, so results may depend on run history.\n", err)
+	}
+
 	GinkgoWriter.Println("BeforeSuite completed successfully - infrastructure ready")
 })
 
