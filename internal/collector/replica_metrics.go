@@ -53,14 +53,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
@@ -160,7 +158,6 @@ func (c *ReplicaMetricsCollector) recordMetricsUnavailableEvent(
 //   - namespace: The namespace where the model is deployed
 //   - scaleTargets: Map of Deployment/LWS namespace/name to Deployment/LWS
 //   - variantAutoscalings: Map of VariantAutoscaling namespace/name to VariantAutoscaling object
-//   - variantCosts: Map of VariantAutoscaling namespace/name to cost value
 //
 // Returns:
 //   - []domain.ReplicaMetrics: Per-pod metrics for saturation and queueing model analysis
@@ -172,9 +169,8 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 	vaEventTracker map[string]bool,
-	variantCosts map[string]float64,
 ) ([]domain.ReplicaMetrics, error) {
-	replicaMetrics, err := c.collectReplicaMetrics(ctx, modelID, namespace, scaleTargets, variantAutoscalings, variantCosts)
+	replicaMetrics, err := c.collectReplicaMetrics(ctx, modelID, namespace, scaleTargets)
 
 	// Determine if metrics are available in this cycle
 	metricsAvailable := err == nil && len(replicaMetrics) > 0
@@ -318,8 +314,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	modelID string,
 	namespace string,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
-	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-	variantCosts map[string]float64,
 ) ([]domain.ReplicaMetrics, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -412,8 +406,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		arrivalRate          float64
 		hasArrivalRate       bool
 		arrivalRateTimestamp time.Time
-		avgTTFT              float64
-		avgTTFTTimestamp     time.Time
 		avgITL               float64
 		avgITLTimestamp      time.Time
 		// Throughput analyzer fields
@@ -464,7 +456,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackTimestamp(data.prefixCacheHitRateTimestamp)
 		trackTimestamp(data.cacheConfigTimestamp)
 		trackTimestamp(data.arrivalRateTimestamp)
-		trackTimestamp(data.avgTTFTTimestamp)
 		trackTimestamp(data.avgITLTimestamp)
 	}
 
@@ -496,7 +487,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			data.prefixCacheHitRateTimestamp,
 			data.cacheConfigTimestamp,
 			data.arrivalRateTimestamp,
-			data.avgTTFTTimestamp,
 			data.avgITLTimestamp,
 		}
 
@@ -786,34 +776,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
-	// Process average TTFT results (seconds)
-	if result := results[registration.QueryAvgTTFT]; result != nil {
-		if !result.HasError() {
-			for _, value := range result.Values {
-				instanceKey, podName, vaName := c.buildInstanceKey(ctx, namespace, value.Labels)
-				if instanceKey == "" {
-					continue
-				}
-
-				if podData[instanceKey] == nil {
-					podData[instanceKey] = &podMetricData{
-						podName: podName,
-						vaName:  vaName,
-					}
-				}
-				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value > 0 {
-					podData[instanceKey].avgTTFT = value.Value
-					podData[instanceKey].avgTTFTTimestamp = value.Timestamp
-
-					logger.V(logging.DEBUG).Info("Avg TTFT metric",
-						"instanceKey", instanceKey,
-						"pod", podName,
-						"avgTTFTSeconds", value.Value)
-				}
-			}
-		}
-	}
-
 	// Process average ITL results (seconds)
 	if result := results[registration.QueryAvgITL]; result != nil {
 		if !result.HasError() {
@@ -896,17 +858,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
-	// Pre-compute MaxBatchSize per scale target from container args.
-	// MaxBatchSize is not a Prometheus metric; it is parsed from the Deployment/LWS
-	// spec using the argument parser for the variant's detected engine
-	// (vLLM --max-num-seqs / SGLang --max-running-requests).
-	// Map key is scale target key (namespace/name).
-	scaleTargetMaxBatchSize := make(map[string]int64, len(scaleTargets))
-	for key, scaleTarget := range scaleTargets {
-		params := saturation_v2.ParseEngineArgs(inferenceengine.Detect(scaleTarget), scaleTarget)
-		scaleTargetMaxBatchSize[key] = params.MaxNumSeqs
-	}
-
 	// Track metrics freshness status per pod
 	vaMetricsFreshnessStatus := make(map[string]map[string]int)
 
@@ -978,29 +929,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			continue
 		}
 
-		variantKey := utils.GetNamespacedKey(namespace, vaName)
-		// Get accelerator name from Deployment/LWS nodeSelector/nodeAffinity or VA label
-		acceleratorName := ""
-		if va, ok := variantAutoscalings[variantKey]; ok && va != nil {
-			// Find the scale target for this VA
-			key := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
-			if scaleTarget, found := scaleTargets[key]; found {
-				// Get accelerator name from Deployment/LWS nodeSelector/nodeAffinity or VA label
-				acceleratorName = accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget)
-			} else {
-				// Deployment/LWS not cached, fall back to VA label via nil scale target
-				acceleratorName = accelerator.GetAcceleratorNameFromScaleTarget(va, nil)
-			}
-		}
-
-		// Look up cost by VariantAutoscaling namespace/name
-		cost := domain.DefaultVariantCost
-		if variantCosts != nil {
-			if c, ok := variantCosts[variantKey]; ok {
-				cost = c
-			}
-		}
-
 		// Compute V2 derived fields (zero-valued when unavailable, backward compatible)
 		var totalKvCapacityTokens int64
 		var tokensInUse int64
@@ -1021,15 +949,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			tokensInUse = int64(rounded)
 		}
 
-		// Look up MaxBatchSize from the scale target's engine args via the VA's ScaleTargetRef
-		var maxBatchSize int64
-		if va, ok := variantAutoscalings[variantKey]; ok && va != nil {
-			key := utils.GetNamespacedKey(namespace, va.Spec.ScaleTargetRef.Name)
-			if mbs, ok := scaleTargetMaxBatchSize[key]; ok {
-				maxBatchSize = mbs
-			}
-		}
-
 		if (data.hasKv || data.hasQueue) && !data.hasArrivalRate {
 			logger.Info("Pod has engine metrics but no dispatch rate — possible pod/pod_name label mismatch", "pod", podName, "model", modelID, "namespace", namespace)
 		}
@@ -1042,10 +961,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			ModelID:               modelID,
 			Namespace:             namespace,
 			VariantName:           vaName,
-			AcceleratorName:       acceleratorName,
 			KvCacheUsage:          kvUsage,
 			QueueLength:           queueLen,
-			Cost:                  cost,
 			NumGpuBlocks:          data.numGpuBlocks,
 			BlockSize:             data.blockSize,
 			TotalKvCapacityTokens: totalKvCapacityTokens,
@@ -1054,8 +971,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			AvgInputTokens:        data.avgInputTokens,
 			PrefixCacheHitRate:    data.prefixCacheHitRate,
 			ArrivalRate:           data.arrivalRate,
-			MaxBatchSize:          maxBatchSize,
-			AvgTTFT:               data.avgTTFT,
 			AvgITL:                data.avgITL,
 			GenerationTokenRate:   data.generationTokenRate,
 			KvUsageInstant:        data.kvUsageInstant,

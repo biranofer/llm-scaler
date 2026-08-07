@@ -193,7 +193,6 @@ func TestCollectReplicaMetrics_ErrorRecordsEvent(t *testing.T) {
 	}
 
 	scaleTargets := make(map[string]scaletarget.ScaleTargetAccessor)
-	variantCosts := make(map[string]float64)
 
 	// Simulate metrics collection failure
 	mockSource := &mockMetricsSource{
@@ -202,7 +201,7 @@ func TestCollectReplicaMetrics_ErrorRecordsEvent(t *testing.T) {
 	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
 
 	// First call with error: no event (first observation, unknown previous state)
-	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.Error(t, err, "Should return error when refresh fails")
 	require.Nil(t, metrics, "Should return nil metrics on error")
 
@@ -214,7 +213,7 @@ func TestCollectReplicaMetrics_ErrorRecordsEvent(t *testing.T) {
 	}
 
 	// Second call: metrics still fail, should NOT emit event (no state transition)
-	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.Error(t, err, "Should still return error")
 
 	select {
@@ -251,7 +250,6 @@ func TestCollectReplicaMetrics_NoMetricsRecordsEvent(t *testing.T) {
 	}
 
 	scaleTargets := make(map[string]scaletarget.ScaleTargetAccessor)
-	variantCosts := make(map[string]float64)
 
 	// Mock source with no metrics (e.g., VA scaled to zero)
 	mockSource := &mockMetricsSource{
@@ -260,7 +258,7 @@ func TestCollectReplicaMetrics_NoMetricsRecordsEvent(t *testing.T) {
 	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
 
 	// First call: no metrics, should NOT emit event (first observation, unknown previous state)
-	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err, "Should not return error when no metrics available")
 	require.Empty(t, metrics, "Should return empty metrics slice")
 
@@ -272,7 +270,7 @@ func TestCollectReplicaMetrics_NoMetricsRecordsEvent(t *testing.T) {
 	}
 
 	// Second call: still no metrics, should NOT emit event (no state transition)
-	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err, "Should not return error")
 
 	select {
@@ -283,7 +281,7 @@ func TestCollectReplicaMetrics_NoMetricsRecordsEvent(t *testing.T) {
 	}
 
 	// Third call: still no metrics, should NOT emit event (no state transition)
-	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err, "Should not return error")
 
 	select {
@@ -326,7 +324,6 @@ func TestCollectReplicaMetrics_EdgeTriggeredEvents(t *testing.T) {
 	}
 
 	scaleTargets := make(map[string]scaletarget.ScaleTargetAccessor)
-	variantCosts := make(map[string]float64)
 
 	// Mock source that starts with no metrics (simulates VA scaled to zero)
 	mockSource := &mockMetricsSource{
@@ -335,7 +332,7 @@ func TestCollectReplicaMetrics_EdgeTriggeredEvents(t *testing.T) {
 	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
 
 	// First call: metrics unavailable, should NOT emit event (first observation, unknown previous state)
-	_, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err)
 
 	select {
@@ -346,7 +343,7 @@ func TestCollectReplicaMetrics_EdgeTriggeredEvents(t *testing.T) {
 	}
 
 	// Second call: metrics still unavailable, should NOT emit event (no state transition)
-	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err)
 
 	select {
@@ -357,7 +354,7 @@ func TestCollectReplicaMetrics_EdgeTriggeredEvents(t *testing.T) {
 	}
 
 	// Third call: still unavailable, should NOT emit event
-	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil, variantCosts)
+	_, err = collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
 	require.NoError(t, err)
 
 	select {
@@ -403,7 +400,6 @@ func TestCollectReplicaMetrics_MetricsObservation(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics failed: %v", err)
@@ -514,7 +510,6 @@ func TestCollectReplicaMetrics_ErrorMetrics(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err == nil {
 		t.Fatal("Expected error but got nil")
@@ -638,7 +633,6 @@ func TestCollectReplicaMetrics_ThroughputKeyMerge(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -715,7 +709,6 @@ func TestCollectReplicaMetrics_ArrivalRatePerPodRetained(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -798,7 +791,7 @@ func TestCollectReplicaMetrics_Freshness(t *testing.T) {
 			context.Background(), "test-model", "test-ns",
 			make(map[string]scaletarget.ScaleTargetAccessor),
 			make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
-			nil, make(map[string]float64),
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -915,7 +908,6 @@ func TestCollectReplicaMetrics_SGLangCacheConfig(t *testing.T) {
 		map[string]scaletarget.ScaleTargetAccessor{sglangScaleTargetKey: sglangTarget},
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -988,7 +980,7 @@ func TestCollectReplicaMetrics_SGLangPrefixCacheHitRate(t *testing.T) {
 				context.Background(), "test-model", "test-ns",
 				map[string]scaletarget.ScaleTargetAccessor{sglangScaleTargetKey: sglangTarget},
 				make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
-				nil, make(map[string]float64),
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -1057,7 +1049,7 @@ func TestCollectReplicaMetrics_MixedEngine(t *testing.T) {
 			sglangScaleTargetKey:  target("lmsysorg/sglang:latest"),
 		},
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
-		nil, make(map[string]float64),
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -1138,7 +1130,6 @@ func TestCollectReplicaMetrics_UnattributedReadyPodsEvent(t *testing.T) {
 	scaleTargets := map[string]scaletarget.ScaleTargetAccessor{
 		"default/dep-target": &mockScaleTargetAccessor{readyReplicas: 2},
 	}
-	variantCosts := make(map[string]float64)
 
 	collector := NewReplicaMetricsCollector(mockSource, k8sClient, fakeRecorder, nil)
 
@@ -1146,7 +1137,7 @@ func TestCollectReplicaMetrics_UnattributedReadyPodsEvent(t *testing.T) {
 	vaEventTracker := make(map[string]bool)
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(), "test-model", "default",
-		scaleTargets, variantAutoscalings, vaEventTracker, variantCosts,
+		scaleTargets, variantAutoscalings, vaEventTracker,
 	)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results, "expected attributed results for va-other")
@@ -1162,7 +1153,7 @@ func TestCollectReplicaMetrics_UnattributedReadyPodsEvent(t *testing.T) {
 	// Second call with same vaEventTracker: event must NOT be re-emitted (deduped).
 	_, err = collector.CollectReplicaMetrics(
 		context.Background(), "test-model", "default",
-		scaleTargets, variantAutoscalings, vaEventTracker, variantCosts,
+		scaleTargets, variantAutoscalings, vaEventTracker,
 	)
 	require.NoError(t, err)
 	select {
@@ -1218,7 +1209,6 @@ func TestCollectReplicaMetrics_ThroughputOrphanSkipped(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	require.NoError(t, err)
 
@@ -1655,7 +1645,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)
@@ -1835,7 +1824,6 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 		make(map[string]scaletarget.ScaleTargetAccessor),
 		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 		nil,
-		make(map[string]float64),
 	)
 	if err != nil {
 		t.Fatalf("CollectReplicaMetrics: %v", err)

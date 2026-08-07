@@ -1176,7 +1176,6 @@ type modelData struct {
 	replicaMetrics      []domain.ReplicaMetrics
 	scaleTargets        map[string]scaletarget.ScaleTargetAccessor
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling
-	variantCosts        map[string]float64
 	variantStates       []domain.VariantReplicaState
 	variantMetadata     []domain.VariantMetadata
 	schedulerQueue      *domain.SchedulerQueueMetrics
@@ -1200,7 +1199,6 @@ func (e *Engine) prepareModelData(
 	logger := ctrl.LoggerFrom(ctx)
 	namespace := modelVAs[0].Namespace
 
-	variantCosts := make(map[string]float64)
 	scaleTargets := make(map[string]scaletarget.ScaleTargetAccessor)
 	variantAutoscalings := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
 
@@ -1215,28 +1213,17 @@ func (e *Engine) prepareModelData(
 			continue
 		}
 
-		cost := domain.DefaultVariantCost
-		if va.Spec.VariantCost != "" {
-			if parsedCost, err := strconv.ParseFloat(va.Spec.VariantCost, 64); err == nil {
-				cost = parsedCost
-			} else {
-				logger.V(logging.DEBUG).Info("Failed to parse variant cost, using default",
-					"variant", va.Name, "variantCost", va.Spec.VariantCost, "default", cost, "error", err)
-			}
-		}
-
 		key := utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())
 		scaleTargets[key] = scaleTarget
 
 		variantKey := utils.GetNamespacedKey(va.Namespace, va.Name)
 		variantAutoscalings[variantKey] = va
-		variantCosts[variantKey] = cost
 	}
 
 	logger.V(logging.DEBUG).Info("Using source infrastructure for replica metrics",
 		"modelID", modelID,
 		"namespace", namespace)
-	replicaMetrics, err := e.ReplicaMetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, scaleTargets, variantAutoscalings, e.vaEventTracker, variantCosts)
+	replicaMetrics, err := e.ReplicaMetricsCollector.CollectReplicaMetrics(ctx, modelID, namespace, scaleTargets, variantAutoscalings, e.vaEventTracker)
 	if err != nil {
 		return nil, fmt.Errorf("failed to collect Saturation metrics for model %s: %w", modelID, err)
 	}
@@ -1271,7 +1258,6 @@ func (e *Engine) prepareModelData(
 		replicaMetrics:      replicaMetrics,
 		scaleTargets:        scaleTargets,
 		variantAutoscalings: variantAutoscalings,
-		variantCosts:        variantCosts,
 		variantStates:       variantStates,
 		variantMetadata:     variantMetadata,
 		schedulerQueue:      schedulerQueue,

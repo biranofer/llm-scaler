@@ -41,25 +41,30 @@ const RolePrefill = "prefill"
 // RoleDecode represents the decode-only role in a P/D disaggregated deployment.
 const RoleDecode = "decode"
 
-// ReplicaMetrics holds per-replica metrics used by both the saturation analyzer
-// and the queueing model analyzer. Saturation analysis uses KV cache, queue, and
-// token-capacity fields, while the queueing model analyzer uses
-// ArrivalRate and MaxBatchSize to model queue dynamics and estimate optimal capacity.
-// For LWS, ReplicaMetrics only holds leader pods (leaderworkerset.sigs.k8s.io/worker-index=0 label)
-// which emit vLLM metrics representing an LWS replica, as such len(ReplicaMetrics) == len(LWS replicas).
+// ReplicaMetrics holds one inference-engine instance's measured signal.
+//
+// It is per *instance*, not per pod: a data-parallel pod exposes one metrics
+// endpoint per DP rank, and the collector keys them by pod_name:port. Anything
+// derived by counting these records is therefore in instance units, which is
+// the unit that pairs with a per-instance capacity. Scale-target units (pods,
+// or LWS groups) live on domain.VariantMetadata — do not cross the two.
+// For LWS, only leader pods (leaderworkerset.sigs.k8s.io/worker-index=0) emit
+// engine metrics, so there one record corresponds to one LWS replica.
+//
+// It carries *signal only*. Variant identity (cost, accelerator, role) belongs
+// to the discovery step and reaches consumers via domain.VariantMetadata; it is
+// not repeated on every instance record.
 type ReplicaMetrics struct {
-	PodName         string
-	KvCacheUsage    float64 // KV cache utilization (0.0-1.0)
-	QueueLength     int     // Number of requests waiting
-	VariantName     string  // Name of the variant this replica belongs to
-	Namespace       string
-	ModelID         string  // Model ID for grouping variants
-	AcceleratorName string  // Accelerator type for this variant
-	Cost            float64 // Cost per replica (from CRD spec, default 10)
+	PodName      string
+	KvCacheUsage float64 // KV cache utilization (0.0-1.0)
+	QueueLength  int     // Number of requests waiting
+	VariantName  string  // Name of the variant this replica belongs to
+	Namespace    string
+	ModelID      string // Model ID for grouping variants
 	// Metadata contains freshness information (optional)
 	Metadata *ReplicaMetricsMetadata `json:"metadata,omitempty"`
 
-	// --- Fields for Saturation Analyzer V2 and Queueing Model Analyzer ---
+	// --- Fields for Saturation Analyzer V2 ---
 
 	// NumGpuBlocks is the total number of KV cache blocks allocated on GPU.
 	// Sourced from vllm:cache_config_info label "num_gpu_blocks".
@@ -107,18 +112,6 @@ type ReplicaMetrics struct {
 	// Used by queueing model analyzer as Lambda (arrival rate) for queue dynamics estimation.
 	// Zero when scheduler metrics are unavailable.
 	ArrivalRate float64
-
-	// MaxBatchSize is the maximum number of concurrent inference requests this replica can process.
-	// Parsed from the --max-num-seqs flag in the pod's parent Deployment container args.
-	// Defaults to 256 (vLLM v0.8+ default) when the flag is not explicitly set.
-	// Used by queueing model analyzer.
-	MaxBatchSize int64
-
-	// AvgTTFT is the average time-to-first-token on this replica in seconds.
-	// Derived from rate(vllm:time_to_first_token_seconds_sum[5m]) / rate(..._count[5m]).
-	// Used by queueing model tuner as observed TTFT for Kalman filter parameter learning.
-	// Zero when metrics are unavailable.
-	AvgTTFT float64
 
 	// AvgITL is the average inter-token latency on this replica in seconds.
 	// Derived from rate(vllm:time_per_output_token_seconds_sum[5m]) / rate(..._count[5m]).

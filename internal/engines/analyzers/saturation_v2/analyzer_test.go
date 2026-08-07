@@ -35,11 +35,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should use k1 (memory-bound) when k2 is unknown", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -54,11 +54,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
 					// Queue >= threshold (5), tokensInUse = 8000
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						8000, 16000, 6, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -73,11 +73,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
 					// Low KV usage but saturated queue
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						4000, 16000, 10, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -92,11 +92,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should store k2 observation in rolling average", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						8000, 16000, 6, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -114,11 +114,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// First call: queue saturated → observes k2
 			input1 := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						8000, 16000, 6, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			_, err := analyzer.Analyze(ctx, input1)
@@ -127,11 +127,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// Second call: queue below threshold → uses historical k2
 			input2 := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						6000, 16000, 2, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			result, err := analyzer.Analyze(ctx, input2)
@@ -146,11 +146,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// Short output workload: k2 observation
 			input1 := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						8000, 16000, 6, 100, 50), // avgOutput=50 → "short"
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			_, _ = analyzer.Analyze(ctx, input1)
@@ -158,11 +158,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// Long output workload: no history yet
 			input2 := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						6000, 16000, 2, 100, 600), // avgOutput=600 → "long"
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			result, err := analyzer.Analyze(ctx, input2)
@@ -176,8 +176,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should derive k2 from chunked prefill params", func() {
 			// Pre-populate store with deployment params for this variant
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName: "H100",
-				GpuCount:        1,
+				GpuCount: 1,
 				EngineParams: &EngineParams{
 					EffectiveMaxBatchedTokens: 2048,
 					MaxNumSeqs:                256,
@@ -189,11 +188,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
 					// Queue below threshold, no history → uses derived k2
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 2, 500, 100), // I=500, O=100
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -211,11 +210,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should fall back to k1 when no batch/queue/history data exists", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 0, 0), // no avg tokens
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -230,11 +229,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should include pending replicas in anticipated supply for scale-up", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						10000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 2, PendingReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 2, PendingReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -249,11 +248,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should NOT include pending replicas in scale-down calculation", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						1000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 3, PendingReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 3, PendingReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -269,7 +268,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 	Describe("Zero-replica variants", func() {
 		It("should use stored live capacity directly when variant has zero replicas", func() {
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName:   "H100",
 				GpuCount:          1,
 				EffectiveCapacity: 12000,
 				LearnedFrom:       "live",
@@ -278,7 +276,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{}, // no pods
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 0, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 				},
 			)
 
@@ -292,7 +290,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should derive capacity from params + workload for deployment-derived records", func() {
 			// Zero-replica variant with deployment-derived params only
 			store.Update("test-ns", "test-model", "variant-b", CapacityRecord{
-				AcceleratorName:   "A100",
 				GpuCount:          1,
 				EffectiveCapacity: 8192, // conservative fallback from LoadFromDeployment
 				EngineParams: &EngineParams{
@@ -305,12 +302,12 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// Another variant has live pods providing workload data
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 500, 100), // I=500, O=100
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
-					{VariantName: "variant-b", CurrentReplicas: 0, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-b", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 				},
 			)
 
@@ -339,7 +336,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 				EffectiveMaxBatchedTokens: 8192,
 			}
 			store.Update("test-ns", "test-model", "variant-b", CapacityRecord{
-				AcceleratorName:   "H100",
 				GpuCount:          1,
 				EffectiveCapacity: 8192,
 				EngineParams:      defaultParams,
@@ -348,7 +344,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 			// variant-a has a compatible live record (same accel, GPU count, params)
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName:       "H100",
 				GpuCount:              1,
 				TotalKvCapacityTokens: 50000,
 				EffectiveCapacity:     40000, // observed min(k1, k2) = 40000
@@ -359,12 +354,12 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// variant-a provides workload data
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 50000, 0, 500, 100), // I=500, O=100
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
-					{VariantName: "variant-b", CurrentReplicas: 0, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-b", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 				},
 			)
 
@@ -380,7 +375,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 		It("should bound k2 estimate by own k1 when TotalKvCapacityTokens is known", func() {
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName:       "A100",
 				GpuCount:              1,
 				EffectiveCapacity:     8192,
 				TotalKvCapacityTokens: 30000, // from num_gpu_blocks_override
@@ -393,15 +387,17 @@ var _ = Describe("SaturationAnalyzer", func() {
 				LearnedFrom: "deployment",
 			})
 
-			// Another variant provides workload data (different accelerator, won't be compatible)
+			// Another variant provides workload data. Its accelerator differs from
+			// variant-a's, so FindCompatible must not match it — the accelerator is
+			// stated on the variant state because that is where discovery puts it.
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-x", "L40S", 5.0,
+					makeReplicaMetrics("pod-1", "variant-x",
 						5000, 16000, 0, 500, 100),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-x", CurrentReplicas: 1, GPUsPerReplica: 1},
-					{VariantName: "variant-a", CurrentReplicas: 0, GPUsPerReplica: 1},
+					{VariantName: "variant-x", AcceleratorName: "L40S", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 				},
 			)
 
@@ -420,7 +416,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should use EffectiveMaxBatchedTokens fallback when no workload data exists", func() {
 			// Zero-replica variant with deployment-derived params, no other live pods
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName:   "H100",
 				GpuCount:          1,
 				EffectiveCapacity: 8192,
 				EngineParams: &EngineParams{
@@ -433,7 +428,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{}, // no live pods at all
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 0, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 				},
 			)
 
@@ -485,11 +480,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should signal scale-up when demand exceeds threshold", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						11000, 16000, 3, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -506,13 +501,13 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should signal scale-down when utilization is below boundary", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						1000, 16000, 0, 100, 50),
-					makeReplicaMetrics("pod-2", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-2", "variant-a",
 						1000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 2, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 2, GPUsPerReplica: 1},
 				},
 			)
 
@@ -527,11 +522,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// Supply ~ demand / 0.77 (between 0.70 boundary and 0.85 threshold)
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						10000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -550,11 +545,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should add scheduler queue demand to total demand", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			input.SchedulerQueue = &domain.SchedulerQueueMetrics{
@@ -578,11 +573,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should not add demand when scheduler queue is nil", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 
@@ -597,7 +592,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 				[]domain.ReplicaMetrics{
 					{
 						PodName: "pod-1", VariantName: "variant-a",
-						AcceleratorName: "H100", Cost: 10.0,
 						TokensInUse: 5000, TotalKvCapacityTokens: 16000,
 						NumGpuBlocks: 1000, BlockSize: 16,
 						AvgInputTokens: 100, AvgOutputTokens: 50,
@@ -605,7 +599,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 					},
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			input.SchedulerQueue = &domain.SchedulerQueueMetrics{
@@ -630,11 +624,11 @@ var _ = Describe("SaturationAnalyzer", func() {
 		It("should use max of bytes and count estimates for input tokens", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
-					makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+					makeReplicaMetrics("pod-1", "variant-a",
 						5000, 16000, 0, 100, 50),
 				},
 				[]domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 				},
 			)
 			input.SchedulerQueue = &domain.SchedulerQueueMetrics{
@@ -657,7 +651,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 	Describe("Scheduler queue demand role attribution", func() {
 		It("should attribute inputTokens to prefill and inputTokens+outputTokens to decode", func() {
 			metrics := []domain.ReplicaMetrics{
-				makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+				makeReplicaMetrics("pod-1", "variant-a",
 					5000, 16000, 0, 100, 50),
 			}
 			activeRoles := map[string]bool{"prefill": true, "decode": true}
@@ -681,7 +675,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 		It("should attribute full demand to 'both' role", func() {
 			metrics := []domain.ReplicaMetrics{
-				makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+				makeReplicaMetrics("pod-1", "variant-a",
 					5000, 16000, 0, 100, 50),
 			}
 			activeRoles := map[string]bool{"both": true}
@@ -698,7 +692,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 		It("should return empty byRole when nil activeRoles", func() {
 			metrics := []domain.ReplicaMetrics{
-				makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+				makeReplicaMetrics("pod-1", "variant-a",
 					5000, 16000, 0, 100, 50),
 			}
 			sq := &domain.SchedulerQueueMetrics{
@@ -714,7 +708,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 		It("should return zero for nil scheduler queue", func() {
 			metrics := []domain.ReplicaMetrics{
-				makeReplicaMetrics("pod-1", "variant-a", "H100", 10.0,
+				makeReplicaMetrics("pod-1", "variant-a",
 					5000, 16000, 0, 100, 50),
 			}
 			activeRoles := map[string]bool{"prefill": true, "decode": true}
@@ -729,7 +723,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 			metrics := []domain.ReplicaMetrics{
 				{
 					PodName: "pod-1", VariantName: "variant-a",
-					AcceleratorName: "H100", Cost: 10.0,
 					TokensInUse: 5000, TotalKvCapacityTokens: 16000,
 					NumGpuBlocks: 1000, BlockSize: 16,
 					AvgInputTokens: 100, AvgOutputTokens: 50,
@@ -762,7 +755,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 				ReplicaMetrics: []domain.ReplicaMetrics{
 					{
 						PodName: "prefill-pod", VariantName: "prefill-v",
-						AcceleratorName: "H100", Cost: 10.0,
 						TokensInUse: 3000, TotalKvCapacityTokens: 16000,
 						NumGpuBlocks: 1000, BlockSize: 16,
 						AvgInputTokens: 100, AvgOutputTokens: 50,
@@ -770,7 +762,6 @@ var _ = Describe("SaturationAnalyzer", func() {
 					},
 					{
 						PodName: "decode-pod", VariantName: "decode-v",
-						AcceleratorName: "H100", Cost: 10.0,
 						TokensInUse: 2000, TotalKvCapacityTokens: 16000,
 						NumGpuBlocks: 1000, BlockSize: 16,
 						AvgInputTokens: 100, AvgOutputTokens: 50,
@@ -859,8 +850,7 @@ func makeAnalyzerInput(
 
 // makeReplicaMetrics creates a ReplicaMetrics with the given parameters.
 func makeReplicaMetrics(
-	podName, variantName, accelerator string,
-	cost float64,
+	podName, variantName string,
 	tokensInUse, totalCapacity int64,
 	queueLen int,
 	avgInput, avgOutput float64,
@@ -875,8 +865,6 @@ func makeReplicaMetrics(
 	return domain.ReplicaMetrics{
 		PodName:               podName,
 		VariantName:           variantName,
-		AcceleratorName:       accelerator,
-		Cost:                  cost,
 		KvCacheUsage:          kvUsage,
 		QueueLength:           queueLen,
 		NumGpuBlocks:          numBlocks,
@@ -1034,20 +1022,18 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// how it was configured — the knob had no effect on the scaling decision.
 		// Tightening the ceiling must raise utilization for identical KV occupancy.
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
 		rm := domain.ReplicaMetrics{
-			PodName:         "pod-1",
-			VariantName:     "variant-a",
-			AcceleratorName: "H100",
-			KvCacheUsage:    0.5,
+			PodName:      "pod-1",
+			VariantName:  "variant-a",
+			KvCacheUsage: 0.5,
 		}
 
 		utilizationAt := func(threshold float64) float64 {
 			cfg.KvCacheThreshold = threshold
-			r := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+			r := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 			Expect(r).NotTo(BeNil())
 			return float64(r.ReplicaDemand) / float64(r.EffectiveCapacity)
 		}
@@ -1065,20 +1051,18 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// reported no capacity at all, so the engine could see a shortfall it had no
 		// per-replica capacity to divide by and never acted on it.
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10, // 10 * 0.05 = 0.5 -> truncates to 0
 			LearnedFrom:       "deployment",
 		})
 		cfg.KvCacheThreshold = 0.05
 
 		rm := domain.ReplicaMetrics{
-			PodName:         "pod-1",
-			VariantName:     "variant-a",
-			AcceleratorName: "H100",
-			KvCacheUsage:    0.5,
+			PodName:      "pod-1",
+			VariantName:  "variant-a",
+			KvCacheUsage: 0.5,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil(), "a positive stored capacity must stay sizable")
 		Expect(result.EffectiveCapacity).To(Equal(int64(1)))
 	})
@@ -1086,29 +1070,26 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 	It("still returns nil when the stored capacity is genuinely zero", func() {
 		// The floor must not resurrect a record that carries no capacity at all.
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 0,
 			LearnedFrom:       "deployment",
 		})
 		rm := domain.ReplicaMetrics{
-			PodName:         "pod-1",
-			VariantName:     "variant-a",
-			AcceleratorName: "H100",
-			KvCacheUsage:    0.5,
+			PodName:      "pod-1",
+			VariantName:  "variant-a",
+			KvCacheUsage: 0.5,
 		}
-		Expect(analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)).To(BeNil())
+		Expect(analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")).To(BeNil())
 	})
 
 	It("should return nil when capacity store has no record", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.5,
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).To(BeNil())
 	})
 
@@ -1124,14 +1105,13 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			KvCacheUsage: 0.5,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).To(BeNil())
 	})
 
 	It("should apply KvCacheThreshold to stored capacity (consistent with main path)", func() {
 		// Store raw capacity of 10000
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1139,12 +1119,11 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.6,
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// Capacity is the usable portion: 10000 * 0.8 (KvCacheThreshold) = 8000.
 		Expect(result.EffectiveCapacity).To(Equal(int64(8000)))
@@ -1157,7 +1136,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 	It("should detect saturation at KvCacheUsage >= KvCacheThreshold", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1165,12 +1143,11 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          1.0, // 100% KV usage
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 1.0 * 10000 = 10000 >= 8000
 		Expect(result.ReplicaDemand).To(Equal(int64(10000)))
@@ -1180,7 +1157,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// This verifies the fix from the review: at 90% KV usage with 0.8 threshold,
 		// the fallback should report saturation, matching the main path behavior.
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1188,12 +1164,11 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.9, // 90% usage, threshold is 80%
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 0.9 * 10000 = 9000 >= 8000.
 		// The spec title is now actually satisfied: occupancy past the configured
@@ -1207,7 +1182,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 	It("should add queue-based demand when avg input tokens available", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1215,14 +1189,13 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.5,
 			TotalKvCapacityTokens: 0,
 			QueueLength:           3,
 			AvgInputTokens:        500,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		// demand = 0.5 * 10000 + 3 * 500 = 5000 + 1500 = 6500
@@ -1231,7 +1204,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 	It("should not add queue demand when token metrics are unavailable", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1239,14 +1211,13 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.3,
 			TotalKvCapacityTokens: 0,
 			QueueLength:           10,
 			AvgInputTokens:        0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		// demand = 0.3 * 10000 = 3000 (no queue contribution)
@@ -1255,7 +1226,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 	It("should charge queue demand by role", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1263,7 +1233,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.5,
 			TotalKvCapacityTokens: 0,
 			QueueLength:           3,
@@ -1272,12 +1241,12 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		}
 
 		// effectiveCapacity = 10000 * 0.8 = 8000; resident = 0.5 * 10000 = 5000.
-		prefill := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RolePrefill)
+		prefill := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RolePrefill, "H100")
 		Expect(prefill).NotTo(BeNil())
 		// 5000 + 3 * 500 = 6500 — output tokens excluded.
 		Expect(prefill.ReplicaDemand).To(Equal(int64(6500)))
 
-		decode := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode)
+		decode := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100")
 		Expect(decode).NotTo(BeNil())
 		// 5000 + 3 * (500 + 250) = 7250 — output tokens included.
 		Expect(decode.ReplicaDemand).To(Equal(int64(7250)))
@@ -1290,7 +1259,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		// that mismatch invents saturation, so pin the safe end: a mostly-idle
 		// replica with a few queued requests must not read as saturated.
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 8192,
 			LearnedFrom:       "deployment",
 		})
@@ -1298,7 +1266,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.10,
 			TotalKvCapacityTokens: 0,
 			QueueLength:           2,
@@ -1306,7 +1273,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			AvgOutputTokens:       100,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 8192 * 0.8 = 6553
 		// demand = 0.10 * 8192 + 2 * (200 + 100) = 819 + 600 = 1419
@@ -1316,7 +1283,6 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 	It("should populate all ReplicaCapacity fields correctly", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			EffectiveCapacity: 10000,
 			LearnedFrom:       "deployment",
 		})
@@ -1324,12 +1290,11 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		rm := domain.ReplicaMetrics{
 			PodName:               "pod-1",
 			VariantName:           "variant-a",
-			AcceleratorName:       "H100",
 			KvCacheUsage:          0.4,
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth)
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		Expect(result.PodName).To(Equal("pod-1"))
@@ -1461,10 +1426,8 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 		return domain.ReplicaMetrics{
 			PodName:               variant + "-pod-1",
 			VariantName:           variant,
-			AcceleratorName:       "H100",
 			ModelID:               "test-model",
 			Namespace:             "test-ns",
-			Cost:                  10.0,
 			TotalKvCapacityTokens: 10000,
 			TokensInUse:           1000,
 			QueueLength:           4,
@@ -1479,7 +1442,7 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 			Namespace:      "test-ns",
 			ReplicaMetrics: []domain.ReplicaMetrics{replicaFor("variant-a")},
 			VariantStates: []domain.VariantReplicaState{
-				{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1, Role: role},
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: role},
 			},
 			Config: satCfg,
 		}
@@ -1511,7 +1474,6 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 	Context("on the fallback path (no cache_config_info)", func() {
 		fallbackDemandFor := func(role string) float64 {
 			store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-				AcceleratorName:   "H100",
 				EffectiveCapacity: 10000,
 				LearnedFrom:       "deployment",
 			})
@@ -1526,7 +1488,7 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 				Namespace:      "test-ns",
 				ReplicaMetrics: []domain.ReplicaMetrics{rm},
 				VariantStates: []domain.VariantReplicaState{
-					{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1, Role: role},
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: role},
 				},
 				Config: satCfg,
 			}
@@ -1601,7 +1563,6 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 
 	It("should produce valid result using fallback when cache_config_info is absent", func() {
 		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
-			AcceleratorName:   "H100",
 			GpuCount:          1,
 			EffectiveCapacity: 8192,
 			LearnedFrom:       "deployment",
@@ -1614,10 +1575,8 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 				{
 					PodName:               "pod-1",
 					VariantName:           "variant-a",
-					AcceleratorName:       "H100",
 					ModelID:               "test-model",
 					Namespace:             "test-ns",
-					Cost:                  10.0,
 					KvCacheUsage:          0.9,
 					TotalKvCapacityTokens: 0,
 					TokensInUse:           0,
@@ -1627,7 +1586,7 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 				},
 			},
 			VariantStates: []domain.VariantReplicaState{
-				{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 			},
 			Config: &config.SaturationScalingConfig{
 				KvCacheThreshold:     0.8,
@@ -1661,16 +1620,14 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 				{
 					PodName:               "pod-1",
 					VariantName:           "variant-a",
-					AcceleratorName:       "H100",
 					ModelID:               "test-model",
 					Namespace:             "test-ns",
-					Cost:                  10.0,
 					KvCacheUsage:          0.5,
 					TotalKvCapacityTokens: 0,
 				},
 			},
 			VariantStates: []domain.VariantReplicaState{
-				{VariantName: "variant-a", CurrentReplicas: 1, GPUsPerReplica: 1},
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 			},
 			Config: &config.SaturationScalingConfig{
 				KvCacheThreshold:     0.8,
@@ -1747,7 +1704,6 @@ var _ = Describe("aggregateByVariant capacity Reason", func() {
 	It("sets Reason to P0-store when no live replicas but a capacity store record exists", func() {
 		store := NewCapacityKnowledgeStore()
 		store.Update("ns", "m", "v1", CapacityRecord{
-			AcceleratorName:   "A100",
 			EffectiveCapacity: 50000,
 			LearnedFrom:       learnedFromLive,
 		})
@@ -1817,7 +1773,7 @@ var _ = Describe("aggregateByVariant DP>1 with pending replicas", func() {
 		// so the pending pod must count as 8 instances, not 1.
 		metrics := make([]domain.ReplicaMetrics, 0, 8)
 		for i := 0; i < 8; i++ {
-			metrics = append(metrics, makeReplicaMetrics("pod-1", "decode-v1", "H100", 10.0,
+			metrics = append(metrics, makeReplicaMetrics("pod-1", "decode-v1",
 				8000, 16000, 0, 100, 50))
 		}
 

@@ -138,7 +138,6 @@ func TestBuildInstanceKey_VANameExtraction(t *testing.T) {
 				make(map[string]scaletarget.ScaleTargetAccessor),
 				make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
 				nil,
-				make(map[string]float64),
 			)
 			if err != nil {
 				t.Fatalf("CollectReplicaMetrics: %v", err)

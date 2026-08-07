@@ -25,7 +25,6 @@ var engineSpecificReplicaQueries = []string{
 	registration.QueryAvgOutputTokens,
 	registration.QueryAvgInputTokens,
 	registration.QueryPrefixCacheHitRate,
-	registration.QueryAvgTTFT,
 	registration.QueryAvgITL,
 	registration.QueryGenerationTokenRate,
 	registration.QueryKvUsageInstant,

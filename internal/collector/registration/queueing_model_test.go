@@ -39,15 +39,6 @@ var _ = Describe("RegisterQueueingModelQueries", func() {
 		})
 	})
 
-	Describe("average TTFT query", func() {
-		It("queries vllm:time_to_first_token_seconds histogram", func() {
-			q := registry.Get("prometheus").QueryList().Get(QueryAvgTTFT)
-			Expect(q).NotTo(BeNil())
-			Expect(q.Template).To(ContainSubstring("vllm:time_to_first_token_seconds_sum"))
-			Expect(q.Template).To(ContainSubstring("vllm:time_to_first_token_seconds_count"))
-		})
-	})
-
 	Describe("average ITL query", func() {
 		It("queries vllm:inter_token_latency_seconds histogram", func() {
 			q := registry.Get("prometheus").QueryList().Get(QueryAvgITL)

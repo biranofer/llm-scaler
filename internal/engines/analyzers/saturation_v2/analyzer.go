@@ -70,11 +70,16 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	// Build GPU count and P/D role lookups from variant states. The role decides
 	// how a waiting request is charged against a replica's KV capacity, so it must
 	// be known before per-replica demand is computed.
+	// Accelerator joins these two: it is variant-level identity from discovery, not
+	// a per-instance measurement, so it is read from the variant state rather than
+	// repeated on every ReplicaMetrics record.
 	gpusByVariant := make(map[string]int, len(input.VariantStates))
 	rolesByVariant := make(map[string]string, len(input.VariantStates))
+	accelByVariant := make(map[string]string, len(input.VariantStates))
 	for _, vs := range input.VariantStates {
 		gpusByVariant[vs.VariantName] = vs.GPUsPerReplica
 		rolesByVariant[vs.VariantName] = vs.Role
+		accelByVariant[vs.VariantName] = vs.AcceleratorName
 	}
 
 	// Phase 1: Per-replica capacity computation
@@ -86,7 +91,8 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		default:
 		}
 		gpuCount := gpusByVariant[rm.VariantName]
-		rc := a.computeReplicaCapacity(rm, satConfig, input.ModelID, input.Namespace, gpuCount, rolesByVariant[rm.VariantName])
+		rc := a.computeReplicaCapacity(rm, satConfig, input.ModelID, input.Namespace, gpuCount,
+			rolesByVariant[rm.VariantName], accelByVariant[rm.VariantName])
 		if rc != nil {
 			replicaCapacities = append(replicaCapacities, *rc)
 		}
@@ -137,6 +143,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	modelID, namespace string,
 	gpuCount int,
 	role string,
+	accelerator string,
 ) *ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
 		// TODO: implement proper demand estimation when vllm:cache_config_info is absent.
@@ -144,7 +151,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		// capacity from the capacity store. A better approach would be to estimate
 		// TotalKvCapacityTokens from deployment args (num_gpu_blocks_override, block_size)
 		// or use a dedicated percentage-based demand signal.
-		return a.computeReplicaCapacityFallback(rm, config, modelID, namespace, role)
+		return a.computeReplicaCapacityFallback(rm, config, modelID, namespace, role, accelerator)
 	}
 
 	// Compute demand: tokens already resident in KV cache plus the role-aware
@@ -160,7 +167,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		engineParams = rec.EngineParams
 	}
 	k2, k2Priority := a.computeK2(
-		modelID, rm.AcceleratorName,
+		modelID, accelerator,
 		gpuCount,
 		rm.QueueLength, rm.TokensInUse,
 		rm.AvgOutputTokens, rm.AvgInputTokens,
@@ -181,7 +188,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		existingParams = existing.EngineParams
 	}
 	a.capacityStore.Update(namespace, modelID, rm.VariantName, CapacityRecord{
-		AcceleratorName:       rm.AcceleratorName,
+		AcceleratorName:       accelerator,
 		GpuCount:              gpuCount,
 		NumGpuBlocks:          rm.NumGpuBlocks,
 		BlockSize:             rm.BlockSize,
@@ -194,7 +201,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	return &ReplicaCapacity{
 		PodName:               rm.PodName,
 		VariantName:           rm.VariantName,
-		AcceleratorName:       rm.AcceleratorName,
+		AcceleratorName:       accelerator,
 		TokensInUse:           rm.TokensInUse,
 		TotalKvCapacityTokens: rm.TotalKvCapacityTokens,
 		MemoryBoundCapacity:   k1,
@@ -215,6 +222,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	cfg *config.SaturationScalingConfig,
 	modelID, namespace string,
 	role string,
+	accelerator string,
 ) *ReplicaCapacity {
 	rec := a.capacityStore.Get(namespace, modelID, rm.VariantName)
 	if rec == nil || rec.EffectiveCapacity <= 0 {
@@ -265,7 +273,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	return &ReplicaCapacity{
 		PodName:               rm.PodName,
 		VariantName:           rm.VariantName,
-		AcceleratorName:       rm.AcceleratorName,
+		AcceleratorName:       accelerator,
 		TokensInUse:           replicaDemand,
 		TotalKvCapacityTokens: effectiveCapacity, // synthetic: store-derived
 		MemoryBoundCapacity:   effectiveCapacity,
@@ -405,7 +413,8 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 		} else if rec := a.capacityStore.Get(namespace, modelID, vs.VariantName); rec != nil && rec.EffectiveCapacity > 0 {
 			// No ready replicas — use stored capacity, enhanced with k2 derivation
 			// for deployment-derived records when workload data is available.
-			perReplicaCapacity = a.estimateStoredCapacity(rec, modelID, kvCacheThreshold, modelAvgInput, modelAvgOutput)
+			perReplicaCapacity = a.estimateStoredCapacity(rec, modelID, accelerator, vs.GPUsPerReplica,
+				kvCacheThreshold, modelAvgInput, modelAvgOutput)
 			capacityLabel = satReasonP0Store
 		} else if rec := a.lookupCompatibleCapacity(namespace, modelID, vs.VariantName, accelerator, vs.GPUsPerReplica); rec != nil {
 			// No own record — try cross-variant estimation from a compatible variant
@@ -493,7 +502,22 @@ func (a *SaturationAnalyzer) lookupCompatibleCapacity(namespace, modelID, varian
 //
 // Falls back to stored EffectiveCapacity (EffectiveMaxBatchedTokens) when no
 // workload data is available.
-func (a *SaturationAnalyzer) estimateStoredCapacity(rec *CapacityRecord, modelID string, kvCacheThreshold float64, modelAvgInput, modelAvgOutput float64) float64 {
+//
+// accelerator and gpuCount are the variant's hardware keys and come from the
+// discovery metadata, NOT from rec. A stored record's own copies can be empty or
+// stale — a deployment-derived record is written before any pod has reported —
+// and keying the compatibility search off them silently finds no match, which
+// reads as "no comparable variant exists" rather than "we looked with a blank
+// key". These are the same keys the record is written under, so read and write
+// agree by construction.
+func (a *SaturationAnalyzer) estimateStoredCapacity(
+	rec *CapacityRecord,
+	modelID string,
+	accelerator string,
+	gpuCount int,
+	kvCacheThreshold float64,
+	modelAvgInput, modelAvgOutput float64,
+) float64 {
 	if rec == nil {
 		return 0
 	}
@@ -517,7 +541,7 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(rec *CapacityRecord, modelID
 			}
 
 			// Bound by compatible variant's live EffectiveCapacity (already min(k1,k2))
-			if compatible := a.capacityStore.FindCompatible(modelID, rec.AcceleratorName, rec.GpuCount, rec.EngineParams); compatible != nil && compatible.LearnedFrom == learnedFromLive && compatible.EffectiveCapacity > 0 {
+			if compatible := a.capacityStore.FindCompatible(modelID, accelerator, gpuCount, rec.EngineParams); compatible != nil && compatible.LearnedFrom == learnedFromLive && compatible.EffectiveCapacity > 0 {
 				if compatible.EffectiveCapacity < bounded {
 					bounded = compatible.EffectiveCapacity
 				}

@@ -56,7 +56,6 @@ var _ = Describe("SGLang query registration", func() {
 		Expect(get(inferenceengine.EngineSGLang, QueryKvCacheUsage).Template).To(ContainSubstring("sglang:token_usage"))
 		Expect(get(inferenceengine.EngineSGLang, QueryQueueLength).Template).To(ContainSubstring("sglang:num_queue_reqs"))
 		Expect(get(inferenceengine.EngineSGLang, QueryCacheConfigInfo).Template).To(ContainSubstring("sglang:max_total_num_tokens"))
-		Expect(get(inferenceengine.EngineSGLang, QueryAvgTTFT).Template).To(ContainSubstring("sglang:time_to_first_token_seconds_sum"))
 		Expect(get(inferenceengine.EngineSGLang, QueryAvgITL).Template).To(ContainSubstring("sglang:inter_token_latency_seconds_sum"))
 		Expect(get(inferenceengine.EngineSGLang, QueryModelRequestCount).Template).To(ContainSubstring("sglang:num_requests_total"))
 
