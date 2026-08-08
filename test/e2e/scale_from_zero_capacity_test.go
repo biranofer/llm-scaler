@@ -33,19 +33,6 @@ import (
 // So the suite runs a live "occupier" workload that consumes its accelerator
 // entirely, then asserts that a parked variant on that accelerator is refused.
 //
-// STATUS: PENDING — written, not yet reproducing. Marked XDescribe so it reports
-// as pending rather than passing; do not "fix" it by deleting the X without
-// making it actually assert something.
-//
-// What is established: the occupier runs, holds 4 GPUs, and is discovered with a
-// resolved accelerator ("NVIDIA-A100-PCIE-80GB"), so conditions 1 and 2 below
-// hold. What does not happen: the engine reaches NO verdict for the parked
-// variant — neither an activation nor a refusal — which means it returns before
-// selection, i.e. it sees no pending requests for that model. Four attempts
-// eliminated: the occupier sharing the model, the occupier sharing the pool, and
-// a selector/label mismatch. The remaining suspect is whether the EPP queues at
-// all for a model whose pool has a live EPP but no ready backends of its own.
-//
 // The occupier must sit OUTSIDE the pool under test. Scale-from-zero triggers on
 // EPP flow-control queueing, and requests only queue when the pool has no ready
 // endpoints — so an occupier sharing the pool would serve them itself and no wake
@@ -57,7 +44,7 @@ import (
 // It still needs to be MEASURED, or its GPUs are not counted as used: usage is
 // summed from the saturation engine's per-model requests, which require replica
 // metrics. Hence the Service and ServiceMonitor below.
-var _ = XDescribe("Scale-From-Zero placement against GPU capacity", Serial, Label("full"), Ordered, func() {
+var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label("full"), Ordered, func() {
 	const (
 		// Product label as the kind emulator sets it on nodes; pools are keyed by
 		// its normalized short name (A100).
