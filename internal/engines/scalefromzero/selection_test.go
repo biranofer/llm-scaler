@@ -3,6 +3,7 @@ package scalefromzero
 import (
 	"testing"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
@@ -279,21 +280,52 @@ func TestDemandOfFloorsMissingGPURequest(t *testing.T) {
 
 // TestUnresolvedAcceleratorDoesNotBlockTheWake: accelerator resolution needs a
 // nodeSelector or label the workload need not carry. No provider publishes a
-// pool named "", so charging demand to it would deny every such variant and turn
-// an annotation gap into "this model can never wake".
+// pool for a placeholder, so charging demand to one would deny every such
+// variant and turn an annotation gap into "this model can never wake".
+//
+// Every placeholder the project recognises is covered, not just "". That matters
+// because accelerator.GetAcceleratorNameFromScaleTarget never returns "" — it
+// falls back to DefaultAcceleratorName — so a bare empty-string check would pass
+// this test's first case while failing in production on every unresolved
+// variant.
 func TestUnresolvedAcceleratorDoesNotBlockTheWake(t *testing.T) {
-	if demand := demandOf([]Candidate{cand("d", domain.RoleDecode, "", 4, 1)}); len(demand) != 0 {
-		t.Fatalf("demand = %v, want empty for an unresolved accelerator", demand)
+	placeholders := map[string]string{
+		"empty":                     "",
+		"DefaultAcceleratorName":    constants.DefaultAcceleratorName,
+		"UnresolvedAcceleratorType": constants.UnresolvedAcceleratorType,
 	}
 
+	for name, accel := range placeholders {
+		t.Run(name, func(t *testing.T) {
+			if demand := demandOf([]Candidate{cand("d", domain.RoleDecode, accel, 4, 1)}); len(demand) != 0 {
+				t.Fatalf("demand = %v, want empty for accelerator %q", demand, accel)
+			}
+
+			in := SelectionInput{
+				Namespace:  selNS,
+				Candidates: []Candidate{cand("d", domain.RoleDecode, accel, 4, 1)},
+				// A fully-committed cluster: a resolvable variant would be denied here.
+				Constraints: pools(map[string]int{"H100": 0}),
+			}
+			set, outcome := selectServingSet(in)
+			if outcome != OutcomeDecodeOnly || !hasAll(names(set), "d") {
+				t.Fatalf("selected %v (%s), want the variant woken despite accelerator %q",
+					names(set), outcome, accel)
+			}
+		})
+	}
+}
+
+// TestResolvedAcceleratorIsStillCharged is the counter-case: skipping
+// placeholders must not degrade into skipping the budget check altogether.
+func TestResolvedAcceleratorIsStillCharged(t *testing.T) {
 	in := SelectionInput{
-		Namespace:  selNS,
-		Candidates: []Candidate{cand("d", domain.RoleDecode, "", 4, 1)},
-		// A fully-committed cluster: a resolvable variant would be denied here.
+		Namespace:   selNS,
+		Candidates:  []Candidate{cand("d", domain.RoleDecode, "H100", 4, 1)},
 		Constraints: pools(map[string]int{"H100": 0}),
 	}
-	set, outcome := selectServingSet(in)
-	if outcome != OutcomeDecodeOnly || !hasAll(names(set), "d") {
-		t.Fatalf("selected %v (%s), want the variant woken despite an unresolved accelerator", names(set), outcome)
+	if set, outcome := selectServingSet(in); outcome != OutcomeNoCapacity || len(set) != 0 {
+		t.Fatalf("selected %v (%s), want no capacity for a resolved accelerator with an empty pool",
+			names(set), outcome)
 	}
 }

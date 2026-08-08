@@ -19,6 +19,7 @@ package scalefromzero
 import (
 	"sort"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
@@ -176,16 +177,23 @@ func fits(in SelectionInput, set []Candidate) bool {
 // is exactly the case a per-variant check would miss.
 //
 // A candidate whose accelerator could not be resolved contributes nothing. Its
-// demand cannot be charged to any pool, and charging it to the empty key would
-// be worse than useless: no provider publishes a pool named "", so the budget
-// check would deny every such variant outright. Accelerator resolution depends
-// on a nodeSelector or label that a workload need not carry, so that would turn
-// an annotation gap into "this model can never wake". Unknown placement is
-// treated the same way as an unknown budget — do not block.
+// demand cannot be charged to any pool, and charging it to the placeholder would
+// be worse than useless: no provider publishes a pool named "unknown", so the
+// budget check would deny every such variant outright. Accelerator resolution
+// depends on a nodeSelector or label that a workload need not carry, so that
+// would turn an annotation gap into "this model can never wake". Unknown
+// placement is treated the same way as an unknown budget — do not block.
+//
+// Resolution is tested with constants.IsAcceleratorResolved, the project-wide
+// predicate, rather than an empty-string check:
+// accelerator.GetAcceleratorNameFromScaleTarget never returns "" — it falls back
+// to the DefaultAcceleratorName ("unknown") sentinel — and the "unresolved"
+// label placeholder can flow back in from metrics. An == "" check would silently
+// never fire.
 func demandOf(set []Candidate) map[string]int {
 	demand := make(map[string]int, len(set))
 	for _, c := range set {
-		if c.Accelerator == "" {
+		if !constants.IsAcceleratorResolved(c.Accelerator) {
 			continue
 		}
 		gpus := c.GPUsPerReplica

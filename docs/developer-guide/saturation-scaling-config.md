@@ -110,13 +110,27 @@ decode/`both` variant to wake) and `no-capacity` (nothing fit the GPU budget).
 Role comes from the `llm-d.ai/role` pod-template label (`prefill`, `decode`, or
 absent/`both`). A model with no prefill variants is unaffected by this setting.
 
-**Placement.** Selection only wakes a variant that can actually get GPUs,
-checked against the same GPU/quota limiters the optimizer honours (see
+**Placement.** Selection prefers a variant that can actually get GPUs, checked
+against the same GPU/quota limiters the optimizer honours (see
 [`limiters`](#limiters-cluster-default-only-live)) and evaluated on the **sum**
 of the variants being woken together — prefill and decode can each fit alone
-while the pair does not. When the GPU budget cannot be determined (no limiter
-configured, or no usage snapshot published yet, as on the first cycle after a
-restart) the check is skipped rather than denying the wake.
+while the pair does not.
+
+The check is **best-effort**: when the GPU budget cannot be determined it is
+skipped rather than denying the wake, because refusing to serve a queued request
+on the strength of a missing measurement is the worse failure. It is skipped
+when any of these hold:
+
+| condition | why |
+| --- | --- |
+| no `limiters:` declared | the limiter supplies no constraints (a valid, inert limiter shape), so there is nothing to place against |
+| no usage snapshot yet | the saturation engine is the sole producer of GPU usage; until it completes one cycle there is no denominator. This is the state on the first cycle after a restart — exactly when a request may be queued |
+| accelerator unresolved | a variant with no resolvable accelerator (no nodeSelector / `inference.optimization/acceleratorName` label) cannot be charged to any pool, so it is not counted rather than denied |
+
+Note the usage snapshot is published independently of `enableLimiter`. The
+GPU-aware optimizer (`GreedyByScore`) only runs when `enableLimiter: true`, but
+the snapshot is published before that branch so scale-from-zero can still check
+placement on a default (`CostAware`) deployment.
 
 ### `limiters` (cluster-default only, live)
 

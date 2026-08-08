@@ -789,9 +789,14 @@ func (e *Engine) selectV2Optimizer(
 	//
 	// Published before the optimizer guard below, and independently of it: the
 	// usage is a property of the current population, not of which optimizer runs.
-	// Publishing after the guard would leave the snapshot empty for every
-	// deployment on the cost-aware optimizer — the default — silently disabling
-	// the scale-from-zero capacity check rather than failing visibly.
+	//
+	// The guard only lets GreedyByScore through, and GreedyByScore is selected
+	// only when the saturation config sets enableLimiter: true (see the optimizer
+	// selection in optimizeOnce). enableLimiter defaults to FALSE, so on a default
+	// deployment the optimizer is CostAware and this function returns at the
+	// guard. Publishing after it therefore left the snapshot permanently empty
+	// for most deployments, silently disabling the scale-from-zero capacity check
+	// instead of failing visibly.
 	currentUsage := computeCurrentGPUUsage(requests)
 	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
 	decision.PublishGPUUsage(currentUsage, currentUsageByNS)

@@ -134,6 +134,24 @@ const maxCost = 1e18
 // can supply constraints: proceed rather than block scaling silently. The first
 // tick after a restart has no usage snapshot yet, and that is exactly when a
 // queued request is waiting to be served.
+//
+// Two things commonly make this nil in practice, and both mean the wake is
+// published without a capacity check:
+//
+//   - The configured limiter supplies no constraints. With no limiters: list
+//     declared, NewLimiterFromConfig can yield a limiter shape that is not a
+//     ConstraintProvider (NoOpLimiter is an explicitly valid, inert value of the
+//     slot), so there is nothing to place against.
+//
+//   - No usage snapshot has been published. The saturation engine is the sole
+//     producer; until it completes a cycle there is no denominator. Note this is
+//     independent of enableLimiter — the snapshot is published before the
+//     optimizer guard precisely so that a default (CostAware) deployment still
+//     feeds this path.
+//
+// The check is therefore best-effort by construction: it prevents waking onto an
+// accelerator that is known to be full, and stays out of the way when placement
+// cannot be reasoned about.
 func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeline.ResourceConstraints {
 	logger := log.FromContext(ctx)
 
