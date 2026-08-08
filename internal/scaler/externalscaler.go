@@ -33,11 +33,17 @@ const MetricName = "wva-desired-replicas"
 // target directly, skipping the ScaledObject read.
 const variantNameKey = "variantName"
 
+// activationTTL bounds how long a "keep this target awake" decision is honoured
+// without being refreshed. See Handler.honoursDecision.
+const activationTTL = 60 * time.Second
+
 // Handler implements pb.ExternalScalerServer.
 type Handler struct {
 	pb.UnimplementedExternalScalerServer
 	client client.Client
 	store  *decision.Store
+	// now is the clock used for decision freshness; overridden in tests.
+	now func() time.Time
 }
 
 // NewHandler builds a Handler. A nil store falls back to decision.Default.
@@ -45,7 +51,46 @@ func NewHandler(c client.Client, store *decision.Store) *Handler {
 	if store == nil {
 		store = decision.Default
 	}
-	return &Handler{client: c, store: store}
+	return &Handler{client: c, store: store, now: time.Now}
+}
+
+// honoursDecision reports whether d still speaks for its target, or has gone
+// stale and should be treated as "no opinion".
+//
+// The store is a latch: Set overwrites and nothing is ever removed, so without
+// this a decision written once outlives whatever produced it. That is not
+// hypothetical — a variant briefly running long enough for the saturation engine
+// to publish "2" keeps isActive true forever after the target is scaled to zero,
+// so the target is woken the instant KEDA asks, is never observed inactive, and
+// NO engine can ever detect pending demand on it. Scale-from-zero is dead for
+// that target until the process restarts.
+//
+// The rule is asymmetric, and the asymmetry is what makes it safe:
+//
+//   - "Keep this awake" (> 0) is a claim that must be kept current. Its
+//     publishers all re-publish well inside activationTTL — the scale-from-zero
+//     engine every 100ms while a queue is pending, the saturation engine every
+//     optimize interval — so an unrefreshed positive decision means nobody is
+//     making the claim any more, and the honest answer is to look at the target
+//     instead (see currentlyRunning).
+//
+//   - "This should be asleep" (0) never expires. It is the resting state, and
+//     expiring it would flip a target that is still draining back to active,
+//     flapping against the scale-down that is already in flight.
+//
+// Note that expiry cannot strand a cold start: as soon as KEDA acts on an
+// activation the target has replicas, so the currentlyRunning fallback answers
+// "active" on its own. The activation decision only has to outlive KEDA's
+// reaction, not the pod's startup.
+func (h *Handler) honoursDecision(d decision.Decision) bool {
+	if d.DesiredReplicas <= 0 {
+		return true
+	}
+	now := h.now
+	if now == nil { // zero-value Handler (tests); NewHandler always sets it.
+		now = time.Now
+	}
+	return now().Sub(d.UpdatedAt) <= activationTTL
 }
 
 // targetName resolves the scale-target name for a ScaledObjectRef. An explicit
@@ -69,16 +114,23 @@ func (h *Handler) targetName(ctx context.Context, ref *pb.ScaledObjectRef) (stri
 	return so.Spec.ScaleTargetRef.Name, nil
 }
 
+// decisionFor returns WVA's latest decision for the ref and whether one exists
+// yet.
+func (h *Handler) decisionFor(ctx context.Context, ref *pb.ScaledObjectRef) (decision.Decision, bool, error) {
+	name, err := h.targetName(ctx, ref)
+	if err != nil {
+		return decision.Decision{}, false, err
+	}
+	d, ok := h.store.Get(ref.Namespace, name)
+	return d, ok, nil
+}
+
 // desired returns WVA's latest desired replicas for the ref and whether a
 // decision exists yet.
 func (h *Handler) desired(ctx context.Context, ref *pb.ScaledObjectRef) (int32, bool, error) {
-	name, err := h.targetName(ctx, ref)
-	if err != nil {
+	d, ok, err := h.decisionFor(ctx, ref)
+	if err != nil || !ok {
 		return 0, false, err
-	}
-	d, ok := h.store.Get(ref.Namespace, name)
-	if !ok {
-		return 0, false, nil
 	}
 	return d.DesiredReplicas, true, nil
 }
@@ -136,13 +188,17 @@ func (h *Handler) IsActive(ctx context.Context, ref *pb.ScaledObjectRef) (*pb.Is
 // unconditionally would be worse, scaling a running workload to zero before WVA
 // has looked at it. So: a target already at zero stays asleep until a decision
 // (or the scale-from-zero engine) wakes it; a running target stays up.
+//
+// A decision that has gone stale takes the same fallback as no decision at all,
+// so a target cannot be held awake by a value nobody is publishing any more —
+// see honoursDecision.
 func (h *Handler) isActive(ctx context.Context, ref *pb.ScaledObjectRef) (bool, error) {
-	d, ok, err := h.desired(ctx, ref)
+	d, ok, err := h.decisionFor(ctx, ref)
 	if err != nil {
 		return false, err
 	}
-	if ok {
-		return d > 0, nil
+	if ok && h.honoursDecision(d) {
+		return d.DesiredReplicas > 0, nil
 	}
 	return h.currentlyRunning(ctx, ref), nil
 }
