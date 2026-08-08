@@ -144,8 +144,19 @@ const (
 // If the same model and inference pool names exist in different namespaces,
 // the metrics will collide. See gateway-api-inference-extension issue #2309.
 const (
-	// SchedulerFlowControlQueueSize is the number of requests queued in the
-	// inference scheduler's flow control layer.
+	// EPPFlowControlQueueSize is the number of requests queued in the inference
+	// scheduler's flow control layer. This is the current name for the family
+	// below: llm-d's EPP exports both and marks the inference_extension_ one
+	// "[Deprecated: Use llm_d_epp_flow_control_queue_size]". Prefer this one and
+	// keep the deprecated name only as a fallback.
+	// Labels: fairness_id, priority, inference_pool, model_name, target_model_name
+	// Note: no namespace label — see TODO(#2309) above.
+	EPPFlowControlQueueSize = "llm_d_epp_flow_control_queue_size"
+
+	// SchedulerFlowControlQueueSize is the deprecated alias of
+	// EPPFlowControlQueueSize. Upstream gateway-api-inference-extension still
+	// emits only this name (and without the inference_pool/model_name/
+	// target_model_name labels llm-d's EPP adds), so it remains the fallback.
 	// Labels: fairness_id, priority, inference_pool, model_name, target_model_name
 	// Note: no namespace label — see TODO(#2309) above.
 	SchedulerFlowControlQueueSize = "inference_extension_flow_control_queue_size"

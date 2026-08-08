@@ -1,0 +1,165 @@
+/*
+Copyright 2025 The llm-d Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package scalefromzero
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+)
+
+const pendingTestModelID = "e2ewva/dummy-model"
+
+// queueSample builds one EPP flow-control queue-size sample as the pod scraping
+// source hands it over: the metric family in __name__, the rest as labels.
+func queueSample(metricName, targetModel string, value float64) source.MetricValue {
+	return source.MetricValue{
+		Value: value,
+		Labels: map[string]string{
+			metricNameLabel:      metricName,
+			targetEPPMetricLabel: targetModel,
+			"model_name":         targetModel,
+			"fairness_id":        "default-flow",
+			"priority":           "0",
+			"inference_pool":     "optimized-baseline",
+		},
+	}
+}
+
+func TestPendingRequestsForModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		values    []source.MetricValue
+		wantFound bool
+		// wantMetricName is the family the returned sample must come from, so a
+		// regression that reads the wrong (or the deprecated) family is caught
+		// rather than passing on the alias.
+		wantMetricName string
+		wantValue      float64
+	}{
+		{
+			name:           "current metric name with queued requests",
+			values:         []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 3)},
+			wantFound:      true,
+			wantMetricName: constants.EPPFlowControlQueueSize,
+			wantValue:      3,
+		},
+		{
+			name:           "deprecated metric name alone is still honoured",
+			values:         []source.MetricValue{queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 2)},
+			wantFound:      true,
+			wantMetricName: constants.SchedulerFlowControlQueueSize,
+			wantValue:      2,
+		},
+		{
+			name: "both families exported: the current one is read",
+			values: []source.MetricValue{
+				queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 5),
+				queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 5),
+			},
+			wantFound:      true,
+			wantMetricName: constants.EPPFlowControlQueueSize,
+			wantValue:      5,
+		},
+		{
+			name: "current family exported and empty: the deprecated alias must not override it",
+			values: []source.MetricValue{
+				queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 0),
+				// A stale alias sample would wake the workload with nothing queued.
+				queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 4),
+			},
+			wantFound: false,
+		},
+		{
+			name:      "queue empty",
+			values:    []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 0)},
+			wantFound: false,
+		},
+		{
+			name:      "queued requests belong to another model",
+			values:    []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, "other/model", 7)},
+			wantFound: false,
+		},
+		{
+			name: "this model's queue is picked out of a mixed set",
+			values: []source.MetricValue{
+				queueSample(constants.EPPFlowControlQueueSize, "other/model", 7),
+				queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 1),
+			},
+			wantFound:      true,
+			wantMetricName: constants.EPPFlowControlQueueSize,
+			wantValue:      1,
+		},
+		{
+			name: "unrelated EPP metrics are ignored",
+			values: []source.MetricValue{
+				{
+					Value:  9,
+					Labels: map[string]string{metricNameLabel: "llm_d_epp_flow_control_queue_bytes", targetEPPMetricLabel: pendingTestModelID},
+				},
+				{
+					Value:  9,
+					Labels: map[string]string{metricNameLabel: "inference_pool_ready_pods", "name": "optimized-baseline"},
+				},
+			},
+			wantFound: false,
+		},
+		{
+			name:      "no metrics at all",
+			values:    nil,
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := pendingRequestsForModel(tt.values, pendingTestModelID)
+			require.Equal(t, tt.wantFound, found)
+			if !tt.wantFound {
+				return
+			}
+			assert.Equal(t, tt.wantMetricName, got.Labels[metricNameLabel])
+			assert.Equal(t, tt.wantValue, got.Value)
+		})
+	}
+}
+
+// TestPendingRequestsForModelMatchesDeployedEPPLabels pins the label set the
+// llm-d EPP actually exports on this gauge. Upstream
+// gateway-api-inference-extension labels it {fairness_id, priority} only; the
+// model scoping the engine relies on comes from llm-d's added
+// target_model_name. If that label disappears the engine must stop matching —
+// silently waking every variant on the pool would be worse than not waking.
+func TestPendingRequestsForModelMatchesDeployedEPPLabels(t *testing.T) {
+	upstreamShape := []source.MetricValue{
+		{
+			Value: 4,
+			Labels: map[string]string{
+				metricNameLabel: constants.SchedulerFlowControlQueueSize,
+				"fairness_id":   "default-flow",
+				"priority":      "0",
+			},
+		},
+	}
+
+	_, found := pendingRequestsForModel(upstreamShape, pendingTestModelID)
+	assert.False(t, found, "a queue sample with no target_model_name must not match a specific model")
+}

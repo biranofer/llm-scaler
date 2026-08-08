@@ -31,6 +31,49 @@ func externalScalerAddress() string {
 	return "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
 }
 
+// expectScaleFromZeroEngineActivation waits until the WVA controller logs the
+// scale-from-zero engine publishing an activation decision for variantName.
+//
+// This asserts the *cause*, and it is the point of the assertion. The scale
+// target reaching one replica only proves that something scaled it — KEDA
+// reacting to an unrelated trigger, a saturation decision landing in the shared
+// decision store, or a leftover HPA all produce the same effect, and each has
+// passed this suite while the scale-from-zero engine did nothing. These specs
+// are about the scale-from-zero path, so a wake-up from any other source has to
+// fail them.
+//
+// variantName is the synthesized variant's name, i.e. the annotated
+// ScaledObject's name (base + "-so"), which is what the engine logs. since
+// anchors the log window — pass the moment the trigger job was created, so an
+// activation left over from an earlier run of the same suite (the variant names
+// are fixed) cannot satisfy the spec.
+func expectScaleFromZeroEngineActivation(variantName string, since time.Time) {
+	GinkgoHelper()
+	const controllerManagerLabel = "control-plane=controller-manager"
+	// Logged by internal/engines/scalefromzero once it publishes the activation
+	// to the decision store, which is what WVA pushes to KEDA.
+	const pattern = "Published scale-from-zero activation"
+	Eventually(func(g Gomega) {
+		// Recomputed per attempt so the window always starts at `since`.
+		sinceSeconds := int64(time.Since(since).Seconds()) + 1
+		ok, logs, logErr := utils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace, controllerManagerLabel, pattern, sinceSeconds)
+		g.Expect(logErr).NotTo(HaveOccurred())
+		g.Expect(ok).To(BeTrue(),
+			"scale-from-zero engine never published an activation; if the target scaled up anyway, something other than the scale-from-zero path woke it")
+		// Require the message and the variant on the same line: another variant's
+		// activation elsewhere in the log must not satisfy this spec.
+		matched := false
+		for _, line := range strings.Split(logs, "\n") {
+			if strings.Contains(line, pattern) && strings.Contains(line, variantName) {
+				matched = true
+				break
+			}
+		}
+		g.Expect(matched).To(BeTrue(),
+			"scale-from-zero activation was published, but not for variant "+variantName)
+	}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+}
+
 // cleanupScaleFromZeroResources deletes all resources created by scale-from-zero tests to ensure clean state
 func cleanupScaleFromZeroResources() {
 	GinkgoWriter.Println("Cleaning up scale-from-zero test resources for clean state...")
@@ -375,6 +418,8 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
 
 			By("Creating a job to send requests while deployment is at zero")
+			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.
+			triggerStart := time.Now()
 			triggerJobName = fmt.Sprintf("scale-from-zero-trigger-%d", time.Now().Unix())
 
 			// Create a job that sends requests to the gateway service (which routes through EPP)
@@ -401,6 +446,9 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			}).Should(Succeed())
 
 			GinkgoWriter.Println("Job pod is running and sending requests")
+
+			By("Waiting for the scale-from-zero engine to publish an activation decision")
+			expectScaleFromZeroEngineActivation(hpaName+"-so", triggerStart)
 
 			By("Monitoring deployment for scale-from-zero decision")
 			// The scale-from-zero engine detects pending requests and publishes an
@@ -832,6 +880,8 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
 
 			By("Creating a job to send requests while LWS is at zero")
+			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.
+			triggerStart := time.Now()
 			triggerJobName = fmt.Sprintf("scale-from-zero-lws-trigger-%d", time.Now().Unix())
 
 			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
@@ -856,6 +906,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			}).Should(Succeed())
 
 			GinkgoWriter.Println("Job pod is running and sending requests")
+
+			By("Waiting for the scale-from-zero engine to publish an activation decision")
+			expectScaleFromZeroEngineActivation(hpaName+"-so", triggerStart)
 
 			By("Monitoring LWS for scale-from-zero decision")
 			// The scale-from-zero engine detects pending requests and publishes an
@@ -1196,6 +1249,8 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
 
 			By("Creating a job to send requests while single-node LWS is at zero")
+			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.
+			triggerStart := time.Now()
 			triggerJobName = fmt.Sprintf("scale-from-zero-lws-single-trigger-%d", time.Now().Unix())
 
 			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
@@ -1220,6 +1275,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			}).Should(Succeed())
 
 			GinkgoWriter.Println("Job pod is running and sending requests")
+
+			By("Waiting for the scale-from-zero engine to publish an activation decision")
+			expectScaleFromZeroEngineActivation(hpaName+"-so", triggerStart)
 
 			By("Monitoring single-node LWS for scale-from-zero decision")
 			// The scale-from-zero engine detects pending requests and publishes an

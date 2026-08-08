@@ -53,9 +53,47 @@ const (
 	MetricsReasonAvailable  = "ScaleFromZero"
 	MetricsMessageAvailable = "Scaled from zero due to pending requests"
 	reasonDetails           = ": pending request - scale-up"
-	targetEPPMetricName     = "inference_extension_flow_control_queue_size"
 	targetEPPMetricLabel    = "target_model_name"
+	metricNameLabel         = "__name__"
 )
+
+// targetEPPMetricNames are the EPP flow-control queue-depth gauges the engine
+// reads to decide whether a workload parked at zero has demand waiting, in
+// preference order. llm-d's EPP renamed the family to the llm_d_epp_ prefix and
+// marks the inference_extension_ name "[Deprecated: Use
+// llm_d_epp_flow_control_queue_size]". Both are exported today, so read the new
+// name and fall back to the old one rather than pinning either — pinning the
+// deprecated name would start failing silently the moment it is dropped.
+var targetEPPMetricNames = []string{
+	constants.EPPFlowControlQueueSize,
+	constants.SchedulerFlowControlQueueSize,
+}
+
+// pendingRequestsForModel reports whether the EPP flow-control queue currently
+// holds requests for modelID, returning the matching sample.
+//
+// Only one metric family is consulted: the first name in targetEPPMetricNames
+// that the EPP actually exports. The deprecated family mirrors the preferred one,
+// so once the preferred family is present its verdict is authoritative and
+// falling through to the alias would only double-count.
+func pendingRequestsForModel(values []source.MetricValue, modelID string) (source.MetricValue, bool) {
+	for _, name := range targetEPPMetricNames {
+		exported := false
+		for _, value := range values {
+			if value.Labels[metricNameLabel] != name {
+				continue
+			}
+			exported = true
+			if value.Value > 0 && value.Labels[targetEPPMetricLabel] == modelID {
+				return value, true
+			}
+		}
+		if exported {
+			return source.MetricValue{}, false
+		}
+	}
+	return source.MetricValue{}, false
+}
 
 type Engine struct {
 	client         client.Client
@@ -260,21 +298,13 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 
 	// Check for pending requests using EPP flowcontrol queue size metrics
 	result := results["all_metrics"]
-	pendingRequestExist := false
-	for _, value := range result.Values {
-		metricName := value.Labels["__name__"]
-		if metricName == targetEPPMetricName && value.Value > 0 {
-			if value.Labels[targetEPPMetricLabel] == va.Spec.ModelID {
-				logger.Info(
-					"Target workload has pending requests, scaling up from zero", "metricName", metricName,
-					"metric", value.Labels, "value", value.Value)
-				pendingRequestExist = true
-				break
-			}
-		}
-	}
-
-	if !pendingRequestExist {
+	pending, pendingRequestExist := pendingRequestsForModel(result.Values, va.Spec.ModelID)
+	if pendingRequestExist {
+		logger.Info(
+			"Target workload has pending requests, scaling up from zero",
+			"metricName", pending.Labels[metricNameLabel],
+			"metric", pending.Labels, "value", pending.Value)
+	} else {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding (10/sec per inactive VA).
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping VA, no pending requests in flow control queue",
 			"va", va.Name,

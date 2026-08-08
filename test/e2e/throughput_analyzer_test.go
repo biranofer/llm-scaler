@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -115,7 +116,8 @@ wait || true
 `
 
 // restartWVAController patches the wva-controller-manager Deployment pod template with a
-// restartedAt annotation to trigger a rollout, then waits for the rollout to complete.
+// restartedAt annotation to trigger a rollout, then waits for the rollout to complete
+// and for the fresh pod to win leader election.
 // Returns an error so callers can Skip() rather than Fail() when the restart is
 // impractical (no RBAC, restricted environment). Uses a bounded wait.
 func restartWVAController(ctx context.Context) error {
@@ -129,6 +131,7 @@ func restartWVAController(ctx context.Context) error {
 	}
 	deadline := time.Now().Add(time.Duration(cfg.PodReadyTimeout) * time.Second)
 	poll := time.Duration(cfg.PollIntervalSec) * time.Second
+	rolledOut := false
 	for time.Now().Before(deadline) {
 		dep, err := k8sClient.AppsV1().Deployments(cfg.WVANamespace).Get(ctx, "wva-controller-manager", metav1.GetOptions{})
 		if err != nil {
@@ -137,11 +140,61 @@ func restartWVAController(ctx context.Context) error {
 		if dep.Status.UpdatedReplicas >= 1 &&
 			dep.Status.ReadyReplicas == dep.Status.UpdatedReplicas &&
 			dep.Status.UnavailableReplicas == 0 {
-			return nil
+			rolledOut = true
+			break
 		}
 		time.Sleep(poll)
 	}
-	return fmt.Errorf("wva-controller-manager rollout did not complete within %ds", cfg.PodReadyTimeout)
+	if !rolledOut {
+		return fmt.Errorf("wva-controller-manager rollout did not complete within %ds", cfg.PodReadyTimeout)
+	}
+	return waitForWVALeadership(ctx, deadline, poll)
+}
+
+// waitForWVALeadership blocks until a running controller-manager pod holds the
+// leader lease.
+//
+// Pod-Ready is not enough. Every engine — saturation, scale-from-zero — and the
+// KEDA external-scaler gRPC server are leader-gated runnables, so a Ready pod
+// that has not yet won the lease does nothing at all: it serves no decisions,
+// and its InferencePool datastore is still empty. The previous holder's lease
+// has to expire first, which takes up to LeaseDuration (60 s here), and specs
+// that start inside that window see a WVA that is up but inert. That is what
+// made the scale-from-zero specs flaky — the engine logged "Inferencepool
+// datastore is empty" and the workload was woken (or not) by something else
+// entirely.
+func waitForWVALeadership(ctx context.Context, deadline time.Time, poll time.Duration) error {
+	// The LEADER_ELECTION_ID default (internal/config/loader.go), which the e2e
+	// deployment does not override. A deployment that does override it has no
+	// lease under this name, and the NotFound branch below degrades to not
+	// waiting rather than failing.
+	const leaseName = "72dd1cf1.llm-d.ai"
+	var lastHolder string
+	for time.Now().Before(deadline) {
+		lease, err := k8sClient.CoordinationV1().Leases(cfg.WVANamespace).Get(ctx, leaseName, metav1.GetOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// Leader election disabled (or a different ID): nothing to wait for.
+				return nil
+			}
+			return fmt.Errorf("get leader lease %s: %w", leaseName, err)
+		}
+		if lease.Spec.HolderIdentity != nil {
+			lastHolder = *lease.Spec.HolderIdentity
+			// holderIdentity is "<pod-name>_<uuid>"; accept it once it names a pod
+			// that currently exists, i.e. the post-restart pod rather than the
+			// terminated one still nominally holding the lease.
+			podName, _, found := strings.Cut(lastHolder, "_")
+			if found {
+				if _, err := k8sClient.CoreV1().Pods(cfg.WVANamespace).Get(ctx, podName, metav1.GetOptions{}); err == nil {
+					return nil
+				}
+			}
+		}
+		time.Sleep(poll)
+	}
+	return fmt.Errorf("no live wva-controller-manager pod acquired the leader lease within %ds (last holder %q)",
+		cfg.PodReadyTimeout, lastHolder)
 }
 
 // buildThroughputSustainedLoadJob returns a Job spec that sends continuous completions
