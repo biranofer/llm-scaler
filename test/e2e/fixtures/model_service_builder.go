@@ -34,6 +34,41 @@ func WithRole(role string) ModelServiceOption {
 	}
 }
 
+// WithAcceleratorNodeSelector pins the workload to a GPU product, which is what
+// makes its accelerator RESOLVABLE. Without it, WVA cannot attribute the
+// workload's GPUs to any pool: its demand is not charged and its usage is not
+// counted, so the capacity check has nothing to decide on.
+//
+// productName is the node's `nvidia.com/gpu.product` value, e.g.
+// "NVIDIA-A100-PCIE-80GB".
+func WithAcceleratorNodeSelector(productName string) ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		if d.Spec.Template.Spec.NodeSelector == nil {
+			d.Spec.Template.Spec.NodeSelector = map[string]string{}
+		}
+		d.Spec.Template.Spec.NodeSelector["nvidia.com/gpu.product"] = productName
+	}
+}
+
+// WithGPURequest sets the pod's GPU resource request/limit, which is how WVA
+// derives GPUs-per-replica (scaletarget.GetTotalGPUsPerReplica).
+func WithGPURequest(count int64) ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		for i := range d.Spec.Template.Spec.Containers {
+			c := &d.Spec.Template.Spec.Containers[i]
+			if c.Resources.Requests == nil {
+				c.Resources.Requests = corev1.ResourceList{}
+			}
+			if c.Resources.Limits == nil {
+				c.Resources.Limits = corev1.ResourceList{}
+			}
+			qty := *resource.NewQuantity(count, resource.DecimalSI)
+			c.Resources.Requests["nvidia.com/gpu"] = qty
+			c.Resources.Limits["nvidia.com/gpu"] = qty
+		}
+	}
+}
+
 // CreateModelService creates the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; callers must use CreateService or EnsureService
 // (typically naming the Service name + "-service") to expose the deployment.

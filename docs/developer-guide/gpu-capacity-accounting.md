@@ -141,3 +141,33 @@ has allocated, not as a statement about cluster-wide GPU availability. Operators
 who need a hard ceiling should declare an explicit quota limiter (see
 [`limiters`](saturation-scaling-config.md#limiters-cluster-default-only-live)),
 which is enforced independently of physical discovery.
+
+## Testing the placement check end-to-end
+
+The scale-from-zero placement check has unit coverage on every seam, but its
+**deny** branch is not yet exercised end-to-end. Three conditions must hold
+simultaneously for a denial to be reachable at all:
+
+1. the variant's accelerator resolves — a `nodeSelector` on a GPU product label,
+   or the `inference.optimization/acceleratorName` label. Without it the
+   candidate contributes no demand and `FitsGPUBudget` returns true having
+   evaluated nothing;
+2. a GPU-usage snapshot exists — which requires at least one **active**
+   WVA-managed variant, since the saturation engine publishes only measured
+   cycles; and
+3. that usage is attributed to the same pool key the limits use (see the key
+   reconciliation above).
+
+Condition 2 conflicts with the trigger itself. Scale-from-zero fires on EPP
+flow-control queueing, and requests only queue when the pool has **no ready
+endpoints** — but the running variant needed for condition 2 supplies exactly
+those endpoints, so requests are dispatched to it and no wake is ever considered.
+
+Resolving it needs the occupying workload in a **second InferencePool**: it still
+consumes GPUs and is still measured, but it does not serve the pool under test.
+Every e2e fixture currently stamps `llm-d.ai/guide: optimized-baseline`, so they
+all land in one pool.
+
+`test/e2e/scale_from_zero_capacity_test.go` implements the scenario and skips
+until a second pool exists. Until then, treat the deny branch as unit-tested
+only.
