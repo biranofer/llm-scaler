@@ -13,6 +13,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -86,6 +87,28 @@ func expectScaleFromZeroEngineActivation(variantName string, since time.Time, al
 		g.Expect(matched).To(BeTrue(),
 			"no single activation line contained all of %v", required)
 	}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+}
+
+// skipIfNoLeaderWorkerSet skips the calling suite when the LeaderWorkerSet CRD is
+// not installed.
+//
+// CI installs it (DEPLOY_LWS=true), but a cluster brought up without it must skip
+// rather than fail: the LWS suites' BeforeAll creates a LeaderWorkerSet, which
+// errors with a no-kind-match the moment the CRD is absent, and the controller
+// itself degrades gracefully in that case ("LeaderWorkerSet CRD not found -
+// support disabled"). Mirrors how EnsureInferenceObjective reports an absent
+// optional API rather than failing on it.
+func skipIfNoLeaderWorkerSet() {
+	GinkgoHelper()
+	lwsList := &unstructured.UnstructuredList{}
+	lwsList.SetAPIVersion("leaderworkerset.x-k8s.io/v1")
+	lwsList.SetKind("LeaderWorkerSetList")
+	err := crClient.List(ctx, lwsList, client.InNamespace(cfg.LLMDNamespace), client.Limit(1))
+	if err != nil && meta.IsNoMatchError(err) {
+		Skip("LeaderWorkerSet CRD not installed on this cluster; " +
+			"deploy with DEPLOY_LWS=true to exercise the LWS scale-from-zero paths")
+	}
+	Expect(err).NotTo(HaveOccurred(), "listing LeaderWorkerSets should either succeed or report the CRD missing")
 }
 
 // cleanupScaleFromZeroResources deletes all resources created by scale-from-zero tests to ensure clean state
@@ -648,6 +671,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
 
+		// The LWS suites create a LeaderWorkerSet; without the CRD that is a
+		// hard failure rather than an honest skip.
+		skipIfNoLeaderWorkerSet()
+
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()
 
@@ -1013,6 +1040,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			Skip("This suite requires EPP flow-control queuing: " +
 				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
+
+		// The LWS suites create a LeaderWorkerSet; without the CRD that is a
+		// hard failure rather than an honest skip.
+		skipIfNoLeaderWorkerSet()
 
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()
