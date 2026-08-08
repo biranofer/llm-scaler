@@ -115,19 +115,19 @@ func (e *Engine) buildCandidates(
 	return candidates, pool, nil
 }
 
-// candidateAccelerator resolves the variant's accelerator into the SAME units the
-// GPU pools are keyed by.
+// candidateAccelerator returns the variant's accelerator exactly as declared.
 //
-// GetAcceleratorNameFromScaleTarget returns the raw nodeSelector/label value
-// ("NVIDIA-A100-PCIE-80GB"), while TypeInventory.Refresh normalizes pool keys to
-// short names ("A100"). Comparing the two directly means a variant that selects
-// GPUs by product label resolves fine, matches no pool, and is denied a wake —
-// a refusal for a perfectly placeable variant. Normalizing here puts both sides
-// in short-name space. The call is idempotent for names that are already short,
-// and leaves the "unknown" placeholder untouched so the unresolved check in
-// demandOf still recognises it.
+// It is deliberately NOT normalized here. Pool keys are normalized short names
+// while a workload may declare either a full product label
+// ("NVIDIA-A100-PCIE-80GB") or an already-short one ("A100"), so the two sides
+// have to be reconciled — but doing it by normalizing the candidate is wrong in
+// both directions. NormalizeAcceleratorName guesses for names it has no vendor
+// prefix for ("Gaudi-2" -> "2", via its `return parts[1]` fallback), so
+// normalizing a short name that happens to contain a hyphen produces a value
+// matching no pool at all. Reconciliation instead happens at lookup time against
+// the pool keys that actually exist — see FitsGPUBudget.
 func candidateAccelerator(va *wvav1alpha1.VariantAutoscaling, scaleTarget scaletarget.ScaleTargetAccessor) string {
-	return accel.NormalizeAcceleratorName(accel.GetAcceleratorNameFromScaleTarget(va, scaleTarget))
+	return accel.GetAcceleratorNameFromScaleTarget(va, scaleTarget)
 }
 
 // resolveVariantCost reads the variant's declared cost, falling back to the project

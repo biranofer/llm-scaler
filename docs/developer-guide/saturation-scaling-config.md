@@ -128,7 +128,7 @@ when any of these hold:
 | the limiter could not be built at startup | there is nothing to place against. Note that declaring no `limiters:` list does **not** land here — it selects the inventory mode, which builds a physical limiter that does supply constraints |
 | no usage snapshot yet | the saturation engine is the sole producer of GPU usage; until it completes one cycle there is no denominator. This is the state on the first cycle after a restart — exactly when a request may be queued |
 | a provider failed to compute constraints | a partial view would deny any accelerator type the surviving providers happen not to mention, turning "could not reach this provider" into "cannot place this variant" |
-| accelerator unresolved | a variant with no resolvable accelerator (no nodeSelector / `inference.optimization/acceleratorName` label) cannot be charged to any pool, so it is not counted rather than denied |
+| — | *(An unresolved accelerator does not skip the check: that candidate simply contributes no demand, and the rest of the set is still checked. A variant with no nodeSelector/nodeAffinity GPU key and no `inference.optimization/acceleratorName` label cannot be charged to any pool, so it is not counted rather than denied.)* |
 
 > **The GPU budget over-states free capacity in two known ways**, affecting the
 > GPU-aware optimizer as well as scale-from-zero: usage on an unresolved

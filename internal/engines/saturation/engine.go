@@ -578,6 +578,23 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// failed list returns above, so reaching here means there really are no
 		// active models.
 		e.evictAllAnalyzerSeries()
+
+		// Deliberately does NOT publish a GPU-usage snapshot here.
+		//
+		// It is tempting to: this is the state scale-from-zero exists for, and a
+		// snapshot published only below never reaches it. But an EMPTY snapshot
+		// is not the same claim as "no GPUs are in use", and publishing one is
+		// worse than publishing nothing. `requests` is also empty when collection
+		// merely FAILED — an unreachable Prometheus, a namespace whose config did
+		// not load — so publishing on this path would overwrite a good snapshot
+		// with zeros during an outage and invite wakes onto a full cluster. Under
+		// a namespace-scoped quota it is worse still: an empty active-namespace
+		// set materialises no NamespacePools, which reads as "no pool covers this
+		// type" and denies every wake permanently, with nothing able to publish a
+		// non-empty snapshot because nothing is running.
+		//
+		// Absence is the honest signal, and the consumer already treats it as
+		// unknown-so-do-not-block (see scalefromzero gpuConstraints).
 		return nil
 	}
 

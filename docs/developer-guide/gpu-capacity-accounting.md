@@ -20,7 +20,7 @@ times out anyway — a wake that looks like progress and delivers none.
 `DefaultLimiter.ComputeConstraints` builds a `ResourcePool` per accelerator type:
 
 ```
-Limit = total GPUs of that type installed across all nodes   (node discovery)
+Limit = sum of node Allocatable for that GPU type, across nodes  (node discovery)
 Used  = GPUs WVA believes its own managed variants hold       (caller-supplied)
 Available() = max(0, Limit - Used)
 ```
@@ -28,6 +28,45 @@ Available() = max(0, Limit - Used)
 `Used` is not measured. It is passed in by the saturation engine, which sums
 `CurrentReplicas × GPUsPerReplica` over the variants it manages
 (`gpuUsageByType`), and is keyed by the variant's resolved accelerator type.
+
+## Gap 0: `Used` is keyed differently from `Limit`, so it is usually 0
+
+This is the one that makes the budgets inert, and it subsumes Gap 1.
+
+Pool **limits** are keyed by *normalized short names*: `TypeInventory.Refresh`
+runs each discovered node product label through `NormalizeAcceleratorName`, so
+`NVIDIA-A100-PCIE-80GB` becomes `A100`.
+
+Pool **usage** is keyed by whatever the workload declares. `gpuUsageByType` keys
+by `VariantMetadata.AcceleratorName`, which is
+`GetAcceleratorNameFromScaleTarget` — the nodeSelector/label value **verbatim**,
+never normalized.
+
+`GetResourcePools` then iterates the limit keys and looks usage up by them:
+
+```go
+for accType, limit := range i.limitByType {   // "A100"
+    used := i.usedByType[accType]             // usage was filed under "NVIDIA-A100-PCIE-80GB"
+```
+
+So for the common deployment shape — a workload pinning itself with
+`nvidia.com/gpu.product: NVIDIA-A100-PCIE-80GB` — **`Used` is always 0** and every
+pool reports its full complement free, however much is actually running. Gap 1 is
+the special case of this where the declared name is the `unknown` placeholder.
+
+Consequence: the scale-from-zero placement check and the GPU-aware optimizer both
+see an empty cluster. The check cannot deny, so it neither prevents a bad wake nor
+(usefully) permits a good one — it is inert rather than wrong. Demand-side naming
+is reconciled at lookup time (`pipeline.resolvePoolKey` tries the declared name,
+then its normalization), so demand finds the right pool; the usage side has no
+equivalent and is where a fix belongs.
+
+**Fix:** normalize at the point usage is accumulated, so both sides of a pool are
+in short-name space. That is a one-line change in `gpuUsageByType`, but it is a
+real behaviour change on the main scaling path: today the optimizer believes the
+cluster is empty and allocates accordingly, and correcting `Used` will make it
+allocate less. It should be made deliberately, with the optimizer's behaviour
+re-validated, not as a drive-by.
 
 ## Gap 1: usage on an unresolved accelerator is invisible
 
@@ -40,7 +79,7 @@ its GPUs are recorded under that key.
 
 ```go
 for accType, limit := range i.limitByType {   // discovered types only
-    used := i.usedByType[accType]             // "unknown" is never a key here
+    used := i.usedByType[accType]             // accType is never "unknown"
 ```
 
 so the placeholder entry has nowhere to land and is silently dropped. With 8
@@ -75,8 +114,10 @@ If the accounting is ever changed, the two candidates are:
 
 ## Gap 2 (future work): `Limit` is installed GPUs, not available GPUs
 
-`Limit` comes from node **capacity** discovery — every GPU installed on every
-node — and `Used` counts only what WVA itself manages. Everything else competing
+`Limit` sums each node's **Allocatable** for the GPU resource and `Used` counts
+only what WVA itself manages. Allocatable is the node's total for that resource;
+it does not subtract what running pods have requested, and it does not go to zero
+when a node is cordoned or `NotReady`. Everything else competing
 for those GPUs is invisible:
 
 - workloads in other namespaces, or not managed by WVA at all;
@@ -108,8 +149,8 @@ Switching the call is not sufficient on its own. A fix must:
    since WVA's managed pods are also real pods, so they must not be summed. The
    discovered figure most likely **replaces** the supplied one, with WVA's
    accounting kept only for in-flight replicas not yet visible as pods.
-4. Prefer node **allocatable** over capacity, and exclude unschedulable nodes, so
-   drained capacity is not counted.
+4. Exclude unschedulable nodes (cordoned / `NotReady`), which Allocatable alone
+   does not do, so drained capacity is not counted as available.
 5. Keep the "unknown means do not block" posture — a discovery failure must not
    deny scale-up, matching the existing fallback when no provider can supply
    constraints.

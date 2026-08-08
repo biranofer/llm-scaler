@@ -74,9 +74,12 @@ func NewHandler(c client.Client, store *decision.Store) *Handler {
 //     unrefreshed positive decision means nobody is making the claim any more,
 //     and the honest answer is to look at the target instead (see
 //     currentlyRunning). GLOBAL_OPT_INTERVAL has only a lower bound, so a
-//     deployment configuring it above activationTTL will expire decisions between
-//     publishes; the fallback then answers from the target's replica count, which
-//     for a running target is still "active", so the effect is benign.
+//     deployment configuring it at or above activationTTL expires decisions
+//     between publishes as a matter of course — and this repo ships one:
+//     config/components/openshift/configmap-patch.yaml sets 60s, exactly the TTL.
+//     The effect is benign, because the fallback then answers from the target's
+//     replica count, which for a running target is still "active"; but it is the
+//     normal case there, not an edge case.
 //
 //   - "This should be asleep" (0) never expires. It is the resting state, and
 //     expiring it would flip a target that is still draining back to active,

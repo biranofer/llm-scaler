@@ -30,35 +30,16 @@ func nodeSelectorTarget(productLabelValue string) scaletarget.ScaleTargetAccesso
 	})
 }
 
-// TestCandidateAcceleratorIsInPoolKeySpace is the regression test for a wake
-// being DENIED for a perfectly placeable variant.
-//
-// Candidates and GPU pools have to be keyed in the same units. Pool keys come
-// from TypeInventory.Refresh, which normalizes discovered product names to short
-// names; the candidate side reads the workload's raw nodeSelector value. When
-// those disagreed, a variant selecting GPUs by product label resolved fine,
-// matched no pool, and FitsGPUBudget denied it.
-//
-// The expected value here is deliberately the same literal that
-// TestPoolKeysAreShortNames in internal/engines/pipeline asserts from the
-// inventory side: if either side stops normalizing, one of the two fails.
-func TestCandidateAcceleratorIsInPoolKeySpace(t *testing.T) {
-	tests := []struct {
-		name  string
-		given string
-		want  string
-	}{
-		{name: "nvidia product label", given: "NVIDIA-A100-PCIE-80GB", want: "A100"},
-		{name: "already a short name", given: "A100", want: "A100"},
-		{name: "amd product label", given: "AMD-MI300X-192G", want: "MI300X"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := candidateAccelerator(&wvav1alpha1.VariantAutoscaling{}, nodeSelectorTarget(tt.given))
-			if got != tt.want {
-				t.Fatalf("candidateAccelerator(%q) = %q, want %q — candidates must be keyed like GPU pools",
-					tt.given, got, tt.want)
+// TestCandidateAcceleratorIsDeclaredVerbatim: the candidate keeps the name the
+// workload declares. Reconciling it with pool keys happens at lookup time
+// (pipeline.FitsGPUBudget), because normalizing here mangles short names with a
+// hyphen — NormalizeAcceleratorName("Gaudi-2") is "2", which matches no pool.
+func TestCandidateAcceleratorIsDeclaredVerbatim(t *testing.T) {
+	for _, declared := range []string{"NVIDIA-A100-PCIE-80GB", "A100", "Gaudi-2"} {
+		t.Run(declared, func(t *testing.T) {
+			got := candidateAccelerator(&wvav1alpha1.VariantAutoscaling{}, nodeSelectorTarget(declared))
+			if got != declared {
+				t.Fatalf("candidateAccelerator(%q) = %q, want it unchanged", declared, got)
 			}
 		})
 	}
@@ -146,7 +127,7 @@ func TestGPUConstraintsPosture(t *testing.T) {
 	})
 
 	t.Run("no usage snapshot means no capacity check", func(t *testing.T) {
-		decision.DefaultGPUUsage = decision.NewGPUUsageStore() // nothing published
+		decision.DefaultGPUUsage.Reset() // nothing published
 		e := &Engine{gpuLimiter: healthy}
 		if got := e.gpuConstraints(ctx, "chat"); got != nil {
 			t.Fatalf("gpuConstraints = %v, want nil before any usage snapshot exists", got)
@@ -154,7 +135,7 @@ func TestGPUConstraintsPosture(t *testing.T) {
 	})
 
 	t.Run("a failing provider makes the whole verdict unknown", func(t *testing.T) {
-		decision.DefaultGPUUsage = decision.NewGPUUsageStore()
+		decision.DefaultGPUUsage.Reset()
 		decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
 
 		e := &Engine{gpuLimiter: pipeline.NewCompositeLimiter("composite",
@@ -167,7 +148,7 @@ func TestGPUConstraintsPosture(t *testing.T) {
 	})
 
 	t.Run("healthy providers yield constraints", func(t *testing.T) {
-		decision.DefaultGPUUsage = decision.NewGPUUsageStore()
+		decision.DefaultGPUUsage.Reset()
 		decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
 
 		e := &Engine{gpuLimiter: healthy}

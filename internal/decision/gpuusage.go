@@ -77,8 +77,24 @@ func (s *GPUUsageStore) Get() (*GPUUsage, bool) {
 	return s.snap, true
 }
 
+// Reset drops the stored snapshot, returning the store to its "nothing published
+// yet" state.
+//
+// Provided so tests can isolate themselves WITHOUT reassigning DefaultGPUUsage:
+// that variable is read unsynchronized by PublishGPUUsage and LatestGPUUsage, so
+// swapping the pointer is a data race against any concurrent user of the store,
+// which the store's own mutex cannot protect against.
+func (s *GPUUsageStore) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snap = nil
+}
+
 // DefaultGPUUsage is the process-wide snapshot store, written by the saturation
 // engine and read by the scale-from-zero engine.
+//
+// Treat this as immutable after init: use Reset to clear it rather than
+// assigning a new store, for the reason given there.
 var DefaultGPUUsage = NewGPUUsageStore()
 
 // PublishGPUUsage records a snapshot in the default store.

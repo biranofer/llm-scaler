@@ -135,3 +135,42 @@ func TestFitsGPUBudget(t *testing.T) {
 		})
 	}
 }
+
+// TestFitsGPUBudgetReconcilesAcceleratorNaming covers the two vocabularies a
+// workload and the pools can be written in.
+//
+// Pool keys are normalized short names; a workload may declare either the full
+// product label or an already-short name. Both must find their pool — and
+// critically, a short name that CONTAINS a hyphen must be matched directly
+// rather than normalized, since NormalizeAcceleratorName("Gaudi-2") is "2".
+// Normalizing unconditionally denied such a variant a wake it should have got.
+func TestFitsGPUBudgetReconcilesAcceleratorNaming(t *testing.T) {
+	// Pools as TypeInventory.Refresh would key them.
+	constraints := []*ResourceConstraints{clusterPools(map[string]ResourcePool{
+		"A100":    {Limit: 8, Used: 0},
+		"Gaudi-2": {Limit: 4, Used: 0},
+	})}
+
+	tests := []struct {
+		name     string
+		declared string
+		need     int
+		want     bool
+	}{
+		{name: "full product label finds its normalized pool", declared: "NVIDIA-A100-PCIE-80GB", need: 4, want: true},
+		{name: "full product label is still bounded by that pool", declared: "NVIDIA-A100-PCIE-80GB", need: 9, want: false},
+		{name: "short name matches directly", declared: "A100", need: 4, want: true},
+		{name: "hyphenated short name matches directly, not via normalization", declared: "Gaudi-2", need: 2, want: true},
+		{name: "hyphenated short name is still bounded", declared: "Gaudi-2", need: 5, want: false},
+		{name: "a genuinely unknown type is denied", declared: "TPU-v5", need: 1, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FitsGPUBudget(constraints, budgetNS, map[string]int{tt.declared: tt.need})
+			if got != tt.want {
+				t.Fatalf("FitsGPUBudget(%s x%d) = %v, want %v", tt.declared, tt.need, got, tt.want)
+			}
+		})
+	}
+}

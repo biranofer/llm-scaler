@@ -189,6 +189,10 @@ func (e *Engine) optimize(ctx context.Context) error {
 	groups := groupInactiveByModel(inactiveVAs)
 	logger.V(logging.DEBUG).Info("Grouped inactive variants by model", "models", len(groups))
 
+	// Keep the refusal bookkeeping to the models still under consideration; it
+	// would otherwise grow for the life of the process.
+	e.pruneRefusals(groups)
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, e.maxConcurrency)
 	errorCh := make(chan error, e.maxConcurrency)
@@ -332,8 +336,12 @@ func (e *Engine) processInactiveModel(
 			"modelID", group.modelID)
 		return nil
 	}
-	logger.Info(
-		"Target workload has pending requests, scaling up from zero",
+	// DEBUG, not Info: this fires on every 100ms tick for as long as ANY request
+	// is queued, including for models that are already serving fine and for
+	// refusals whose reason has not changed. The events worth an Info line are
+	// the outcomes below — a wake, or a refusal — not the demand itself.
+	logger.V(logging.DEBUG).Info(
+		"Target workload has pending requests",
 		"metricName", pending.Labels[metricNameLabel],
 		"metric", pending.Labels, "value", pending.Value)
 
@@ -349,6 +357,12 @@ func (e *Engine) processInactiveModel(
 		if outcome == OutcomeAlreadyServing {
 			// The steady state for every serving model with a queue. Not a
 			// refusal, and on a 100ms loop it must never reach Info.
+			//
+			// Clear any remembered refusal too: the model is no longer in a
+			// refused state, so if it parks again and is refused for the same
+			// reason later, that is news and must be reported rather than
+			// suppressed as unchanged.
+			e.clearRefusal(group.key())
 			logger.V(logging.DEBUG).Info("Scale-from-zero: model already has a running decode, leaving it to the saturation engine",
 				"namespace", group.namespace, "modelID", group.modelID)
 			return nil

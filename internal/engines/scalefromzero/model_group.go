@@ -100,6 +100,30 @@ func (e *Engine) clearRefusal(key string) {
 	delete(e.lastRefusal, key)
 }
 
+// pruneRefusals drops remembered refusals for models that are no longer in the
+// inactive population.
+//
+// Without this the map is append-only in a process that runs for the life of the
+// cluster: every model that is ever refused and then deleted — or simply scaled
+// up and left there — keeps its entry forever. The bookkeeping is only
+// meaningful for models this cycle is actually considering.
+func (e *Engine) pruneRefusals(groups []modelGroup) {
+	e.refusalMu.Lock()
+	defer e.refusalMu.Unlock()
+	if len(e.lastRefusal) == 0 {
+		return
+	}
+	live := make(map[string]struct{}, len(groups))
+	for _, g := range groups {
+		live[g.key()] = struct{}{}
+	}
+	for key := range e.lastRefusal {
+		if _, ok := live[key]; !ok {
+			delete(e.lastRefusal, key)
+		}
+	}
+}
+
 // coverage records which P/D roles a model is already running.
 type coverage struct {
 	decode  bool

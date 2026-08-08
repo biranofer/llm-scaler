@@ -1,5 +1,7 @@
 package pipeline
 
+import "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+
 // FitsGPUBudget reports whether allocating demand — GPUs keyed by accelerator
 // type — is permitted in namespace under the given constraints.
 //
@@ -34,15 +36,16 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 	perType := mergeConstraints(constraints)
 	nsBudgets, nsScoped := mergeNamespaceConstraints(constraints)[namespace]
 
-	for accType, need := range demand {
+	for rawType, need := range demand {
 		if need <= 0 {
 			continue
 		}
 
-		budget, known := perType[accType]
+		accType, known := resolvePoolKey(perType, rawType)
 		if !known {
 			return false
 		}
+		budget := perType[accType]
 
 		if nsScoped {
 			nsBudget, listed := nsBudgets[accType]
@@ -63,4 +66,31 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 	}
 
 	return true
+}
+
+// resolvePoolKey maps an accelerator name as a WORKLOAD declares it onto the key
+// the pools actually use, reporting whether any pool covers it.
+//
+// The two sides are written in different vocabularies and neither can be
+// changed unilaterally: pool keys come from node product labels normalized to
+// short names ("A100"), while a workload's nodeSelector or
+// inference.optimization/acceleratorName label may carry either the full product
+// name ("NVIDIA-A100-PCIE-80GB") or the short one.
+//
+// Matching the declared name first and only then its normalization is what keeps
+// this correct in both directions. Normalizing unconditionally is not safe:
+// NormalizeAcceleratorName falls back to "the part after the first hyphen" for
+// names with no vendor prefix it knows, so an already-short "Gaudi-2" becomes
+// "2" and matches nothing. Trying the declared name first means such a name is
+// found directly, and only names that genuinely need de-vendoring are normalized.
+func resolvePoolKey(perType map[string]int, declared string) (string, bool) {
+	if _, ok := perType[declared]; ok {
+		return declared, true
+	}
+	if normalized := accelerator.NormalizeAcceleratorName(declared); normalized != declared {
+		if _, ok := perType[normalized]; ok {
+			return normalized, true
+		}
+	}
+	return "", false
 }
