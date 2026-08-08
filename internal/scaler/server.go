@@ -8,6 +8,8 @@ import (
 	"google.golang.org/grpc"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 )
 
 // Server is a controller-runtime manager.Runnable that serves WVA's KEDA
@@ -22,6 +24,9 @@ type Server struct {
 	Addr string
 	// Client reads KEDA ScaledObjects to resolve scale targets.
 	Client client.Client
+	// Registry is where incoming calls register the workloads they name — WVA's
+	// discovery. Nil uses registry.Default, which is what the engines read.
+	Registry *registry.Registry
 }
 
 // Start listens and serves until ctx is cancelled, then stops gracefully.
@@ -35,7 +40,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	grpcServer := grpc.NewServer()
-	pb.RegisterExternalScalerServer(grpcServer, NewHandler(s.Client, nil))
+	pb.RegisterExternalScalerServer(grpcServer, NewHandler(s.Client, nil, s.Registry))
 	logger.Info("KEDA external scaler listening", "addr", s.Addr)
 
 	serveErr := make(chan error, 1)

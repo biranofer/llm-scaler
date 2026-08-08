@@ -66,6 +66,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	prometheusutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/scaler"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/crd"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
@@ -560,7 +561,17 @@ func main() {
 	// Register the KEDA external scaler gRPC server. Leader-gated (a plain
 	// manager.Runnable) so it is co-located with the optimize loop that feeds the
 	// in-memory decision store it serves.
-	if err := mgr.Add(&scaler.Server{Addr: *externalScalerBindAddress, Client: mgr.GetClient()}); err != nil {
+	//
+	// It writes registry.Default as well as reading the decision store: every call
+	// registers the workload it names, which is how WVA discovers what it manages
+	// (docs/plans/engine/keda-driven-discovery.md). Leader-gating it therefore also
+	// gates discovery — correct, since only the leader runs the engines that
+	// consume the registry.
+	if err := mgr.Add(&scaler.Server{
+		Addr:     *externalScalerBindAddress,
+		Client:   mgr.GetClient(),
+		Registry: registry.Default,
+	}); err != nil {
 		setupLog.Error(err, "unable to add KEDA external scaler to manager")
 		os.Exit(1)
 	}

@@ -22,16 +22,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 )
 
 // MetricName is the external metric WVA exposes to KEDA/HPA. It is advertised
 // with a target of 1, so HPA computes ceil(metricValue / 1) = metricValue and
 // scales the target to exactly WVA's desired replica count.
 const MetricName = "wva-desired-replicas"
-
-// variantNameKey is an optional scalerMetadata override that names the scale
-// target directly, skipping the ScaledObject read.
-const variantNameKey = "variantName"
 
 // activationTTL bounds how long a "keep this target awake" decision is honoured
 // without being refreshed. See Handler.honoursDecision.
@@ -42,16 +39,40 @@ type Handler struct {
 	pb.UnimplementedExternalScalerServer
 	client client.Client
 	store  *decision.Store
+	// registry is the set of workloads WVA manages. Every RPC registers its ref
+	// there — see observe.
+	registry *registry.Registry
 	// now is the clock used for decision freshness; overridden in tests.
 	now func() time.Time
 }
 
-// NewHandler builds a Handler. A nil store falls back to decision.Default.
-func NewHandler(c client.Client, store *decision.Store) *Handler {
+// NewHandler builds a Handler. A nil store falls back to decision.Default, and a
+// nil reg to registry.Default.
+func NewHandler(c client.Client, store *decision.Store, reg *registry.Registry) *Handler {
 	if store == nil {
 		store = decision.Default
 	}
-	return &Handler{client: c, store: store, now: time.Now}
+	if reg == nil {
+		reg = registry.Default
+	}
+	return &Handler{client: c, store: store, registry: reg, now: time.Now}
+}
+
+// observe records that KEDA has asked about this ref. It is the discovery event:
+// WVA does not look for the workloads it manages, it manages the ones it is
+// called about (docs/plans/engine/keda-driven-discovery.md).
+//
+// Called at the top of every RPC, including ones whose answer does not depend on
+// the ref, because registration is the point and the answer is incidental. It
+// never fails and never rejects: metadata that does not parse is still a
+// registration — the engine reports the bad trigger once per cycle with the
+// object's name attached, which is a far better diagnostic than a workload that
+// silently never appears.
+func (h *Handler) observe(ref *pb.ScaledObjectRef) {
+	if ref == nil || h.registry == nil {
+		return
+	}
+	h.registry.Observe(ref.GetNamespace(), ref.GetName(), ref.GetScalerMetadata())
 }
 
 // honoursDecision reports whether d still speaks for its target, or has gone
@@ -114,7 +135,7 @@ func (h *Handler) targetName(ctx context.Context, ref *pb.ScaledObjectRef) (stri
 	if ref == nil {
 		return "", status.Error(codes.InvalidArgument, "scaledObjectRef is required")
 	}
-	if v := ref.GetScalerMetadata()[variantNameKey]; v != "" {
+	if v := ref.GetScalerMetadata()[registry.VariantNameKey]; v != "" {
 		return v, nil
 	}
 	var so kedav1alpha1.ScaledObject
@@ -151,7 +172,12 @@ func (h *Handler) desired(ctx context.Context, ref *pb.ScaledObjectRef) (int32, 
 
 // GetMetricSpec advertises the WVA metric with a target of 1 so HPA scales the
 // target to exactly the value GetMetrics returns.
-func (h *Handler) GetMetricSpec(_ context.Context, _ *pb.ScaledObjectRef) (*pb.GetMetricSpecResponse, error) {
+//
+// The response does not depend on the ref, but the call still registers it: KEDA
+// asks for the spec when it starts managing a ScaledObject, which makes this the
+// earliest notice WVA gets that a workload exists.
+func (h *Handler) GetMetricSpec(_ context.Context, ref *pb.ScaledObjectRef) (*pb.GetMetricSpecResponse, error) {
+	h.observe(ref)
 	return &pb.GetMetricSpecResponse{
 		MetricSpecs: []*pb.MetricSpec{{MetricName: MetricName, TargetSize: 1}},
 	}, nil
@@ -161,6 +187,7 @@ func (h *Handler) GetMetricSpec(_ context.Context, _ *pb.ScaledObjectRef) (*pb.G
 // first optimization decision exists it returns 0, so HPA holds the target at
 // minReplicaCount rather than acting on a guess.
 func (h *Handler) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
+	h.observe(req.GetScaledObjectRef())
 	d, ok, err := h.desired(ctx, req.GetScaledObjectRef())
 	if err != nil {
 		return nil, err
@@ -182,6 +209,7 @@ func (h *Handler) GetMetrics(ctx context.Context, req *pb.GetMetricsRequest) (*p
 // external-push` trigger uses StreamIsActive instead, which reports the same
 // predicate without waiting for a poll interval.
 func (h *Handler) IsActive(ctx context.Context, ref *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
+	h.observe(ref)
 	active, err := h.isActive(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -280,6 +308,16 @@ func (h *Handler) StreamIsActive(ref *pb.ScaledObjectRef, stream pb.ExternalScal
 	ctx := stream.Context()
 	logger := log.FromContext(ctx).WithValues(
 		"namespace", ref.GetNamespace(), "scaledObject", ref.GetName())
+
+	// Registered for the life of the stream rather than by timestamp. On a push
+	// trigger this is the ONLY call a workload parked at zero ever receives —
+	// KEDA does not poll IsActive, and the HPA does not query metrics for a
+	// workload it is not scaling — so a TTL keyed on the last call would evict
+	// exactly the entries whose purpose is to be woken from zero.
+	if h.registry != nil && ref != nil {
+		release := h.registry.Hold(ref.GetNamespace(), ref.GetName(), ref.GetScalerMetadata())
+		defer release()
+	}
 
 	// Resolve the target once, up front: it is fixed for the life of the
 	// ScaledObject, and subscribing needs the resolved name.

@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 )
 
 // These specs cover the decision-freshness rule in honoursDecision. They live in
@@ -55,7 +56,7 @@ func freshnessHandler(t *testing.T, store *decision.Store, targetReplicas int32,
 		},
 	}
 
-	h := NewHandler(fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build(), store)
+	h := NewHandler(fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build(), store, registry.New(0))
 	h.now = func() time.Time { return *nowPtr }
 	return h
 }

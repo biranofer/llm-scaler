@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/scaler"
 )
 
@@ -41,7 +42,7 @@ var _ = Describe("External scaler handler", func() {
 		s := runtime.NewScheme()
 		Expect(kedav1alpha1.AddToScheme(s)).To(Succeed())
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
-		return scaler.NewHandler(c, store)
+		return scaler.NewHandler(c, store, registry.New(0))
 	}
 
 	scaledObject := func(namespace, name, target string) *kedav1alpha1.ScaledObject {

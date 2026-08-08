@@ -1,9 +1,15 @@
 # External-scaler WVA discovery — no VariantAutoscaling CRD, no prometheus-adapter.
 #
-# WVA discovers this ScaledObject via the llm-d.ai/managed annotation and computes
-# the desired replicas with its capacity model. Instead of publishing a metric for
-# KEDA to read (see ../annotations/scaledobject.yaml), WVA implements KEDA's
-# external-scaler gRPC contract and returns the decision directly. KEDA/HPA actuate.
+# WVA computes the desired replicas with its capacity model. Instead of publishing
+# a metric for KEDA to read (see ../annotations/scaledobject.yaml), WVA implements
+# KEDA's external-scaler gRPC contract and returns the decision directly. KEDA/HPA
+# actuate.
+#
+# Discovery is the call itself: KEDA naming this scaler in a trigger is what makes
+# the workload WVA's to manage, and the trigger `metadata` below is the whole
+# per-variant configuration surface. The llm-d.ai/* annotations are on their way
+# out and are kept here only while the engines still read them
+# (docs/plans/engine/keda-driven-discovery.md).
 #
 # Requires the external-scaler Service that routes to the WVA controller's
 # gRPC port (config/base/manager/external-scaler-service.yaml). With the deploy
@@ -73,6 +79,12 @@ spec:
     metadata:
       # The WVA controller's external-scaler gRPC service (host:port).
       scalerAddress: wva-external-scaler.workload-variant-autoscaler-system.svc.cluster.local:9090
+      # The model this variant serves. Required: it is the grouping key for every
+      # multi-variant decision. Mirrors the llm-d.ai/model-id annotation, which is
+      # being retired in favour of this.
+      modelID: default/default
+      # Per-replica cost for cost-aware optimization. Optional; defaults to "10.0".
+      variantCost: "10.0"
       # Optional override: name the scale target directly to skip the ScaledObject read.
       # Defaults to spec.scaleTargetRef.name resolved from this ScaledObject.
       # variantName: sample-deployment
