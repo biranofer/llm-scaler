@@ -942,28 +942,34 @@ func (e *Engine) optimizeV2(
 		modelScaleTargets[utils.GetNamespacedKey(namespace, modelID)] = data.scaleTargets
 	}
 
+	if len(requests) == 0 {
+		// Deliberately publishes NO GPU-usage snapshot on this path.
+		//
+		// Reaching here with an empty `requests` does not mean "nothing is using
+		// GPUs". A fleet genuinely parked at zero never gets this far — optimize
+		// returns at len(activeVAs) == 0 well before optimizeV2 — so the ONLY way
+		// to be here is that active variants existed and every one of them failed
+		// collection: an unreachable Prometheus, a namespace whose config did not
+		// load, a failed prepareModelData. Publishing zeros for that would tell
+		// the scale-from-zero engine the cluster is empty at exactly the moment
+		// WVA has lost visibility, and it would wake models onto a full cluster
+		// while reporting a successful capacity check.
+		//
+		// Leaving the previous snapshot in place is safe because the consumer
+		// bounds its age (see gpuUsageMaxAge in scalefromzero).
+		return nil
+	}
+
 	// Share the GPU accounting with the scale-from-zero engine, which must know
 	// what is free before waking a variant but has no population of its own to
 	// sum. One producer keeps the two engines from disagreeing about capacity.
 	//
-	// Published HERE — before the empty-population return and outside
-	// selectV2Optimizer — because both of those are unreachable in exactly the
-	// state scale-from-zero exists for. `requests` is built from ACTIVE variants,
-	// so a fleet parked at zero produces none, returns below, and would never
-	// publish; the consumer would then read "no snapshot" as "unknown" and skip
-	// the capacity check precisely when it is needed. Publishing an empty
-	// snapshot is the correct answer for that state: WVA's managed variants are
-	// holding no GPUs.
-	//
-	// It is also independent of which optimizer runs — usage is a property of the
-	// population. selectV2Optimizer returns early unless the optimizer is
-	// GreedyByScore, which is selected only when enableLimiter is true, and that
-	// defaults to false (see the optimizer selection in optimize).
+	// Published only from here, where `requests` is non-empty and therefore
+	// reflects a real measurement. It is independent of which optimizer runs —
+	// usage is a property of the population — so it must not live inside
+	// selectV2Optimizer, which returns early unless the optimizer is
+	// GreedyByScore, selected only when enableLimiter is true (default false).
 	decision.PublishGPUUsage(computeCurrentGPUUsage(requests), computeCurrentGPUUsageByNamespace(requests))
-
-	if len(requests) == 0 {
-		return nil
-	}
 
 	// Stage 2: Compute GPU constraints and call optimizer
 	optimizer, constraints := e.selectV2Optimizer(ctx, requests)

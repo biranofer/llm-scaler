@@ -168,7 +168,7 @@ func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 	i.usedByType = make(map[string]int, len(usedByType))
 	total := 0
 	for declared, count := range usedByType {
-		key, ok := i.limitKeyForLocked(declared)
+		key, ok := resolveAcceleratorKey(i.limitByType, declared)
 		if !ok {
 			// No discovered type owns this name — an unresolved accelerator, or a
 			// type that has since left the cluster. Unattributable, so not counted.
@@ -178,26 +178,6 @@ func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 		total += count
 	}
 	i.totalUsed = total
-}
-
-// limitKeyForLocked maps an accelerator name as a workload declares it onto the
-// discovered limit key that owns it.
-//
-// The declared name is tried first and only then its normalization, which is what
-// keeps both spellings working: NormalizeAcceleratorName falls back to "the
-// segment after the first hyphen" for names carrying no vendor prefix it knows,
-// so an already-short "Gaudi-2" would become "2" and match nothing if normalized
-// unconditionally. Callers must hold i.mu.
-func (i *TypeInventory) limitKeyForLocked(declared string) (string, bool) {
-	if _, ok := i.limitByType[declared]; ok {
-		return declared, true
-	}
-	if normalized := accelerator.NormalizeAcceleratorName(declared); normalized != declared {
-		if _, ok := i.limitByType[normalized]; ok {
-			return normalized, true
-		}
-	}
-	return "", false
 }
 
 // TotalLimit returns total GPU capacity across all types.

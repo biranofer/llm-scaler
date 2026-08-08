@@ -76,13 +76,35 @@ func (q *QuotaInventory) Refresh(_ context.Context) error {
 // instead (the Inventory interface predates the per-namespace case; rather
 // than widen the interface we accept both shapes and only the relevant one
 // is consulted).
+// Incoming keys are reconciled onto the CONFIGURED quota keys before being
+// stored. Quota keys are whatever the operator typed (conventionally short names
+// like "A100"); usage arrives keyed by the name a workload declares, which for
+// the common nodeSelector deployment is the raw product label
+// ("NVIDIA-A100-PCIE-80GB"). Unreconciled, every lookup in TotalUsed /
+// GetResourcePools / NamespaceResourcePools misses, Used stays 0, and a quota
+// reports its full allowance free however much is running — so the cap never
+// binds, which is the one thing a quota exists to do.
 func (q *QuotaInventory) SetUsed(usedByType map[string]int) {
 	if q.cfg.Scope != config.QuotaScopeCluster {
 		return
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.usedByType = maps.Clone(usedByType)
+	q.usedByType = reconcileUsageKeys(q.cfg.ClusterQuotas, usedByType)
+}
+
+// reconcileUsageKeys maps declared usage keys onto the key set `known` uses,
+// summing any that collide. Usage matching no known key is dropped: it cannot be
+// charged to a budget, and counting it would make the totals contradict the
+// per-type view.
+func reconcileUsageKeys(known map[string]int, declared map[string]int) map[string]int {
+	out := make(map[string]int, len(declared))
+	for name, count := range declared {
+		if key, ok := resolveAcceleratorKey(known, name); ok {
+			out[key] += count
+		}
+	}
+	return out
 }
 
 // SetUsedByNamespace updates the per-namespace usage map used by
@@ -91,13 +113,30 @@ func (q *QuotaInventory) SetUsed(usedByType map[string]int) {
 // NamespaceResourcePools omits them, so no cap is enforced for them.
 //
 // For cluster-scoped inventories this method is a no-op.
+// Each namespace's usage is reconciled onto that namespace's configured quota
+// keys, for the reason given on SetUsed.
 func (q *QuotaInventory) SetUsedByNamespace(usedByNS map[string]map[string]int) {
 	if q.cfg.Scope != config.QuotaScopeNamespace {
 		return
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.usedByNS = copyNestedIntMap(usedByNS)
+	reconciled := make(map[string]map[string]int, len(usedByNS))
+	for ns, perType := range usedByNS {
+		// Note the second return is `excluded`, NOT `found`: an excluded
+		// namespace yields (nil, true), and every other case yields a map with
+		// false. An excluded or unquotaed namespace has nothing to reconcile
+		// against, so its usage is kept verbatim — the key set of this map is
+		// also what callers use as the active-namespace set, so entries must not
+		// be dropped.
+		quotas, excluded := q.cfg.QuotaForNamespace(ns)
+		if excluded || len(quotas) == 0 {
+			reconciled[ns] = maps.Clone(perType)
+			continue
+		}
+		reconciled[ns] = reconcileUsageKeys(quotas, perType)
+	}
+	q.usedByNS = reconciled
 }
 
 // TotalLimit returns the cluster-wide sum of quotas across accelerator types

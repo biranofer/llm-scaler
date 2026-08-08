@@ -41,7 +41,7 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 			continue
 		}
 
-		accType, known := resolvePoolKey(perType, rawType)
+		accType, known := resolveAcceleratorKey(perType, rawType)
 		if !known {
 			return false
 		}
@@ -68,27 +68,31 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 	return true
 }
 
-// resolvePoolKey maps an accelerator name as a WORKLOAD declares it onto the key
-// the pools actually use, reporting whether any pool covers it.
+// resolveAcceleratorKey maps an accelerator name as a WORKLOAD declares it onto
+// the key an accelerator-keyed map actually uses, reporting whether the map
+// covers it.
 //
-// The two sides are written in different vocabularies and neither can be
-// changed unilaterally: pool keys come from node product labels normalized to
-// short names ("A100"), while a workload's nodeSelector or
-// inference.optimization/acceleratorName label may carry either the full product
-// name ("NVIDIA-A100-PCIE-80GB") or the short one.
+// The two sides are written in different vocabularies and neither can be changed
+// unilaterally. Physical pool keys come from node product labels normalized to
+// short names ("A100"); quota keys are whatever the operator typed; and a
+// workload's nodeSelector or inference.optimization/acceleratorName label may
+// carry either the full product name ("NVIDIA-A100-PCIE-80GB") or the short one.
 //
 // Matching the declared name first and only then its normalization is what keeps
 // this correct in both directions. Normalizing unconditionally is not safe:
-// NormalizeAcceleratorName falls back to "the part after the first hyphen" for
-// names with no vendor prefix it knows, so an already-short "Gaudi-2" becomes
-// "2" and matches nothing. Trying the declared name first means such a name is
-// found directly, and only names that genuinely need de-vendoring are normalized.
-func resolvePoolKey(perType map[string]int, declared string) (string, bool) {
-	if _, ok := perType[declared]; ok {
+// NormalizeAcceleratorName falls back to "the segment after the first hyphen" for
+// names with no vendor prefix it knows, so an already-short "Gaudi-2" becomes "2"
+// and matches nothing. Trying the declared name first means such a name is found
+// directly, and only names that genuinely need de-vendoring are normalized.
+//
+// Shared by every accelerator-keyed lookup — physical limits, quotas, and the
+// demand check — so they cannot drift in how they reconcile a name.
+func resolveAcceleratorKey(known map[string]int, declared string) (string, bool) {
+	if _, ok := known[declared]; ok {
 		return declared, true
 	}
 	if normalized := accelerator.NormalizeAcceleratorName(declared); normalized != declared {
-		if _, ok := perType[normalized]; ok {
+		if _, ok := known[normalized]; ok {
 			return normalized, true
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
 )
@@ -180,4 +181,53 @@ func TestConstraintProvidersFrom(t *testing.T) {
 			t.Fatalf("got %v, want only the constraint-providing constituent", got)
 		}
 	})
+}
+
+// TestQuotaUsageIsReconciledOntoQuotaKeys is the quota half of the key
+// reconciliation. A quota whose Used stays 0 reports its full allowance free
+// however much is running, so the cap never binds — the one thing a quota exists
+// to do. Quota keys are whatever the operator typed; usage arrives keyed by the
+// workload's declaration.
+func TestQuotaUsageIsReconciledOntoQuotaKeys(t *testing.T) {
+	inv := NewQuotaInventory(config.QuotaLimiterConfig{
+		Name:          "cluster-quota",
+		Scope:         config.QuotaScopeCluster,
+		ClusterQuotas: map[string]int{"A100": 8},
+	})
+
+	// The workload declares its accelerator by product label.
+	inv.SetUsed(map[string]int{"NVIDIA-A100-PCIE-80GB": 8})
+
+	pools := inv.GetResourcePools()
+	if got := pools["A100"].Used; got != 8 {
+		t.Fatalf("A100 Used = %d, want 8 — a product-label usage key must land on the quota key", got)
+	}
+	if got := pools["A100"].Available(); got != 0 {
+		t.Fatalf("A100 Available = %d, want 0; the quota is fully consumed and must bind", got)
+	}
+	if got := inv.TotalUsed(); got != 8 {
+		t.Fatalf("TotalUsed = %d, want 8", got)
+	}
+}
+
+// TestNamespaceQuotaUsageIsReconciled: same for the namespace scope, per the
+// namespace's own configured keys.
+func TestNamespaceQuotaUsageIsReconciled(t *testing.T) {
+	inv := NewQuotaInventory(config.QuotaLimiterConfig{
+		Name:            "ns-quota",
+		Scope:           config.QuotaScopeNamespace,
+		NamespaceQuotas: map[string]map[string]int{"team-a": {"A100": 4}},
+	})
+
+	inv.SetUsedByNamespace(map[string]map[string]int{
+		"team-a": {"NVIDIA-A100-PCIE-80GB": 4},
+	})
+
+	pools := inv.NamespaceResourcePools([]string{"team-a"})
+	if got := pools["team-a"]["A100"].Used; got != 4 {
+		t.Fatalf("team-a A100 Used = %d, want 4", got)
+	}
+	if got := pools["team-a"]["A100"].Available(); got != 0 {
+		t.Fatalf("team-a A100 Available = %d, want 0; the namespace quota must bind", got)
+	}
 }

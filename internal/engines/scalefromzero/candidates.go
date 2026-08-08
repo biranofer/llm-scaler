@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -34,6 +35,19 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
+
+// gpuUsageMaxAge bounds how old a GPU-usage snapshot may be and still be used to
+// place a wake.
+//
+// The producer publishes only measured cycles, deliberately leaving the previous
+// snapshot alone when collection fails rather than overwriting it with zeros.
+// That is right for a blip but needs an upper bound: without one, a saturation
+// loop wedged by a long Prometheus outage would leave this engine placing wakes
+// against an arbitrarily old picture of the cluster, ten times a second, for the
+// duration. Generous relative to the default 15s optimize interval — and to the
+// 60s the OpenShift overlay ships — so a slow-but-working cycle is never treated
+// as an outage.
+const gpuUsageMaxAge = 5 * time.Minute
 
 // variantByName finds a group member by variant name.
 func (g modelGroup) variantByName(name string) (wvav1alpha1.VariantAutoscaling, bool) {
@@ -194,6 +208,16 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 	if !ok {
 		logger.V(logging.DEBUG).Info("No GPU usage snapshot published yet; waking without a capacity check",
 			"namespace", namespace)
+		return nil
+	}
+	if age := time.Since(usage.TakenAt); age > gpuUsageMaxAge {
+		// The producer publishes only measured cycles, so it deliberately leaves
+		// the last snapshot alone when collection fails. That is the right call
+		// for a blip, but an unbounded one would have this engine placing wakes
+		// against an arbitrarily old picture of the cluster, at 10Hz, for as long
+		// as the outage lasts. Past the bound, fall back to "unknown".
+		logger.V(logging.DEBUG).Info("GPU usage snapshot is too old to place against; waking without a capacity check",
+			"namespace", namespace, "age", age, "maxAge", gpuUsageMaxAge)
 		return nil
 	}
 
