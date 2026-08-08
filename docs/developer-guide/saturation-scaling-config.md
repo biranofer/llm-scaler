@@ -130,9 +130,9 @@ when any of these hold:
 | a provider failed to compute constraints | a partial view would deny any accelerator type the surviving providers happen not to mention, turning "could not reach this provider" into "cannot place this variant" |
 | — | *(An unresolved accelerator does not skip the check: that candidate simply contributes no demand, and the rest of the set is still checked. A variant with no nodeSelector/nodeAffinity GPU key and no `inference.optimization/acceleratorName` label cannot be charged to any pool, so it is not counted rather than denied.)* |
 
-> **The GPU budget over-states free capacity in two known ways**, affecting the
+> **The GPU budget can still over-state free capacity**, affecting the
 > GPU-aware optimizer as well as scale-from-zero: usage on an unresolved
-> accelerator never lands in a pool, and the physical `Limit` counts every
+> accelerator is charged to no pool, and the physical `Limit` counts every
 > *installed* GPU rather than what is actually available. Both are described,
 > with their fixes and current status, in
 > [GPU Capacity Accounting](gpu-capacity-accounting.md). The short version: make

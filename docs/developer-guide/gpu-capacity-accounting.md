@@ -1,7 +1,7 @@
 # GPU Capacity Accounting
 
 How WVA decides whether GPUs are available, what that number actually means
-today, and the two ways it currently over-states free capacity.
+today, and the ways it can still over-state free capacity.
 
 Two consumers read these budgets:
 
@@ -29,88 +29,65 @@ Available() = max(0, Limit - Used)
 `CurrentReplicas × GPUsPerReplica` over the variants it manages
 (`gpuUsageByType`), and is keyed by the variant's resolved accelerator type.
 
-## Gap 0: `Used` is keyed differently from `Limit`, so it is usually 0
+## Key reconciliation: `Used` vs `Limit` (fixed)
 
-This is the one that makes the budgets inert, and it subsumes Gap 1.
+The two sides of a pool are written in different vocabularies, and getting this
+wrong made the budgets inert rather than merely inaccurate.
 
-Pool **limits** are keyed by *normalized short names*: `TypeInventory.Refresh`
-runs each discovered node product label through `NormalizeAcceleratorName`, so
-`NVIDIA-A100-PCIE-80GB` becomes `A100`.
+- **Limits** are keyed by *normalized short names*: `TypeInventory.Refresh` runs
+  each discovered node product label through `NormalizeAcceleratorName`, so
+  `NVIDIA-A100-PCIE-80GB` becomes `A100`.
+- **Usage** arrives keyed by whatever the workload declares. `gpuUsageByType`
+  keys by `VariantMetadata.AcceleratorName`, i.e. the nodeSelector/label value
+  verbatim — for the common deployment shape, the raw product label.
 
-Pool **usage** is keyed by whatever the workload declares. `gpuUsageByType` keys
-by `VariantMetadata.AcceleratorName`, which is
-`GetAcceleratorNameFromScaleTarget` — the nodeSelector/label value **verbatim**,
-never normalized.
+Unreconciled, a product-label usage key never matched a limit key,
+`GetResourcePools` reported `Used = 0` for it, and every pool claimed its full
+complement was free however much was running. Both consumers therefore saw an
+empty cluster.
 
-`GetResourcePools` then iterates the limit keys and looks usage up by them:
+`TypeInventory.SetUsed` now reconciles incoming keys onto the discovered limit
+keys, trying the declared name first and only then its normalization. Order
+matters: `NormalizeAcceleratorName` falls back to "the segment after the first
+hyphen" for names with no vendor prefix it recognises, so an already-short
+`Gaudi-2` would become `2` and match nothing if normalized unconditionally. The
+demand side does the same at lookup time (`pipeline.resolvePoolKey`), so both
+spellings work on both sides.
 
-```go
-for accType, limit := range i.limitByType {   // "A100"
-    used := i.usedByType[accType]             // usage was filed under "NVIDIA-A100-PCIE-80GB"
-```
+Pinned by `TestUsageIsReconciledOntoPoolKeys` and `TestPoolKeysAreShortNames`.
 
-So for the common deployment shape — a workload pinning itself with
-`nvidia.com/gpu.product: NVIDIA-A100-PCIE-80GB` — **`Used` is always 0** and every
-pool reports its full complement free, however much is actually running. Gap 1 is
-the special case of this where the declared name is the `unknown` placeholder.
+> **This changed allocation behaviour.** Before it, `Used` was effectively always
+> 0 in nodeSelector deployments, so the GPU-aware optimizer believed the cluster
+> was empty and allocated against the full installed capacity. It now sees real
+> usage and will allocate less. That is the correction, but it is a behavioural
+> change for any existing deployment running `enableLimiter: true`.
 
-Consequence: the scale-from-zero placement check and the GPU-aware optimizer both
-see an empty cluster. The check cannot deny, so it neither prevents a bad wake nor
-(usefully) permits a good one — it is inert rather than wrong. Demand-side naming
-is reconciled at lookup time (`pipeline.resolvePoolKey` tries the declared name,
-then its normalization), so demand finds the right pool; the usage side has no
-equivalent and is where a fix belongs.
-
-**Fix:** normalize at the point usage is accumulated, so both sides of a pool are
-in short-name space. That is a one-line change in `gpuUsageByType`, but it is a
-real behaviour change on the main scaling path: today the optimizer believes the
-cluster is empty and allocates accordingly, and correcting `Used` will make it
-allocate less. It should be made deliberately, with the optimizer's behaviour
-re-validated, not as a drive-by.
-
-## Gap 1: usage on an unresolved accelerator is invisible
+## Gap 1: usage on an unresolved accelerator is still unattributable
 
 A variant with neither a `nodeSelector`/`nodeAffinity` GPU key nor the
 `inference.optimization/acceleratorName` label resolves to
-`constants.DefaultAcceleratorName` — the internal `"unknown"` placeholder — so
-its GPUs are recorded under that key.
+`constants.DefaultAcceleratorName` — the internal `"unknown"` placeholder. That
+name matches no discovered type, so reconciliation drops it: its GPUs are charged
+to no pool.
 
-`TypeInventory.GetResourcePools` iterates the **discovered** types:
+The per-type budgets therefore still over-state free capacity by however many
+GPUs unresolved variants hold. With 8 H100s, 2 held by a resolved variant and 4
+by unresolved ones, the pool reports `Available() == 6` while only 2 are
+genuinely free.
 
-```go
-for accType, limit := range i.limitByType {   // discovered types only
-    used := i.usedByType[accType]             // accType is never "unknown"
-```
+What changed is that the inconsistency is gone: dropped usage is excluded from
+`TotalUsed` as well, so the aggregate and the sum of the pools now agree.
+Previously `SetUsed` summed every key while the pools iterated only discovered
+types, leaving the two views contradicting each other in opposite directions.
 
-so the placeholder entry has nowhere to land and is silently dropped. With 8
-H100s, 2 held by a resolved variant and 4 by unresolved ones, the pool reports
-`Available() == 6` while only 2 are genuinely free.
+Pinned by `internal/engines/pipeline/unresolved_accelerator_usage_test.go`.
 
-There is a second, **latent** half: `SetUsed` sums *every* key into `totalUsed`,
-so `TotalUsed` reports 6 while the pools account for 2. Nothing reads it —
-`ResourceConstraints.TotalUsed`/`TotalAvail` are populated by `DefaultLimiter`
-and never consumed, because the optimizer merges `Pools` and `NamespacePools`
-only — but a future consumer would inherit the inconsistency. `QuotaInventory`
-deliberately keeps its totals symmetric with its limits; `TypeInventory` has no
-such guard, which is why this reads as an oversight rather than a decision.
-
-Both behaviours are pinned by
-`internal/engines/pipeline/unresolved_accelerator_usage_test.go`, which fails if
-they change, so the semantics cannot drift without updating this document.
-
-**Why it is not fixed in the accounting.** Usage that cannot be attributed to a
-type cannot be charged to a pool, and charging it to every candidate type would
-deny legitimate scale-up on a guess. The durable fix is making the accelerator
+**Why it is not fixed further.** Usage that cannot be attributed to a type cannot
+be charged to a pool, and charging it to every candidate type would deny
+legitimate scale-up on a guess. The durable fix is making the accelerator
 resolvable — set a `nodeSelector`/`nodeAffinity` GPU key on the workload, or the
 `inference.optimization/acceleratorName` label. WVA emits an
 `AcceleratorNotResolved` warning event per affected variant.
-
-If the accounting is ever changed, the two candidates are:
-
-| option | effect |
-| --- | --- |
-| exclude placeholder keys at the source (`gpuUsageByType` + `constants.IsAcceleratorResolved`) | makes pools and totals consistent; no behaviour change today, since pools already ignore the key. Totals become less accurate but no longer contradict the pools |
-| charge unresolved usage conservatively (e.g. against the largest candidate pool) | closes the over-statement, at the cost of denying legitimate scale-up on a guess |
 
 ## Gap 2 (future work): `Limit` is installed GPUs, not available GPUs
 

@@ -57,20 +57,16 @@ func TestUnresolvedUsageNeverReachesAnyPool(t *testing.T) {
 	}
 }
 
-// TestUnresolvedUsageStillCountsTowardTotals shows the other half: SetUsed sums
-// every key into totalUsed, so the aggregate DOES include unresolved usage while
-// the per-type pools do not. The two views of one inventory disagree, in opposite
-// directions.
+// TestUnattributableUsageIsExcludedConsistently: usage that matches no
+// discovered type is dropped rather than stored, so the per-type pools and the
+// TotalUsed aggregate agree.
 //
-// This is latent rather than active: ResourceConstraints.TotalUsed/TotalAvail are
-// populated by DefaultLimiter but nothing reads them — the optimizer merges Pools
-// and NamespacePools only. It is pinned here so that a future consumer of the
-// totals does not silently inherit an inconsistency.
-//
-// QuotaInventory deliberately avoids this: its TotalUsed counts only the key set
-// TotalLimit does, "so the two stay symmetric". TypeInventory has no such guard,
-// which is why this asymmetry looks like an oversight rather than a decision.
-func TestUnresolvedUsageStillCountsTowardTotals(t *testing.T) {
+// Previously SetUsed summed EVERY key into totalUsed while GetResourcePools
+// iterated the discovered types only, so the two views of one inventory
+// disagreed in opposite directions — pools under-counting, totals over-counting.
+// Nothing read the totals, so it was latent; it is now consistent by
+// construction.
+func TestUnattributableUsageIsExcludedConsistently(t *testing.T) {
 	disc := &mockDiscovery{inventory: map[string]map[string]discovery.AcceleratorModelInfo{
 		"node-a": {"H100": {Count: 8}},
 	}}
@@ -80,19 +76,50 @@ func TestUnresolvedUsageStillCountsTowardTotals(t *testing.T) {
 	}
 	inv.SetUsed(map[string]int{"H100": 2, constants.DefaultAcceleratorName: 4})
 
-	if got := inv.TotalUsed(); got != 6 {
-		t.Fatalf("TotalUsed = %d, want 6 (every key is summed, including the placeholder)", got)
-	}
-
-	// Sum of per-type pool usage, i.e. what the optimizer can actually see.
 	poolUsed := 0
 	for _, p := range inv.GetResourcePools() {
 		poolUsed += p.Used
 	}
-	if poolUsed == inv.TotalUsed() {
-		t.Fatalf("per-type pools (%d used) and TotalUsed (%d) agree; if unresolved usage is now "+
-			"attributed or excluded consistently, update these tests and the limitation note",
-			poolUsed, inv.TotalUsed())
+	if poolUsed != inv.TotalUsed() {
+		t.Fatalf("per-type pools account for %d used but TotalUsed is %d; the two views of one "+
+			"inventory must agree", poolUsed, inv.TotalUsed())
+	}
+	if inv.TotalUsed() != 2 {
+		t.Fatalf("TotalUsed = %d, want 2 (the unattributable 4 is not counted)", inv.TotalUsed())
+	}
+}
+
+// TestUsageIsReconciledOntoPoolKeys is the fix for the defect that made the GPU
+// budgets inert: usage arrives keyed the way a WORKLOAD declares its accelerator
+// (the raw product label, for the common nodeSelector deployment) while limits
+// are keyed by normalized short names. Unreconciled, Used stayed 0 and every
+// pool claimed to be entirely free however much was running.
+func TestUsageIsReconciledOntoPoolKeys(t *testing.T) {
+	disc := &mockDiscovery{inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+		"node-a": {"NVIDIA-A100-PCIE-80GB": {Count: 8}}, // pool key becomes "A100"
+		"node-b": {"Intel-Gaudi-2-96GB": {Count: 4}},    // pool key becomes "Gaudi-2"
+	}}
+	inv := NewTypeInventory("test", disc)
+	if err := inv.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	inv.SetUsed(map[string]int{
+		"NVIDIA-A100-PCIE-80GB": 5, // declared as a product label
+		"Gaudi-2":               3, // declared as an already-short name with a hyphen
+	})
+
+	pools := inv.GetResourcePools()
+	if got := pools["A100"].Used; got != 5 {
+		t.Fatalf("A100 Used = %d, want 5 — a product-label key must land on its normalized pool", got)
+	}
+	if got := pools["A100"].Available(); got != 3 {
+		t.Fatalf("A100 Available = %d, want 3", got)
+	}
+	// "Gaudi-2" must match directly: NormalizeAcceleratorName("Gaudi-2") is "2",
+	// so normalizing unconditionally would file it under a type that does not exist.
+	if got := pools["Gaudi-2"].Used; got != 3 {
+		t.Fatalf("Gaudi-2 Used = %d, want 3 — a hyphenated short name must match directly", got)
 	}
 }
 

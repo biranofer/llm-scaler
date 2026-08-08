@@ -146,18 +146,58 @@ func (i *TypeInventory) Refresh(ctx context.Context) error {
 
 // SetUsed updates the used GPU counts per accelerator type.
 // This should be called with current usage (e.g., from replica counts) before reading pools.
+//
+// Incoming keys are reconciled against the discovered limit keys, because the two
+// sides are written in different vocabularies. Limits are keyed by NORMALIZED
+// short names ("A100"); callers key usage by the name a WORKLOAD declares, which
+// for the common nodeSelector deployment is the raw product label
+// ("NVIDIA-A100-PCIE-80GB"). Without reconciliation such a key never matches a
+// limit key, GetResourcePools reports Used = 0 for it, and every pool claims its
+// full complement is free however much is actually running — so both the
+// GPU-aware optimizer and the scale-from-zero placement check see an empty
+// cluster and over-allocate.
+//
+// Usage that matches no discovered type is dropped rather than stored: it cannot
+// be charged to a pool, so counting it in totalUsed would leave the aggregate
+// contradicting the sum of the pools. Callers must therefore Refresh (which
+// populates the limit keys) before SetUsed; ComputeConstraints does.
 func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	// Copy the map to avoid external mutations
 	i.usedByType = make(map[string]int, len(usedByType))
 	total := 0
-	for accType, count := range usedByType {
-		i.usedByType[accType] = count
+	for declared, count := range usedByType {
+		key, ok := i.limitKeyForLocked(declared)
+		if !ok {
+			// No discovered type owns this name — an unresolved accelerator, or a
+			// type that has since left the cluster. Unattributable, so not counted.
+			continue
+		}
+		i.usedByType[key] += count
 		total += count
 	}
 	i.totalUsed = total
+}
+
+// limitKeyForLocked maps an accelerator name as a workload declares it onto the
+// discovered limit key that owns it.
+//
+// The declared name is tried first and only then its normalization, which is what
+// keeps both spellings working: NormalizeAcceleratorName falls back to "the
+// segment after the first hyphen" for names carrying no vendor prefix it knows,
+// so an already-short "Gaudi-2" would become "2" and match nothing if normalized
+// unconditionally. Callers must hold i.mu.
+func (i *TypeInventory) limitKeyForLocked(declared string) (string, bool) {
+	if _, ok := i.limitByType[declared]; ok {
+		return declared, true
+	}
+	if normalized := accelerator.NormalizeAcceleratorName(declared); normalized != declared {
+		if _, ok := i.limitByType[normalized]; ok {
+			return normalized, true
+		}
+	}
+	return "", false
 }
 
 // TotalLimit returns total GPU capacity across all types.
