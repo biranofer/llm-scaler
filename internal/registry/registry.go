@@ -55,6 +55,37 @@ type Entry struct {
 	// Streaming reports whether a StreamIsActive is currently open for it, which
 	// keeps it live regardless of LastSeen.
 	Streaming bool
+	// Target is what a read of the ScaledObject resolved, and Zero until one has
+	// succeeded. See SetTarget.
+	Target Target
+	// TargetAt dates that read. Zero means the entry has never been enriched.
+	TargetAt time.Time
+}
+
+// Target is the part of a ScaledObject WVA needs and the KEDA call does not
+// carry: which workload to scale, and the envelope KEDA will hold it within.
+//
+// It is read from the object rather than taken from trigger metadata because
+// KEDA owns these fields — min/max are what its HPA enforces, so duplicating
+// them into metadata would create a second copy that can disagree with the one
+// actually in force.
+type Target struct {
+	APIVersion  string
+	Kind        string
+	Name        string
+	MinReplicas *int32
+	MaxReplicas *int32
+}
+
+// Fresh reports whether the entry's target read is recent enough to use.
+//
+// Enrichment is deliberately decoupled from the call rate: the scale-from-zero
+// loop runs at 10Hz and re-reading each ScaledObject at that rate — uncached, as
+// it must be to avoid a cluster-wide informer — would put a request per variant
+// per 100ms on the API server. The envelope changes about as often as someone
+// edits a manifest, so a cadence in the tens of seconds loses nothing.
+func (e Entry) Fresh(now time.Time, maxAge time.Duration) bool {
+	return !e.TargetAt.IsZero() && now.Sub(e.TargetAt) <= maxAge
 }
 
 // Registry is the set of live entries. Safe for concurrent use: gRPC handlers
@@ -220,6 +251,32 @@ func (r *Registry) Get(namespace, name string) (Entry, bool) {
 	copied.Metadata = maps.Clone(e.Metadata)
 	return copied, true
 }
+
+// SetTarget records what a read of the entry's ScaledObject resolved.
+//
+// Kept on the entry rather than in a second map so that enrichment cannot
+// outlive the entry it describes: expiry drops both together, and a workload
+// that comes back is re-read rather than resuming against whatever its envelope
+// used to be.
+//
+// A no-op for an entry that is not registered — the read was for a workload KEDA
+// has since stopped asking about, and reviving it here would put a variant back
+// in the fleet that no call justifies.
+func (r *Registry) SetTarget(namespace, name string, t Target) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	e, ok := r.m[key(namespace, name)]
+	if !ok {
+		return
+	}
+	e.Target = t
+	e.TargetAt = r.now()
+}
+
+// TTL reports how long an entry survives without being called about. Read by the
+// Enricher, which has to refresh well inside it.
+func (r *Registry) TTL() time.Duration { return r.ttl }
 
 // Len reports how many entries are held, live or not. For metrics and tests.
 func (r *Registry) Len() int {
