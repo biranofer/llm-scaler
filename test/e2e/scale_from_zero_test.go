@@ -115,9 +115,12 @@ func skipIfNoLeaderWorkerSet() {
 func cleanupScaleFromZeroResources() {
 	GinkgoWriter.Println("Cleaning up scale-from-zero test resources for clean state...")
 
-	// Helper to check if resource name matches scale-from-zero test patterns
+	// Helper to check if resource name matches scale-from-zero test patterns.
+	// The later suites (P/D, capacity) name their resources "sfz-pd-*"/"sfz-cap-*"
+	// rather than spelling the prefix out, so both forms must be swept or an
+	// aborted run leaves those behind to poison the next one.
 	isScaleFromZeroResource := func(name string) bool {
-		return strings.HasPrefix(name, "scale-from-zero-")
+		return strings.HasPrefix(name, "scale-from-zero-") || strings.HasPrefix(name, "sfz-")
 	}
 
 	// Delete all HPAs with scale-from-zero prefix

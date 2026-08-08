@@ -165,7 +165,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		By("Waiting for the engine to report the refusal, naming the capacity reason")
 		// The engine's own verdict, not the absence of a scale-up: a target that
 		// merely has not been woken YET looks identical from the outside.
-		expectScaleFromZeroRefusal(deniedVar+"-so", triggerStart, "no-capacity")
+		expectScaleFromZeroRefusal(triggerStart, "no-capacity")
 
 		By("Verifying the denied variant stayed at zero")
 		Consistently(func(g Gomega) {
@@ -208,11 +208,16 @@ func createParkedVariant(svcName, deployName, variantName, scalerName, poolName,
 }
 
 // expectScaleFromZeroRefusal waits until the engine reports that it declined to
-// wake variantName, for the given reason.
+// wake anything, for the given reason.
+//
+// Deliberately not scoped to a variant: the refusal is a per-MODEL verdict — the
+// engine picks a serving set for the model as a whole and logs namespace, modelID
+// and reason, never a candidate it rejected. Asserting on a variant name would
+// mean asserting on a string the engine does not emit.
 //
 // The refusal is logged once per verdict change rather than once per poll, so the
 // window has to start before the trigger.
-func expectScaleFromZeroRefusal(variantName string, since time.Time, reason string) {
+func expectScaleFromZeroRefusal(since time.Time, reason string) {
 	GinkgoHelper()
 	const controllerManagerLabel = "control-plane=controller-manager"
 	const pattern = "no variant woken for a model with pending requests"
