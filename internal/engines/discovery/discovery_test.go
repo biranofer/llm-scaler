@@ -208,29 +208,26 @@ func roleTargetWithArgs(args []string, label string) scaletarget.ScaleTargetAcce
 	})
 }
 
-// The engine's own --disaggregation-mode is what the process is actually
-// configured to do, so it outranks the pod-template label — a convention a
-// workload may not carry, or may carry stale.
+// The llm-d role label is the sole signal; engine arguments are deliberately not
+// consulted, since the flag differs per engine.
 var _ = Describe("RoleFromScaleTarget", func() {
-	DescribeTable("resolves the P/D role",
-		func(args []string, label string, want string) {
-			Expect(discovery.RoleFromScaleTarget(roleTargetWithArgs(args, label))).To(Equal(want))
+	DescribeTable("resolves the P/D role from the llm-d role label",
+		func(label string, want string) {
+			Expect(discovery.RoleFromScaleTarget(roleTargetWithArgs(nil, label))).To(Equal(want))
 		},
-		Entry("engine args alone declare prefill",
-			[]string{"--disaggregation-mode", "prefill"}, "", domain.RolePrefill),
-		Entry("engine args alone declare decode",
-			[]string{"--disaggregation-mode", "decode"}, "", domain.RoleDecode),
-		Entry("the = form is understood too",
-			[]string{"--disaggregation-mode=decode"}, "", domain.RoleDecode),
-		Entry("engine args outrank a conflicting label",
-			[]string{"--disaggregation-mode", "decode"}, domain.RolePrefill, domain.RoleDecode),
-		Entry("the label is used when the engine declares nothing",
-			[]string{"--model", "meta/llama"}, domain.RolePrefill, domain.RolePrefill),
-		Entry("neither source means the non-disaggregated role",
-			[]string{"--model", "meta/llama"}, "", domain.RoleBoth),
-		Entry("an unrecognised mode falls through to the default",
-			[]string{"--disaggregation-mode", "something-else"}, "", domain.RoleBoth),
+		Entry("prefill", domain.RolePrefill, domain.RolePrefill),
+		Entry("decode", domain.RoleDecode, domain.RoleDecode),
+		Entry("no label means non-disaggregated", "", domain.RoleBoth),
+		Entry("an unrecognised value means non-disaggregated", "sidecar", domain.RoleBoth),
 	)
+
+	It("ignores engine arguments, whichever engine they belong to", func() {
+		// SGLang spells this --disaggregation-mode and vLLM uses
+		// --kv-transfer-config; neither is consulted, so a workload that declares
+		// a role only through args reads as non-disaggregated.
+		target := roleTargetWithArgs([]string{"--disaggregation-mode", "prefill"}, "")
+		Expect(discovery.RoleFromScaleTarget(target)).To(Equal(domain.RoleBoth))
+	})
 
 	It("treats a nil scale target as non-disaggregated", func() {
 		Expect(discovery.RoleFromScaleTarget(nil)).To(Equal(domain.RoleBoth))

@@ -19,7 +19,6 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
@@ -28,10 +27,8 @@ import (
 )
 
 // RoleLabel is the pod-template label carrying a variant's P/D disaggregation
-// role. It is the FALLBACK signal: the engine's own `--disaggregation-mode`
-// argument is preferred where present (see RoleFromScaleTarget). Any value other
-// than "prefill"/"decode" (or absence of both signals) means the
-// non-disaggregated role "both".
+// role, and the sole signal WVA uses to distinguish roles. Any other value, or
+// its absence, means the non-disaggregated role "both".
 const RoleLabel = "llm-d.ai/role"
 
 // Discover resolves the domain.VariantMetadata for each VariantAutoscaling. It prefers a
@@ -147,24 +144,18 @@ func costFromVA(ctx context.Context, va *llmdvariant.VariantAutoscaling) float64
 	return cost
 }
 
-// RoleFromScaleTarget resolves a scale target's P/D role, returning "prefill",
-// "decode", or "both".
+// RoleFromScaleTarget resolves a scale target's P/D role from the llm-d role
+// label, returning "prefill", "decode", or "both".
 //
-// Two sources, in order: the engine's own `--disaggregation-mode` argument, then
-// the RoleLabel pod-template label. "both" is the default when neither declares
-// a role, which is correct for a non-disaggregated workload — it serves complete
-// requests on its own.
+// The label is the source of truth. Engine arguments are deliberately NOT
+// consulted: the flag differs per engine (SGLang has --disaggregation-mode, vLLM
+// configures disaggregation through --kv-transfer-config), so parsing them would
+// be an engine-by-engine guess at something llm-d already states declaratively.
+// "both" is the default when no role is declared, which is correct for a
+// non-disaggregated workload — it serves complete requests on its own.
 func RoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
 	if scaleTarget == nil {
 		return domain.RoleBoth
-	}
-
-	// The engine's own arguments are authoritative: `--disaggregation-mode
-	// prefill|decode` is what the process is actually configured to do, whereas
-	// the pod-template label is a convention a workload may simply not carry.
-	// Prefer it, and fall back to the label.
-	if role := saturation_v2.ParseDisaggregationRole(scaleTarget); role != "" {
-		return role
 	}
 
 	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
