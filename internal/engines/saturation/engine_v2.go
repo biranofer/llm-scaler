@@ -611,6 +611,23 @@ func applyUniversalThreshold(nr *pipeline.NamedAnalyzerResult, scaleUp, scaleDow
 // than from the analyzer's VariantCapacity: both are in scale-target units, but
 // GPU accounting must reflect what is actually allocated, not what reported
 // metrics this cycle.
+//
+// KNOWN LIMITATION — unresolved accelerators are not attributable. A variant
+// with neither a nodeSelector/nodeAffinity GPU key nor the
+// inference.optimization/acceleratorName label resolves to
+// constants.DefaultAcceleratorName ("unknown"), so its GPUs are keyed under a
+// placeholder. TypeInventory.GetResourcePools iterates the DISCOVERED types, so
+// that entry never lands in a pool: the per-type budgets the GPU-aware optimizer
+// and the scale-from-zero placement check consume over-state free capacity by
+// however many GPUs those variants hold. SetUsed, meanwhile, sums every key into
+// totalUsed, so the aggregate includes them — the two views disagree, though
+// nothing reads the aggregate today.
+//
+// This is not fixable here: usage that cannot be attributed to a type cannot be
+// charged to a pool, and charging it to every candidate type would be worse.
+// The durable fix is resolving the accelerator. Both behaviours are pinned by
+// internal/engines/pipeline/unresolved_accelerator_usage_test.go so they cannot
+// drift silently.
 func gpuUsageByType(req pipeline.ModelScalingRequest, perType map[string]int) {
 	stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
 	for _, s := range req.VariantStates {
