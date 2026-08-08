@@ -171,3 +171,31 @@ its GPUs, and is discovered with a resolved accelerator, but the engine reaches
 no verdict for the parked variant at all, which points at the EPP not queueing
 for that model rather than at the capacity check. Until it passes, treat the deny
 branch as **unit-tested only**.
+
+## Assumption: one model, one InferencePool
+
+The scale-from-zero wake path assumes a model's variants all sit behind a single
+EPP. `buildCandidates` resolves one pool for the model group, and the group's
+pending-request verdict is read from that pool's flow-control queue.
+
+That matches the project's contract, and it is what keeps the wake cheap: one
+scrape per model per tick, rather than one per variant.
+
+**Per-role pools are a possible future shape and are not implemented.** If a
+model's decode sat behind one EPP and its prefill behind another, the current
+code would read both variants' demand from whichever pool resolved first — so a
+decode variant could be judged by the prefill queue, and its activation logged
+against an EPP that was never consulted. That is silently wrong rather than
+imprecise, which is why the assumption is stated here and checked in code.
+
+Supporting per-role pools would mean:
+
+1. resolving the pool **per candidate** rather than per model group;
+2. reading demand from each distinct pool in turn, attributing the verdict to the
+   pool it came from; and
+3. keeping selection across the whole model, so a P/D pair is still chosen as one
+   set against one joint GPU budget even when its halves are behind different
+   pools.
+
+Until then, a model that resolves to more than one pool is logged
+("Model resolves to more than one InferencePool"), and only the first is used.
