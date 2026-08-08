@@ -783,6 +783,19 @@ func (e *Engine) selectV2Optimizer(
 ) (pipeline.ScalingOptimizer, []*pipeline.ResourceConstraints) {
 	logger := ctrl.LoggerFrom(ctx)
 
+	// Share the accounting with the scale-from-zero engine, which needs to know
+	// what is free before waking a variant but has no population of its own to
+	// sum. One producer keeps the two engines from disagreeing about capacity.
+	//
+	// Published before the optimizer guard below, and independently of it: the
+	// usage is a property of the current population, not of which optimizer runs.
+	// Publishing after the guard would leave the snapshot empty for every
+	// deployment on the cost-aware optimizer — the default — silently disabling
+	// the scale-from-zero capacity check rather than failing visibly.
+	currentUsage := computeCurrentGPUUsage(requests)
+	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
+	decision.PublishGPUUsage(currentUsage, currentUsageByNS)
+
 	// GreedyByScore is currently the only GPU-aware optimizer; any future
 	// constraint-consuming optimizer must be added to this guard.
 	optimizer := e.optimizer
@@ -799,12 +812,6 @@ func (e *Engine) selectV2Optimizer(
 		return pipeline.NewCostAwareOptimizer(), nil
 	}
 
-	currentUsage := computeCurrentGPUUsage(requests)
-	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
-	// Share the accounting with the scale-from-zero engine, which needs to know
-	// what is free before waking a variant but has no population of its own to
-	// sum. One producer keeps the two engines from disagreeing about capacity.
-	decision.PublishGPUUsage(currentUsage, currentUsageByNS)
 	var constraints []*pipeline.ResourceConstraints
 	for _, cp := range providers {
 		constraint, err := cp.ComputeConstraints(ctx, currentUsage, currentUsageByNS)

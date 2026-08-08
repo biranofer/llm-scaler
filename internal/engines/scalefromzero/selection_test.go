@@ -276,3 +276,24 @@ func TestDemandOfFloorsMissingGPURequest(t *testing.T) {
 		t.Fatalf("demand[H100] = %d, want 1", demand["H100"])
 	}
 }
+
+// TestUnresolvedAcceleratorDoesNotBlockTheWake: accelerator resolution needs a
+// nodeSelector or label the workload need not carry. No provider publishes a
+// pool named "", so charging demand to it would deny every such variant and turn
+// an annotation gap into "this model can never wake".
+func TestUnresolvedAcceleratorDoesNotBlockTheWake(t *testing.T) {
+	if demand := demandOf([]Candidate{cand("d", domain.RoleDecode, "", 4, 1)}); len(demand) != 0 {
+		t.Fatalf("demand = %v, want empty for an unresolved accelerator", demand)
+	}
+
+	in := SelectionInput{
+		Namespace:  selNS,
+		Candidates: []Candidate{cand("d", domain.RoleDecode, "", 4, 1)},
+		// A fully-committed cluster: a resolvable variant would be denied here.
+		Constraints: pools(map[string]int{"H100": 0}),
+	}
+	set, outcome := selectServingSet(in)
+	if outcome != OutcomeDecodeOnly || !hasAll(names(set), "d") {
+		t.Fatalf("selected %v (%s), want the variant woken despite an unresolved accelerator", names(set), outcome)
+	}
+}

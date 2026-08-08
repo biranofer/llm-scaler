@@ -174,9 +174,20 @@ func fits(in SelectionInput, set []Candidate) bool {
 // demandOf sums one replica of each candidate, keyed by accelerator type. Two
 // candidates on the same accelerator therefore contend for the same pool, which
 // is exactly the case a per-variant check would miss.
+//
+// A candidate whose accelerator could not be resolved contributes nothing. Its
+// demand cannot be charged to any pool, and charging it to the empty key would
+// be worse than useless: no provider publishes a pool named "", so the budget
+// check would deny every such variant outright. Accelerator resolution depends
+// on a nodeSelector or label that a workload need not carry, so that would turn
+// an annotation gap into "this model can never wake". Unknown placement is
+// treated the same way as an unknown budget — do not block.
 func demandOf(set []Candidate) map[string]int {
 	demand := make(map[string]int, len(set))
 	for _, c := range set {
+		if c.Accelerator == "" {
+			continue
+		}
 		gpus := c.GPUsPerReplica
 		if gpus <= 0 {
 			// Mirrors scaletarget.GetTotalGPUsPerReplica's floor: a workload with
