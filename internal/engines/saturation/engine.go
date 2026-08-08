@@ -801,6 +801,10 @@ func (e *Engine) selectV2Optimizer(
 
 	currentUsage := computeCurrentGPUUsage(requests)
 	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
+	// Share the accounting with the scale-from-zero engine, which needs to know
+	// what is free before waking a variant but has no population of its own to
+	// sum. One producer keeps the two engines from disagreeing about capacity.
+	decision.PublishGPUUsage(currentUsage, currentUsageByNS)
 	var constraints []*pipeline.ResourceConstraints
 	for _, cp := range providers {
 		constraint, err := cp.ComputeConstraints(ctx, currentUsage, currentUsageByNS)

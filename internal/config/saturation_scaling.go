@@ -94,6 +94,10 @@ type SaturationScalingConfig struct {
 	// the WVA_SCALE_TO_ZERO env fallback) governs — see ResolveScaleToZeroEnabled.
 	ScaleToZero *ScaleToZeroEnvelope `yaml:"scaleToZero,omitempty"`
 
+	// ScaleFromZero optionally tunes how this entry is woken from zero replicas.
+	// When nil, the defaults documented on ScaleFromZeroEnvelope apply.
+	ScaleFromZero *ScaleFromZeroEnvelope `yaml:"scaleFromZero,omitempty"`
+
 	// Limiters is the sole source that selects the GPU limiter for the scaling
 	// pipeline; it is applied live (no restart) and is honored only on the cluster
 	// "default" entry (a budget-scope setting, like EnableRescale). A limiters list
@@ -111,6 +115,36 @@ type SaturationScalingConfig struct {
 // scale-to-zero ConfigMap" rather than "disabled".
 type ScaleToZeroEnvelope struct {
 	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// ScaleFromZeroEnvelope is the inline scale-from-zero setting on a scaling entry.
+type ScaleFromZeroEnvelope struct {
+	// RequirePrefill refuses to wake a P/D-disaggregated model from zero unless a
+	// prefill variant can be placed alongside decode.
+	//
+	// The default (nil / false) wakes decode alone when prefill will not fit,
+	// because that still serves: the llm-d router sends the request to a decode
+	// endpoint and, with no prefill endpoint selected, the decode worker runs
+	// both stages locally. Disaggregation is a TTFT/throughput optimization that
+	// the router already skips on its own for short prompts and high cache hits,
+	// so refusing to wake would trade a slower model for no model at all.
+	//
+	// Set true when degraded prefill performance is worse than unavailability
+	// for this model — for example when a TTFT SLO matters more than serving at
+	// all, or when decode nodes must not absorb prefill load.
+	//
+	// Pointer so an absent field means "inherit the default" rather than "false",
+	// matching ScaleToZeroEnvelope.Enabled.
+	RequirePrefill *bool `yaml:"requirePrefill,omitempty"`
+}
+
+// RequirePrefillOnScaleFromZero reports whether the entry refuses to wake from
+// zero without prefill. Absent config means false — see ScaleFromZeroEnvelope.
+func (c SaturationScalingConfig) RequirePrefillOnScaleFromZero() bool {
+	if c.ScaleFromZero == nil || c.ScaleFromZero.RequirePrefill == nil {
+		return false
+	}
+	return *c.ScaleFromZero.RequirePrefill
 }
 
 // limiterTypeGPUInventory is the inline Limiters type that selects the physical
