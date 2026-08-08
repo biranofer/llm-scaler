@@ -158,16 +158,16 @@ simultaneously for a denial to be reachable at all:
 3. that usage is attributed to the same pool key the limits use (see the key
    reconciliation above).
 
-Condition 2 conflicts with the trigger itself. Scale-from-zero fires on EPP
+Condition 2 interacts awkwardly with the trigger. Scale-from-zero fires on EPP
 flow-control queueing, and requests only queue when the pool has **no ready
-endpoints** — but the running variant needed for condition 2 supplies exactly
-those endpoints, so requests are dispatched to it and no wake is ever considered.
+endpoints** — so the running variant needed for condition 2 must not sit in the
+pool under test, or it serves the requests itself. The one-model-one-pool
+contract makes that natural: the occupier serves its own model, so it belongs to
+its own pool (`fixtures.WithPoolGuide`).
 
-Resolving it needs the occupying workload in a **second InferencePool**: it still
-consumes GPUs and is still measured, but it does not serve the pool under test.
-Every e2e fixture currently stamps `llm-d.ai/guide: optimized-baseline`, so they
-all land in one pool.
-
-`test/e2e/scale_from_zero_capacity_test.go` implements the scenario and skips
-until a second pool exists. Until then, treat the deny branch as unit-tested
-only.
+`test/e2e/scale_from_zero_capacity_test.go` implements the scenario but is
+**pending** (`XDescribe`) — it does not yet reproduce. The occupier runs, holds
+its GPUs, and is discovered with a resolved accelerator, but the engine reaches
+no verdict for the parked variant at all, which points at the EPP not queueing
+for that model rather than at the capacity check. Until it passes, treat the deny
+branch as **unit-tested only**.

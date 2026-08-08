@@ -10,9 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
@@ -35,20 +33,31 @@ import (
 // So the suite runs a live "occupier" workload that consumes its accelerator
 // entirely, then asserts that a parked variant on that accelerator is refused.
 //
-// PRECONDITION — a SECOND InferencePool. The occupier and the variant under test
-// cannot share one, and this is structural rather than a fixture detail:
-// scale-from-zero triggers on EPP flow-control queueing, which only happens when
-// the pool has NO ready endpoints, while the capacity check needs a usage
-// snapshot, which only exists when some WVA-managed variant is running and
-// measured. In one pool those requirements are mutually exclusive — the occupier
-// gives the pool ready endpoints, so requests are dispatched to it instead of
-// queueing, and no wake is ever considered. Every fixture currently stamps
-// llm-d.ai/guide: optimized-baseline, so they all land in the same pool.
+// STATUS: PENDING — written, not yet reproducing. Marked XDescribe so it reports
+// as pending rather than passing; do not "fix" it by deleting the X without
+// making it actually assert something.
 //
-// The suite therefore skips until the e2e infra provides a second pool for the
-// occupier. It is kept, rather than deleted, because everything else in it is
-// correct and the missing piece is one label plus an InferencePool/EPP.
-var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label("full"), Ordered, func() {
+// What is established: the occupier runs, holds 4 GPUs, and is discovered with a
+// resolved accelerator ("NVIDIA-A100-PCIE-80GB"), so conditions 1 and 2 below
+// hold. What does not happen: the engine reaches NO verdict for the parked
+// variant — neither an activation nor a refusal — which means it returns before
+// selection, i.e. it sees no pending requests for that model. Four attempts
+// eliminated: the occupier sharing the model, the occupier sharing the pool, and
+// a selector/label mismatch. The remaining suspect is whether the EPP queues at
+// all for a model whose pool has a live EPP but no ready backends of its own.
+//
+// The occupier must sit OUTSIDE the pool under test. Scale-from-zero triggers on
+// EPP flow-control queueing, and requests only queue when the pool has no ready
+// endpoints — so an occupier sharing the pool would serve them itself and no wake
+// would ever be considered. The project's contract is one model to one
+// InferencePool, which makes this natural: the occupier serves its own model, so
+// it belongs to its own pool. It is placed there with a distinct guide label,
+// since the fixtures otherwise default every workload into one pool.
+//
+// It still needs to be MEASURED, or its GPUs are not counted as used: usage is
+// summed from the saturation engine's per-model requests, which require replica
+// metrics. Hence the Service and ServiceMonitor below.
+var _ = XDescribe("Scale-From-Zero placement against GPU capacity", Serial, Label("full"), Ordered, func() {
 	const (
 		// Product label as the kind emulator sets it on nodes; pools are keyed by
 		// its normalized short name (A100).
@@ -77,8 +86,6 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: set SCALE_TO_ZERO_ENABLED=true")
 		}
-
-		skipUnlessSecondInferencePool()
 
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()
@@ -109,7 +116,14 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 			occupierModel, occupierVar, cfg.UseSimulator, cfg.MaxNumSeqs,
 			fixtures.WithAcceleratorNodeSelector(fullAccelerator),
 			fixtures.WithGPURequest(gpusPerNode),
+			// Its own pool, per the one-model-one-pool contract: it must not
+			// serve the pool whose queue drives the wake under test.
+			fixtures.WithPoolGuide("sfz-cap-occupier-pool"),
 		)).To(Succeed())
+
+		// Scraped, so its replicas turn into measured usage.
+		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, occupierSvc, occupierDeploy, 8000)).To(Succeed())
+		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, occupierSvc, occupierDeploy)).To(Succeed())
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, occupierScal, occupierDeploy,
 			occupierVar, 1, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectWVAAnnotations(occupierModel, "10.0"),
@@ -229,22 +243,4 @@ func expectScaleFromZeroRefusal(variantName string, since time.Time, reason stri
 		}
 		g.Expect(matched).To(BeTrue(), "no refusal line carried reason %q", reason)
 	}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
-}
-
-// skipUnlessSecondInferencePool skips when the cluster has only the one
-// InferencePool every fixture joins. See the note on the suite: the occupier has
-// to live in a different pool, or it supplies the ready endpoints that stop
-// requests queueing and the scenario cannot arise at all.
-func skipUnlessSecondInferencePool() {
-	GinkgoHelper()
-	pools := &unstructured.UnstructuredList{}
-	pools.SetAPIVersion("inference.networking.k8s.io/v1")
-	pools.SetKind("InferencePoolList")
-	if err := crClient.List(ctx, pools, client.InNamespace(cfg.LLMDNamespace)); err != nil {
-		Skip("could not list InferencePools: " + err.Error())
-	}
-	if len(pools.Items) < 2 {
-		Skip("this suite needs a second InferencePool for the occupier, so it does not supply " +
-			"ready endpoints to the pool under test; only " + fmt.Sprint(len(pools.Items)) + " present")
-	}
 }

@@ -332,3 +332,27 @@ func buildModelServerBaseArgs(modelID string, useSimulator bool, maxNumSeqs int)
 		"--disable-log-requests",
 	}
 }
+
+// WithPoolGuide overrides the `llm-d.ai/guide` label that decides which
+// InferencePool selects this workload's pods.
+//
+// Needed to place a workload OUTSIDE the pool under test. The project's contract
+// is one model to one InferencePool, but every fixture defaults to the same
+// guide value, so two fixtures serving different models would still land in one
+// pool — and a running workload there supplies ready endpoints, which stops
+// requests queueing and makes the scale-from-zero scenario unreachable.
+func WithPoolGuide(guide string) ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		if d.Spec.Template.Labels == nil {
+			d.Spec.Template.Labels = map[string]string{}
+		}
+		d.Spec.Template.Labels["llm-d.ai/guide"] = guide
+		// The guide label is part of the Deployment's selector, and the API
+		// server rejects a template whose labels do not match it.
+		if d.Spec.Selector != nil && d.Spec.Selector.MatchLabels != nil {
+			if _, selects := d.Spec.Selector.MatchLabels["llm-d.ai/guide"]; selects {
+				d.Spec.Selector.MatchLabels["llm-d.ai/guide"] = guide
+			}
+		}
+	}
+}
