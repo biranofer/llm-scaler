@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -107,6 +106,10 @@ type Engine struct {
 	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
 	// means no capacity check — see gpuConstraints.
 	gpuLimiter pipeline.Limiter
+	// lastRefusal remembers, per model, the last reason a wake was refused, so a
+	// verdict repeated every 100ms is logged once rather than continuously.
+	refusalMu   sync.Mutex
+	lastRefusal map[string]SelectionOutcome
 }
 
 // SetGPULimiter injects the limiter whose constraints bound a wake, so the
@@ -343,13 +346,26 @@ func (e *Engine) processInactiveModel(
 		RequirePrefill: e.requirePrefill(group.modelID, group.namespace),
 	})
 	if len(selected) == 0 {
-		// Operator-visible: demand exists and nothing was woken for it.
-		logger.Info("Scale-from-zero: no variant woken for a model with pending requests",
-			"namespace", group.namespace,
-			"modelID", group.modelID,
-			"reason", string(outcome))
+		if outcome == OutcomeAlreadyServing {
+			// The steady state for every serving model with a queue. Not a
+			// refusal, and on a 100ms loop it must never reach Info.
+			logger.V(logging.DEBUG).Info("Scale-from-zero: model already has a running decode, leaving it to the saturation engine",
+				"namespace", group.namespace, "modelID", group.modelID)
+			return nil
+		}
+		// A genuine refusal: demand exists and nothing was woken for it. Logged
+		// only when the verdict CHANGES, because this loop runs every 100ms and
+		// an unchanged refusal repeated at Info would bury the log at 10 lines a
+		// second for as long as the demand lasts.
+		if e.refusalChanged(group.key(), outcome) {
+			logger.Info("Scale-from-zero: no variant woken for a model with pending requests",
+				"namespace", group.namespace,
+				"modelID", group.modelID,
+				"reason", string(outcome))
+		}
 		return nil
 	}
+	e.clearRefusal(group.key())
 
 	var errs []error
 	for _, c := range selected {
@@ -413,10 +429,14 @@ func (e *Engine) publishActivation(
 
 	decision, hasDecision := common.DecisionCache.Get(va.Name, va.Namespace)
 	if !hasDecision {
-		cost, err := strconv.ParseFloat(va.Spec.VariantCost, 64)
-		if err != nil {
-			return err
-		}
+		// variantCost falls back to the project default rather than erroring.
+		// VariantCost is optional, and failing here would abort AFTER the
+		// activation and the retention mark have already been published: the
+		// target gets woken but never receives its decision-cache entry, status,
+		// or event, and hasDecision stays false so the same half-applied pass
+		// repeats every 100ms forever. This now agrees with buildCandidates,
+		// which deliberately keeps such a variant as a candidate.
+		cost := resolveVariantCost(ctx, va)
 		d := domain.VariantDecision{
 			VariantName:        va.Name,
 			Namespace:          va.Namespace,

@@ -51,6 +51,12 @@ const (
 	// OutcomeDecodeOnly woke decode alone: either the model is not
 	// disaggregated, or no prefill could be placed and requirePrefill is false.
 	OutcomeDecodeOnly SelectionOutcome = "decode-only"
+	// OutcomeAlreadyServing means the model already has a running decode, so
+	// there is nothing to wake. A queue building on a serving model is a
+	// saturation problem, not an activation one. Distinct from the refusals
+	// below because it is the steady state for every serving model and must not
+	// be reported as a failure to wake.
+	OutcomeAlreadyServing SelectionOutcome = "already-serving"
 	// OutcomeNoDecodeCandidate means the model has no inactive decode variant to
 	// wake at all.
 	OutcomeNoDecodeCandidate SelectionOutcome = "no-decode-candidate"
@@ -102,7 +108,7 @@ type SelectionInput struct {
 func selectServingSet(in SelectionInput) ([]Candidate, SelectionOutcome) {
 	if in.DecodeCovered {
 		// Already serving: not a scale-from-zero case.
-		return nil, OutcomeDecodeOnly
+		return nil, OutcomeAlreadyServing
 	}
 
 	decodes, prefills := splitByRole(in.Candidates)

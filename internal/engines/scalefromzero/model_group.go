@@ -72,6 +72,34 @@ func groupInactiveByModel(vas []wvav1alpha1.VariantAutoscaling) []modelGroup {
 	return groups
 }
 
+// refusalChanged reports whether outcome differs from the last refusal recorded
+// for this model, recording it either way.
+//
+// The optimize loop runs every 100ms, so a model that cannot be woken produces a
+// verdict ten times a second for as long as its requests are queued. Logging
+// only transitions keeps the operator-facing signal — "this model has demand and
+// was not woken, because X" — without burying the log.
+func (e *Engine) refusalChanged(key string, outcome SelectionOutcome) bool {
+	e.refusalMu.Lock()
+	defer e.refusalMu.Unlock()
+	if e.lastRefusal == nil {
+		e.lastRefusal = make(map[string]SelectionOutcome)
+	}
+	if prev, ok := e.lastRefusal[key]; ok && prev == outcome {
+		return false
+	}
+	e.lastRefusal[key] = outcome
+	return true
+}
+
+// clearRefusal forgets a model's last refusal, so that if it is refused again
+// later the reason is reported afresh rather than suppressed as unchanged.
+func (e *Engine) clearRefusal(key string) {
+	e.refusalMu.Lock()
+	defer e.refusalMu.Unlock()
+	delete(e.lastRefusal, key)
+}
+
 // coverage records which P/D roles a model is already running.
 type coverage struct {
 	decode  bool

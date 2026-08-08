@@ -178,14 +178,17 @@ func TestSelectServingSet(t *testing.T) {
 			wantSet:     nil,
 		},
 		{
-			name: "a model already serving is left to the saturation engine",
+			name: "a model already serving is reported as such, not as a refusal",
 			in: SelectionInput{
 				Namespace:     selNS,
 				Candidates:    []Candidate{cand("p", domain.RolePrefill, "H100", 2, 1)},
 				DecodeCovered: true,
 				Constraints:   pools(map[string]int{"H100": 8}),
 			},
-			wantOutcome: OutcomeDecodeOnly,
+			// Distinct from the refusals: the caller must be able to stay silent
+			// for this one, since it is the steady state for every serving model
+			// with a queue and the loop runs at 10Hz.
+			wantOutcome: OutcomeAlreadyServing,
 			wantSet:     nil,
 		},
 		{
