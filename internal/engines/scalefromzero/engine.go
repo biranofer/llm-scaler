@@ -320,6 +320,12 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 	// a direct patch here would fight the HPA that owns the same field.
 	// TODO: Right now we are scaling all the VA for the same target model. We need to scale only the VA that has the lowest cost.
 	decision.Set(va.Namespace, objName, int32(targetWorkloadReplicas))
+	// Acknowledge the wake so scale-to-zero leaves the model alone for its
+	// retention period. The model has served nothing yet — the request that
+	// caused this is still queued in the EPP — so the idle request counter the
+	// enforcer reads is zero and would zero the replica straight back out from
+	// under the request that asked for it.
+	decision.MarkActivated(va.Namespace, va.Spec.ModelID)
 	logger.Info("Published scale-from-zero activation for Target Workload", "variant", va.Name, "target VA model", va.Spec.ModelID, "inferencepool", pool.EndpointPicker.ServiceName)
 
 	// 2. Create or update VariantDecision

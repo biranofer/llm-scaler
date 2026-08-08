@@ -41,6 +41,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/external"
 	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
@@ -1093,6 +1094,20 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	}
 
 	scaleToZeroConfig := e.Config.ScaleToZeroConfigForNamespace(namespace)
+
+	// A model just woken from zero has served nothing yet: the request that woke
+	// it is still queued in the EPP while the pod pulls and loads. The enforcer's
+	// idle signal is a request counter over the retention window, which reads
+	// zero for precisely that model — so without this gate the wake is undone
+	// before it can serve the request that asked for it. Hold the model for the
+	// same retention period the operator already configures for idleness.
+	retention := config.ScaleToZeroRetentionPeriod(scaleToZeroConfig, modelID)
+	if decision.WithinActivationRetention(namespace, modelID, retention) {
+		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model was recently woken from zero and is inside its retention period",
+			"modelID", modelID, "namespace", namespace, "retention", retention, "optimizer", optimizerName)
+		return false
+	}
+
 	// Resolve the saturation entry so an inline scaleToZero setting can override
 	// the separate scale-to-zero ConfigMap for this model/namespace.
 	satConfig := resolveSaturationConfig(e.Config.SaturationConfigForNamespace(namespace), modelID, namespace)

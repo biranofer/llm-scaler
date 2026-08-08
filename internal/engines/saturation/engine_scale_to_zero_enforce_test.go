@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -70,6 +71,37 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		e := engineWithIdleEnforcer()
 		d := decisions()
 		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v1-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeTrue())
+		Expect(d[0].TargetReplicas).To(Equal(0))
+	})
+
+	It("does NOT zero a model still inside its scale-from-zero retention period", func() {
+		// A model just woken from zero has served nothing yet — the request that
+		// woke it is still queued in the EPP — so the enforcer's request counter
+		// reads idle for exactly the model that has demand waiting on it. Without
+		// this gate the wake is undone before it can serve that request.
+		decision.DefaultActivations.Mark(namespace, modelID)
+		DeferCleanup(func() { decision.DefaultActivations.Clear(namespace, modelID) })
+
+		e := engineWithIdleEnforcer() // configured retention: 10m
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2),
+			"a model woken from zero must keep its replicas for the retention period")
+	})
+
+	It("zeroes an idle model once its scale-from-zero retention has lapsed", func() {
+		// The hold is a grace period, not a permanent exemption: the canary spec
+		// above zeroes this same model with no activation recorded at all.
+		decision.DefaultActivations.Mark(namespace, modelID)
+		decision.DefaultActivations.Clear(namespace, modelID)
+
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
 			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
 		Expect(scaledToZero).To(BeTrue())
 		Expect(d[0].TargetReplicas).To(Equal(0))
