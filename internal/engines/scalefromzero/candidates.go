@@ -221,9 +221,27 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		return nil
 	}
 
+	// Make sure THIS namespace is in the active set handed to the providers.
+	//
+	// A namespace-scoped quota is only materialised for namespaces present in
+	// usageByNamespace, and that map is built from ACTIVE variants — so a
+	// namespace whose fleet is entirely parked, which is every namespace this
+	// engine asks about, would be absent and its quota simply would not apply.
+	// The wake would then be judged against the cluster aggregate instead: it
+	// could exceed the namespace's own cap, or be refused because a DIFFERENT
+	// namespace is full. Present with zero usage is the accurate statement.
+	byNamespace := usage.ByNamespace
+	if _, present := byNamespace[namespace]; !present {
+		byNamespace = make(map[string]map[string]int, len(usage.ByNamespace)+1)
+		for ns, perType := range usage.ByNamespace {
+			byNamespace[ns] = perType
+		}
+		byNamespace[namespace] = map[string]int{}
+	}
+
 	var constraints []*pipeline.ResourceConstraints
 	for _, cp := range providers {
-		c, err := cp.ComputeConstraints(ctx, usage.ByType, usage.ByNamespace)
+		c, err := cp.ComputeConstraints(ctx, usage.ByType, byNamespace)
 		if err != nil {
 			// A partial view is worse than none. FitsGPUBudget denies any
 			// accelerator type its constraints do not mention, so proceeding with

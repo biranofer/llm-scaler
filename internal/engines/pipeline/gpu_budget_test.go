@@ -174,3 +174,74 @@ func TestFitsGPUBudgetReconcilesAcceleratorNaming(t *testing.T) {
 		})
 	}
 }
+
+// TestFitsGPUBudgetNamespaceScoped covers the closed-allowlist semantics, where
+// the namespace — not the cluster aggregate — decides what may be used.
+func TestFitsGPUBudgetNamespaceScoped(t *testing.T) {
+	tests := []struct {
+		name        string
+		constraints []*ResourceConstraints
+		demand      map[string]int
+		want        bool
+	}{
+		{
+			// An operator granting a namespace UNLIMITED of a type must not have
+			// its wakes refused. aggregateNamespacePools omits the -1 sentinel, so
+			// the type is absent from the cluster Pools; resolving there first
+			// denied it while the optimizer allowed it.
+			name: "an unlimited namespace grant is honoured even though the cluster pool omits the type",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: -1}}},
+			)},
+			demand: map[string]int{"A100": 16},
+			want:   true,
+		},
+		{
+			name: "a finite namespace grant still binds",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{"A100": {Limit: 64}},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: 2, Used: 1}}},
+			)},
+			demand: map[string]int{"A100": 2},
+			want:   false,
+		},
+		{
+			// A namespace may not be granted more than physically exists.
+			name: "an unlimited namespace grant is still bounded by the cluster pool",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{"A100": {Limit: 4, Used: 3}},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: -1}}},
+			)},
+			demand: map[string]int{"A100": 2},
+			want:   false,
+		},
+		{
+			name: "a type the namespace does not list is denied",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{"A100": {Limit: 64}, "L4": {Limit: 64}},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: 8}}},
+			)},
+			demand: map[string]int{"L4": 1},
+			want:   false,
+		},
+		{
+			// The product-label spelling must resolve on the namespace side too.
+			name: "a product-label demand resolves against the namespace's keys",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{"A100": {Limit: 64}},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: 2}}},
+			)},
+			demand: map[string]int{"NVIDIA-A100-PCIE-80GB": 3},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FitsGPUBudget(tt.constraints, budgetNS, tt.demand); got != tt.want {
+				t.Fatalf("FitsGPUBudget = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

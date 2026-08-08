@@ -158,3 +158,45 @@ func TestGPUConstraintsPosture(t *testing.T) {
 		}
 	})
 }
+
+// TestGPUConstraintsMaterializesTheAskedNamespace: a namespace-scoped quota is
+// only applied to namespaces present in the active-usage map, and that map comes
+// from ACTIVE variants — so every namespace this engine asks about would be
+// absent and its quota simply would not apply. The wake would then be judged
+// against the cluster aggregate: able to exceed its own cap, or refused because a
+// different namespace is full.
+func TestGPUConstraintsMaterializesTheAskedNamespace(t *testing.T) {
+	decision.DefaultGPUUsage.Reset()
+	// Another namespace is active; ours is entirely parked, so it is absent.
+	decision.PublishGPUUsage(
+		map[string]int{"A100": 4},
+		map[string]map[string]int{"other-ns": {"A100": 4}},
+	)
+
+	var seen map[string]map[string]int
+	e := &Engine{gpuLimiter: capturingProvider{fn: func(byNS map[string]map[string]int) { seen = byNS }}}
+
+	e.gpuConstraints(context.Background(), "parked-ns")
+
+	if _, ok := seen["parked-ns"]; !ok {
+		t.Fatalf("active namespaces = %v; the namespace being placed must be present, or its "+
+			"namespace-scoped quota is never materialised", seen)
+	}
+	if got := len(seen["parked-ns"]); got != 0 {
+		t.Fatalf("parked namespace usage = %v, want empty (present with zero usage)", seen["parked-ns"])
+	}
+	if _, ok := seen["other-ns"]; !ok {
+		t.Fatal("the existing active namespaces must be preserved")
+	}
+}
+
+// capturingProvider records the namespace usage map it is handed.
+type capturingProvider struct {
+	fn func(map[string]map[string]int)
+}
+
+func (c capturingProvider) Name() string { return "capturing" }
+func (c capturingProvider) ComputeConstraints(_ context.Context, _ map[string]int, byNS map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+	c.fn(byNS)
+	return &pipeline.ResourceConstraints{ProviderName: "capturing"}, nil
+}

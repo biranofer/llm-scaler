@@ -41,18 +41,30 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 			continue
 		}
 
-		accType, known := resolveAcceleratorKey(perType, rawType)
-		if !known {
-			return false
-		}
-		budget := perType[accType]
-
+		var budget int
 		if nsScoped {
-			nsBudget, listed := nsBudgets[accType]
+			// A namespace present in any provider's NamespacePools is a CLOSED
+			// allowlist, and it — not the cluster aggregate — decides what this
+			// namespace may use. Resolve against it FIRST: a type the namespace
+			// grants as unlimited is legitimately absent from the cluster Pools
+			// (aggregateNamespacePools omits the -1 sentinel), so resolving
+			// against the cluster first would deny a wake the optimizer allows.
+			nsKey, listed := resolveAcceleratorKey(nsBudgets, rawType)
 			if !listed {
 				return false
 			}
-			budget = tighterBudget(budget, nsBudget)
+			budget = nsBudgets[nsKey]
+			// Still bounded by the cluster pool where one is known: a namespace
+			// may not be granted more than physically exists.
+			if clusterKey, known := resolveAcceleratorKey(perType, rawType); known {
+				budget = tighterBudget(budget, perType[clusterKey])
+			}
+		} else {
+			accType, known := resolveAcceleratorKey(perType, rawType)
+			if !known {
+				return false
+			}
+			budget = perType[accType]
 		}
 
 		// A negative budget survives tighterBudget only when every contributing
