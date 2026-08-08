@@ -502,6 +502,12 @@ func main() {
 			cfg, // Pass unified Config to engine
 			gpuLimiter,
 		)
+		// Discovery: the workloads KEDA has called the external scaler about.
+		// The enricher reads with GetAPIReader deliberately — a cached read of a
+		// ScaledObject is served by a cluster-wide informer, which is the LIST+WATCH
+		// this design exists to remove.
+		engine.Variants = registry.Default
+		engine.VariantEnricher = registry.NewEnricher(mgr.GetAPIReader(), registry.Default, registry.DefaultTargetMaxAge)
 		// Rebuild the limiter live when the saturation ConfigMap's limiters: list
 		// changes — no restart required. The builder re-reads the effective config.
 		engine.SetLimiterBuilder(func() (pipeline.Limiter, error) {
@@ -533,6 +539,13 @@ func main() {
 		if err != nil {
 			return err
 		}
+		// Same registry as the saturation engine: one call registers a workload for
+		// both. Its own Enricher, because the two loops run at different rates and
+		// each must be free to refresh when it needs to — they share the registry,
+		// which is where the freshness actually lives, so neither re-reads what the
+		// other has just read.
+		engine.Variants = registry.Default
+		engine.VariantEnricher = registry.NewEnricher(mgr.GetAPIReader(), registry.Default, registry.DefaultTargetMaxAge)
 		// Give the engine a limiter so a wake is only published for a variant
 		// that can actually be placed. This is its own instance rather than the
 		// saturation engine's: a limiter supplies constraints from usage passed

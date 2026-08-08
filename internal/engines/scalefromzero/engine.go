@@ -43,6 +43,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -106,6 +107,13 @@ type Engine struct {
 	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
 	// means no capacity check — see gpuConstraints.
 	gpuLimiter pipeline.Limiter
+	// Variants is the set of workloads KEDA has called WVA about — discovery. Nil
+	// falls back to the annotation-sourced listing.
+	Variants *registry.Registry
+	// VariantEnricher resolves each registered workload's scale target. Refreshed
+	// at the top of every cycle, which is a no-op for entries still inside their
+	// freshness window — this loop runs at 10Hz and must not read per tick.
+	VariantEnricher *registry.Enricher
 	// lastRefusal remembers, per model, the last reason a wake was refused, so a
 	// verdict repeated every 100ms is logged once rather than continuously.
 	refusalMu   sync.Mutex
@@ -163,7 +171,9 @@ func (e *Engine) optimize(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
 	// Get all inactive (replicas == 0) VAs
-	inactiveVAs, scaleTargets, err := utils.InactiveVariantAutoscaling(ctx, e.client)
+	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
+
+	inactiveVAs, scaleTargets, err := utils.InactiveVariantAutoscaling(ctx, e.client, e.Variants)
 	if err != nil {
 		return err
 	}
@@ -175,7 +185,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 	// Failing to read the active population is not fatal: treat coverage as
 	// unknown (nothing covered), which at worst re-publishes an activation for a
 	// target that is already awake.
-	activeVAs, activeTargets, activeErr := utils.ActiveVariantAutoscaling(ctx, e.client)
+	activeVAs, activeTargets, activeErr := utils.ActiveVariantAutoscaling(ctx, e.client, e.Variants)
 	if activeErr != nil {
 		logger.V(logging.DEBUG).Error(activeErr, "Could not list active variants; treating every role as uncovered")
 	}

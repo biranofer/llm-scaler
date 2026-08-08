@@ -51,6 +51,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -139,6 +140,13 @@ type Engine struct {
 
 	// metricsRegistry is used to access metrics sources for request count queries
 	metricsRegistry *source.SourceRegistry
+	// Variants is the set of workloads KEDA has called WVA about — discovery. Nil
+	// falls back to the annotation-sourced listing.
+	Variants *registry.Registry
+	// VariantEnricher resolves each registered workload's scale target with an
+	// uncached read. Refreshed at the top of every cycle; a no-op for entries
+	// still inside their freshness window.
+	VariantEnricher *registry.Enricher
 
 	// saturationV2Analyzer is the V2 token-based saturation analyzer (initialized once).
 	// Also pre-registered in analyzers under domain.SaturationAnalyzerName.
@@ -561,7 +569,9 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		logger.Info("Scaling to zero is enabled")
 	}
 
-	activeVAs, _, err := utils.ActiveVariantAutoscaling(ctx, e.client)
+	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
+
+	activeVAs, _, err := utils.ActiveVariantAutoscaling(ctx, e.client, e.Variants)
 	if err != nil {
 		logger.Error(err, "Unable to get active variant autoscalings")
 		return err

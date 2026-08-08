@@ -318,7 +318,7 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 			managedHPA("ns1", "hpa-ann", "deploy-ann", "model-ann"),
 		).Build()
 
-		result := readyVariantAutoscalings(ctx, cl)
+		result := readyVariantAutoscalings(ctx, cl, nil)
 		if len(result) != 1 {
 			t.Fatalf("want 1 annotation-sourced variant, got %d", len(result))
 		}
@@ -337,7 +337,7 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 			managedSO("ns-so", "so-ann", "deploy-so", "model-so"),
 		).Build()
 
-		result := readyVariantAutoscalings(ctx, cl)
+		result := readyVariantAutoscalings(ctx, cl, nil)
 		if len(result) != 2 {
 			t.Errorf("want 2 variants, got %d", len(result))
 		}
@@ -360,7 +360,7 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 			},
 		}).Build()
 
-		result := readyVariantAutoscalings(ctx, cl)
+		result := readyVariantAutoscalings(ctx, cl, nil)
 		if len(result) != 1 {
 			t.Errorf("want 1 variant (HPA-sourced, KEDA error is non-fatal), got %d", len(result))
 		}
