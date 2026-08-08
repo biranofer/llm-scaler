@@ -381,22 +381,35 @@ func (e *Engine) processInactiveModel(
 	}
 	e.clearRefusal(group.key())
 
-	var errs []error
+	// Publishing cannot fail — see publishActivation, which deliberately has no
+	// error path so that a wake can never be left half-applied. That matters most
+	// for a P/D pair: the two members were validated against the JOINT budget, so
+	// publishing one without the other would put capacity behind a set that was
+	// never approved.
 	for _, c := range selected {
 		va, ok := group.variantByName(c.VariantName)
 		if !ok {
+			// Unreachable: candidates are built from group.variants, and variant
+			// names are unique per namespace. Logged rather than skipped silently
+			// so that if the two ever diverge it is visible.
+			logger.Error(nil, "Selected variant is not in its own model group; skipping",
+				"variant", c.VariantName, "namespace", group.namespace, "modelID", group.modelID)
 			continue
 		}
-		if err := e.publishActivation(ctx, scaleTargets, va, pool, 1, outcome); err != nil {
-			errs = append(errs, err)
-		}
+		e.publishActivation(ctx, scaleTargets, va, pool, 1, outcome)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // publishActivation records the wake for one selected variant: it publishes the
 // activation decision KEDA acts on, then updates the shared decision cache and
 // the variant's status.
+//
+// It returns nothing on purpose. Everything after the decision.Set below is
+// bookkeeping, and an early return there would leave the target woken with no
+// cache entry, status, or event — a half-applied state the 100ms loop would then
+// repeat forever. Failures that used to abort are handled in place instead (see
+// resolveVariantCost).
 func (e *Engine) publishActivation(
 	ctx context.Context,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
@@ -404,7 +417,7 @@ func (e *Engine) publishActivation(
 	pool *poolutil.EndpointPool,
 	targetWorkloadReplicas int,
 	outcome SelectionOutcome,
-) error {
+) {
 	logger := log.FromContext(ctx)
 	objName := va.GetScaleTargetName()
 
@@ -517,6 +530,4 @@ func (e *Engine) publishActivation(
 		"namespace", va.Namespace,
 		"targetReplicas", targetWorkloadReplicas,
 		"reason", string(domain.DecisionReasonScaleFromZero)+reasonDetails)
-
-	return nil
 }

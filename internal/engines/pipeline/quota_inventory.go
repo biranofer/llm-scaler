@@ -358,10 +358,3 @@ func (q *QuotaInventory) NamespaceResourcePools(activeNamespaces []string) map[s
 
 // copyNestedIntMap returns a deep copy of a two-level nested int map.
 // maps.Clone is shallow, so the inner maps are cloned explicitly.
-func copyNestedIntMap(src map[string]map[string]int) map[string]map[string]int {
-	dst := make(map[string]map[string]int, len(src))
-	for outer, inner := range src {
-		dst[outer] = maps.Clone(inner)
-	}
-	return dst
-}
