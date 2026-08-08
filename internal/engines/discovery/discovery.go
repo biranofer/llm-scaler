@@ -19,6 +19,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	saturation_v2 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/saturation_v2"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
@@ -27,9 +28,10 @@ import (
 )
 
 // RoleLabel is the pod-template label carrying a variant's P/D disaggregation
-// role. Its presence and value ("prefill"/"decode") is the only signal WVA uses
-// to distinguish roles; any other value (or absence) means the non-disaggregated
-// role "both".
+// role. It is the FALLBACK signal: the engine's own `--disaggregation-mode`
+// argument is preferred where present (see RoleFromScaleTarget). Any value other
+// than "prefill"/"decode" (or absence of both signals) means the
+// non-disaggregated role "both".
 const RoleLabel = "llm-d.ai/role"
 
 // Discover resolves the domain.VariantMetadata for each VariantAutoscaling. It prefers a
@@ -145,13 +147,26 @@ func costFromVA(ctx context.Context, va *llmdvariant.VariantAutoscaling) float64
 	return cost
 }
 
-// RoleFromScaleTarget extracts the P/D role from a scale target's leader
-// pod-template labels. Returns "prefill", "decode", or "both" (the default when
-// no role label is present or the value is unrecognized).
+// RoleFromScaleTarget resolves a scale target's P/D role, returning "prefill",
+// "decode", or "both".
+//
+// Two sources, in order: the engine's own `--disaggregation-mode` argument, then
+// the RoleLabel pod-template label. "both" is the default when neither declares
+// a role, which is correct for a non-disaggregated workload — it serves complete
+// requests on its own.
 func RoleFromScaleTarget(scaleTarget scaletarget.ScaleTargetAccessor) string {
 	if scaleTarget == nil {
 		return domain.RoleBoth
 	}
+
+	// The engine's own arguments are authoritative: `--disaggregation-mode
+	// prefill|decode` is what the process is actually configured to do, whereas
+	// the pod-template label is a convention a workload may simply not carry.
+	// Prefer it, and fall back to the label.
+	if role := saturation_v2.ParseDisaggregationRole(scaleTarget); role != "" {
+		return role
+	}
+
 	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
 	if podTemplateSpec == nil || podTemplateSpec.Labels == nil {
 		return domain.RoleBoth

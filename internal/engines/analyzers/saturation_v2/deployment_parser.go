@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
@@ -300,4 +301,48 @@ func resolveEffectiveMaxBatchedTokens(params *EngineParams) {
 	}
 
 	params.EffectiveMaxBatchedTokens = 2048
+}
+
+// DisaggregationRole is a P/D role declared on the engine's own command line.
+// Empty when the workload declares none.
+type DisaggregationRole = string
+
+// ParseDisaggregationRole reads the P/D role a workload declares through its
+// engine arguments, e.g. `--disaggregation-mode prefill`.
+//
+// This is the authoritative source for the role: it is what the engine process
+// is actually configured to do, whereas the `llm-d.ai/role` pod-template label is
+// a convention a workload may simply not carry. Callers should prefer this and
+// fall back to the label (see discovery.RoleFromScaleTarget).
+//
+// Returns "" when no role flag is present, which callers must treat as "unknown,
+// use the fallback" rather than as a role in its own right.
+func ParseDisaggregationRole(scaleTarget scaletarget.ScaleTargetAccessor) DisaggregationRole {
+	if scaleTarget == nil {
+		return ""
+	}
+	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
+	if podTemplateSpec == nil {
+		return ""
+	}
+
+	role := ""
+	for _, container := range podTemplateSpec.Spec.Containers {
+		args := collectArgs(container.Command, container.Args)
+		parseArgsWith(args, nil, func(key, value string, _ *EngineParams) {
+			if normalizeKey(key) != "disaggregation_mode" {
+				return
+			}
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case domain.RolePrefill:
+				role = domain.RolePrefill
+			case domain.RoleDecode:
+				role = domain.RoleDecode
+			}
+		})
+		if role != "" {
+			return role
+		}
+	}
+	return role
 }

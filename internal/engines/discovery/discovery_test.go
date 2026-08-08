@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -187,5 +188,51 @@ var _ = Describe("VariantMetadata.ToReplicaState", func() {
 		Expect(rs.PendingReplicas).To(Equal(1))
 		Expect(rs.MinReplicas).To(Equal(m.MinReplicas))
 		Expect(rs.MaxReplicas).To(Equal(m.MaxReplicas))
+	})
+})
+
+// roleTargetWithArgs builds a Deployment accessor whose container declares args,
+// optionally alongside a role label.
+func roleTargetWithArgs(args []string, label string) scaletarget.ScaleTargetAccessor {
+	labels := map[string]string{}
+	if label != "" {
+		labels[discovery.RoleLabel] = label
+	}
+	return scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "server", Args: args}}},
+			},
+		},
+	})
+}
+
+// The engine's own --disaggregation-mode is what the process is actually
+// configured to do, so it outranks the pod-template label — a convention a
+// workload may not carry, or may carry stale.
+var _ = Describe("RoleFromScaleTarget", func() {
+	DescribeTable("resolves the P/D role",
+		func(args []string, label string, want string) {
+			Expect(discovery.RoleFromScaleTarget(roleTargetWithArgs(args, label))).To(Equal(want))
+		},
+		Entry("engine args alone declare prefill",
+			[]string{"--disaggregation-mode", "prefill"}, "", domain.RolePrefill),
+		Entry("engine args alone declare decode",
+			[]string{"--disaggregation-mode", "decode"}, "", domain.RoleDecode),
+		Entry("the = form is understood too",
+			[]string{"--disaggregation-mode=decode"}, "", domain.RoleDecode),
+		Entry("engine args outrank a conflicting label",
+			[]string{"--disaggregation-mode", "decode"}, domain.RolePrefill, domain.RoleDecode),
+		Entry("the label is used when the engine declares nothing",
+			[]string{"--model", "meta/llama"}, domain.RolePrefill, domain.RolePrefill),
+		Entry("neither source means the non-disaggregated role",
+			[]string{"--model", "meta/llama"}, "", domain.RoleBoth),
+		Entry("an unrecognised mode falls through to the default",
+			[]string{"--disaggregation-mode", "something-else"}, "", domain.RoleBoth),
+	)
+
+	It("treats a nil scale target as non-disaggregated", func() {
+		Expect(discovery.RoleFromScaleTarget(nil)).To(Equal(domain.RoleBoth))
 	})
 })
