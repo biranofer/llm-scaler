@@ -104,6 +104,41 @@ TTL defaults to 5 minutes: comfortably above KEDA's 30s default
 `pollingInterval` and the 15s optimize interval, so a slow poll never evicts a
 live workload, while an abandoned entry does not linger for the process lifetime.
 
+## Why not watch ScaledObjects?
+
+The obvious alternative is to subscribe: watch ScaledObjects and update the
+registry the moment one changes. It is rejected, because **a watch is a list.**
+A controller-runtime informer does an initial cluster-wide LIST and then holds a
+WATCH, keeping every ScaledObject in the cluster in memory — including the ones
+WVA does not manage — and needs `list;watch` cluster-wide in RBAC. That is
+precisely the thing this design removes. (Note this is also why WVA's per-entry
+read uses `GetAPIReader`: a *cached* Get is served by that same informer, so
+reading through `GetClient()` would reinstate the watch without anyone writing
+the word "watch".)
+
+The gap a watch would close is narrower than it looks, because **KEDA already
+notifies us.** When a ScaledObject's generation changes, KEDA rebuilds its scaler
+cache: it re-issues `GetMetricSpec` and closes and re-opens `StreamIsActive`. So
+a change to the trigger — which is where WVA's own configuration lives — is
+pushed to WVA for free, on the object's own edit.
+
+What KEDA does not forward is the rest of the object: `scaleTargetRef`,
+`minReplicaCount`, `maxReplicaCount`. So:
+
+- A call carrying metadata that differs from what is stored is treated as
+  evidence the OBJECT changed, and **invalidates the entry's target read** — the
+  next enrichment pass re-reads immediately rather than serving a stale envelope
+  for the rest of its window. The last known target keeps serving until it lands,
+  so an edit never drops a variant out of the fleet.
+- An edit that touches *only* min/max and leaves the trigger alone still waits
+  out the freshness window (≤30s). That is the accepted cost. These are envelope
+  bounds that change when someone edits a manifest, and KEDA's HPA — not WVA —
+  is what enforces them in the meantime.
+
+If that window ever proves too slow, the cheaper fix than a watch is to shorten
+`DefaultTargetMaxAge`, or to move the affected field into trigger metadata where
+KEDA will push it.
+
 ### Restart
 
 The registry is in-memory and starts empty. After a WVA restart, KEDA re-opens its

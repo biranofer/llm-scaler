@@ -62,6 +62,8 @@ const (
 	// testNamespace is the single namespace these tests operate in; the registry
 	// keys on (namespace, name), so entries and objects must agree on it.
 	testNamespace = "chat"
+	// testTarget is the workload the fixture ScaledObject scales.
+	testTarget = "chat-deploy"
 )
 
 func newTestEnricher(t *testing.T, now *time.Time, reg *Registry, objs ...client.Object) (*Enricher, *countingReader) {
@@ -82,7 +84,7 @@ func TestRefreshResolvesTheTarget(t *testing.T) {
 
 	minR, maxR := int32(0), int32(9)
 	e, _ := newTestEnricher(t, &now, reg,
-		scaledObject("chat-so", "chat-deploy", &minR, &maxR))
+		scaledObject("chat-so", testTarget, &minR, &maxR))
 
 	e.Refresh(context.Background())
 
@@ -90,7 +92,7 @@ func TestRefreshResolvesTheTarget(t *testing.T) {
 	if !ok {
 		t.Fatal("the entry should still be registered")
 	}
-	if entry.Target.Name != "chat-deploy" {
+	if entry.Target.Name != testTarget {
 		t.Errorf("scale target: have %q", entry.Target.Name)
 	}
 	if entry.Target.Kind != "Deployment" || entry.Target.APIVersion != "apps/v1" {
@@ -117,7 +119,7 @@ func TestRefreshDoesNotRereadFreshEntries(t *testing.T) {
 	reg.Observe(testNamespace, "chat-so", nil)
 
 	e, reader := newTestEnricher(t, &now, reg,
-		scaledObject("chat-so", "chat-deploy", nil, nil))
+		scaledObject("chat-so", testTarget, nil, nil))
 
 	e.Refresh(context.Background())
 	if reader.gets != 1 {
@@ -147,7 +149,7 @@ func TestRefreshKeepsTheLastTargetOnError(t *testing.T) {
 	reg.Observe(testNamespace, "chat-so", nil)
 
 	e, reader := newTestEnricher(t, &now, reg,
-		scaledObject("chat-so", "chat-deploy", nil, nil))
+		scaledObject("chat-so", testTarget, nil, nil))
 	e.Refresh(context.Background())
 
 	reader.err = errors.New("apiserver unreachable")
@@ -158,7 +160,7 @@ func TestRefreshKeepsTheLastTargetOnError(t *testing.T) {
 	if !ok {
 		t.Fatal("a failed read must not deregister the workload")
 	}
-	if entry.Target.Name != "chat-deploy" {
+	if entry.Target.Name != testTarget {
 		t.Errorf("the last known target must survive a failed read, have %q", entry.Target.Name)
 	}
 }
@@ -230,7 +232,7 @@ func TestEnrichmentDiesWithItsEntry(t *testing.T) {
 
 	minR, maxR := int32(1), int32(4)
 	e, _ := newTestEnricher(t, &now, reg,
-		scaledObject("chat-so", "chat-deploy", &minR, &maxR))
+		scaledObject("chat-so", testTarget, &minR, &maxR))
 	e.Refresh(context.Background())
 
 	now = now.Add(2 * testTTL)
@@ -249,7 +251,7 @@ func TestEnrichmentDiesWithItsEntry(t *testing.T) {
 // TestTargetFromScaledObjectDefaultsMaxReplicas: an omitted maxReplicaCount must
 // read as the ceiling KEDA will actually enforce, not as "unbounded".
 func TestTargetFromScaledObjectDefaultsMaxReplicas(t *testing.T) {
-	so := scaledObject("chat-so", "chat-deploy", nil, nil)
+	so := scaledObject("chat-so", testTarget, nil, nil)
 	target := TargetFromScaledObject(so)
 
 	if target.MaxReplicas == nil {
@@ -311,5 +313,72 @@ func TestRefreshIsANoOpWithoutAReader(t *testing.T) {
 
 	if entry, _ := reg.Get(testNamespace, "chat-so"); !entry.TargetAt.IsZero() {
 		t.Error("nothing should have been enriched")
+	}
+}
+
+// TestChangedTriggerMetadataInvalidatesTheTargetRead is how WVA learns about an
+// edited ScaledObject without watching one.
+//
+// KEDA rebuilds its scaler cache when a ScaledObject's generation changes — it
+// re-issues GetMetricSpec and re-opens StreamIsActive — so a call carrying
+// different metadata is evidence that the OBJECT changed, not just that time
+// passed. Waiting out the freshness window there would serve a stale envelope
+// for no reason.
+func TestChangedTriggerMetadataInvalidatesTheTargetRead(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "chat-so", map[string]string{ModelIDKey: testModel})
+
+	e, reader := newTestEnricher(t, &now, reg,
+		scaledObject("chat-so", testTarget, nil, nil))
+	e.Refresh(context.Background())
+	if reader.gets != 1 {
+		t.Fatalf("expected the first read, have %d", reader.gets)
+	}
+
+	// Same metadata, well inside the window: no re-read.
+	reg.Observe(testNamespace, "chat-so", map[string]string{ModelIDKey: testModel})
+	e.Refresh(context.Background())
+	if reader.gets != 1 {
+		t.Errorf("an unchanged trigger must not force a read, have %d", reader.gets)
+	}
+
+	// Changed metadata: KEDA only re-sends this because the object changed.
+	reg.Observe(testNamespace, "chat-so", map[string]string{
+		ModelIDKey: testModel, VariantCostKey: "20.0",
+	})
+	e.Refresh(context.Background())
+	if reader.gets != 2 {
+		t.Errorf("a changed trigger must force a re-read, have %d", reader.gets)
+	}
+}
+
+// TestInvalidationKeepsServingTheLastEnvelope: an edit must not drop the variant
+// out of the fleet while the fresh read is pending. Clearing the target would be
+// a scaling gap caused by an edit that may not have touched the scale target at
+// all.
+func TestInvalidationKeepsServingTheLastEnvelope(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "chat-so", map[string]string{ModelIDKey: testModel})
+
+	e, _ := newTestEnricher(t, &now, reg,
+		scaledObject("chat-so", testTarget, nil, nil))
+	e.Refresh(context.Background())
+
+	reg.Observe(testNamespace, "chat-so", map[string]string{
+		ModelIDKey: testModel, VariantCostKey: "20.0",
+	})
+
+	entry, ok := reg.Get(testNamespace, "chat-so")
+	if !ok {
+		t.Fatal("the workload must stay registered across an edit")
+	}
+	if entry.Target.Name != testTarget {
+		t.Errorf("the last known target must keep serving until the re-read lands, have %q",
+			entry.Target.Name)
+	}
+	if entry.Fresh(now, testTargetMaxAge) {
+		t.Error("but it must read as stale, so the next pass re-reads it")
 	}
 }

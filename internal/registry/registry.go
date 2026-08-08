@@ -131,6 +131,20 @@ func key(namespace, name string) string { return namespace + "/" + name }
 // A refresh replaces the metadata rather than merging it, so editing a trigger
 // takes effect on the next call instead of leaving removed keys behind forever.
 // FirstSeen is preserved.
+//
+// **Changed metadata invalidates the entry's target read.** This is how WVA
+// learns about an edited ScaledObject without watching one. KEDA rebuilds its
+// scaler cache when a ScaledObject's generation changes — it re-issues
+// GetMetricSpec and re-opens StreamIsActive — so a call carrying metadata
+// different from what is stored is evidence that the OBJECT changed, not just
+// that time passed. The fields WVA reads separately (scaleTargetRef, min/max)
+// may well have changed in the same edit, so the cached read is dropped and the
+// next enrichment pass re-reads immediately instead of serving a stale envelope
+// for the rest of its window.
+//
+// It is not a complete substitute for a watch: an edit that touches ONLY
+// min/max, leaving the trigger alone, still waits out the freshness window. That
+// is the deliberate trade — see docs/plans/engine/keda-driven-discovery.md.
 func (r *Registry) Observe(namespace, name string, metadata map[string]string) {
 	if namespace == "" || name == "" {
 		return
@@ -145,6 +159,14 @@ func (r *Registry) Observe(namespace, name string, metadata map[string]string) {
 	if !ok {
 		e = &entry{Entry: Entry{Namespace: namespace, Name: name, FirstSeen: now}}
 		r.m[k] = e
+	} else if !maps.Equal(e.Metadata, metadata) {
+		// Zero the DATE, not the target. Clearing the target would drop the
+		// variant out of the fleet until the next enrichment pass — a scaling gap
+		// caused by an edit that may not even have touched the scale target. A
+		// zero date reads as stale, so the next pass re-reads immediately, while
+		// the last known envelope keeps serving in the meantime. Same policy as a
+		// failed read, for the same reason.
+		e.TargetAt = time.Time{}
 	}
 	e.Metadata = maps.Clone(metadata)
 	e.LastSeen = now
