@@ -400,6 +400,9 @@ func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
 	if override.ScaleToZero != nil {
 		c.ScaleToZero = override.ScaleToZero
 	}
+	if override.ScaleFromZero != nil {
+		c.ScaleFromZero = override.ScaleFromZero
+	}
 	// Limiters is intentionally NOT merged: it is a cluster-"default"-scope setting
 	// read only from the global default entry (see Config.EffectiveLimiterMode), so
 	// a per-model override's limiters would never be consumed.

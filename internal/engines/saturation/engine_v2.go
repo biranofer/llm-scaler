@@ -699,19 +699,7 @@ func computeCurrentGPUUsageByNamespace(requests []pipeline.ModelScalingRequest) 
 // quota configs are all consulted. Other limiter shapes (e.g. NoOpLimiter)
 // contribute nothing.
 func gpuConstraintProviders(l pipeline.Limiter) []pipeline.ConstraintProvider {
-	switch lim := l.(type) {
-	case pipeline.ConstraintProvider:
-		return []pipeline.ConstraintProvider{lim}
-	case *pipeline.CompositeLimiter:
-		var providers []pipeline.ConstraintProvider
-		for _, c := range lim.Constituents() {
-			if cp, ok := c.(pipeline.ConstraintProvider); ok {
-				providers = append(providers, cp)
-			}
-		}
-		return providers
-	}
-	return nil
+	return pipeline.ConstraintProvidersFrom(l)
 }
 
 // collectV2ModelRequest performs V2 analysis for a single model and returns

@@ -188,3 +188,29 @@ type NamespaceAwareInventory interface {
 	// should be called first so the returned pools carry current usage.
 	NamespaceResourcePools(activeNamespaces []string) map[string]map[string]ResourcePool
 }
+
+// ConstraintProvidersFrom unwraps a configured limiter into the providers that
+// can supply constraints: a limiter that is itself a ConstraintProvider, or each
+// constituent of a CompositeLimiter that is one (so a multi-entry quota config is
+// fully consulted). Returns nil for a nil limiter, or one that provides no
+// constraints — NoOpLimiter is a valid, inert value of the slot.
+//
+// Shared by every constraint consumer so they cannot drift in what they consider
+// a provider.
+func ConstraintProvidersFrom(l Limiter) []ConstraintProvider {
+	switch lim := l.(type) {
+	case nil:
+		return nil
+	case *CompositeLimiter:
+		var providers []ConstraintProvider
+		for _, c := range lim.Constituents() {
+			if cp, ok := c.(ConstraintProvider); ok {
+				providers = append(providers, cp)
+			}
+		}
+		return providers
+	case ConstraintProvider:
+		return []ConstraintProvider{lim}
+	}
+	return nil
+}
