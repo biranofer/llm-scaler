@@ -95,3 +95,62 @@ func TestUnresolvedUsageStillCountsTowardTotals(t *testing.T) {
 			poolUsed, inv.TotalUsed())
 	}
 }
+
+// TestPoolKeysAreShortNames is the inventory half of the candidate/pool key
+// agreement. Pools are keyed by NORMALIZED short names, so anything compared
+// against them must be normalized too — when the scale-from-zero candidate side
+// used raw nodeSelector values, a variant selecting GPUs by product label
+// matched no pool and was denied a wake.
+//
+// The expected literals here are the same ones
+// TestCandidateAcceleratorIsInPoolKeySpace asserts from the candidate side: if
+// either side stops normalizing, one of the two fails.
+func TestPoolKeysAreShortNames(t *testing.T) {
+	disc := &mockDiscovery{inventory: map[string]map[string]discovery.AcceleratorModelInfo{
+		"node-a": {"NVIDIA-A100-PCIE-80GB": {Count: 8}},
+		"node-b": {"AMD-MI300X-192G": {Count: 4}},
+	}}
+	inv := NewTypeInventory("test", disc)
+	if err := inv.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	pools := inv.GetResourcePools()
+	for _, want := range []string{"A100", "MI300X"} {
+		if _, ok := pools[want]; !ok {
+			t.Fatalf("pools = %v, want a %q key (pool keys are normalized short names)", pools, want)
+		}
+	}
+	if _, raw := pools["NVIDIA-A100-PCIE-80GB"]; raw {
+		t.Fatal("pools are keyed by the raw product name; candidates normalize, so they would never match")
+	}
+}
+
+// TestConstraintProvidersFrom pins the unwrap both engines now share.
+func TestConstraintProvidersFrom(t *testing.T) {
+	direct := &DefaultLimiter{name: "gpu-limiter"}
+
+	t.Run("nil limiter", func(t *testing.T) {
+		if got := ConstraintProvidersFrom(nil); got != nil {
+			t.Fatalf("got %v, want nil", got)
+		}
+	})
+
+	t.Run("a limiter that is itself a provider", func(t *testing.T) {
+		got := ConstraintProvidersFrom(direct)
+		if len(got) != 1 || got[0].Name() != "gpu-limiter" {
+			t.Fatalf("got %v, want the limiter itself", got)
+		}
+	})
+
+	t.Run("a composite yields each constituent that provides constraints", func(t *testing.T) {
+		// A composite is NOT itself a ConstraintProvider, so it must be unwrapped
+		// rather than returned whole — otherwise a multi-entry quota config would
+		// be consulted as one opaque provider.
+		got := ConstraintProvidersFrom(NewCompositeLimiter("composite",
+			[]Limiter{direct, &NoOpLimiter{}}))
+		if len(got) != 1 || got[0].Name() != "gpu-limiter" {
+			t.Fatalf("got %v, want only the constraint-providing constituent", got)
+		}
+	})
+}
