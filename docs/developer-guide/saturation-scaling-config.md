@@ -71,6 +71,53 @@ for that model/namespace. When omitted, that ConfigMap (and the `WVA_SCALE_TO_ZE
 env fallback) governs, exactly as before. The retention period is unaffected — it
 always comes from the scale-to-zero ConfigMap.
 
+### `scaleFromZero`
+
+An entry may tune how a model is woken from zero replicas:
+
+```yaml
+scaleFromZero: { requirePrefill: true }
+```
+
+| key | default | meaning |
+| --- | --- | --- |
+| `requirePrefill` | `false` | Refuse to wake a P/D-disaggregated model unless a prefill variant can be placed alongside decode. |
+
+**Why the default is `false`.** When the scale-from-zero engine picks which
+variants to wake, decode is mandatory and prefill is best-effort. That follows
+from how the llm-d router behaves rather than from a preference: with no prefill
+endpoint selected it routes the request to a decode endpoint, and the decode
+worker runs both stages locally. The router already declines disaggregation on
+its own for short prompts and high prefix-cache hits, so decode-only is a normal
+serving mode, not a failure mode. If prefill cannot be placed — no free GPUs on
+its accelerator, or a namespace quota that excludes it — waking decode alone
+still serves the queued request, whereas refusing to wake trades a slower model
+for no model at all.
+
+Set `requirePrefill: true` when degraded prefill performance is worse than
+unavailability for this model: a strict TTFT SLO, or decode nodes that must not
+absorb prefill load. With it set, a model whose prefill cannot be placed is left
+at zero and the engine logs why at INFO:
+
+```
+Scale-from-zero: no variant woken for a model with pending requests
+  namespace=... modelID=... reason=prefill-required
+```
+
+Other `reason` values are `no-decode-candidate` (the model has no inactive
+decode/`both` variant to wake) and `no-capacity` (nothing fit the GPU budget).
+
+Role comes from the `llm-d.ai/role` pod-template label (`prefill`, `decode`, or
+absent/`both`). A model with no prefill variants is unaffected by this setting.
+
+**Placement.** Selection only wakes a variant that can actually get GPUs,
+checked against the same GPU/quota limiters the optimizer honours (see
+[`limiters`](#limiters-cluster-default-only-live)) and evaluated on the **sum**
+of the variants being woken together — prefill and decode can each fit alone
+while the pair does not. When the GPU budget cannot be determined (no limiter
+configured, or no usage snapshot published yet, as on the first cycle after a
+restart) the check is skipped rather than denying the wake.
+
 ### `limiters` (cluster-default only, live)
 
 The `default` entry selects the GPU limiter for the scaling pipeline. This is the
@@ -921,7 +968,13 @@ type SaturationScalingConfig struct {
     Priority             float64               `yaml:"priority,omitempty"`           // default 1.0
     Analyzers            []AnalyzerScoreConfig `yaml:"analyzers,omitempty"`
     ScaleToZero          *ScaleToZeroEnvelope  `yaml:"scaleToZero,omitempty"`        // Phase 1: inline scale-to-zero
+    ScaleFromZero        *ScaleFromZeroEnvelope `yaml:"scaleFromZero,omitempty"`     // Phase 1: inline scale-from-zero
     Limiters             []QuotaLimiterConfig  `yaml:"limiters,omitempty"`           // Phase 1: cluster-default-only GPU limiters
+}
+
+// ScaleFromZeroEnvelope tunes how a model is woken from zero replicas.
+type ScaleFromZeroEnvelope struct {
+    RequirePrefill *bool `yaml:"requirePrefill,omitempty"` // default false: decode alone may be woken
 }
 
 // AnalyzerScoreConfig configures one analyzer in the multi-analyzer pipeline.

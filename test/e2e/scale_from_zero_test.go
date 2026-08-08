@@ -47,12 +47,19 @@ func externalScalerAddress() string {
 // anchors the log window — pass the moment the trigger job was created, so an
 // activation left over from an earlier run of the same suite (the variant names
 // are fixed) cannot satisfy the spec.
-func expectScaleFromZeroEngineActivation(variantName string, since time.Time) {
+// alsoContaining are extra substrings that must appear on the SAME activation
+// line, e.g. the serving-set outcome.
+//
+// Assert everything you care about here rather than grepping the controller log
+// after the run: kubelet rotates the container log, so a post-hoc grep can come
+// back empty for an activation that demonstrably happened.
+func expectScaleFromZeroEngineActivation(variantName string, since time.Time, alsoContaining ...string) {
 	GinkgoHelper()
 	const controllerManagerLabel = "control-plane=controller-manager"
 	// Logged by internal/engines/scalefromzero once it publishes the activation
 	// to the decision store, which is what WVA pushes to KEDA.
 	const pattern = "Published scale-from-zero activation"
+	required := append([]string{pattern, variantName}, alsoContaining...)
 	Eventually(func(g Gomega) {
 		// Recomputed per attempt so the window always starts at `since`.
 		sinceSeconds := int64(time.Since(since).Seconds()) + 1
@@ -60,17 +67,24 @@ func expectScaleFromZeroEngineActivation(variantName string, since time.Time) {
 		g.Expect(logErr).NotTo(HaveOccurred())
 		g.Expect(ok).To(BeTrue(),
 			"scale-from-zero engine never published an activation; if the target scaled up anyway, something other than the scale-from-zero path woke it")
-		// Require the message and the variant on the same line: another variant's
-		// activation elsewhere in the log must not satisfy this spec.
+		// Require every fragment on one line: another variant's activation
+		// elsewhere in the log must not satisfy this spec.
 		matched := false
 		for _, line := range strings.Split(logs, "\n") {
-			if strings.Contains(line, pattern) && strings.Contains(line, variantName) {
+			all := true
+			for _, want := range required {
+				if !strings.Contains(line, want) {
+					all = false
+					break
+				}
+			}
+			if all {
 				matched = true
 				break
 			}
 		}
 		g.Expect(matched).To(BeTrue(),
-			"scale-from-zero activation was published, but not for variant "+variantName)
+			"no single activation line contained all of %v", required)
 	}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 }
 
@@ -371,15 +385,18 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		})
 	})
 
-	// TODO(scale-from-zero-keda-flaky): The KEDA scale-from-zero flow is flaky — the
-	// engine intermittently logs "Inferencepool datastore is empty - skipping processing
-	// inactive variant" and the target never scales up from zero within the timeout.
-	// This was tolerated while the KEDA full-e2e job was non-blocking; it became blocking
-	// once KEDA became the sole backend. Labeled
-	// "flaky" to keep it out of the required `full && !smoke && !flaky` gate until the
-	// root cause (InferencePool datastore not populated for inactive variants) is fixed.
-	// Tracking issue: TODO(file issue and reference here).
-	Context("Scale-from-zero with pending requests", Label("flaky"), func() {
+	// Previously labelled "flaky" and excluded from the required
+	// `full && !smoke && !flaky` gate. Both causes are fixed, so it is back in
+	// the gate:
+	//   - The suite restarts the controller in BeforeSuite but only waited for
+	//     pod-Ready. Every engine is a leader-gated runnable, so WVA was up but
+	//     inert for up to the lease duration, which is what produced
+	//     "Inferencepool datastore is empty". restartWVAController now waits for
+	//     leadership.
+	//   - The decision store was a latch, so a stale positive decision woke the
+	//     target before the engine could ever see it inactive. Decisions that say
+	//     "keep awake" now expire.
+	Context("Scale-from-zero with pending requests", func() {
 		var triggerJobName string
 
 		AfterAll(func() {
@@ -837,12 +854,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		})
 	})
 
-	// TODO(scale-from-zero-keda-flaky): Flaky on KEDA — see the note on the plain
-	// "Scale-from-zero with pending requests" Context. The engine logs "Inferencepool
-	// datastore is empty - skipping processing inactive variant" and the LWS never scales
-	// up from zero within the timeout. Labeled "flaky" to exclude from the required gate
-	// until the InferencePool-datastore root cause is fixed. Tracking issue: TODO.
-	Context("Scale-from-zero with pending requests for LWS", Label("flaky"), func() {
+	// Previously "flaky" — see the note on the plain "Scale-from-zero with
+	// pending requests" Context for the two causes and their fixes.
+	Context("Scale-from-zero with pending requests for LWS", func() {
 		var triggerJobName string
 
 		AfterAll(func() {
@@ -1206,12 +1220,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		})
 	})
 
-	// TODO(scale-from-zero-keda-flaky): Flaky on KEDA — see the note on the plain
-	// "Scale-from-zero with pending requests" Context. The engine logs "Inferencepool
-	// datastore is empty - skipping processing inactive variant" and the single-node LWS
-	// never scales up from zero within the timeout. Labeled "flaky" to exclude from the
-	// required gate until the InferencePool-datastore root cause is fixed. Tracking issue: TODO.
-	Context("Scale-from-zero with pending requests for single-node LWS", Label("flaky"), func() {
+	// Previously "flaky" — see the note on the plain "Scale-from-zero with
+	// pending requests" Context for the two causes and their fixes.
+	Context("Scale-from-zero with pending requests for single-node LWS", func() {
 		var triggerJobName string
 
 		AfterAll(func() {

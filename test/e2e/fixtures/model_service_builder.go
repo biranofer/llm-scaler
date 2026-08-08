@@ -14,7 +14,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 )
+
+// ModelServiceOption adjusts a model-service Deployment before it is applied.
+type ModelServiceOption func(*appsv1.Deployment)
+
+// WithRole stamps the P/D disaggregation role on the pod template, which is
+// where WVA reads it from (discovery.RoleFromScaleTarget). Use
+// domain.RolePrefill / domain.RoleDecode; an unlabelled workload reads as
+// "both", i.e. non-disaggregated.
+func WithRole(role string) ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		if d.Spec.Template.Labels == nil {
+			d.Spec.Template.Labels = map[string]string{}
+		}
+		d.Spec.Template.Labels[discovery.RoleLabel] = role
+	}
+}
 
 // CreateModelService creates the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; callers must use CreateService or EnsureService
@@ -56,10 +74,14 @@ func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 // It does not create a Kubernetes Service; pair with EnsureService for a ClusterIP Service.
 // variantName is stamped as the llm-d.ai/variant label on the pod template so the
 // collector can attribute pod metrics to the right annotated scaler. Pass "" to omit.
-func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int) error {
+// Options adjust the built Deployment before it is applied; see WithRole.
+func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
 	appLabel := name + decodeNameSuffix
 	deploymentName := appLabel
 	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, variantName, useSimulator, maxNumSeqs, nil)
+	for _, opt := range opts {
+		opt(desiredDeployment)
+	}
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
