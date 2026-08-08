@@ -106,6 +106,8 @@ Scale-from-zero: no variant woken for a model with pending requests
 
 Other `reason` values are `no-decode-candidate` (the model has no inactive
 decode/`both` variant to wake) and `no-capacity` (nothing fit the GPU budget).
+Each is logged once per verdict change, not once per poll. A model that is
+already serving is not a refusal and is not reported here at all.
 
 Role comes from the `llm-d.ai/role` pod-template label (`prefill`, `decode`, or
 absent/`both`). A model with no prefill variants is unaffected by this setting.
@@ -123,8 +125,9 @@ when any of these hold:
 
 | condition | why |
 | --- | --- |
-| no `limiters:` declared | the limiter supplies no constraints (a valid, inert limiter shape), so there is nothing to place against |
+| the limiter could not be built at startup | there is nothing to place against. Note that declaring no `limiters:` list does **not** land here — it selects the inventory mode, which builds a physical limiter that does supply constraints |
 | no usage snapshot yet | the saturation engine is the sole producer of GPU usage; until it completes one cycle there is no denominator. This is the state on the first cycle after a restart — exactly when a request may be queued |
+| a provider failed to compute constraints | a partial view would deny any accelerator type the surviving providers happen not to mention, turning "could not reach this provider" into "cannot place this variant" |
 | accelerator unresolved | a variant with no resolvable accelerator (no nodeSelector / `inference.optimization/acceleratorName` label) cannot be charged to any pool, so it is not counted rather than denied |
 
 > **The GPU budget over-states free capacity in two known ways**, affecting the

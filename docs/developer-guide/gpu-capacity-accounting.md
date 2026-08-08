@@ -88,28 +88,33 @@ So a cluster whose GPUs are fully consumed by non-WVA workloads still reports
 its full complement as available, and WVA will happily scale into capacity that
 does not exist.
 
-**The capability to fix this already exists and is simply not called.**
+**Most of the machinery exists but is not wired end-to-end.**
 `limiter_factory.go` builds the inventory with `NewTypeInventoryWithUsage`, which
-wires a `FullDiscovery` whose `DiscoverUsage` lists pods and sums their actual
+supplies a `FullDiscovery` whose `DiscoverUsage` lists pods and sums their actual
 GPU requests. Reaching it requires `RefreshAll` (limits **and** usage), but
 `DefaultLimiter.ComputeConstraints` calls `Refresh` — limits only — and then
 overwrites usage with the caller's WVA-only figure via `SetUsed`.
 
-A fix should:
+Switching the call is not sufficient on its own. A fix must:
 
-1. call `RefreshAll` (or `DiscoverUsage` directly) so `Used` reflects real
-   cluster-wide GPU consumption;
-2. decide how discovered usage composes with WVA's own accounting — they overlap,
+1. **Normalize the discovered usage keys.** `DiscoverUsage` keys its result by the
+   raw node product label (`NVIDIA-A100-PCIE-80GB`), while `Refresh` normalizes
+   *limit* keys to short names via `NormalizeAcceleratorName`. Calling
+   `RefreshAll` today would file usage under keys `GetResourcePools` never reads —
+   reproducing Gap 1's silent drop rather than fixing Gap 2.
+2. Call `RefreshAll` (or `DiscoverUsage` directly) so `Used` reflects real
+   cluster-wide GPU consumption.
+3. Decide how discovered usage composes with WVA's own accounting — they overlap,
    since WVA's managed pods are also real pods, so they must not be summed. The
    discovered figure most likely **replaces** the supplied one, with WVA's
-   accounting kept only for in-flight replicas not yet visible as pods;
-3. prefer node **allocatable** over capacity, and exclude unschedulable nodes, so
-   drained capacity is not counted;
-4. keep the "unknown means do not block" posture — a discovery failure must not
+   accounting kept only for in-flight replicas not yet visible as pods.
+4. Prefer node **allocatable** over capacity, and exclude unschedulable nodes, so
+   drained capacity is not counted.
+5. Keep the "unknown means do not block" posture — a discovery failure must not
    deny scale-up, matching the existing fallback when no provider can supply
    constraints.
 
-Step 2 is the substantive one: naively switching to discovered usage without
+Step 3 is the substantive one: naively switching to discovered usage without
 reconciling the overlap would double-count WVA's own replicas and under-state
 availability, which fails in the opposite direction.
 

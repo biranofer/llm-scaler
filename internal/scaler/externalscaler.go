@@ -68,11 +68,15 @@ func NewHandler(c client.Client, store *decision.Store) *Handler {
 // The rule is asymmetric, and the asymmetry is what makes it safe:
 //
 //   - "Keep this awake" (> 0) is a claim that must be kept current. Its
-//     publishers all re-publish well inside activationTTL — the scale-from-zero
-//     engine every 100ms while a queue is pending, the saturation engine every
-//     optimize interval — so an unrefreshed positive decision means nobody is
-//     making the claim any more, and the honest answer is to look at the target
-//     instead (see currentlyRunning).
+//     publishers normally re-publish well inside activationTTL — the
+//     scale-from-zero engine every 100ms while a queue is pending, the saturation
+//     engine every optimize interval (GLOBAL_OPT_INTERVAL, default 15s) — so an
+//     unrefreshed positive decision means nobody is making the claim any more,
+//     and the honest answer is to look at the target instead (see
+//     currentlyRunning). GLOBAL_OPT_INTERVAL has only a lower bound, so a
+//     deployment configuring it above activationTTL will expire decisions between
+//     publishes; the fallback then answers from the target's replica count, which
+//     for a running target is still "active", so the effect is benign.
 //
 //   - "This should be asleep" (0) never expires. It is the resting state, and
 //     expiring it would flip a target that is still draining back to active,
@@ -82,6 +86,13 @@ func NewHandler(c client.Client, store *decision.Store) *Handler {
 // activation the target has replicas, so the currentlyRunning fallback answers
 // "active" on its own. The activation decision only has to outlive KEDA's
 // reaction, not the pod's startup.
+//
+// Scope: this governs the 0<->1 gate only. GetMetrics deliberately has no
+// freshness check (it drives HPA's scaling at >=1, where a value collapsing to 0
+// between publishes would be worse), so a stale decision on a RUNNING target
+// still reports its last replica count there. That predates this expiry and is
+// unchanged by it — expiring the activation bit does not, on its own, let a
+// target with an abandoned decision scale back down.
 func (h *Handler) honoursDecision(d decision.Decision) bool {
 	if d.DesiredReplicas <= 0 {
 		return true
