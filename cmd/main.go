@@ -532,6 +532,22 @@ func main() {
 		if err != nil {
 			return err
 		}
+		// Give the engine a limiter so a wake is only published for a variant
+		// that can actually be placed. This is its own instance rather than the
+		// saturation engine's: a limiter supplies constraints from usage passed
+		// per call, so instances share no mutable state, and building one here
+		// avoids threading the other engine's closure-scoped value across.
+		//
+		// Unlike the saturation engine's, this one is not rebuilt live on a
+		// ConfigMap change (see SetLimiterBuilder) — a limiters: change needs a
+		// restart to affect the scale-from-zero capacity check. A limiter that
+		// cannot be built is not fatal: the engine then wakes without a capacity
+		// check, which is what it did before selection existed.
+		if sfzLimiter, limErr := pipeline.NewLimiterFromConfig(cfg, mgr.GetClient()); limErr != nil {
+			setupLog.Error(limErr, "failed to build GPU limiter for scale-from-zero; waking without a capacity check")
+		} else {
+			engine.SetGPULimiter(sfzLimiter)
+		}
 		go engine.StartOptimizeLoop(ctx)
 		return nil
 	}))

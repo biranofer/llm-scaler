@@ -40,10 +40,12 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
+	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
@@ -102,6 +104,17 @@ type Engine struct {
 	Datastore      datastore.Datastore
 	maxConcurrency int
 	config         *config.Config // Unified configuration (injected from main.go)
+	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
+	// means no capacity check — see gpuConstraints.
+	gpuLimiter pipeline.Limiter
+}
+
+// SetGPULimiter injects the limiter whose constraints bound a wake, so the
+// engine does not wake a variant onto an accelerator with no free GPUs. Optional:
+// with no limiter the engine wakes without a capacity check, which is the
+// behaviour it had before selection existed.
+func (e *Engine) SetGPULimiter(l pipeline.Limiter) {
+	e.gpuLimiter = l
 }
 
 // NewEngine creates a new instance of the scale-from-zero engine.
@@ -154,6 +167,25 @@ func (e *Engine) optimize(ctx context.Context) error {
 
 	logger.V(logging.DEBUG).Info("Found inactive VariantAutoscaling resources", "count", len(inactiveVAs))
 
+	// Which roles a model is already running. A model whose decode is up can
+	// serve, so it is the saturation engine's business, not this engine's.
+	// Failing to read the active population is not fatal: treat coverage as
+	// unknown (nothing covered), which at worst re-publishes an activation for a
+	// target that is already awake.
+	activeVAs, activeTargets, activeErr := utils.ActiveVariantAutoscaling(ctx, e.client)
+	if activeErr != nil {
+		logger.V(logging.DEBUG).Error(activeErr, "Could not list active variants; treating every role as uncovered")
+	}
+	coverage := activeRoleCoverage(activeVAs, activeTargets)
+
+	// Wake decisions are made per model, not per variant: a P/D model needs a
+	// decode (optionally with a prefill) chosen together against one GPU budget,
+	// and every variant of a model shares one EPP queue, so grouping also
+	// collapses what used to be one EPP scrape per inactive variant into one per
+	// model.
+	groups := groupInactiveByModel(inactiveVAs)
+	logger.V(logging.DEBUG).Info("Grouped inactive variants by model", "models", len(groups))
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, e.maxConcurrency)
 	errorCh := make(chan error, e.maxConcurrency)
@@ -171,33 +203,33 @@ func (e *Engine) optimize(ctx context.Context) error {
 		}
 	}()
 
-variantLoop:
-	for _, va := range inactiveVAs {
+modelLoop:
+	for _, group := range groups {
 		// Check if context is cancelled, but don't return immediately
 		select {
 		case <-ctx.Done():
 			logger.V(logging.DEBUG).Info("Context cancelled, stopping new work")
-			break variantLoop
+			break modelLoop
 		default:
 		}
 
-		logger.V(logging.DEBUG).Info("Processing variant", "name", va.Name)
+		logger.V(logging.DEBUG).Info("Processing model", "modelID", group.modelID, "namespace", group.namespace)
 		wg.Add(1)
 
 		// This call blocks if the channel is full (concurrency limit reached)
 		sem <- struct{}{}
-		go func(variant wvav1alpha1.VariantAutoscaling) {
+		go func(g modelGroup) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			err := e.processInactiveVariant(ctx, scaleTargets, variant, 1)
+			err := e.processInactiveModel(ctx, scaleTargets, g, coverage[g.key()])
 			if err != nil {
-				logger.V(logging.DEBUG).Error(err, "Error Processing variant", "name", variant.Name)
+				logger.V(logging.DEBUG).Error(err, "Error processing model", "modelID", g.modelID, "namespace", g.namespace)
 				errorCh <- err
 			} else {
 				errorCh <- nil
 			}
-		}(va)
+		}(group)
 	}
 
 	// Wait for all goroutines to complete, then close error channel
@@ -218,57 +250,46 @@ variantLoop:
 	return nil
 }
 
-// ProcessInactiveVariant processes a single inactive VariantAutoscaling resource.
-func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[string]scaletarget.ScaleTargetAccessor, va wvav1alpha1.VariantAutoscaling, targetWorkloadReplicas int) error {
-	logger := log.FromContext(ctx)
-	objKind := va.GetScaleTargetKind()
+// resolveScaleTarget returns the VA's scale target from the pre-populated map,
+// falling back to a live fetch.
+func (e *Engine) resolveScaleTarget(ctx context.Context, scaleTargets map[string]scaletarget.ScaleTargetAccessor, va wvav1alpha1.VariantAutoscaling) (scaletarget.ScaleTargetAccessor, error) {
 	objName := va.GetScaleTargetName()
+	if target, found := scaleTargets[utils.GetNamespacedKey(va.Namespace, objName)]; found {
+		return target, nil
+	}
+	return scaletarget.FetchScaleTarget(ctx, e.client, va.Name, va.GetScaleTargetKind(), objName, va.Namespace)
+}
 
-	// Extract Labels for the pods created by the ScaleTarget object
-	// Use ScaleTargetAccessor to handle both Deployment and LeaderWorkerSet uniformly
-	key := utils.GetNamespacedKey(va.Namespace, objName)
-	scaleTarget, found := scaleTargets[key]
-	if !found {
-		// Fetch on-demand if not in the cache
-		var err error
-		scaleTarget, err = scaletarget.FetchScaleTarget(ctx, e.client, va.Name, objKind, objName, va.Namespace)
-		if err != nil {
-			return err
-		}
-	}
-	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
-	if podTemplateSpec == nil {
-		return errors.New("pod template spec is missing for target workload object")
-	}
-	labels := podTemplateSpec.Labels
-	if labels == nil {
-		return errors.New("labels are missing for target workload object")
-	}
+// processInactiveModel decides whether a model with no running capacity should
+// be woken, and if so which of its variants to wake.
+//
+// It replaces a per-variant loop that woke every inactive variant of the model.
+// That both over-allocated (several variants for one model's demand) and
+// under-served: a variant whose accelerator had no free GPUs was woken anyway,
+// its pods sat Pending, and the request that asked for it timed out — a wake
+// that looks like progress and delivers none.
+func (e *Engine) processInactiveModel(
+	ctx context.Context,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+	group modelGroup,
+	covered coverage,
+) error {
+	logger := log.FromContext(ctx)
 
 	// Check if inferencepool datastore is empty: this can happen during bootstrapping
-	dsPoolList := e.Datastore.PoolList()
-	if len(dsPoolList) == 0 {
-		logger.Info("Inferencepool datastore is empty - skipping processing inactive variant", "value", va.Name)
+	if len(e.Datastore.PoolList()) == 0 {
+		logger.Info("Inferencepool datastore is empty - skipping processing inactive model", "modelID", group.modelID)
 		return nil
 	}
 
-	// Find target EPP for metrics collection in the same namespace as the VA
-	pool, err := e.Datastore.PoolGetFromLabels(va.Namespace, labels)
+	candidates, pool, err := e.buildCandidates(ctx, scaleTargets, group)
 	if err != nil {
-		// Only skip on "not found" errors - return other errors to surface real datastore failures
-		if errors.Is(err, datastore.ErrPoolNotSynced) {
-			logger.V(logging.DEBUG).Info("Skipping variant, target EPP not found in datastore",
-				"variant", va.Name,
-				"namespace", va.Namespace,
-				"modelID", va.Spec.ModelID)
-			return nil
-		}
-		// Unexpected error - log and return to surface the issue
-		logger.Error(err, "Unexpected error finding target EPP",
-			"variant", va.Name,
-			"namespace", va.Namespace,
-			"modelID", va.Spec.ModelID)
 		return err
+	}
+	if len(candidates) == 0 {
+		// Every variant was skipped (no resolvable pool yet, typically during
+		// bootstrap); buildCandidates has already logged why.
+		return nil
 	}
 
 	// Use EPP source from registry
@@ -278,13 +299,15 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 		// This is unexpected - pool exists but metrics source is missing
 		err := fmt.Errorf("EPP metrics source not found in registry for pool %s", namespacedPoolName)
 		logger.Error(err, "Datastore inconsistency detected",
-			"variant", va.Name,
-			"namespace", va.Namespace,
+			"modelID", group.modelID,
+			"namespace", group.namespace,
 			"pool", namespacedPoolName)
 		return err
 	}
 
-	// Execute the query with timing
+	// One scrape per model per tick. Every variant of a model shares this queue,
+	// so the old per-variant scrape re-fetched identical data N times through a
+	// mutex-serialized HTTP call on a 100ms loop.
 	startTime := time.Now()
 	results, err := eppSource.Refresh(ctx, source.RefreshSpec{})
 	duration := time.Since(startTime).Seconds()
@@ -298,20 +321,62 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 
 	// Check for pending requests using EPP flowcontrol queue size metrics
 	result := results["all_metrics"]
-	pending, pendingRequestExist := pendingRequestsForModel(result.Values, va.Spec.ModelID)
-	if pendingRequestExist {
-		logger.Info(
-			"Target workload has pending requests, scaling up from zero",
-			"metricName", pending.Labels[metricNameLabel],
-			"metric", pending.Labels, "value", pending.Value)
-	} else {
-		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding (10/sec per inactive VA).
-		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping VA, no pending requests in flow control queue",
-			"va", va.Name,
-			"namespace", va.Namespace,
-			"modelID", va.Spec.ModelID)
+	pending, pendingRequestExist := pendingRequestsForModel(result.Values, group.modelID)
+	if !pendingRequestExist {
+		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
+		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",
+			"namespace", group.namespace,
+			"modelID", group.modelID)
 		return nil
 	}
+	logger.Info(
+		"Target workload has pending requests, scaling up from zero",
+		"metricName", pending.Labels[metricNameLabel],
+		"metric", pending.Labels, "value", pending.Value)
+
+	selected, outcome := selectServingSet(SelectionInput{
+		Namespace:      group.namespace,
+		Candidates:     candidates,
+		DecodeCovered:  covered.decode,
+		PrefillCovered: covered.prefill,
+		Constraints:    e.gpuConstraints(ctx, group.namespace),
+		RequirePrefill: e.requirePrefill(group.modelID, group.namespace),
+	})
+	if len(selected) == 0 {
+		// Operator-visible: demand exists and nothing was woken for it.
+		logger.Info("Scale-from-zero: no variant woken for a model with pending requests",
+			"namespace", group.namespace,
+			"modelID", group.modelID,
+			"reason", string(outcome))
+		return nil
+	}
+
+	var errs []error
+	for _, c := range selected {
+		va, ok := group.variantByName(c.VariantName)
+		if !ok {
+			continue
+		}
+		if err := e.publishActivation(ctx, scaleTargets, va, pool, 1, outcome); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// publishActivation records the wake for one selected variant: it publishes the
+// activation decision KEDA acts on, then updates the shared decision cache and
+// the variant's status.
+func (e *Engine) publishActivation(
+	ctx context.Context,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+	va wvav1alpha1.VariantAutoscaling,
+	pool *poolutil.EndpointPool,
+	targetWorkloadReplicas int,
+	outcome SelectionOutcome,
+) error {
+	logger := log.FromContext(ctx)
+	objName := va.GetScaleTargetName()
 
 	// 1. Publish the activation decision. Writing the decision store is the whole
 	// actuation: it flips the external scaler's IsActive predicate to true and
@@ -326,7 +391,9 @@ func (e *Engine) processInactiveVariant(ctx context.Context, scaleTargets map[st
 	// enforcer reads is zero and would zero the replica straight back out from
 	// under the request that asked for it.
 	decision.MarkActivated(va.Namespace, va.Spec.ModelID)
-	logger.Info("Published scale-from-zero activation for Target Workload", "variant", va.Name, "target VA model", va.Spec.ModelID, "inferencepool", pool.EndpointPicker.ServiceName)
+	logger.Info("Published scale-from-zero activation for Target Workload",
+		"variant", va.Name, "target VA model", va.Spec.ModelID,
+		"inferencepool", pool.EndpointPicker.ServiceName, "servingSet", string(outcome))
 
 	// 2. Create or update VariantDecision
 	va.Status.Actuation.Applied = false

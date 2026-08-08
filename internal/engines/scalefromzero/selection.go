@@ -1,0 +1,216 @@
+/*
+Copyright 2025 The llm-d Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package scalefromzero
+
+import (
+	"sort"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+)
+
+// Candidate is one inactive variant that could be woken, reduced to what
+// selection needs: what it costs, what it would consume, and which half of a
+// P/D pair it is.
+type Candidate struct {
+	// VariantName identifies the variant; ScaleTargetName is the workload the
+	// activation decision is keyed by.
+	VariantName     string
+	ScaleTargetName string
+	// Role is the normalized P/D role: "prefill", "decode" or "both".
+	Role string
+	// Accelerator is the GPU type this variant runs on.
+	Accelerator string
+	// GPUsPerReplica is what one replica consumes; waking is always one replica.
+	GPUsPerReplica int
+	// Cost is the variant's declared cost, used to rank equally-feasible options.
+	Cost float64
+}
+
+// SelectionOutcome explains what selection decided, for logging and metrics.
+type SelectionOutcome string
+
+const (
+	// OutcomePair woke a decode and a prefill variant together.
+	OutcomePair SelectionOutcome = "decode+prefill"
+	// OutcomeDecodeOnly woke decode alone: either the model is not
+	// disaggregated, or no prefill could be placed and requirePrefill is false.
+	OutcomeDecodeOnly SelectionOutcome = "decode-only"
+	// OutcomeNoDecodeCandidate means the model has no inactive decode variant to
+	// wake at all.
+	OutcomeNoDecodeCandidate SelectionOutcome = "no-decode-candidate"
+	// OutcomeNoCapacity means nothing could be placed within the GPU budget.
+	OutcomeNoCapacity SelectionOutcome = "no-capacity"
+	// OutcomePrefillRequired means a decode variant would fit, but no prefill
+	// could be placed alongside it and the policy requires one.
+	OutcomePrefillRequired SelectionOutcome = "prefill-required"
+)
+
+// SelectionInput is everything selectServingSet needs to choose a serving set.
+type SelectionInput struct {
+	// Namespace scopes the GPU budget lookup.
+	Namespace string
+	// Candidates are the model's inactive variants.
+	Candidates []Candidate
+	// DecodeCovered reports whether the model already has a running decode (or
+	// "both") variant. When true the model can already serve and scale-from-zero
+	// has nothing to do — a saturated-but-serving model is the saturation
+	// engine's business, not this engine's.
+	DecodeCovered bool
+	// PrefillCovered reports whether a prefill variant is already running, in
+	// which case waking another adds nothing to reachability.
+	PrefillCovered bool
+	// Constraints are the GPU/quota constraints to place within. Empty means
+	// unknown, which FitsGPUBudget treats as permissive.
+	Constraints []*pipeline.ResourceConstraints
+	// RequirePrefill refuses a decode-only wake for a disaggregated model.
+	RequirePrefill bool
+}
+
+// selectServingSet chooses the cheapest set of variants to wake so the model can
+// serve, or returns nothing with the reason why.
+//
+// Decode is mandatory and prefill is optional, which follows from how the llm-d
+// router behaves rather than from a preference: with no prefill endpoint
+// selected it sends the request to a decode endpoint, which runs both stages
+// locally. Disaggregation is a TTFT/throughput optimization the router already
+// declines on its own for short prompts and high cache hits. So a decode woken
+// alone serves, and refusing to wake because prefill will not fit would trade a
+// slower model for no model at all.
+//
+// The pair search is exhaustive rather than greedy. Picking the cheapest decode
+// and the cheapest prefill independently can fail on the joint budget while some
+// costlier pairing fits, and reporting "no capacity" when capacity exists is the
+// failure this whole path is meant to prevent. Roles are at most two and
+// candidates per role are a handful, so the cross-product is small enough to
+// search exactly.
+func selectServingSet(in SelectionInput) ([]Candidate, SelectionOutcome) {
+	if in.DecodeCovered {
+		// Already serving: not a scale-from-zero case.
+		return nil, OutcomeDecodeOnly
+	}
+
+	decodes, prefills := splitByRole(in.Candidates)
+	if len(decodes) == 0 {
+		return nil, OutcomeNoDecodeCandidate
+	}
+
+	// Cheapest first, so the first feasible option found is the cheapest one and
+	// ties resolve deterministically.
+	sortByCost(decodes)
+	sortByCost(prefills)
+
+	// A model with no prefill variants at all, or one whose prefill is already
+	// up, is not waiting on a pair.
+	pairWanted := len(prefills) > 0 && !in.PrefillCovered
+
+	if pairWanted {
+		if pair, ok := cheapestFeasiblePair(in, decodes, prefills); ok {
+			return pair, OutcomePair
+		}
+		if in.RequirePrefill {
+			// A decode might well fit on its own, but the operator has said a
+			// degraded-prefill model is worse than an absent one.
+			return nil, OutcomePrefillRequired
+		}
+	}
+
+	for _, d := range decodes {
+		if fits(in, []Candidate{d}) {
+			return []Candidate{d}, OutcomeDecodeOnly
+		}
+	}
+	return nil, OutcomeNoCapacity
+}
+
+// cheapestFeasiblePair returns the lowest-combined-cost (decode, prefill) pair
+// that fits the budget together. Both slices must already be sorted by cost.
+func cheapestFeasiblePair(in SelectionInput, decodes, prefills []Candidate) ([]Candidate, bool) {
+	var (
+		best  []Candidate
+		found bool
+		// bestCost is only read when found is true.
+		bestCost float64
+	)
+	for _, d := range decodes {
+		for _, p := range prefills {
+			cost := d.Cost + p.Cost
+			if found && cost >= bestCost {
+				// Prefills are cost-sorted, so every remaining p in this row is
+				// at least this expensive.
+				break
+			}
+			set := []Candidate{d, p}
+			if !fits(in, set) {
+				continue
+			}
+			best, bestCost, found = set, cost, true
+			break // cheapest prefill for this decode; costlier ones cannot win
+		}
+	}
+	return best, found
+}
+
+// fits reports whether the set can be placed within the GPU budget, testing the
+// combined demand rather than each member alone.
+func fits(in SelectionInput, set []Candidate) bool {
+	return pipeline.FitsGPUBudget(in.Constraints, in.Namespace, demandOf(set))
+}
+
+// demandOf sums one replica of each candidate, keyed by accelerator type. Two
+// candidates on the same accelerator therefore contend for the same pool, which
+// is exactly the case a per-variant check would miss.
+func demandOf(set []Candidate) map[string]int {
+	demand := make(map[string]int, len(set))
+	for _, c := range set {
+		gpus := c.GPUsPerReplica
+		if gpus <= 0 {
+			// Mirrors scaletarget.GetTotalGPUsPerReplica's floor: a workload with
+			// no explicit GPU request still occupies one.
+			gpus = 1
+		}
+		demand[c.Accelerator] += gpus
+	}
+	return demand
+}
+
+// splitByRole separates candidates into decode-capable and prefill-only. A
+// "both" variant counts as decode: it serves complete requests on its own, which
+// is what decode-capable means here.
+func splitByRole(candidates []Candidate) (decodes, prefills []Candidate) {
+	for _, c := range candidates {
+		switch c.Role {
+		case domain.RolePrefill:
+			prefills = append(prefills, c)
+		default:
+			decodes = append(decodes, c)
+		}
+	}
+	return decodes, prefills
+}
+
+// sortByCost orders candidates cheapest first, breaking ties on name so
+// selection is stable across ticks and does not flap between equal-cost
+// variants.
+func sortByCost(candidates []Candidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Cost != candidates[j].Cost {
+			return candidates[i].Cost < candidates[j].Cost
+		}
+		return candidates[i].VariantName < candidates[j].VariantName
+	})
+}

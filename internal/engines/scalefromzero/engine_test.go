@@ -492,17 +492,27 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				tt.vaNamespace + "/" + deploymentName: scaletarget.NewDeploymentAccessor(dp),
 			}
 
-			// Process the inactive variant
-			err := engine.processInactiveVariant(ctx, scaleTargets, *va, 0)
+			// Resolve the variant into a selection candidate. This is the step
+			// that looks the EPP pool up from the scale target's pod labels, so
+			// it is where a namespace mismatch shows up: a variant whose pool
+			// does not resolve is dropped from the candidates rather than
+			// failing the model.
+			group := modelGroup{namespace: tt.vaNamespace, modelID: modelId, variants: []vav1alpha1.VariantAutoscaling{*va}}
+			candidates, resolvedPool, err := engine.buildCandidates(ctx, scaleTargets, group)
 
 			if tt.expectSkip {
 				// When pool is not found (different namespace), we expect nil error (skip)
 				assert.NoError(t, err, "Expected no error (skip) for: %s, but got: %v", tt.skipReason, err)
-			} else if err != nil && errors.Is(err, datastore.ErrPoolNotSynced) {
-				// When pool is found, we expect it to proceed
-				// It may error on EPP metrics refresh (which is expected in test environment)
-				// but it should NOT error on "pool not found"
-				t.Errorf("Should have found pool in same namespace, but got: %v", err)
+				assert.Empty(t, candidates, "Variant should be skipped when its pool is in another namespace: %s", tt.skipReason)
+				assert.Nil(t, resolvedPool)
+			} else {
+				if err != nil && errors.Is(err, datastore.ErrPoolNotSynced) {
+					// When pool is found, we expect it to proceed
+					t.Errorf("Should have found pool in same namespace, but got: %v", err)
+				}
+				assert.NoError(t, err)
+				assert.Len(t, candidates, 1, "Variant in the pool's namespace should become a candidate")
+				assert.NotNil(t, resolvedPool, "Pool should resolve for a same-namespace variant")
 			}
 		})
 	}
