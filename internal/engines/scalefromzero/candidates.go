@@ -26,6 +26,7 @@ import (
 	accel "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
@@ -98,22 +99,13 @@ func (e *Engine) buildCandidates(
 			pool = variantPool
 		}
 
-		cost, err := strconv.ParseFloat(va.Spec.VariantCost, 64)
-		if err != nil {
-			// An unparseable cost must not hide the variant: rank it last rather
-			// than dropping a variant that may be the only one able to serve.
-			logger.V(logging.DEBUG).Info("Variant has an unparseable cost; ranking it last",
-				"variant", va.Name, "variantCost", va.Spec.VariantCost)
-			cost = maxCost
-		}
-
 		candidates = append(candidates, Candidate{
 			VariantName:     va.Name,
 			ScaleTargetName: va.GetScaleTargetName(),
 			Role:            discovery.RoleFromScaleTarget(scaleTarget),
-			Accelerator:     accel.GetAcceleratorNameFromScaleTarget(&va, scaleTarget),
+			Accelerator:     candidateAccelerator(&va, scaleTarget),
 			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
-			Cost:            cost,
+			Cost:            resolveVariantCost(ctx, va),
 		})
 	}
 
@@ -123,8 +115,42 @@ func (e *Engine) buildCandidates(
 	return candidates, pool, nil
 }
 
-// maxCost ranks a variant with an unparseable cost behind every well-formed one.
-const maxCost = 1e18
+// candidateAccelerator resolves the variant's accelerator into the SAME units the
+// GPU pools are keyed by.
+//
+// GetAcceleratorNameFromScaleTarget returns the raw nodeSelector/label value
+// ("NVIDIA-A100-PCIE-80GB"), while TypeInventory.Refresh normalizes pool keys to
+// short names ("A100"). Comparing the two directly means a variant that selects
+// GPUs by product label resolves fine, matches no pool, and is denied a wake —
+// a refusal for a perfectly placeable variant. Normalizing here puts both sides
+// in short-name space. The call is idempotent for names that are already short,
+// and leaves the "unknown" placeholder untouched so the unresolved check in
+// demandOf still recognises it.
+func candidateAccelerator(va *wvav1alpha1.VariantAutoscaling, scaleTarget scaletarget.ScaleTargetAccessor) string {
+	return accel.NormalizeAcceleratorName(accel.GetAcceleratorNameFromScaleTarget(va, scaleTarget))
+}
+
+// resolveVariantCost reads the variant's declared cost, falling back to the project
+// default when it is absent or unparseable.
+//
+// VariantCost is optional (`variantCost,omitempty`), and domain.DefaultVariantCost
+// is what every other consumer assumes for an unset one — see costFromVA in
+// internal/engines/discovery. Ranking such a variant behind every well-formed one
+// instead would invert that default: a fleet that never sets variantCost would
+// have no meaningful cost order at all, and a cheap-but-unset variant would lose
+// to a declared-expensive one.
+func resolveVariantCost(ctx context.Context, va wvav1alpha1.VariantAutoscaling) float64 {
+	if va.Spec.VariantCost == "" {
+		return domain.DefaultVariantCost
+	}
+	cost, err := strconv.ParseFloat(va.Spec.VariantCost, 64)
+	if err != nil {
+		log.FromContext(ctx).V(logging.DEBUG).Info("Variant has an unparseable cost; using the default",
+			"variant", va.Name, "variantCost", va.Spec.VariantCost, "default", domain.DefaultVariantCost)
+		return domain.DefaultVariantCost
+	}
+	return cost
+}
 
 // gpuConstraints returns the GPU/quota constraints to place a wake within, or
 // nil when they cannot be determined.
@@ -135,19 +161,23 @@ const maxCost = 1e18
 // tick after a restart has no usage snapshot yet, and that is exactly when a
 // queued request is waiting to be served.
 //
-// Two things commonly make this nil in practice, and both mean the wake is
-// published without a capacity check:
+// Three things make this nil, and each means the wake is published without a
+// capacity check:
 //
-//   - The configured limiter supplies no constraints. With no limiters: list
-//     declared, NewLimiterFromConfig can yield a limiter shape that is not a
-//     ConstraintProvider (NoOpLimiter is an explicitly valid, inert value of the
-//     slot), so there is nothing to place against.
+//   - No limiter was injected. In production SetGPULimiter is always called, so
+//     this only happens when NewLimiterFromConfig itself failed at startup.
+//     Declaring no limiters: list does NOT land here: EffectiveLimiterMode then
+//     returns the inventory mode, which builds a DefaultLimiter — and that IS a
+//     ConstraintProvider, so the physical check still runs.
 //
 //   - No usage snapshot has been published. The saturation engine is the sole
-//     producer; until it completes a cycle there is no denominator. Note this is
-//     independent of enableLimiter — the snapshot is published before the
-//     optimizer guard precisely so that a default (CostAware) deployment still
-//     feeds this path.
+//     producer; until it completes a cycle over a non-empty population there is
+//     no denominator. Note this is independent of enableLimiter — the snapshot is
+//     published before the optimizer guard precisely so that a default
+//     (CostAware) deployment still feeds this path.
+//
+//   - A provider could not compute constraints (see below): a partial view would
+//     deny types the surviving providers happen not to mention.
 //
 // The check is therefore best-effort by construction: it prevents waking onto an
 // accelerator that is known to be full, and stays out of the way when placement
@@ -155,7 +185,7 @@ const maxCost = 1e18
 func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeline.ResourceConstraints {
 	logger := log.FromContext(ctx)
 
-	providers := e.constraintProviders()
+	providers := pipeline.ConstraintProvidersFrom(e.gpuLimiter)
 	if len(providers) == 0 {
 		return nil
 	}
@@ -171,53 +201,38 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 	for _, cp := range providers {
 		c, err := cp.ComputeConstraints(ctx, usage.ByType, usage.ByNamespace)
 		if err != nil {
-			logger.V(logging.DEBUG).Error(err, "Failed to compute GPU constraints, skipping provider",
-				"provider", cp.Name())
-			continue
+			// A partial view is worse than none. FitsGPUBudget denies any
+			// accelerator type its constraints do not mention, so proceeding with
+			// the survivors would turn "this provider could not be reached" into
+			// "this variant cannot be placed" — refusing a wake with requests
+			// already queued, on the strength of a failed lookup. Fall back to
+			// unknown, matching the saturation engine, which drops to its
+			// unlimited optimizer rather than let scale-up be silently blocked.
+			logger.Info("Could not compute GPU constraints; waking without a capacity check",
+				"provider", cp.Name(), "namespace", namespace, "error", err.Error())
+			return nil
 		}
 		constraints = append(constraints, c)
 	}
 	return constraints
 }
 
-// constraintProviders unwraps the configured limiter into the providers that can
-// supply constraints, mirroring the saturation engine's gpuConstraintProviders.
-func (e *Engine) constraintProviders() []pipeline.ConstraintProvider {
-	if e.gpuLimiter == nil {
-		return nil
-	}
-	switch lim := e.gpuLimiter.(type) {
-	case *pipeline.CompositeLimiter:
-		var providers []pipeline.ConstraintProvider
-		for _, c := range lim.Constituents() {
-			if cp, ok := c.(pipeline.ConstraintProvider); ok {
-				providers = append(providers, cp)
-			}
-		}
-		return providers
-	case pipeline.ConstraintProvider:
-		return []pipeline.ConstraintProvider{lim}
-	}
-	return nil
-}
-
 // requirePrefill reports whether the model refuses a decode-only wake.
 //
-// Precedence matches the rest of the saturation config: a model-specific entry
-// wins over the "default" entry. Only this one field is resolved rather than
-// running the full merge, which also calibrates thresholds that have no bearing
-// here.
+// Resolution goes through SaturationScalingConfig.Merge — the same overlay every
+// other per-entry setting uses — rather than a hand-rolled precedence check, so
+// there is one implementation of "model-specific entry wins over default" and it
+// cannot drift from the rest of the config. Only the merge is run, not
+// ApplyDefaults/ApplyV2ThresholdDefaults, which calibrate scaling thresholds that
+// have no bearing on this field.
 func (e *Engine) requirePrefill(modelID, namespace string) bool {
 	if e.config == nil {
 		return false
 	}
 	entries := e.config.SaturationConfigForNamespace(namespace)
-	if override, ok := entries[modelID+"#"+namespace]; ok &&
-		override.ScaleFromZero != nil && override.ScaleFromZero.RequirePrefill != nil {
-		return *override.ScaleFromZero.RequirePrefill
+	resolved := entries["default"] // zero value when absent, which reads as false
+	if override, ok := entries[modelID+"#"+namespace]; ok {
+		resolved.Merge(override)
 	}
-	if def, ok := entries["default"]; ok {
-		return def.RequirePrefillOnScaleFromZero()
-	}
-	return false
+	return resolved.RequirePrefillOnScaleFromZero()
 }

@@ -783,23 +783,8 @@ func (e *Engine) selectV2Optimizer(
 ) (pipeline.ScalingOptimizer, []*pipeline.ResourceConstraints) {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// Share the accounting with the scale-from-zero engine, which needs to know
-	// what is free before waking a variant but has no population of its own to
-	// sum. One producer keeps the two engines from disagreeing about capacity.
-	//
-	// Published before the optimizer guard below, and independently of it: the
-	// usage is a property of the current population, not of which optimizer runs.
-	//
-	// The guard only lets GreedyByScore through, and GreedyByScore is selected
-	// only when the saturation config sets enableLimiter: true (see the optimizer
-	// selection in optimizeOnce). enableLimiter defaults to FALSE, so on a default
-	// deployment the optimizer is CostAware and this function returns at the
-	// guard. Publishing after it therefore left the snapshot permanently empty
-	// for most deployments, silently disabling the scale-from-zero capacity check
-	// instead of failing visibly.
 	currentUsage := computeCurrentGPUUsage(requests)
 	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
-	decision.PublishGPUUsage(currentUsage, currentUsageByNS)
 
 	// GreedyByScore is currently the only GPU-aware optimizer; any future
 	// constraint-consuming optimizer must be added to this guard.
@@ -939,6 +924,25 @@ func (e *Engine) optimizeV2(
 		modelReplicaMetrics[modelID] = data.replicaMetrics
 		modelScaleTargets[utils.GetNamespacedKey(namespace, modelID)] = data.scaleTargets
 	}
+
+	// Share the GPU accounting with the scale-from-zero engine, which must know
+	// what is free before waking a variant but has no population of its own to
+	// sum. One producer keeps the two engines from disagreeing about capacity.
+	//
+	// Published HERE — before the empty-population return and outside
+	// selectV2Optimizer — because both of those are unreachable in exactly the
+	// state scale-from-zero exists for. `requests` is built from ACTIVE variants,
+	// so a fleet parked at zero produces none, returns below, and would never
+	// publish; the consumer would then read "no snapshot" as "unknown" and skip
+	// the capacity check precisely when it is needed. Publishing an empty
+	// snapshot is the correct answer for that state: WVA's managed variants are
+	// holding no GPUs.
+	//
+	// It is also independent of which optimizer runs — usage is a property of the
+	// population. selectV2Optimizer returns early unless the optimizer is
+	// GreedyByScore, which is selected only when enableLimiter is true, and that
+	// defaults to false (see the optimizer selection in optimize).
+	decision.PublishGPUUsage(computeCurrentGPUUsage(requests), computeCurrentGPUUsageByNamespace(requests))
 
 	if len(requests) == 0 {
 		return nil
