@@ -44,8 +44,9 @@ func (a *Activations) Mark(namespace, modelID string) {
 	a.m[activationKey(namespace, modelID)] = a.now()
 }
 
-// Clear forgets the model's activation. Called once the model is genuinely
-// serving, so normal idle accounting takes over.
+// Clear forgets the model's activation, so normal idle accounting takes over
+// immediately rather than at the end of the hold. Lapsed holds drop out on their
+// own (see WithinRetention), so this is only needed to end one early.
 func (a *Activations) Clear(namespace, modelID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -57,18 +58,31 @@ func (a *Activations) Clear(namespace, modelID string) {
 // never woken (or whose hold has lapsed) reports false, leaving normal
 // scale-to-zero accounting in charge.
 //
-// A non-positive retention disables the hold.
+// A lapsed entry is dropped as it is read: the enforcer asks about every model
+// it gates on every cycle, so this is where a hold that has served its purpose
+// gets collected. Nothing else prunes the map, and without this an entry is
+// written once per wake and kept for the life of the process.
+//
+// A non-positive retention disables the hold. It deliberately does NOT prune:
+// retention comes from config and can be turned back on, and a model whose hold
+// is merely disabled this cycle should not silently lose the wake it recorded.
 func (a *Activations) WithinRetention(namespace, modelID string, retention time.Duration) bool {
 	if retention <= 0 {
 		return false
 	}
-	a.mu.RLock()
-	at, ok := a.m[activationKey(namespace, modelID)]
-	a.mu.RUnlock()
+	key := activationKey(namespace, modelID)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	at, ok := a.m[key]
 	if !ok {
 		return false
 	}
-	return a.now().Sub(at) < retention
+	if a.now().Sub(at) < retention {
+		return true
+	}
+	delete(a.m, key)
+	return false
 }
 
 // DefaultActivations is the process-wide registry, written by the

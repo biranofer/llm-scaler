@@ -107,4 +107,39 @@ func TestNonPositiveRetentionDisablesTheHold(t *testing.T) {
 			t.Fatalf("retention %s must disable the hold", retention)
 		}
 	}
+
+	// Disabling the hold must not throw the record away: retention is config and
+	// can be raised again, and this path is not evidence the wake is over.
+	if len(a.m) != 1 {
+		t.Fatalf("a disabled hold must keep its entry, have %d", len(a.m))
+	}
+}
+
+// TestLapsedHoldsArePruned: nothing else prunes the registry, so a read that
+// finds a hold has lapsed is what collects it. Without this an entry survives
+// for the life of the process, one per model ever woken.
+func TestLapsedHoldsArePruned(t *testing.T) {
+	now := time.Now()
+	a := newTestActivations(&now)
+	const retention = time.Minute
+
+	a.Mark(actNS, actModel)
+	a.Mark("other-ns", actModel)
+	if len(a.m) != 2 {
+		t.Fatalf("expected both wakes recorded, have %d", len(a.m))
+	}
+
+	now = now.Add(2 * retention)
+	if a.WithinRetention(actNS, actModel, retention) {
+		t.Fatal("the hold must have lapsed")
+	}
+
+	if _, ok := a.m[activationKey(actNS, actModel)]; ok {
+		t.Fatal("reading a lapsed hold must drop it")
+	}
+	// Only the entry that was read is collected; the other model's hold is
+	// untouched, since its own retention is not this caller's to judge.
+	if _, ok := a.m[activationKey("other-ns", actModel)]; !ok {
+		t.Fatal("an unread hold must survive another model's pruning")
+	}
 }
