@@ -11,6 +11,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
@@ -662,6 +663,22 @@ func computeCurrentGPUUsage(requests []pipeline.ModelScalingRequest) map[string]
 		gpuUsageByType(req, usage)
 	}
 	return usage
+}
+
+// publishPopulationGPUUsage shares this cycle's GPU accounting with the
+// scale-from-zero engine, which must know what is free before waking a variant
+// but has no population of its own to sum.
+//
+// It exists as a named function so the publication can be exercised as the
+// production code path rather than restated in a test: the two views (per type,
+// and per namespace per type) must be derived from the SAME requests, or a
+// consumer that cross-checks them sees a cluster that does not add up.
+//
+// Call only with a non-empty population — an empty one is indistinguishable from
+// a failed collection, and publishing zeros for it tells the scale-from-zero
+// engine the cluster is idle exactly when WVA has lost visibility.
+func publishPopulationGPUUsage(requests []pipeline.ModelScalingRequest) {
+	decision.PublishGPUUsage(computeCurrentGPUUsage(requests), computeCurrentGPUUsageByNamespace(requests))
 }
 
 // computeCurrentGPUUsageByNamespace mirrors computeCurrentGPUUsage but buckets
