@@ -289,7 +289,7 @@ func (e *Engine) processInactiveModel(
 		return nil
 	}
 
-	candidates, pools, err := e.buildCandidates(ctx, scaleTargets, group)
+	candidates, pool, err := e.buildCandidates(ctx, scaleTargets, group)
 	if err != nil {
 		return err
 	}
@@ -299,16 +299,36 @@ func (e *Engine) processInactiveModel(
 		return nil
 	}
 
-	// Look for queued demand in each of the model's pools, stopping at the first
-	// that has some. Ordinarily there is exactly one — the contract is one model
-	// to one InferencePool — so this is a single scrape per model per tick, which
-	// is what replaced the old per-VARIANT scrape of identical data. A model whose
-	// roles sit behind different pools is read from each in turn rather than
-	// having one pool's queue stand in for the others.
-	pending, pendingPool, pendingRequestExist, err := e.findPendingDemand(ctx, group, pools)
-	if err != nil {
+	// Use EPP source from registry
+	namespacedPoolName := pool.Namespace + "/" + pool.Name
+	eppSource := e.Datastore.PoolGetMetricsSource(namespacedPoolName)
+	if eppSource == nil {
+		// This is unexpected - pool exists but metrics source is missing
+		err := fmt.Errorf("EPP metrics source not found in registry for pool %s", namespacedPoolName)
+		logger.Error(err, "Datastore inconsistency detected",
+			"modelID", group.modelID,
+			"namespace", group.namespace,
+			"pool", namespacedPoolName)
 		return err
 	}
+
+	// One scrape per model per tick. Every variant of a model shares this queue,
+	// so the old per-variant scrape re-fetched identical data N times through a
+	// mutex-serialized HTTP call on a 100ms loop.
+	startTime := time.Now()
+	results, err := eppSource.Refresh(ctx, source.RefreshSpec{})
+	duration := time.Since(startTime).Seconds()
+	metrics.ObserveMetricsCollectionDuration(duration, constants.QueryTypeQueueLength)
+
+	if err != nil {
+		reason := prometheus.CategorizePrometheusError(err)
+		metrics.IncMetricsCollectionErrors(constants.QueryTypeQueueLength, reason)
+		return err
+	}
+
+	// Check for pending requests using EPP flowcontrol queue size metrics
+	result := results["all_metrics"]
+	pending, pendingRequestExist := pendingRequestsForModel(result.Values, group.modelID)
 	if !pendingRequestExist {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",
@@ -316,7 +336,6 @@ func (e *Engine) processInactiveModel(
 			"modelID", group.modelID)
 		return nil
 	}
-	pool := pendingPool
 	// DEBUG, not Info: this fires on every 100ms tick for as long as ANY request
 	// is queued, including for models that are already serving fine and for
 	// refusals whose reason has not changed. The events worth an Info line are
@@ -380,47 +399,6 @@ func (e *Engine) processInactiveModel(
 		e.publishActivation(ctx, scaleTargets, va, pool, 1, outcome)
 	}
 	return nil
-}
-
-// findPendingDemand scrapes each of the model's EPP pools until one reports
-// queued requests for it, returning the sample and the pool it came from.
-//
-// The pool is returned alongside the sample because it is what the activation is
-// logged against; attributing a wake to a pool whose queue was never consulted
-// would make the log actively misleading when a model spans pools.
-func (e *Engine) findPendingDemand(
-	ctx context.Context,
-	group modelGroup,
-	pools []*poolutil.EndpointPool,
-) (source.MetricValue, *poolutil.EndpointPool, bool, error) {
-	logger := log.FromContext(ctx)
-
-	for _, pool := range pools {
-		namespacedPoolName := pool.Namespace + "/" + pool.Name
-		eppSource := e.Datastore.PoolGetMetricsSource(namespacedPoolName)
-		if eppSource == nil {
-			// This is unexpected - pool exists but metrics source is missing
-			err := fmt.Errorf("EPP metrics source not found in registry for pool %s", namespacedPoolName)
-			logger.Error(err, "Datastore inconsistency detected",
-				"modelID", group.modelID,
-				"namespace", group.namespace,
-				"pool", namespacedPoolName)
-			return source.MetricValue{}, nil, false, err
-		}
-
-		startTime := time.Now()
-		results, err := eppSource.Refresh(ctx, source.RefreshSpec{})
-		metrics.ObserveMetricsCollectionDuration(time.Since(startTime).Seconds(), constants.QueryTypeQueueLength)
-		if err != nil {
-			metrics.IncMetricsCollectionErrors(constants.QueryTypeQueueLength, prometheus.CategorizePrometheusError(err))
-			return source.MetricValue{}, nil, false, err
-		}
-
-		if pending, ok := pendingRequestsForModel(results["all_metrics"].Values, group.modelID); ok {
-			return pending, pool, true, nil
-		}
-	}
-	return source.MetricValue{}, nil, false, nil
 }
 
 // publishActivation records the wake for one selected variant: it publishes the

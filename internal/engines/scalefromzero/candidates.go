@@ -59,32 +59,24 @@ func (g modelGroup) variantByName(name string) (wvav1alpha1.VariantAutoscaling, 
 	return wvav1alpha1.VariantAutoscaling{}, false
 }
 
-// buildCandidates turns a model's inactive variants into selection candidates,
-// and returns the distinct EPP pools they sit behind.
+// buildCandidates turns a model's inactive variants into selection candidates
+// and resolves the EPP pool they share.
 //
 // A variant whose pool cannot be resolved is skipped rather than failing the
 // model: that is the normal bootstrap state, and one unresolvable variant must
-// not stop its siblings from being woken.
-//
-// Ordinarily this yields exactly ONE pool — the contract is one model to one
-// InferencePool. Pools are still returned as a set rather than a single value
-// because per-role pools for a model are a possibility, and a model whose decode
-// and prefill sit behind different EPPs must have its demand read from the right
-// queue: judging a decode variant from the prefill pool's queue would be silently
-// wrong rather than merely imprecise. Selection still considers all of the
-// model's candidates together, so a P/D pair is chosen as one set even when its
-// halves are behind different pools.
+// not stop its siblings from being woken. The pool returned is the first that
+// resolves; a model's variants serve the same model behind the same EPP, so they
+// share a queue.
 func (e *Engine) buildCandidates(
 	ctx context.Context,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	group modelGroup,
-) ([]Candidate, []*poolutil.EndpointPool, error) {
+) ([]Candidate, *poolutil.EndpointPool, error) {
 	logger := log.FromContext(ctx)
 
 	var (
 		candidates []Candidate
-		pools      []*poolutil.EndpointPool
-		seenPools  = map[string]struct{}{}
+		pool       *poolutil.EndpointPool
 	)
 
 	for _, va := range group.variants {
@@ -117,11 +109,8 @@ func (e *Engine) buildCandidates(
 				"modelID", va.Spec.ModelID)
 			return nil, nil, err
 		}
-		if key := variantPool.Namespace + "/" + variantPool.Name; true {
-			if _, seen := seenPools[key]; !seen {
-				seenPools[key] = struct{}{}
-				pools = append(pools, variantPool)
-			}
+		if pool == nil {
+			pool = variantPool
 		}
 
 		candidates = append(candidates, Candidate{
@@ -134,10 +123,10 @@ func (e *Engine) buildCandidates(
 		})
 	}
 
-	if len(pools) == 0 {
+	if pool == nil {
 		return nil, nil, nil
 	}
-	return candidates, pools, nil
+	return candidates, pool, nil
 }
 
 // candidateAccelerator returns the variant's accelerator exactly as declared.

@@ -504,7 +504,7 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				// When pool is not found (different namespace), we expect nil error (skip)
 				assert.NoError(t, err, "Expected no error (skip) for: %s, but got: %v", tt.skipReason, err)
 				assert.Empty(t, candidates, "Variant should be skipped when its pool is in another namespace: %s", tt.skipReason)
-				assert.Empty(t, resolvedPool, "no pool resolves when the variant is in another namespace")
+				assert.Nil(t, resolvedPool)
 			} else {
 				if err != nil && errors.Is(err, datastore.ErrPoolNotSynced) {
 					// When pool is found, we expect it to proceed
@@ -512,7 +512,7 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 				}
 				assert.NoError(t, err)
 				assert.Len(t, candidates, 1, "Variant in the pool's namespace should become a candidate")
-				assert.Len(t, resolvedPool, 1, "one model resolves to exactly one InferencePool (the project contract); a set is returned only so per-role pools cannot be mis-attributed")
+				assert.NotNil(t, resolvedPool, "Pool should resolve for a same-namespace variant")
 			}
 		})
 	}
