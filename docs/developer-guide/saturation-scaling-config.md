@@ -127,17 +127,16 @@ when any of these hold:
 | no usage snapshot yet | the saturation engine is the sole producer of GPU usage; until it completes one cycle there is no denominator. This is the state on the first cycle after a restart — exactly when a request may be queued |
 | accelerator unresolved | a variant with no resolvable accelerator (no nodeSelector / `inference.optimization/acceleratorName` label) cannot be charged to any pool, so it is not counted rather than denied |
 
-> **Unresolved accelerators over-state free capacity.** This affects the
-> GPU-aware optimizer as well as scale-from-zero. GPU usage is keyed by
-> accelerator type, and a variant WVA cannot resolve is keyed under an internal
-> `unknown` placeholder. Per-type pools are built from *discovered* types, so
-> that entry never lands in a pool: the GPUs those variants hold are invisible to
-> the per-type budgets, and both the optimizer and the placement check see more
-> headroom than exists. Usage that cannot be attributed to a type cannot be
-> charged to one, so the fix is to make the accelerator resolvable — set a
-> `nodeSelector`/`nodeAffinity` GPU key on the workload, or the
-> `inference.optimization/acceleratorName` label. WVA emits an
-> `AcceleratorNotResolved` warning event for each such variant.
+> **The GPU budget over-states free capacity in two known ways**, affecting the
+> GPU-aware optimizer as well as scale-from-zero: usage on an unresolved
+> accelerator never lands in a pool, and the physical `Limit` counts every
+> *installed* GPU rather than what is actually available. Both are described,
+> with their fixes and current status, in
+> [GPU Capacity Accounting](gpu-capacity-accounting.md). The short version: make
+> the accelerator resolvable (`nodeSelector`/`nodeAffinity` GPU key, or the
+> `inference.optimization/acceleratorName` label — WVA emits an
+> `AcceleratorNotResolved` event otherwise), and declare an explicit quota
+> limiter if you need a hard ceiling.
 
 Note the usage snapshot is published independently of `enableLimiter`. The
 GPU-aware optimizer (`GreedyByScore`) only runs when `enableLimiter: true`, but

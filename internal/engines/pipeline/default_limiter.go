@@ -57,11 +57,25 @@ func (l *DefaultLimiter) Name() string {
 // a single ComputeConstraints. See docs/developer-guide/quota-limiter.md.
 func (l *DefaultLimiter) ComputeConstraints(ctx context.Context, usageByType map[string]int, usageByNamespace map[string]map[string]int) (*ResourceConstraints, error) {
 	// Step 1: Refresh inventory to get latest limits from the cluster
+	//
+	// FUTURE WORK — this is Refresh (limits only), so Limit is every GPU
+	// INSTALLED on every node, and Used below is only what WVA itself manages.
+	// GPUs held by non-WVA workloads, other namespaces, system pods, or nodes
+	// that are cordoned/NotReady are invisible, so free capacity is over-stated.
+	// The inventory is already built with NewTypeInventoryWithUsage, whose
+	// DiscoverUsage sums actual pod GPU requests; reaching it needs RefreshAll,
+	// plus a decision on how discovered usage composes with the caller's figure
+	// (they overlap — WVA's managed pods are also real pods — so they must not be
+	// summed). See docs/developer-guide/gpu-capacity-accounting.md.
 	if err := l.inventory.Refresh(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh inventory: %w", err)
 	}
 
 	// Step 2: Record current usage
+	//
+	// Usage keyed to an unresolved accelerator ("unknown") never lands in a pool,
+	// because GetResourcePools iterates the discovered types — another way free
+	// capacity is over-stated. Same doc, Gap 1.
 	l.inventory.SetUsed(usageByType)
 
 	// Step 3: Expose per-type availability
