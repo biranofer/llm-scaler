@@ -138,3 +138,79 @@ func TestStartSurvivesAFailedFirstObservation(t *testing.T) {
 		t.Error("Start never attempted an observation")
 	}
 }
+
+// TestEnsureFreshObservesWhenStale pins the reason EnsureFresh exists: a
+// placement is decided the instant demand appears, and the periodic observation
+// can be a whole interval old by then.
+//
+// The scale-from-zero e2e failed exactly here — a workload became Ready, a wake
+// was considered a second later, and the budget was computed from an observation
+// taken before that workload existed, so it was waved onto an accelerator that
+// was already full.
+func TestEnsureFreshObservesWhenStale(t *testing.T) {
+	store := decision.NewGPUUsageStore()
+	disc := &fakeDiscovery{byType: map[string]int{"A100": 0}}
+	r := &Refresher{Store: store, Discovery: disc}
+
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("seed Refresh: %v", err)
+	}
+	// The cluster changes: a workload starts and takes the whole pool.
+	disc.byType = map[string]int{"A100": 4}
+
+	// maxAge 0 makes any observation stale, which is what a caller asking for
+	// "current" effectively wants.
+	r.EnsureFresh(context.Background(), 0)
+
+	snap, _ := store.Get()
+	if snap.ByType["A100"] != 4 {
+		t.Errorf("ByType[A100] = %d, want 4 — the decision would have been taken against a "+
+			"cluster that no longer exists", snap.ByType["A100"])
+	}
+}
+
+// TestEnsureFreshSkipsWhenCurrent: the caller runs at 10Hz, so a fresh-enough
+// observation must be reused rather than re-walking the cache on every tick.
+func TestEnsureFreshSkipsWhenCurrent(t *testing.T) {
+	disc := &fakeDiscovery{byType: map[string]int{"A100": 1}}
+	r := &Refresher{Store: decision.NewGPUUsageStore(), Discovery: disc}
+
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("seed Refresh: %v", err)
+	}
+	before := disc.calls
+
+	for range 20 {
+		r.EnsureFresh(context.Background(), time.Minute)
+	}
+	if disc.calls != before {
+		t.Errorf("observed %d extra times; a current observation must be reused", disc.calls-before)
+	}
+}
+
+// TestEnsureFreshOnNilRefresherIsANoOp: the engine field is optional, and a nil
+// receiver must not panic the 10Hz loop.
+func TestEnsureFreshOnNilRefresherIsANoOp(t *testing.T) {
+	var r *Refresher
+	r.EnsureFresh(context.Background(), 0)
+}
+
+// TestEnsureFreshSurvivesAFailedObservation: a blip must leave the previous
+// observation standing rather than failing the placement, which would turn a
+// transient discovery error into a refusal to wake.
+func TestEnsureFreshSurvivesAFailedObservation(t *testing.T) {
+	store := decision.NewGPUUsageStore()
+	disc := &fakeDiscovery{byType: map[string]int{"A100": 2}}
+	r := &Refresher{Store: store, Discovery: disc}
+
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatalf("seed Refresh: %v", err)
+	}
+	disc.err = errors.New("transient")
+	r.EnsureFresh(context.Background(), 0)
+
+	snap, ok := store.Get()
+	if !ok || snap.ByType["A100"] != 2 {
+		t.Errorf("snapshot = %v (ok=%v), want the previous observation kept", snap, ok)
+	}
+}

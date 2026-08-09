@@ -21,6 +21,7 @@ package gpuusage
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -54,6 +55,60 @@ type Refresher struct {
 	Store *decision.GPUUsageStore
 	// Interval between refreshes. Defaults to DefaultInterval.
 	Interval time.Duration
+
+	// freshMu serialises on-demand refreshes so concurrent callers collapse onto
+	// one observation. See EnsureFresh.
+	freshMu sync.Mutex
+}
+
+// DecisionMaxAge is how stale an observation may be at the moment a placement
+// decision is actually taken.
+//
+// The ticker alone is not enough. A wake is decided the instant demand appears,
+// which is routinely within a second of the cluster changing — a workload that
+// has just become Ready is exactly the thing a placement must account for, and on
+// a 15s tick it is invisible for up to 15s after it starts holding GPUs. That
+// window is not rare: the scale-from-zero e2e loses it more often than it wins,
+// waking onto an accelerator that a just-started workload had already filled.
+//
+// Small enough that a decision effectively sees the current cluster, large enough
+// to bound the work: the observation walks the pod informer's cache, so a refresh
+// costs no API call, and this caps it at one walk every two seconds however hard
+// the 10Hz loop asks.
+const DecisionMaxAge = 2 * time.Second
+
+// EnsureFresh takes a new observation if the published one is older than maxAge,
+// so a caller about to make a decision is not reasoning about a cluster that has
+// since changed. A nil Refresher is a no-op, which is what makes it safe to leave
+// uninjected in tests.
+//
+// Concurrent callers collapse onto one observation rather than stampeding: the
+// 10Hz loop asks once per model per tick, and they would otherwise each walk the
+// cache with nothing to gain — the second walk would see what the first did.
+//
+// A failed observation is not reported to the caller. The previous one stands and
+// the consumer's own staleness bound still applies, so the decision degrades the
+// same way it would have without this call; failing the placement instead would
+// turn a transient blip into a refusal to wake.
+func (r *Refresher) EnsureFresh(ctx context.Context, maxAge time.Duration) {
+	if r == nil {
+		return
+	}
+	if snap, ok := r.store().Get(); ok && time.Since(snap.TakenAt) <= maxAge {
+		return
+	}
+
+	r.freshMu.Lock()
+	defer r.freshMu.Unlock()
+	// Re-check under the lock: whoever held it may have just refreshed.
+	if snap, ok := r.store().Get(); ok && time.Since(snap.TakenAt) <= maxAge {
+		return
+	}
+	if err := r.Refresh(ctx); err != nil {
+		log.FromContext(ctx).V(logging.DEBUG).Info(
+			"On-demand GPU usage refresh failed; deciding against the previous observation",
+			"error", err.Error())
+	}
 }
 
 // Refresh takes one observation and publishes it.

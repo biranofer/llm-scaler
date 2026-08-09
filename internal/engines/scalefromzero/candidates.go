@@ -31,6 +31,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
@@ -209,6 +210,13 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		e.reportUnchecked(ctx, namespace, "no constraint provider is configured")
 		return nil
 	}
+
+	// Observe before deciding. A wake is considered the instant demand appears,
+	// which is routinely within a second of the cluster changing, so the periodic
+	// observation alone can be a whole interval out of date at exactly the moment
+	// it is consulted — and a workload that has just started holding GPUs is
+	// precisely what a placement must not miss.
+	e.UsageRefresher.EnsureFresh(ctx, gpuusage.DecisionMaxAge)
 
 	usage, ok := decision.LatestGPUUsage()
 	if !ok {

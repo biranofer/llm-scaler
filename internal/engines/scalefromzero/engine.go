@@ -40,6 +40,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
@@ -107,6 +108,11 @@ type Engine struct {
 	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
 	// means no capacity check — see gpuConstraints.
 	gpuLimiter pipeline.Limiter
+	// UsageRefresher brings the cluster's GPU usage up to date immediately before
+	// a placement is decided. A nil pointer is a no-op (EnsureFresh has a nil
+	// receiver guard), so the periodic observation is then the only input — which
+	// is what tests want and what production must not rely on.
+	UsageRefresher *gpuusage.Refresher
 	// Variants is the set of workloads KEDA has called WVA about — discovery.
 	Variants *registry.Registry
 	// VariantEnricher resolves each registered workload's scale target. Refreshed

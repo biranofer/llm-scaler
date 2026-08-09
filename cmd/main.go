@@ -439,9 +439,10 @@ func main() {
 	// consume this, and until it exists the capacity checks have no evidence and
 	// degrade to "unknown", which is permissive. It is the SOLE producer of the
 	// snapshot — see internal/gpuusage.
-	if err := mgr.Add(&gpuusage.Refresher{
+	usageRefresher := &gpuusage.Refresher{
 		Discovery: discovery.NewK8sWithGpuOperator(mgr.GetClient()),
-	}); err != nil {
+	}
+	if err := mgr.Add(usageRefresher); err != nil {
 		setupLog.Error(err, "unable to add the GPU usage refresher to the manager")
 		os.Exit(1)
 	}
@@ -559,6 +560,11 @@ func main() {
 		// other has just read.
 		engine.Variants = registry.Default
 		engine.VariantEnricher = registry.NewEnricher(mgr.GetAPIReader(), registry.Default, registry.DefaultTargetMaxAge)
+		// Let the engine bring the usage picture up to date immediately before it
+		// places a wake. The periodic observation alone can be a full interval old
+		// at the moment it is consulted, and a workload that has just started
+		// holding GPUs is exactly what a placement must not miss.
+		engine.UsageRefresher = usageRefresher
 		// Give the engine a limiter so a wake is only published for a variant
 		// that can actually be placed. This is its own instance rather than the
 		// saturation engine's: a limiter supplies constraints from usage passed
