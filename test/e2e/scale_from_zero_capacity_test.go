@@ -98,7 +98,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		By("Running an occupier that consumes the whole " + fullAccelerator + " pool")
 		// Also serves condition (2): an active variant is what makes the
 		// saturation engine publish a usage snapshot at all.
-		occupierModel := cfg.ModelID + "-occupier"
+		occupierModel := sfzModelID("sfz-cap-occupier")
 		Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, occupierSvc, poolName,
 			occupierModel, occupierVar, cfg.UseSimulator, cfg.MaxNumSeqs,
 			fixtures.WithAcceleratorNodeSelector(fullAccelerator),
@@ -149,7 +149,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		By("Sending requests so both parked variants have demand")
 		triggerStart := time.Now()
 		triggerJobName = fmt.Sprintf("sfz-cap-trigger-%d", time.Now().Unix())
-		job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, cfg.EPPServiceName, cfg.ModelID)
+		job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, cfg.EPPServiceName, sfzModelID("sfz-cap"))
 		_, err := k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -186,7 +186,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 func createParkedVariant(svcName, deployName, variantName, scalerName, poolName, accelerator string) {
 	GinkgoHelper()
 	Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, svcName, poolName,
-		cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
+		sfzModelID("sfz-cap"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
 		fixtures.WithAcceleratorNodeSelector(accelerator),
 		fixtures.WithGPURequest(1),
 	)).To(Succeed())
@@ -202,7 +202,7 @@ func createParkedVariant(svcName, deployName, variantName, scalerName, poolName,
 
 	Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerName, deployName, variantName,
 		0, 10, cfg.MonitoringNS,
-		fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
+		fixtures.WithWVATriggerMetadata(sfzModelID("sfz-cap"), "30.0"),
 		fixtures.WithExternalScalerPushTrigger(externalScalerAddress()),
 	)).To(Succeed())
 }

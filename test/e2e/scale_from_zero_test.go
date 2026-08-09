@@ -32,6 +32,28 @@ func externalScalerAddress() string {
 	return "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
 }
 
+// sfzModelID gives a scale-from-zero suite a model of its own.
+//
+// Every suite used to serve cfg.ModelID, which made these specs depend on what
+// the rest of the run happened to leave behind. Scale-from-zero can only be
+// observed while NOTHING serves the model: the wake is triggered by requests
+// queueing in the EPP, and it is refused outright for a model whose decode is
+// already covered. A workload from another suite still serving the shared model
+// answers the trigger's requests, so nothing queues, and the engine correctly
+// does nothing — the spec then times out waiting for a wake that must not
+// happen, and blames the engine.
+//
+// That is not hypothetical. In a full run, throughput-scaleup-ms-so was serving
+// e2ewva/dummy-model at one replica fifteen seconds before the Deployment spec
+// began waiting, and every scale-from-zero suite in that run failed while the
+// same suites passed 22/22 in isolation.
+//
+// A distinct model per suite removes the coupling rather than ordering around
+// it: no other suite's workload can answer for a model only this suite serves.
+func sfzModelID(suffix string) string {
+	return cfg.ModelID + "-" + suffix
+}
+
 // expectScaleFromZeroEngineActivation waits until the WVA controller logs the
 // scale-from-zero engine publishing an activation decision for variantName.
 //
@@ -295,7 +317,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 
 		By("Creating model service deployment with 0 initial replicas")
 		// Create deployment with 0 replicas using the fixture
-		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Immediately scale deployment to 0 (with retry to handle race conditions)
@@ -347,7 +369,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		// wva_desired_replicas keyed by variantName.
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", variantName, 0, 10, cfg.MonitoringNS,
-			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(sfzModelID("sfz"), "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
@@ -464,7 +486,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 
 			// Create a job that sends requests to the gateway service (which routes through EPP)
 			// This allows EPP to queue requests and expose the flow control queue size metric
-			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
+			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, sfzModelID("sfz"))
 			_, err = k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create scale-from-zero trigger job")
 
@@ -717,7 +739,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		}).Should(Succeed(), "EPP pods should be ready")
 
 		By("Creating model service LeaderWorkerSet with 0 initial replicas")
-		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
+		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service LWS")
 
 		// Register cleanup for LWS
@@ -809,7 +831,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(sfzModelID("sfz-lws"), "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
@@ -925,7 +947,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			triggerStart := time.Now()
 			triggerJobName = fmt.Sprintf("scale-from-zero-lws-trigger-%d", time.Now().Unix())
 
-			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
+			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, sfzModelID("sfz-lws"))
 			_, err = k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create scale-from-zero trigger job")
 
@@ -1087,7 +1109,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		}).Should(Succeed(), "EPP pods should be ready")
 
 		By("Creating model service LeaderWorkerSet with single-node (leader only) with 0 initial replicas")
-		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
+		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws1"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service LWS")
 
 		// Register cleanup for LWS
@@ -1179,7 +1201,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(sfzModelID("sfz-lws1"), "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
@@ -1295,7 +1317,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 			triggerStart := time.Now()
 			triggerJobName = fmt.Sprintf("scale-from-zero-lws-single-trigger-%d", time.Now().Unix())
 
-			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
+			job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, sfzModelID("sfz-lws1"))
 			_, err = k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred(), "Failed to create scale-from-zero trigger job")
 

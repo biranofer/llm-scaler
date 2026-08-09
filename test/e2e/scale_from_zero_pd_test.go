@@ -57,7 +57,7 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 	ensureRoleWorkloadAtZero := func(svcName, deployName, variantName, scalerName, role string) {
 		GinkgoHelper()
 		Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, svcName, poolName,
-			cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
+			sfzModelID("sfz-pd"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
 			fixtures.WithRole(role),
 		)).To(Succeed(), "creating the %s model service", role)
 
@@ -71,7 +71,7 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 			Should(Succeed(), "parking the %s workload at zero", role)
 
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerName, deployName, variantName, 0, 10, cfg.MonitoringNS,
-			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(sfzModelID("sfz-pd"), "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()),
 		)).To(Succeed(), "creating the %s ScaledObject", role)
 	}
@@ -151,7 +151,7 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 		By("Sending requests while both roles are parked at zero")
 		triggerStart := time.Now()
 		triggerJobName = fmt.Sprintf("sfz-pd-trigger-%d", time.Now().Unix())
-		job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, cfg.ModelID)
+		job := createScaleFromZeroTriggerJob(triggerJobName, cfg.LLMDNamespace, gatewayServiceName, sfzModelID("sfz-pd"))
 		_, err = k8sClient.BatchV1().Jobs(cfg.LLMDNamespace).Create(ctx, job, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
