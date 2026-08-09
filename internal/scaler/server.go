@@ -22,8 +22,11 @@ import (
 type Server struct {
 	// Addr is the gRPC bind address, e.g. ":9090".
 	Addr string
-	// Client reads KEDA ScaledObjects to resolve scale targets.
-	Client client.Client
+	// Client reads KEDA ScaledObjects to resolve scale targets. It MUST be an
+	// uncached reader (manager.GetAPIReader): a cached Get of a ScaledObject
+	// lazily starts a cluster-wide LIST+WATCH informer for the kind, which is the
+	// watch this design removes.
+	Client client.Reader
 	// Registry is where incoming calls register the workloads they name — WVA's
 	// discovery. Nil uses registry.Default, which is what the engines read.
 	Registry *registry.Registry

@@ -382,3 +382,77 @@ func TestInvalidationKeepsServingTheLastEnvelope(t *testing.T) {
 		t.Error("but it must read as stale, so the next pass re-reads it")
 	}
 }
+
+// fakeTracker records what the namespace sync hands the datastore.
+type fakeTracker struct{ tracked map[string]string }
+
+func newFakeTracker() *fakeTracker { return &fakeTracker{tracked: map[string]string{}} }
+
+func (f *fakeTracker) NamespaceTrack(_, name, namespace string) {
+	f.tracked[namespace+"/"+name] = namespace
+}
+func (f *fakeTracker) NamespaceUntrack(_, name, namespace string) {
+	delete(f.tracked, namespace+"/"+name)
+}
+
+// TestRefreshTracksNamespaces is what replaces the ScaledObject reconciler.
+//
+// Namespace tracking scopes which namespaces WVA loads configuration from. It
+// used to come from watching ScaledObjects — and a watch is the cluster-wide
+// LIST+WATCH this design removes. The registry knows the same thing for a better
+// reason: these are the namespaces WVA has actually been called about.
+func TestRefreshTracksNamespaces(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "a-so", map[string]string{ModelIDKey: testModel})
+	reg.Observe("batch", "b-so", map[string]string{ModelIDKey: testModel})
+
+	e, _ := newTestEnricher(t, &now, reg)
+	tracker := newFakeTracker()
+	e.Tracker = tracker
+
+	e.Refresh(context.Background())
+
+	if _, ok := tracker.tracked[testNamespace+"/a-so"]; !ok {
+		t.Error("a registered workload's namespace must be tracked")
+	}
+	if _, ok := tracker.tracked["batch/b-so"]; !ok {
+		t.Error("every registered namespace must be tracked, not just the first")
+	}
+}
+
+// TestRefreshUntracksDepartedNamespaces: a workload KEDA stops calling about must
+// stop pinning its namespace, or configuration keeps loading for a namespace WVA
+// no longer has anything in.
+func TestRefreshUntracksDepartedNamespaces(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "a-so", map[string]string{ModelIDKey: testModel})
+
+	e, _ := newTestEnricher(t, &now, reg)
+	tracker := newFakeTracker()
+	e.Tracker = tracker
+	e.Refresh(context.Background())
+
+	if len(tracker.tracked) != 1 {
+		t.Fatalf("expected one tracked workload, have %d", len(tracker.tracked))
+	}
+
+	// Nobody has called about it for a whole TTL, so it is gone.
+	now = now.Add(2 * testTTL)
+	e.Refresh(context.Background())
+
+	if len(tracker.tracked) != 0 {
+		t.Errorf("an expired workload must release its namespace, have %v", tracker.tracked)
+	}
+}
+
+// TestSyncNamespacesWithoutATrackerIsANoOp guards the optional wiring.
+func TestSyncNamespacesWithoutATrackerIsANoOp(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "a-so", nil)
+
+	e, _ := newTestEnricher(t, &now, reg)
+	e.Refresh(context.Background()) // must not panic
+}

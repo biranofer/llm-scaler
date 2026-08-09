@@ -354,9 +354,7 @@ func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespac
 		default:
 			// The synthetic VariantAutoscaling is always keyed by the ScaledObject
 			// name, so use it directly.
-			if ms.ScaledObject != nil {
-				vaName = ms.ScaledObject.Name
-			}
+			vaName = ms.Name
 		}
 	}
 

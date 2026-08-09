@@ -248,14 +248,18 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 	// from ConfigMap), since config arrives after engine init.
 	var scalingOptimizer pipeline.ScalingOptimizer = pipeline.NewCostAwareOptimizer()
 
-	podLocator, err := locator.New(client, apiReader)
+	// Declared before the locator so the closure below can read the field that is
+	// wired after construction — see locator.New on why it takes a func.
+	var engine Engine
+
+	podLocator, err := locator.New(apiReader, func() *registry.Registry { return engine.Variants })
 	if err != nil {
 		// locator.New only fails when defaultCacheSize <= 0, which is a
 		// programming error we cannot recover from at runtime.
 		panic(fmt.Sprintf("locator.New: %v", err))
 	}
 
-	engine := Engine{
+	engine = Engine{
 		client:                  client,
 		scheme:                  scheme,
 		Recorder:                recorder,

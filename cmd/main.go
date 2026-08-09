@@ -49,13 +49,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
@@ -193,7 +191,6 @@ func main() {
 	}
 	// Gate the pod locator's ScaledObject lookups on KEDA availability. Set before
 	// the saturation engine goroutine constructs its locator.
-	locator.SetKEDAEnabled(kedaEnabled)
 
 	tlsOpts := []func(*tls.Config){
 		func(c *tls.Config) {
@@ -355,14 +352,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup custom indexes for lookups on HPAs and ScaledObjects
-	setupLog.Info("Setting up indexes")
-	if err := indexers.SetupIndexes(context.Background(), mgr, kedaEnabled); err != nil {
-		setupLog.Error(err, "unable to setup indexes")
-		os.Exit(1)
-	}
-	setupLog.Info("Indexes setup completed")
-
 	// Initialize metrics
 	setupLog.Info("Creating metrics emitter instance")
 	// Force initialization of metrics by creating a metrics emitter
@@ -506,6 +495,11 @@ func main() {
 		// this design exists to remove.
 		engine.Variants = registry.Default
 		engine.VariantEnricher = registry.NewEnricher(mgr.GetAPIReader(), registry.Default, registry.DefaultTargetMaxAge)
+		// The registry is also what tells the datastore which namespaces to load
+		// configuration for. That used to come from a ScaledObject reconciler, whose
+		// watch was a cluster-wide informer; the registry knows the same thing for a
+		// better reason — these are the namespaces WVA has actually been called about.
+		engine.VariantEnricher.Tracker = ds
 		// Rebuild the limiter live when the saturation ConfigMap's limiters: list
 		// changes — no restart required. The builder re-reads the effective config.
 		engine.SetLimiterBuilder(func() (pipeline.Limiter, error) {
@@ -580,23 +574,13 @@ func main() {
 	// consume the registry.
 	if err := mgr.Add(&scaler.Server{
 		Addr:     *externalScalerBindAddress,
-		Client:   mgr.GetClient(),
+		Client:   mgr.GetAPIReader(),
 		Registry: registry.Default,
 	}); err != nil {
 		setupLog.Error(err, "unable to add KEDA external scaler to manager")
 		os.Exit(1)
 	}
 
-	// ScaledObjectReconciler: registered only when KEDA CRD is present.
-	if kedaEnabled {
-		if err = (&controller.ScaledObjectReconciler{
-			Client:    mgr.GetClient(),
-			Datastore: ds,
-		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create ScaledObject controller")
-			os.Exit(1)
-		}
-	}
 	// +kubebuilder:scaffold:builder
 
 	// Create InferencePool reconciler

@@ -21,10 +21,8 @@ import (
 	"testing"
 	"time"
 
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -48,7 +46,7 @@ func scalerLocator(scalerByPod map[string]string) *mockLocator {
 				return nil, nil
 			}
 			return &locator.ManagedScaler{
-				ScaledObject: &kedav1alpha1.ScaledObject{ObjectMeta: metav1.ObjectMeta{Name: name}},
+				Name: name,
 			}, nil
 		},
 	}
@@ -60,7 +58,7 @@ func allPodsLocator(scalerName string) *mockLocator {
 	return &mockLocator{
 		locateFunc: func(_ context.Context, _, _ string) (*locator.ManagedScaler, error) {
 			return &locator.ManagedScaler{
-				ScaledObject: &kedav1alpha1.ScaledObject{ObjectMeta: metav1.ObjectMeta{Name: scalerName}},
+				Name: scalerName,
 			}, nil
 		},
 	}

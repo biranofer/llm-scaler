@@ -44,8 +44,49 @@ type Enricher struct {
 	// MaxAge is how stale a target read may be before it is refreshed. Zero uses
 	// DefaultTargetMaxAge.
 	MaxAge time.Duration
+	// Tracker, if set, is kept in step with the registry's live namespaces so
+	// namespace-scoped configuration loads for exactly the namespaces WVA has
+	// workloads in. Optional.
+	Tracker NamespaceTracker
+	// tracked remembers what was handed to Tracker last pass, so entries that go
+	// away can be untracked. Only touched from Refresh.
+	tracked map[string]string
 	// now is the clock, overridden in tests.
 	now func() time.Time
+}
+
+// NamespaceTracker is the slice of the datastore the namespace sync needs.
+type NamespaceTracker interface {
+	NamespaceTrack(resourceType, resourceName, namespace string)
+	NamespaceUntrack(resourceType, resourceName, namespace string)
+}
+
+// namespaceResourceType labels registry-sourced tracking in the datastore.
+const namespaceResourceType = "Scaler"
+
+// syncNamespaces reconciles the tracker against the live entries.
+//
+// This replaces the ScaledObject reconciler, which tracked namespaces by watching
+// the objects — and a watch is the cluster-wide LIST+WATCH this design removes.
+// The registry already knows which namespaces have workloads in them, for the
+// better reason: they are the namespaces WVA has actually been called about.
+func (e *Enricher) syncNamespaces(live []Entry) {
+	if e.Tracker == nil {
+		return
+	}
+	now := make(map[string]string, len(live))
+	for _, entry := range live {
+		now[key(entry.Namespace, entry.Name)] = entry.Namespace
+		e.Tracker.NamespaceTrack(namespaceResourceType, entry.Name, entry.Namespace)
+	}
+	for k, namespace := range e.tracked {
+		if _, still := now[k]; still {
+			continue
+		}
+		name := k[len(namespace)+1:]
+		e.Tracker.NamespaceUntrack(namespaceResourceType, name, namespace)
+	}
+	e.tracked = now
 }
 
 // NewEnricher builds an Enricher over reader and reg.
@@ -84,8 +125,11 @@ func (e *Enricher) Refresh(ctx context.Context) {
 	logger := log.FromContext(ctx)
 	now := e.clock()
 
+	live := e.Registry.Snapshot()
+	e.syncNamespaces(live)
+
 	var read, failed, gone int
-	for _, entry := range e.Registry.Snapshot() {
+	for _, entry := range live {
 		if entry.Fresh(now, e.MaxAge) {
 			continue
 		}

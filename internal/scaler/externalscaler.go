@@ -37,7 +37,11 @@ const activationTTL = 60 * time.Second
 // Handler implements pb.ExternalScalerServer.
 type Handler struct {
 	pb.UnimplementedExternalScalerServer
-	client client.Client
+	// client MUST be an uncached reader (manager.GetAPIReader). A cached Get of a
+	// ScaledObject lazily starts a cluster-wide LIST+WATCH informer for the kind
+	// on first use — the watch this design exists to remove — and it would appear
+	// the moment KEDA made its first call, with nothing in the code saying "watch".
+	client client.Reader
 	store  *decision.Store
 	// registry is the set of workloads WVA manages. Every RPC registers its ref
 	// there — see observe.
@@ -48,7 +52,9 @@ type Handler struct {
 
 // NewHandler builds a Handler. A nil store falls back to decision.Default, and a
 // nil reg to registry.Default.
-func NewHandler(c client.Client, store *decision.Store, reg *registry.Registry) *Handler {
+//
+// c must be uncached — see the client field.
+func NewHandler(c client.Reader, store *decision.Store, reg *registry.Registry) *Handler {
 	if store == nil {
 		store = decision.Default
 	}
@@ -128,15 +134,29 @@ func (h *Handler) honoursDecision(d decision.Decision) bool {
 	return now().Sub(d.UpdatedAt) <= activationTTL
 }
 
-// targetName resolves the scale-target name for a ScaledObjectRef. An explicit
-// scalerMetadata["variantName"] wins (and avoids the read); otherwise it reads
-// the KEDA ScaledObject and returns its scaleTargetRef.name.
+// targetName resolves the scale-target name for a ScaledObjectRef, cheapest
+// source first.
+//
+//  1. an explicit scalerMetadata["variantName"], which avoids any lookup;
+//  2. the registry, if the enricher has already resolved this entry — the steady
+//     state, and the reason this path costs no API traffic at all; and only then
+//  3. an uncached read of the ScaledObject, for the window between a workload's
+//     first call and its first enrichment pass.
+//
+// Step 2 matters because step 3 is uncached by necessity: making it cached would
+// serve it from a cluster-wide informer, so without the registry hop every KEDA
+// poll of every workload would be a real API request.
 func (h *Handler) targetName(ctx context.Context, ref *pb.ScaledObjectRef) (string, error) {
 	if ref == nil {
 		return "", status.Error(codes.InvalidArgument, "scaledObjectRef is required")
 	}
 	if v := ref.GetScalerMetadata()[registry.VariantNameKey]; v != "" {
 		return v, nil
+	}
+	if h.registry != nil {
+		if e, ok := h.registry.Get(ref.GetNamespace(), ref.GetName()); ok && e.Target.Name != "" {
+			return e.Target.Name, nil
+		}
 	}
 	var so kedav1alpha1.ScaledObject
 	nn := types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}

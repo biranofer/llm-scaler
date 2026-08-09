@@ -21,6 +21,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 )
 
 // DefaultTTL bounds how long an entry survives without being called about.
@@ -314,4 +316,53 @@ func (r *Registry) Forget(namespace, name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.m, key(namespace, name))
+}
+
+// FindByScaleTarget returns the live entry whose resolved scale target is the
+// given workload, for callers that have a Deployment or LeaderWorkerSet and need
+// the scaler in front of it.
+//
+// This is what replaces the ScaledObject field index. An index means an informer,
+// and an informer means a cluster-wide LIST+WATCH — the thing this design exists
+// to remove. The registry already holds the same mapping for every workload WVA
+// manages, in memory, so the lookup costs no API traffic at all.
+//
+// It scans rather than maintaining a reverse map on purpose: N is the number of
+// managed variants, not pods, and a second map would have to be kept consistent
+// across Observe, SetTarget, Forget and expiry — four places to drift out of
+// sync, for a saving that does not register at this scale.
+//
+// An empty kind matches a Deployment, which is what KEDA defaults an omitted
+// scaleTargetRef.kind to.
+func (r *Registry) FindByScaleTarget(namespace, kind, name string) (Entry, bool) {
+	if namespace == "" || name == "" {
+		return Entry{}, false
+	}
+	if kind == "" {
+		kind = constants.DeploymentKind
+	}
+	now := r.now()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, e := range r.m {
+		if e.Namespace != namespace || e.Target.Name != name {
+			continue
+		}
+		entryKind := e.Target.Kind
+		if entryKind == "" {
+			entryKind = constants.DeploymentKind
+		}
+		if entryKind != kind {
+			continue
+		}
+		if !e.Streaming && now.Sub(e.LastSeen) > r.ttl {
+			continue
+		}
+		copied := e.Entry
+		copied.Metadata = maps.Clone(e.Metadata)
+		return copied, true
+	}
+	return Entry{}, false
 }

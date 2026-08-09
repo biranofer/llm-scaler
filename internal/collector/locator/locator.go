@@ -11,10 +11,8 @@ package locator
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,30 +21,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ManagedScaler is the managed scaler WVA recognizes. ScaledObject is non-nil on
-// a successful Locate.
+// ManagedScaler identifies the scaler in front of a workload.
 //
-// It is a struct with one field rather than a bare *ScaledObject because KEDA is
-// currently the only actuator: the HPA path was removed with annotation-based
-// discovery and returns as an external-metrics API server, at which point a
-// second kind lands here.
+// It carries a name rather than the object because the object is no longer read:
+// attribution resolves against the in-memory registry, which is the set of
+// workloads KEDA has called WVA about. Name is the ScaledObject's name, which is
+// what every downstream consumer keys a variant by.
 type ManagedScaler struct {
-	ScaledObject *kedav1alpha1.ScaledObject
+	Namespace string
+	Name      string
 }
 
-// kedaEnabled records whether the KEDA ScaledObject CRD is installed. It is set
-// once at startup via SetKEDAEnabled before any locator is constructed. Defaults
-// to true so that ScaledObject lookups remain enabled unless explicitly disabled.
-var kedaEnabled atomic.Bool
-
-func init() { kedaEnabled.Store(true) }
-
-// SetKEDAEnabled configures whether locators attempt KEDA ScaledObject lookups.
-// Call once at startup (cmd/main.go) with the result of crd.CheckKEDACRD. When
-// false, the ScaledObject field index is not registered, so locators must skip
-// every ScaledObject access to avoid unregistered-index and unsyncable-informer
-// errors.
-func SetKEDAEnabled(enabled bool) { kedaEnabled.Store(enabled) }
+// The locator no longer knows or cares whether KEDA is installed. It used to:
+// the ScaledObject field index was only registered when the CRD was present, so
+// every lookup had to be gated on that. Attribution now resolves against the
+// in-memory registry, which is empty when nothing has called WVA — the same
+// answer, without the flag or the informer.
 
 // PodLocator resolves pods to managed scalers. Implementations are safe
 // for concurrent use.
@@ -93,33 +83,48 @@ type PodLocator interface {
 
 // New constructs a PodLocator.
 //
-//   - cached    — controller-runtime cached client (mgr.GetClient()), used
-//     for the field-indexed scaler lookups and for LocateByVariant's
-//     direct Get by name (HPAs and ScaledObjects are already watched).
 //   - apiReader — uncached reader (mgr.GetAPIReader()), used for every
 //     Pod / ReplicaSet / Deployment / LWS read in the owner-chain walk.
-func New(cached, apiReader client.Reader) (PodLocator, error) {
+//   - variants  — supplies the registry of workloads KEDA has called WVA about,
+//     which is what turns a resolved scale target into a variant identity.
+//
+// variants is a func rather than a value because the locator is built inside the
+// engine's constructor while the registry is wired onto the engine afterwards.
+// Resolving it per call keeps ONE source of truth: whatever the engine is given
+// is what attribution uses. A value captured here could silently differ, and the
+// symptom would be metrics attributed against a different fleet than the
+// optimizer is balancing. Nil, or a nil result, attributes nothing — the right
+// answer when WVA has been called about nothing.
+//
+// It takes no cached client. It used to, for the field-indexed scaler lookup and
+// a direct Get by name — and both of those were served by a cluster-wide
+// ScaledObject informer. The registry replaces them with an in-memory lookup.
+func New(apiReader client.Reader, variants func() *registry.Registry) (PodLocator, error) {
 	cache, err := newResolutionCache(defaultCacheSize)
 	if err != nil {
 		return nil, err
 	}
 	return &podLocator{
-		cached:      cached,
-		apiReader:   apiReader,
-		maxDepth:    defaultMaxDepth,
-		cache:       cache,
-		kedaEnabled: kedaEnabled.Load(),
+		apiReader: apiReader,
+		variants:  variants,
+		maxDepth:  defaultMaxDepth,
+		cache:     cache,
 	}, nil
 }
 
 type podLocator struct {
-	cached    client.Reader
 	apiReader client.Reader
+	variants  func() *registry.Registry
 	maxDepth  int
 	cache     *resolutionCache
-	// kedaEnabled snapshots the package-level flag at construction. When false,
-	// the ScaledObject field index is not registered, so SO lookups are skipped.
-	kedaEnabled bool
+}
+
+// registry returns the current variant registry, or nil when none is wired.
+func (l *podLocator) registry() *registry.Registry {
+	if l.variants == nil {
+		return nil
+	}
+	return l.variants()
 }
 
 func (l *podLocator) Locate(ctx context.Context, namespace, podName string) (*ManagedScaler, error) {
@@ -165,19 +170,14 @@ func (l *podLocator) LocateByVariant(ctx context.Context, namespace, variantName
 	if variantName == "" {
 		return nil, nil
 	}
-	// Skip the lookup when KEDA is absent: its informer cannot sync without the
-	// CRD, so a cached Get would error.
-	if !l.kedaEnabled {
+	reg := l.registry()
+	if reg == nil {
 		return nil, nil
 	}
-	so, err := l.getManagedScaledObject(ctx, namespace, variantName)
-	if err != nil {
-		return nil, err
-	}
-	if so == nil {
+	if _, ok := reg.Get(namespace, variantName); !ok {
 		return nil, nil
 	}
-	return &ManagedScaler{ScaledObject: so}, nil
+	return &ManagedScaler{Namespace: namespace, Name: variantName}, nil
 }
 
 func (l *podLocator) GetPodLabels(ctx context.Context, namespace, podName string) map[string]string {
@@ -244,54 +244,23 @@ func (l *podLocator) resolveScaleTarget(ctx context.Context, pod *corev1.Pod, na
 	return chainNode{}, nil
 }
 
-// resolveScaler runs the field-indexed lookups for a top-level scale target.
-func (l *podLocator) resolveScaler(ctx context.Context, target chainNode) (*ManagedScaler, error) {
-	ref := autoscalingv2.CrossVersionObjectReference{
-		APIVersion: target.APIVersion,
-		Kind:       target.Kind,
-		Name:       target.Name,
-	}
-	// Skip the lookup when KEDA is absent: the ScaledObject field index is not
-	// registered, so a MatchingFields List would error.
-	if !l.kedaEnabled {
-		return nil, nil
-	}
-	so, err := indexers.FindSOForScaleTarget(ctx, asClient(l.cached), ref, target.Namespace)
-	if err != nil {
-		return nil, err
-	}
-	if so == nil {
-		return nil, nil
-	}
-	return &ManagedScaler{ScaledObject: so}, nil
-}
-
-// getManagedScaledObject fetches a ScaledObject by name.
+// resolveScaler finds the scaler in front of a top-level scale target.
 //
-// It no longer filters on an annotation. Whether a workload is WVA's is decided
-// by KEDA calling the external scaler, which this lookup cannot observe, so
-// filtering here would drop exactly the workloads configured the current way —
-// by trigger metadata, with no annotations at all. The scaler for a workload is
-// its scaler regardless of who manages it; management is settled by the registry.
-func (l *podLocator) getManagedScaledObject(ctx context.Context, namespace, name string) (*kedav1alpha1.ScaledObject, error) {
-	so := &kedav1alpha1.ScaledObject{}
-	if err := l.cached.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, so); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get ScaledObject %s/%s: %w", namespace, name, err)
+// It reads the in-memory registry rather than a field index. An index means an
+// informer and therefore a cluster-wide LIST+WATCH; the registry holds the same
+// mapping for every workload WVA manages, so this costs no API traffic.
+func (l *podLocator) resolveScaler(_ context.Context, target chainNode) (*ManagedScaler, error) {
+	reg := l.registry()
+	if reg == nil {
+		return nil, nil
 	}
-	return so, nil
-}
-
-// asClient adapts a client.Reader into the client.Client expected by the
-// indexers package. The locator only ever performs reads; the index
-// helpers don't write.
-func asClient(r client.Reader) client.Client {
-	if c, ok := r.(client.Client); ok {
-		return c
+	entry, ok := reg.FindByScaleTarget(target.Namespace, target.Kind, target.Name)
+	if !ok {
+		// The workload has no scaler WVA has been called about. Unmanaged as far as
+		// WVA is concerned, which is the same answer the field index used to give
+		// for an object carrying no annotation — without the cluster-wide watch
+		// that index implied.
+		return nil, nil
 	}
-	// In production the cached reader is a client.Client. In tests we use the
-	// fake client which also implements client.Client.
-	panic("locator: cached reader does not implement client.Client")
+	return &ManagedScaler{Namespace: entry.Namespace, Name: entry.Name}, nil
 }

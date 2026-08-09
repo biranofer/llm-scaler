@@ -7,7 +7,7 @@ import (
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,50 +35,33 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func newClients(t *testing.T, objs ...runtime.Object) (cached, apiReader client.Client) {
+func newClients(t *testing.T, objs ...runtime.Object) (apiReader client.Client) {
 	t.Helper()
-	scheme := newScheme(t)
-	build := func() client.Client {
-		return fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithRuntimeObjects(objs...).
-			WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
-			Build()
-	}
-	return build(), build()
+	return fake.NewClientBuilder().
+		WithScheme(newScheme(t)).
+		WithRuntimeObjects(objs...).
+		Build()
 }
 
-// newClientsNoSOIndex mimics a cluster without the KEDA CRD: the ScaledObject
-// field index is not registered, so any MatchingFields List against it would error.
-func newClientsNoSOIndex(t *testing.T, objs ...runtime.Object) (cached, apiReader client.Client) {
-	t.Helper()
-	scheme := newScheme(t)
-	build := func() client.Client {
-		return fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithRuntimeObjects(objs...).
-			Build()
-	}
-	return build(), build()
+// registered stands in for KEDA having called WVA's external scaler about a
+// workload, with its scale target already resolved. That registration is the ONLY
+// thing that makes a pod attributable now: the locator reads the registry, not a
+// field index, so there is no cluster-wide ScaledObject watch behind it.
+func registered(scalerName, ns, targetKind, targetName string) *registry.Registry {
+	reg := registry.New(0)
+	reg.Observe(ns, scalerName, map[string]string{registry.ModelIDKey: "m"})
+	reg.SetTarget(ns, scalerName, registry.Target{
+		APIVersion: "apps/v1", Kind: targetKind, Name: targetName,
+	})
+	return reg
+}
+
+// variantsOf adapts a registry to the provider locator.New expects.
+func variantsOf(reg *registry.Registry) func() *registry.Registry {
+	return func() *registry.Registry { return reg }
 }
 
 const testNamespace = "default"
-
-// managedSO builds a WVA-managed KEDA ScaledObject targeting the named workload.
-// The ScaledObject is the only managed scaler kind now: HPA discovery was removed
-// with annotation-based discovery, and HPA-only clusters return via an
-// external-metrics API server (docs/plans/engine/keda-driven-discovery.md).
-func managedSO(name, ns, targetKind, targetName string) *kedav1alpha1.ScaledObject {
-	return &kedav1alpha1.ScaledObject{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: kedav1alpha1.ScaledObjectSpec{
-			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
-				APIVersion: "apps/v1", Kind: targetKind, Name: targetName,
-			},
-		},
-	}
-}
 
 func TestLocate_UnmanagedReturnsNil(t *testing.T) {
 	ns := testNamespace
@@ -91,8 +74,8 @@ func TestLocate_UnmanagedReturnsNil(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}},
 	}
-	cached, apiReader := newClients(t, deploy, rs, pod)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, nil)
 	got, err := loc.Locate(context.Background(), ns, "p")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
@@ -103,8 +86,8 @@ func TestLocate_UnmanagedReturnsNil(t *testing.T) {
 }
 
 func TestLocate_PodNotFound(t *testing.T) {
-	cached, apiReader := newClients(t)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t)
+	loc, _ := locator.New(apiReader, nil)
 	got, err := loc.Locate(context.Background(), testNamespace, "missing")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
@@ -121,10 +104,8 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "d", UID: "uid-d", Controller: ptr.To(true)}}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}}}
-	so := managedSO("h", ns, "Deployment", "d")
-
-	cached, apiReader := newClients(t, deploy, rs, pod, so)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "d")))
 
 	// Warm the cache.
 	if _, err := loc.Locate(context.Background(), ns, "p"); err != nil {
@@ -141,7 +122,7 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Locate: %v", err)
 	}
-	if got == nil || got.ScaledObject == nil || got.ScaledObject.Name != "h" {
+	if got == nil || got.Name != "h" {
 		t.Errorf("cache miss on second call: got=%v", got)
 	}
 }
@@ -156,12 +137,10 @@ func TestLocate_LWSChain(t *testing.T) {
 				Name: "lws", UID: "uid-lws", Controller: ptr.To(true),
 			}}},
 	}
-	so := managedSO("h", ns, "LeaderWorkerSet", "lws")
-	so.Spec.ScaleTargetRef.APIVersion = "leaderworkerset.x-k8s.io/v1"
-	cached, apiReader := newClients(t, lws, pod, so)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, lws, pod)
+	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "LeaderWorkerSet", "lws")))
 	got, err := loc.Locate(context.Background(), ns, "p")
-	if err != nil || got == nil || got.ScaledObject == nil || got.ScaledObject.Name != "h" {
+	if err != nil || got == nil || got.Name != "h" {
 		t.Fatalf("got=%v err=%v", got, err)
 	}
 }
@@ -169,14 +148,11 @@ func TestLocate_LWSChain(t *testing.T) {
 // TestLocate_KEDADisabledSkipsScaledObject verifies that when KEDA is disabled the
 // locator does not touch the (unregistered) ScaledObject field index, so Locate
 // returns the managed HPA without erroring on the missing index.
-// TestLocate_KEDADisabledFindsNothing: with the HPA path gone, KEDA is the only
-// actuator, so a cluster without it has no managed scalers for WVA to find. The
-// locator must report that quietly rather than erroring — the ScaledObject field
-// index is not registered, and a MatchingFields List against it would fail.
-func TestLocate_KEDADisabledFindsNothing(t *testing.T) {
-	locator.SetKEDAEnabled(false)
-	t.Cleanup(func() { locator.SetKEDAEnabled(true) })
-
+// TestLocate_NothingRegisteredFindsNothing: attribution is only possible for a
+// workload KEDA has called WVA about. With an empty registry the answer is "not
+// mine" — reported quietly, not as an error, because that is the normal state for
+// every unmanaged pod in the cluster.
+func TestLocate_NothingRegisteredFindsNothing(t *testing.T) {
 	ns := testNamespace
 	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: ns, UID: "uid-d"}}
 	rs := &appsv1.ReplicaSet{
@@ -187,33 +163,67 @@ func TestLocate_KEDADisabledFindsNothing(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}},
 	}
-	cached, apiReader := newClientsNoSOIndex(t, deploy, rs, pod)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, variantsOf(registry.New(0)))
 
 	got, err := loc.Locate(context.Background(), ns, "p")
 	if err != nil {
-		t.Fatalf("Locate must not error when KEDA is absent: %v", err)
-	}
-	if got != nil {
-		t.Fatalf("got=%v, want nil: nothing is managed without KEDA", got)
-	}
-}
-
-// TestLocateByVariant_KEDADisabledFindsNothing is the same for the by-variant
-// entry point, which must skip its cached ScaledObject Get for the same reason.
-func TestLocateByVariant_KEDADisabledFindsNothing(t *testing.T) {
-	locator.SetKEDAEnabled(false)
-	t.Cleanup(func() { locator.SetKEDAEnabled(true) })
-
-	cached, apiReader := newClientsNoSOIndex(t)
-	loc, _ := locator.New(cached, apiReader)
-
-	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
-	if err != nil {
-		t.Fatalf("LocateByVariant must not error when KEDA is absent: %v", err)
+		t.Fatalf("Locate must not error on an unmanaged workload: %v", err)
 	}
 	if got != nil {
 		t.Fatalf("got=%v, want nil", got)
+	}
+}
+
+// TestLocate_RegisteredForADifferentTargetFindsNothing guards the match itself: a
+// registered workload must not attribute a pod belonging to some other Deployment.
+func TestLocate_RegisteredForADifferentTargetFindsNothing(t *testing.T) {
+	ns := testNamespace
+	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: ns, UID: "uid-d"}}
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "rs", Namespace: ns, UID: "uid-rs",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "d", UID: "uid-d", Controller: ptr.To(true)}}},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}},
+	}
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "some-other-deployment")))
+
+	got, err := loc.Locate(context.Background(), ns, "p")
+	if err != nil {
+		t.Fatalf("Locate: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("got=%v, want nil: the registered entry scales a different workload", got)
+	}
+}
+
+// TestLocateByVariant_UnregisteredFindsNothing — the by-variant entry point reads
+// the same registry, so an unknown name resolves to nothing.
+func TestLocateByVariant_UnregisteredFindsNothing(t *testing.T) {
+	loc, _ := locator.New(newClients(t), variantsOf(registry.New(0)))
+
+	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
+	if err != nil {
+		t.Fatalf("LocateByVariant: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("got=%v, want nil", got)
+	}
+}
+
+// TestLocateByVariant_Registered resolves by the scaler's own name.
+func TestLocateByVariant_Registered(t *testing.T) {
+	loc, _ := locator.New(newClients(t), variantsOf(registered("v", testNamespace, "Deployment", "d")))
+
+	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
+	if err != nil {
+		t.Fatalf("LocateByVariant: %v", err)
+	}
+	if got == nil || got.Name != "v" {
+		t.Fatalf("got=%v, want the registered scaler", got)
 	}
 }
 
@@ -233,8 +243,8 @@ func TestResolveScaleTarget_UnmanagedDeployment(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}}}
 
-	cached, apiReader := newClients(t, deploy, rs, pod)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, nil)
 
 	ref, ok, err := loc.ResolveScaleTarget(context.Background(), ns, "p")
 	if err != nil {
@@ -252,8 +262,8 @@ func TestResolveScaleTarget_NoScalerEligibleAncestor(t *testing.T) {
 	ns := testNamespace
 	// Pod with no controller owner → no Deployment/LWS ancestor.
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns}}
-	cached, apiReader := newClients(t, pod)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, pod)
+	loc, _ := locator.New(apiReader, nil)
 
 	ref, ok, err := loc.ResolveScaleTarget(context.Background(), ns, "p")
 	if err != nil {
@@ -265,8 +275,8 @@ func TestResolveScaleTarget_NoScalerEligibleAncestor(t *testing.T) {
 }
 
 func TestResolveScaleTarget_PodNotFound(t *testing.T) {
-	cached, apiReader := newClients(t)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t)
+	loc, _ := locator.New(apiReader, nil)
 
 	_, ok, err := loc.ResolveScaleTarget(context.Background(), testNamespace, "missing")
 	if err != nil {
@@ -289,8 +299,8 @@ func TestResolveScaleTarget_ReusesLocateCache(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}}}
 
-	cached, apiReader := newClients(t, deploy, rs, pod)
-	loc, _ := locator.New(cached, apiReader)
+	apiReader := newClients(t, deploy, rs, pod)
+	loc, _ := locator.New(apiReader, nil)
 
 	// Warm the pod→target cache via Locate (no managed scaler, returns nil).
 	if _, err := loc.Locate(context.Background(), ns, "p"); err != nil {
@@ -376,9 +386,9 @@ func TestGetPodLabels(t *testing.T) {
 			if tt.pod != nil {
 				objs = append(objs, tt.pod)
 			}
-			cached, apiReader := newClients(t, objs...)
+			apiReader := newClients(t, objs...)
 
-			loc, err := locator.New(cached, apiReader)
+			loc, err := locator.New(apiReader, nil)
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
@@ -423,9 +433,9 @@ func TestGetPodLabels_CacheReuse(t *testing.T) {
 		},
 	}
 
-	cached, apiReader := newClients(t, pod)
+	apiReader := newClients(t, pod)
 
-	loc, err := locator.New(cached, apiReader)
+	loc, err := locator.New(apiReader, nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -464,11 +474,8 @@ func TestGetPodLabels_TransientGetError(t *testing.T) {
 			},
 		}).
 		Build()
-	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
-		Build()
 
-	loc, err := locator.New(cached, apiReader)
+	loc, err := locator.New(apiReader, nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -512,11 +519,8 @@ func TestGetPodLabels_ResolveScaleTargetErrorSkipsCache(t *testing.T) {
 			},
 		}).
 		Build()
-	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
-		Build()
 
-	loc, err := locator.New(cached, apiReader)
+	loc, err := locator.New(apiReader, nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -561,7 +565,6 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 			}},
 		},
 	}
-	so := managedSO("h", ns, "Deployment", "d")
 
 	scheme := newScheme(t)
 	failOnce := true
@@ -579,12 +582,8 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 			},
 		}).
 		Build()
-	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithRuntimeObjects(so).
-		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
-		Build()
 
-	loc, err := locator.New(cached, apiReader)
+	loc, err := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "d")))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -600,10 +599,10 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if ms == nil || ms.ScaledObject == nil {
-		t.Fatalf("Locate: expected managed HPA, got %v", ms)
+	if ms == nil {
+		t.Fatalf("Locate: expected the registered scaler, got nil")
 	}
-	if ms.ScaledObject.Name != "h" {
-		t.Errorf("Locate: ScaledObject name = %q, want %q", ms.ScaledObject.Name, "h")
+	if ms.Name != "h" {
+		t.Errorf("Locate: scaler name = %q, want %q", ms.Name, "h")
 	}
 }
