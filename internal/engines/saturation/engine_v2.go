@@ -11,12 +11,14 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -677,8 +679,37 @@ func computeCurrentGPUUsage(requests []pipeline.ModelScalingRequest) map[string]
 // Call only with a non-empty population — an empty one is indistinguishable from
 // a failed collection, and publishing zeros for it tells the scale-from-zero
 // engine the cluster is idle exactly when WVA has lost visibility.
-func publishPopulationGPUUsage(requests []pipeline.ModelScalingRequest) {
-	decision.PublishGPUUsage(computeCurrentGPUUsage(requests), computeCurrentGPUUsageByNamespace(requests))
+func publishPopulationGPUUsage(ctx context.Context, requests []pipeline.ModelScalingRequest) {
+	byType := computeCurrentGPUUsage(requests)
+	decision.PublishGPUUsage(byType, computeCurrentGPUUsageByNamespace(requests))
+	reportUnattributedGPUs(ctx, byType)
+}
+
+// reportUnattributedGPUs surfaces usage that could not be charged to any
+// accelerator type.
+//
+// GetResourcePools iterates the DISCOVERED types, so a bucket keyed by the
+// unresolved sentinel never lands in a pool: those GPUs are held but invisible,
+// every pool over-states how much is free by that amount, and the wake capacity
+// check can allow a placement it should refuse. Nothing about that fails — it is
+// silent over-provisioning, which is why it is worth a metric and a warning
+// rather than a debug line.
+//
+// This reports the condition; it deliberately does not change the budget policy,
+// which is a separate decision about whether an unattributable variant should
+// block scaling for everyone.
+func reportUnattributedGPUs(ctx context.Context, byType map[string]int) {
+	unattributed, names := unattributedGPUs(byType)
+	metrics.SetUnattributedGPUs(unattributed)
+	if unattributed == 0 {
+		return
+	}
+	ctrl.LoggerFrom(ctx).Info(
+		"GPUs are held by variants whose accelerator could not be resolved; "+
+			"they are charged to no accelerator pool, so free capacity is over-stated by this amount "+
+			"and a wake may be allowed onto an accelerator that is full. "+
+			"Set a GPU product nodeSelector on the workload, or the accelerator label on its scaler.",
+		"unattributedGPUs", unattributed, "underKeys", names)
 }
 
 // computeCurrentGPUUsageByNamespace mirrors computeCurrentGPUUsage but buckets
@@ -1015,4 +1046,23 @@ func logScalingDecisions(
 			"decisions", entries,
 		)
 	}
+}
+
+// unattributedGPUs totals usage that no accelerator pool accounts for, and names
+// the keys it was found under.
+//
+// Both the empty string and the "unknown" sentinel land here: they arrive by
+// different routes — discovery resolving nothing at all versus resolving to the
+// placeholder — and have identical consequences, so they are counted together.
+// Keys come back sorted so the log line is stable across cycles.
+func unattributedGPUs(byType map[string]int) (total int, keys []string) {
+	for accType, gpus := range byType {
+		if constants.IsAcceleratorResolved(accType) {
+			continue
+		}
+		total += gpus
+		keys = append(keys, accType)
+	}
+	sort.Strings(keys)
+	return total, keys
 }

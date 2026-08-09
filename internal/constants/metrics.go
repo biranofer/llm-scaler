@@ -180,6 +180,14 @@ const (
 	// Labels: variant_name, namespace, accelerator_type
 	WVADesiredReplicas = "wva_desired_replicas"
 
+	// WVAUnattributedGPUs counts GPUs held by variants whose accelerator type
+	// could not be resolved. Such usage cannot be charged to any accelerator
+	// pool, so every pool over-states how much is free by this amount and the
+	// budget check lets wakes through that should have been refused. It is
+	// exported because the condition is otherwise entirely silent — nothing
+	// errors, capacity simply looks larger than it is.
+	WVAUnattributedGPUs = "wva_unattributed_gpus"
+
 	// WVACurrentReplicas is a gauge that tracks the current number of replicas.
 	// Labels: variant_name, namespace, accelerator_type
 	WVACurrentReplicas = "wva_current_replicas"

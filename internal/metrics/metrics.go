@@ -43,6 +43,7 @@ func replicaSeriesKey(variantName, namespace string) string {
 var (
 	replicaScalingTotal *prometheus.CounterVec
 	desiredReplicas     *prometheus.GaugeVec
+	unattributedGPUs    *prometheus.GaugeVec
 	currentReplicas     *prometheus.GaugeVec
 	desiredRatio        *prometheus.GaugeVec
 	errorsTotal         *prometheus.CounterVec
@@ -253,6 +254,19 @@ func InitMetrics(registry prometheus.Registerer) error {
 		modelsProcessedLabels,
 	)
 
+	unattributedGPUs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAUnattributedGPUs,
+			Help: "GPUs held by variants whose accelerator type could not be resolved. " +
+				"This usage is charged to no accelerator pool, so every pool over-states " +
+				"how much is free by this amount and the wake capacity check can allow a " +
+				"placement it should refuse. Any non-zero value is a misconfiguration: set " +
+				"a GPU product nodeSelector on the workload, or the accelerator label on " +
+				"its scaler.",
+		},
+		modelsProcessedLabels,
+	)
+
 	decisionsLimitedLabels := []string{constants.LabelVariantName, constants.LabelNamespace, constants.LabelLimiterName}
 	if controllerInstance != "" {
 		decisionsLimitedLabels = append(decisionsLimitedLabels, constants.LabelControllerInstance)
@@ -419,6 +433,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(optimizationDuration); err != nil {
 		return fmt.Errorf("failed to register optimizationDuration metric: %w", err)
 	}
+	if err := registry.Register(unattributedGPUs); err != nil {
+		return err
+	}
 	if err := registry.Register(modelsProcessedGauge); err != nil {
 		return fmt.Errorf("failed to register modelsProcessedGauge metric: %w", err)
 	}
@@ -540,6 +557,20 @@ func ObserveOptimizationDuration(durationSeconds float64, status string) {
 }
 
 // SetModelsProcessed sets the gauge to the number of models processed in the last optimization cycle.
+// SetUnattributedGPUs records GPUs held by variants whose accelerator could not
+// be resolved. Set every cycle, including to zero, so the series reports the
+// current state rather than a high-water mark.
+func SetUnattributedGPUs(count int) {
+	if unattributedGPUs == nil {
+		return
+	}
+	labels := prometheus.Labels{}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	unattributedGPUs.With(labels).Set(float64(count))
+}
+
 func SetModelsProcessed(count int) {
 	if modelsProcessedGauge == nil {
 		return

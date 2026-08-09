@@ -983,7 +983,7 @@ func (e *Engine) optimizeV2(
 	// usage is a property of the population — so it must not live inside
 	// selectV2Optimizer, which returns early unless the optimizer is
 	// GreedyByScore, selected only when enableLimiter is true (default false).
-	publishPopulationGPUUsage(requests)
+	publishPopulationGPUUsage(ctx, requests)
 
 	// Stage 2: Compute GPU constraints and call optimizer
 	optimizer, constraints := e.selectV2Optimizer(ctx, requests)

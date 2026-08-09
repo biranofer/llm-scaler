@@ -66,7 +66,7 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		// Driven through the production publish, not a restatement of it: the
 		// per-type and per-namespace views must come from the SAME population or
 		// a consumer comparing them sees a cluster that does not add up.
-		publishPopulationGPUUsage([]pipeline.ModelScalingRequest{
+		publishPopulationGPUUsage(ctx, []pipeline.ModelScalingRequest{
 			satReq("chat",
 				[]domain.VariantMetadata{{VariantName: "chat-a", AcceleratorName: "A100"}},
 				[]domain.VariantReplicaState{{VariantName: "chat-a", CurrentReplicas: 3, GPUsPerReplica: 2}}),
@@ -98,7 +98,7 @@ var _ = Describe("GPU usage snapshot publication", func() {
 				[]domain.VariantMetadata{{VariantName: "chat-a", AcceleratorName: "A100"}},
 				[]domain.VariantReplicaState{{VariantName: "chat-a", CurrentReplicas: 3, GPUsPerReplica: 2}}),
 		}
-		publishPopulationGPUUsage(measured)
+		publishPopulationGPUUsage(ctx, measured)
 
 		e := &Engine{Config: config.NewTestConfig(), optimizer: pipeline.NewCostAwareOptimizer()}
 		decisions := e.optimizeV2(ctx, map[string][]llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
@@ -113,5 +113,32 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		Expect(ok).To(BeTrue(), "the last measured snapshot must survive a blind cycle")
 		Expect(snap.ByType).To(HaveKeyWithValue("A100", 6),
 			"a blind cycle must not overwrite the last real measurement with zeros")
+	})
+})
+
+// Unattributed GPUs are the silent half of the capacity picture: usage keyed by
+// the unresolved sentinel is charged to no accelerator pool, because
+// GetResourcePools iterates the DISCOVERED types. Every pool then over-states
+// how much is free by that amount, and the wake capacity check can allow a
+// placement it should refuse — with nothing erroring anywhere.
+var _ = Describe("Unattributed GPU reporting", func() {
+	It("counts GPUs held under an unresolved accelerator", func() {
+		total, keys := unattributedGPUs(map[string]int{"A100": 6, "unknown": 4})
+		Expect(total).To(Equal(4), "the unresolved bucket is what no pool accounts for")
+		Expect(keys).To(Equal([]string{"unknown"}))
+	})
+
+	It("reports nothing when every variant's accelerator resolved", func() {
+		total, keys := unattributedGPUs(map[string]int{"A100": 6, "H100": 2})
+		Expect(total).To(BeZero())
+		Expect(keys).To(BeEmpty())
+	})
+
+	It("counts the empty name and the sentinel together", func() {
+		// They arrive by different routes — discovery resolving nothing at all
+		// versus resolving to the placeholder — and have identical consequences.
+		total, keys := unattributedGPUs(map[string]int{"": 3, "unknown": 2, "A100": 8})
+		Expect(total).To(Equal(5))
+		Expect(keys).To(Equal([]string{"", "unknown"}), "keys are sorted for a stable log line")
 	})
 })
