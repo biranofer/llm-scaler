@@ -203,18 +203,28 @@ Not in this plan. Next step after it.
    filter. Only `llm-d.ai/synthetic` survives, and only as the guard that keeps an
    in-memory object from reaching the API server.
 
-## What still watches, and why
+## What still watches: nothing
 
-One cluster-wide informer remains: **ScaledObjects**, via the field index the
-locator uses to attribute pods to variants. It is not discovery — an indexed
-ScaledObject is not a managed one — but it is a LIST+WATCH, so the "no listing"
-goal is not yet complete.
+No informer, index, or watch on ScaledObjects or HPAs remains. Three separate
+things held the last one, and removing any single one would have left it in place:
 
-Removing it means changing how attribution works. The locator resolves
-pod → Deployment → ScaledObject; the registry already holds the inverse
-(ScaledObject → scale target) for every workload WVA manages, so that last hop
-could be an in-memory lookup against the registry instead of an indexed query,
-and the informer would go. That is the natural next step and is not done here.
+- **the field index** — `IndexField` starts a LIST+WATCH for its kind at startup
+  whether or not anything calls `List`, so deleting the index's callers was never
+  going to be enough;
+- **the ScaledObject reconciler's watch**, which existed only to track which
+  namespaces hold managed workloads. The registry knows that for a better reason,
+  so `Enricher.Refresh` reconciles the datastore's tracked set each pass;
+- **the external scaler's own reads** — `h.client` was `mgr.GetClient()`, and a
+  *cached* Get lazily starts the informer on first use. It would have appeared the
+  moment KEDA made its first call, with nothing in the code saying "watch".
 
-Also still listed, deliberately (not discovery, no per-call substitute):
-node inventory, the locator's pod lookup, and the ConfigMap namespace list.
+Pod attribution — the reason the index existed — now resolves against the
+registry, which already holds ScaledObject → scale-target for every managed
+workload. `targetName` consults the registry before falling back to an uncached
+read, because uncached is mandatory here: without that hop, every KEDA poll of
+every workload would be a real API request.
+
+Still listed, deliberately, and none of it discovery: node inventory (cluster GPU
+capacity), the locator's pod reads (uncached, per owner-chain walk), and the
+ConfigMap namespace list at bootstrap.
+
