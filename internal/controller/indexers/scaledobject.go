@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -15,13 +14,15 @@ import (
 // spec.scaleTargetRef. Index value: scaleTargetIndexKey(namespace, ref).
 const ScaledObjectByScaleTargetKey = ".spec.scaleTargetRef.managedSO"
 
-// ScaledObjectByScaleTargetIndexFunc indexes managed ScaledObjects
-// (llm-d.ai/managed=true) by their scaleTargetRef.
+// ScaledObjectByScaleTargetIndexFunc indexes ScaledObjects by their
+// scaleTargetRef, for the locator's pod -> variant attribution.
+//
+// Every ScaledObject is indexed, annotated or not: whether a workload is WVA's is
+// decided by KEDA calling the external scaler, which an index function cannot
+// observe. Being in the index is therefore not a claim of management — it only
+// says "this is the scaler for that workload", which is true regardless.
 func ScaledObjectByScaleTargetIndexFunc(o client.Object) []string {
 	so := o.(*kedav1alpha1.ScaledObject)
-	if !annotations.IsManaged(so) {
-		return nil
-	}
 	if so.Spec.ScaleTargetRef == nil || so.Spec.ScaleTargetRef.Name == "" {
 		return nil
 	}

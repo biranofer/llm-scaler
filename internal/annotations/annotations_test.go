@@ -1,19 +1,3 @@
-/*
-Copyright 2025 The llm-d Authors
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package annotations_test
 
 import (
@@ -22,99 +6,39 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
+	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
-func obj(ann map[string]string) metav1.Object {
-	return &metav1.ObjectMeta{Annotations: ann}
-}
+// One annotation is left. The discovery schema — llm-d.ai/managed, model-id and
+// variant-cost — is gone: WVA no longer looks for the workloads it manages, so
+// there is nothing for an opt-in annotation to opt into. Configuration lives in
+// KEDA trigger metadata now (internal/registry).
+//
+// What Synthetic still does is guard the API server: every variant WVA works with
+// is an in-memory object it synthesized, and none of them may ever be written.
+func TestIsSynthetic(t *testing.T) {
+	synthesized := &wvav1alpha1.VariantAutoscaling{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "chat-so",
+			Namespace:   "chat",
+			Annotations: map[string]string{annotations.Synthetic: "true"},
+		},
+	}
+	if !annotations.IsSynthetic(synthesized) {
+		t.Error("a variant marked synthetic must report as synthetic")
+	}
 
-func TestIsManaged(t *testing.T) {
-	tests := []struct {
-		name string
-		ann  map[string]string
-		want bool
-	}{
-		{"managed true", map[string]string{annotations.Managed: "true"}, true},
-		{"managed false", map[string]string{annotations.Managed: "false"}, false},
-		{"missing", map[string]string{}, false},
-		{"nil annotations", nil, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := annotations.IsManaged(obj(tc.ann)); got != tc.want {
-				t.Errorf("IsManaged() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestParse(t *testing.T) {
-	tests := []struct {
-		name        string
-		ann         map[string]string
-		wantModelID string
-		wantCost    string
-		wantErr     bool
-	}{
-		{
-			name:        "all fields",
-			ann:         map[string]string{annotations.Managed: "true", annotations.ModelID: "ibm/granite-13b", annotations.VariantCost: "40.0"},
-			wantModelID: "ibm/granite-13b",
-			wantCost:    "40.0",
-		},
-		{
-			name:        "cost defaults to 10.0",
-			ann:         map[string]string{annotations.Managed: "true", annotations.ModelID: "ibm/granite-13b"},
-			wantModelID: "ibm/granite-13b",
-			wantCost:    "10.0",
-		},
-		{
-			name:    "missing managed",
-			ann:     map[string]string{annotations.ModelID: "ibm/granite-13b"},
-			wantErr: true,
-		},
-		{
-			name:    "managed false",
-			ann:     map[string]string{annotations.Managed: "false", annotations.ModelID: "ibm/granite-13b"},
-			wantErr: true,
-		},
-		{
-			name:    "missing model-id",
-			ann:     map[string]string{annotations.Managed: "true"},
-			wantErr: true,
-		},
-		{
-			name:    "invalid cost",
-			ann:     map[string]string{annotations.Managed: "true", annotations.ModelID: "ibm/granite-13b", annotations.VariantCost: "not-a-number"},
-			wantErr: true,
-		},
-		{
-			name:        "integer cost",
-			ann:         map[string]string{annotations.Managed: "true", annotations.ModelID: "m", annotations.VariantCost: "5"},
-			wantModelID: "m",
-			wantCost:    "5",
-		},
-		{
-			name:    "negative cost rejected",
-			ann:     map[string]string{annotations.Managed: "true", annotations.ModelID: "m", annotations.VariantCost: "-5.0"},
-			wantErr: true,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := annotations.Parse(obj(tc.ann))
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("Parse() error = %v, wantErr %v", err, tc.wantErr)
-			}
-			if err != nil {
-				return
-			}
-			if got.ModelID != tc.wantModelID {
-				t.Errorf("ModelID = %q, want %q", got.ModelID, tc.wantModelID)
-			}
-			if got.VariantCost != tc.wantCost {
-				t.Errorf("VariantCost = %q, want %q", got.VariantCost, tc.wantCost)
-			}
-		})
+	for name, va := range map[string]*wvav1alpha1.VariantAutoscaling{
+		"no annotations": {ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "chat"}},
+		"annotation absent": {ObjectMeta: metav1.ObjectMeta{
+			Name: "b", Namespace: "chat", Annotations: map[string]string{"other": "true"},
+		}},
+		"annotation not true": {ObjectMeta: metav1.ObjectMeta{
+			Name: "c", Namespace: "chat", Annotations: map[string]string{annotations.Synthetic: "false"},
+		}},
+	} {
+		if annotations.IsSynthetic(va) {
+			t.Errorf("%s: must not report as synthetic", name)
+		}
 	}
 }

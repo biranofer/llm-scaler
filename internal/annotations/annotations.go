@@ -14,80 +14,43 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package annotations defines the WVA annotation schema used for annotation-based
-// discovery on KEDA ScaledObjects and Kubernetes HPAs. Placing this schema in a
-// dedicated package gives a single source of truth for annotation key names and
-// parsing logic across the controller, engine, and test fixtures.
+// Package annotations defines the one annotation WVA still uses, on the
+// in-memory VariantAutoscaling objects it synthesizes.
+//
+// It used to hold the discovery schema — llm-d.ai/managed, model-id and
+// variant-cost, read off ScaledObjects and HPAs. That is gone: WVA no longer
+// looks for the workloads it manages, so there is nothing for an opt-in
+// annotation to opt into.
 package annotations
 
 import (
-	"fmt"
-	"strconv"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
+// The llm-d.ai/managed, llm-d.ai/model-id and llm-d.ai/variant-cost annotations
+// are gone. WVA no longer looks for the workloads it manages, so there is nothing
+// for an opt-in annotation to opt into: KEDA only calls a scaler its trigger
+// names, and being called is what being managed means. The configuration those
+// annotations carried now lives in the trigger's metadata, which KEDA delivers on
+// every call — see internal/registry and
+// docs/plans/engine/keda-driven-discovery.md.
 const (
-	// Managed is the annotation that opts a ScaledObject or HPA into WVA management.
-	// Value must be "true".
-	Managed = "llm-d.ai/managed"
-
-	// ModelID is the required annotation identifying the model served by the variant.
-	// It maps to VariantAutoscalingSpec.ModelID and is used for multi-variant grouping.
-	ModelID = "llm-d.ai/model-id"
-
-	// VariantCost is the optional annotation specifying cost per replica for
-	// cost-aware optimization. Must be a non-negative decimal string. Defaults to "10.0".
-	VariantCost = "llm-d.ai/variant-cost"
-
-	// Synthetic marks an in-memory VariantAutoscaling as annotation-sourced.
-	// Objects carrying this annotation are never written to the Kubernetes API server;
-	// they exist only within the WVA optimization pipeline.
+	// Synthetic marks an in-memory VariantAutoscaling as one WVA synthesized
+	// rather than read. Objects carrying this annotation are never written to the
+	// Kubernetes API server; they exist only within the WVA optimization pipeline.
 	Synthetic = "llm-d.ai/synthetic"
 
-	// defaultVariantCost matches the kubebuilder default on VariantAutoscalingConfigSpec.
-	defaultVariantCost = "10.0"
-
-	// enabledValue is the annotation value that turns a boolean WVA annotation
-	// (Managed, Synthetic) on.
+	// enabledValue is the annotation value that turns Synthetic on.
 	enabledValue = "true"
 )
 
-// Parsed holds the validated WVA annotation values extracted from a Kubernetes object.
-type Parsed struct {
-	ModelID     string
-	VariantCost string
-}
-
-// IsManaged returns true if obj bears llm-d.ai/managed: "true".
-func IsManaged(obj metav1.Object) bool {
-	return obj.GetAnnotations()[Managed] == enabledValue
-}
-
-// Parse extracts and validates WVA annotations from obj.
-// Returns an error if required annotations are missing or have invalid values.
-func Parse(obj metav1.Object) (*Parsed, error) {
-	ann := obj.GetAnnotations()
-	if ann[Managed] != enabledValue {
-		return nil, fmt.Errorf("annotation %s must be \"true\"", Managed)
-	}
-	modelID := ann[ModelID]
-	if modelID == "" {
-		return nil, fmt.Errorf("required annotation %s is missing or empty", ModelID)
-	}
-	cost := ann[VariantCost]
-	if cost == "" {
-		cost = defaultVariantCost
-	}
-	costVal, err := strconv.ParseFloat(cost, 64)
-	if err != nil {
-		return nil, fmt.Errorf("annotation %s must be a numeric string, got %q: %w", VariantCost, cost, err)
-	}
-	if costVal < 0 {
-		return nil, fmt.Errorf("annotation %q must be non-negative, got %v", VariantCost, costVal)
-	}
-	return &Parsed{
-		ModelID:     modelID,
-		VariantCost: cost,
-	}, nil
+// IsSynthetic reports whether va was synthesized by WVA rather than read from a
+// VariantAutoscaling CRD instance. Synthetic VAs exist only in memory and must
+// never be written to the Kubernetes API server.
+//
+// Every variant is synthetic today — they are built from the registry, i.e. from
+// what KEDA has called WVA about. The predicate remains as the guard that keeps
+// an in-memory object from reaching the API server.
+func IsSynthetic(va *wvav1alpha1.VariantAutoscaling) bool {
+	return va.GetAnnotations()[Synthetic] == enabledValue
 }

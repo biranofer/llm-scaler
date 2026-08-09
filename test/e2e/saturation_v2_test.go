@@ -148,7 +148,7 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		// overrides the HPA default (300 s) so the scale-down It completes within the
 		// EventuallyExtendedSec budget.
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"),
 			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })
 

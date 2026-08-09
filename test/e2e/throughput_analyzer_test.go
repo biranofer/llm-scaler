@@ -323,7 +323,7 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 
 		By("Registering the deployment with WVA via an annotated scaler (both analyzers enabled)")
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 	})
 
@@ -445,7 +445,7 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 
 		By("Registering the deployment with WVA via an annotated scaler (both analyzers enabled)")
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 		// No load job: --fake-metrics replaces simulator runtime emission entirely, so
 		// service traffic has no effect on the values the engine reads. Scale-up is
@@ -553,7 +553,7 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 
 		By("Registering the deployment with WVA via an annotated scaler (TA-only config)")
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, modelSvcName) })
 
 		By("Starting sustained load for TA-only scenario")

@@ -115,7 +115,7 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 
 		By("Registering the SGLang deployment with WVA via an annotated scaler")
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, baseName, appLabel, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"))).To(Succeed())
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, baseName) })
 	})
 

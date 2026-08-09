@@ -17,6 +17,7 @@ limitations under the License.
 package saturation
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -30,31 +31,27 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source/prometheus"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	utils "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	testutils "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
-// newManagedScaledObject builds a WVA-managed KEDA ScaledObject targeting the given
-// Deployment. The engine discovers variants by synthesizing them from such
-// annotated HPAs.
+// newManagedScaledObject builds a KEDA ScaledObject targeting the given
+// Deployment, carrying WVA's configuration in its trigger metadata. It bears no
+// llm-d.ai/* annotations: those are gone, and a workload becomes WVA's by KEDA
+// calling the external scaler about it (see wvaDiscovery).
 func newManagedScaledObject(name, namespace, targetDeployment, modelID string) *kedav1alpha1.ScaledObject {
 	maxReplicas := int32(2)
 	return &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
-			Annotations: map[string]string{
-				annotations.Managed:     "true",
-				annotations.ModelID:     modelID,
-				annotations.VariantCost: "10.0",
-			},
 		},
 		Spec: kedav1alpha1.ScaledObjectSpec{
 			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
@@ -63,19 +60,44 @@ func newManagedScaledObject(name, namespace, targetDeployment, modelID string) *
 				Name:       targetDeployment,
 			},
 			MaxReplicaCount: &maxReplicas,
-			// Required by the CRD (minItems: 1), and the shape a real WVA
-			// deployment uses: KEDA calls WVA's external scaler, and that call is
-			// what registers the workload.
+			// Required by the CRD (minItems: 1), and WVA's whole configuration
+			// surface. KEDA delivers this verbatim as
+			// scalerMetadata on every external-scaler call, and that call is what
+			// registers the workload — see registerScaledObjects.
 			Triggers: []kedav1alpha1.ScaleTriggers{{
 				Type: "external-push",
 				Name: "wva-external-scaler",
 				Metadata: map[string]string{
-					"scalerAddress": "wva-external-scaler.wva-system.svc:9090",
-					"modelID":       modelID,
+					"scalerAddress":         "wva-external-scaler.wva-system.svc:9090",
+					registry.ModelIDKey:     modelID,
+					registry.VariantCostKey: "10.0",
 				},
 			}},
 		},
 	}
+}
+
+// wvaDiscovery stands in for KEDA calling WVA's external scaler about every
+// ScaledObject in the namespace, and returns the registry plus an enricher that
+// resolves each one against the live test API server — the same pair the engine
+// is wired with in production.
+func wvaDiscovery(ctx context.Context, namespace string) (*registry.Registry, *registry.Enricher) {
+	GinkgoHelper()
+	reg := registry.New(0)
+
+	var soList kedav1alpha1.ScaledObjectList
+	Expect(k8sClient.List(ctx, &soList, client.InNamespace(namespace))).To(Succeed())
+	for i := range soList.Items {
+		so := &soList.Items[i]
+		if len(so.Spec.Triggers) == 0 {
+			continue
+		}
+		reg.Observe(so.Namespace, so.Name, so.Spec.Triggers[0].Metadata)
+	}
+
+	enricher := registry.NewEnricher(k8sClient, reg, 0)
+	enricher.Refresh(ctx)
+	return reg, enricher
 }
 
 var _ = Describe("Saturation Engine", func() {
@@ -169,7 +191,7 @@ var _ = Describe("Saturation Engine", func() {
 				}
 				Expect(k8sClient.Create(ctx, d)).To(Succeed())
 
-				// Variants are discovered from annotated HPAs targeting the Deployment.
+				// Variants are discovered from the ScaledObject KEDA calls about.
 				Expect(k8sClient.Create(ctx, newManagedScaledObject(name, "default", name, modelID))).To(Succeed())
 			}
 		})
@@ -238,6 +260,7 @@ var _ = Describe("Saturation Engine", func() {
 			})
 			fakeRecorder := record.NewFakeRecorder(100)
 			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig, pipeline.NewNoOpLimiter("test"))
+			engine.Variants, engine.VariantEnricher = wvaDiscovery(ctx, "default")
 
 			By("Performing optimization loop")
 			err := engine.optimize(ctx)
@@ -327,7 +350,7 @@ var _ = Describe("Saturation Engine", func() {
 				}
 				Expect(k8sClient.Create(ctx, d)).To(Succeed())
 
-				// Variants are discovered from annotated HPAs targeting the Deployment.
+				// Variants are discovered from the ScaledObject KEDA calls about.
 				Expect(k8sClient.Create(ctx, newManagedScaledObject(name, "default", name, modelID))).To(Succeed())
 			}
 		})
@@ -390,6 +413,7 @@ var _ = Describe("Saturation Engine", func() {
 			})
 			fakeRecorder := record.NewFakeRecorder(100)
 			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), fakeRecorder, sourceRegistry, testConfig, pipeline.NewNoOpLimiter("test"))
+			engine.Variants, engine.VariantEnricher = wvaDiscovery(ctx, "default")
 
 			By("Performing optimization loop with source infrastructure")
 			err := engine.optimize(ctx)
@@ -491,6 +515,7 @@ var _ = Describe("Saturation Engine", func() {
 				},
 			})
 			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig, pipeline.NewNoOpLimiter("test"))
+			engine.Variants, engine.VariantEnricher = wvaDiscovery(ctx, "default")
 
 			By("Running optimize() with EnableLimiter=false")
 			err := engine.optimize(ctx)

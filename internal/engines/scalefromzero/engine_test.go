@@ -34,9 +34,9 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	poolreconciler "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	vav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -60,21 +60,15 @@ var (
 	variantCost     = float64(5)
 )
 
-// managedSO builds a WVA-managed KEDA ScaledObject targeting the given
-// Deployment. It is the annotation-sourced discovery path, which is on its way
-// out — a workload discovered this way is one whose configuration has not yet
-// moved into trigger metadata. Tests that exercise the CURRENT path register with
-// the registry instead (see wake_path_test.go).
+// managedSO builds a KEDA ScaledObject targeting the given Deployment, carrying
+// WVA's configuration in its trigger metadata. It bears no llm-d.ai/* annotations:
+// those are gone, and being managed is decided by KEDA calling the external
+// scaler, which registerSO below stands in for.
 func managedSO(ns, name, targetDeployment, modelID string) *kedav1alpha1.ScaledObject {
 	return &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
-			Annotations: map[string]string{
-				annotations.Managed:     "true",
-				annotations.ModelID:     modelID,
-				annotations.VariantCost: "5.0",
-			},
 		},
 		Spec: kedav1alpha1.ScaledObjectSpec{
 			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
@@ -84,8 +78,30 @@ func managedSO(ns, name, targetDeployment, modelID string) *kedav1alpha1.ScaledO
 			},
 			MinReplicaCount: ptrInt32(0),
 			MaxReplicaCount: ptrInt32(2),
+			Triggers: []kedav1alpha1.ScaleTriggers{{
+				Type: "external-push",
+				Name: "wva-external-scaler",
+				Metadata: map[string]string{
+					registry.ModelIDKey:     modelID,
+					registry.VariantCostKey: "5.0",
+				},
+			}},
 		},
 	}
+}
+
+// registerSO stands in for KEDA calling WVA's external scaler about the object,
+// which is what makes a workload WVA's. Enrichment is supplied directly rather
+// than read, so these tests need no live API for the ScaledObject.
+func registerSO(reg *registry.Registry, so *kedav1alpha1.ScaledObject) {
+	reg.Observe(so.Namespace, so.Name, so.Spec.Triggers[0].Metadata)
+	reg.SetTarget(so.Namespace, so.Name, registry.Target{
+		APIVersion:  so.Spec.ScaleTargetRef.APIVersion,
+		Kind:        so.Spec.ScaleTargetRef.Kind,
+		Name:        so.Spec.ScaleTargetRef.Name,
+		MinReplicas: so.Spec.MinReplicaCount,
+		MaxReplicas: so.Spec.MaxReplicaCount,
+	})
 }
 
 func ptrInt32(i int32) *int32 { return &i }
@@ -264,16 +280,23 @@ func TestMultipleInactiveVariants(t *testing.T) {
 
 	fakeRecorder := record.NewFakeRecorder(100)
 
+	// KEDA calling about each ScaledObject is what makes it WVA's.
+	reg := registry.New(0)
+	for _, so := range []*kedav1alpha1.ScaledObject{so1, so2, so3} {
+		registerSO(reg, so)
+	}
+
 	engine := &Engine{
 		client:         fakeClient,
 		executor:       nil,
 		recorder:       fakeRecorder,
 		Datastore:      ds,
 		maxConcurrency: 30,
+		Variants:       reg,
 	}
 
 	// Get all inactive VAs
-	inactiveVAs, scaleTargets, err := utils.InactiveVariantAutoscaling(ctx, fakeClient, nil)
+	inactiveVAs, scaleTargets, err := utils.InactiveVariantAutoscaling(ctx, fakeClient, reg)
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(inactiveVAs), "Should have 3 inactive VAs")
 

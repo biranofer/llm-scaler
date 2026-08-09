@@ -20,10 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -97,7 +95,7 @@ func InactiveVariantAutoscaling(ctx context.Context, client client.Client, reg *
 // filterVariantsByScaleTargetAccessors is a generic function to filter VAs based on scaleTarget state.
 // Returns filtered VAs and a map of scaleTargetAccessors keyed by "namespace/scaleTargetName".
 func filterVariantsByScaleTargetAccessor(ctx context.Context, client client.Client, reg *registry.Registry, filter VariantFilter, filterName string) ([]wvav1alpha1.VariantAutoscaling, map[string]scaletarget.ScaleTargetAccessor, error) {
-	readyVAs := readyVariantAutoscalings(ctx, client, reg)
+	readyVAs := readyVariantAutoscalings(ctx, reg)
 
 	filteredVAs := make([]wvav1alpha1.VariantAutoscaling, 0, len(readyVAs))
 	scaleTargetAccessors := make(map[string]scaletarget.ScaleTargetAccessor)
@@ -165,27 +163,18 @@ func filterVariantsByScaleTargetAccessor(ctx context.Context, client client.Clie
 // only variants whose trigger names a matching instance are returned, enabling
 // multi-controller isolation.
 //
-// A nil registry falls back to the annotation-sourced listing, which is how the
-// HPA path and any deployment not yet migrated to trigger metadata still work.
-// That fallback goes with the HPA path (see the plan doc); until then both
-// sources exist and the registry takes precedence for a workload present in both.
-func readyVariantAutoscalings(ctx context.Context, k8sClient client.Client, reg *registry.Registry) []wvav1alpha1.VariantAutoscaling {
+// A nil registry yields nothing: there is no second discovery source any more.
+// Nothing is listed here — the whole set comes from calls WVA has received.
+//
+// The k8sClient argument is retained for the caller's convenience (it threads
+// through to the scale-target fetch in filterVariantsByScaleTargetAccessor) and
+// is deliberately not used for discovery.
+func readyVariantAutoscalings(ctx context.Context, reg *registry.Registry) []wvav1alpha1.VariantAutoscaling {
 	logger := ctrl.LoggerFrom(ctx)
 
-	// keyed by namespace/kind/name, matching annotationSourcedVariants, so a
-	// workload discovered both ways is not optimized twice.
+	// Keyed by what it scales, so two entries that somehow name the same workload
+	// collapse rather than being optimized twice.
 	byTarget := make(map[string]wvav1alpha1.VariantAutoscaling)
-
-	annotated, err := annotationSourcedVariants(ctx, k8sClient)
-	if err != nil {
-		// Non-fatal: log and continue with whatever was discovered.
-		logger.Error(err, "Error while listing annotation-sourced variants (non-fatal)")
-	}
-	for _, va := range annotated {
-		byTarget[variantTargetKey(va)] = va
-	}
-	// Registry entries win: a workload KEDA is actively calling about is better
-	// evidence than an annotation someone left on an object.
 	for _, va := range registrySourcedVariants(ctx, reg) {
 		byTarget[variantTargetKey(va)] = va
 	}
@@ -202,7 +191,6 @@ func readyVariantAutoscalings(ctx context.Context, k8sClient client.Client, reg 
 
 	logger.V(logging.DEBUG).Info("Found variants ready for optimization",
 		"count", len(readyVAs),
-		"registered", len(byTarget)-len(annotated),
 		"controllerInstance", controllerInstance)
 
 	return readyVAs
@@ -301,61 +289,6 @@ func derefOr(v *int32, fallback int32) int32 {
 		return fallback
 	}
 	return *v
-}
-
-// annotationSourcedVariants lists KEDA ScaledObjects bearing llm-d.ai/managed:
-// "true" and synthesizes in-memory VariantAutoscaling objects from them,
-// skipping gracefully when the KEDA CRD is not installed.
-//
-// This is the legacy discovery path, kept only for workloads that have not yet
-// moved their configuration into trigger metadata. It is on its way out with the
-// annotations themselves; registrySourcedVariants is the replacement, and wins
-// for any workload found both ways.
-//
-// The HPA half is gone: an HPA cannot be driven by a KEDA call, so HPA-only
-// clusters return via an external-metrics API server instead
-// (docs/plans/engine/keda-driven-discovery.md).
-func annotationSourcedVariants(ctx context.Context, k8sClient client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
-	logger := ctrl.LoggerFrom(ctx)
-	// keyed by namespace/kind/name for deduplication.
-	byTarget := make(map[string]wvav1alpha1.VariantAutoscaling)
-
-	// KEDA ScaledObjects — may not be installed; handle gracefully.
-	// TODO(#1134): scope to tracked namespaces only (client.InNamespace per ds.ListTrackedNamespaces())
-	// to avoid iterating the full cluster cache on every engine tick.
-	var soList kedav1alpha1.ScaledObjectList
-	if err := k8sClient.List(ctx, &soList); err != nil {
-		if apimeta.IsNoMatchError(err) {
-			logger.V(logging.DEBUG).Info("KEDA ScaledObject CRD not available, skipping annotation discovery for ScaledObjects")
-		} else {
-			result := make([]wvav1alpha1.VariantAutoscaling, 0, len(byTarget))
-			for _, va := range byTarget {
-				result = append(result, va)
-			}
-			return result, fmt.Errorf("listing ScaledObjects: %w", err)
-		}
-	} else {
-		for i := range soList.Items {
-			so := &soList.Items[i]
-			if !annotations.IsManaged(so) || !so.DeletionTimestamp.IsZero() {
-				continue
-			}
-			va, err := annotations.VariantAutoscalingFromScaledObject(so)
-			if err != nil {
-				logger.V(logging.DEBUG).Info("Skipping ScaledObject with invalid WVA annotations",
-					"namespace", so.Namespace, "name", so.Name, "error", err)
-				continue
-			}
-			key := fmt.Sprintf("%s/%s/%s", va.Namespace, va.Spec.ScaleTargetRef.Kind, va.Spec.ScaleTargetRef.Name)
-			byTarget[key] = *va
-		}
-	}
-
-	result := make([]wvav1alpha1.VariantAutoscaling, 0, len(byTarget))
-	for _, va := range byTarget {
-		result = append(result, va)
-	}
-	return result, nil
 }
 
 // isActive explicitly requires that replicas > 0

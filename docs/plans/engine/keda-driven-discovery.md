@@ -1,15 +1,15 @@
 # KEDA-driven discovery
 
-Status: in progress
+Status: increments 1-4 landed; one informer left (see "What still watches")
 Branch: `feat/wva-external-scaler`
 
 ## What changes
 
-WVA discovers the workloads it manages by listing the cluster and filtering on an
-annotation. This inverts that: **the KEDA external-scaler call is the discovery
+WVA used to discover the workloads it manages by listing the cluster and filtering
+on an annotation. This inverts that: **the KEDA external-scaler call is the discovery
 event.** WVA stops looking for variants and lets them announce themselves.
 
-Today:
+Before:
 
 ```
 timer ──► List HPAs (cluster-wide)  ──┐
@@ -42,6 +42,12 @@ Three consequences:
 - **The HPA path goes.** It has no equivalent of "KEDA calls us", so it cannot be
   driven this way. It returns later as an external-metrics API server (see
   [HPA-only clusters](#hpa-only-clusters)).
+
+The deleted reconcilers matter less than the deleted **indexes**. `IndexField`
+starts a cluster-wide LIST+WATCH informer for its kind at startup whether or not
+any code calls `List`, so removing the `List` calls alone would have moved the
+listing rather than removed it. For the same reason WVA's per-entry ScaledObject
+read uses `GetAPIReader`: a *cached* Get is served by that informer.
 
 ## What the call drives, and what it does not
 
@@ -148,17 +154,6 @@ exactly the state WVA is already in before its first optimization cycle:
 `GetMetrics` returns 0 and HPA holds the target at `minReplicaCount`. No new
 failure mode, and no persistence needed.
 
-## What still lists
-
-"No listing" is scoped to variant discovery. These remain, and are not discovery:
-
-- **Node inventory** (`internal/discovery`) — cluster GPU capacity. Nothing in the
-  KEDA call describes the cluster.
-- **Pod lookup in the locator** — pod→variant attribution for metrics. vLLM
-  metrics carry no variant label, so the owner-walk from pod is the only linkage
-  (see the metric-label surface notes).
-- **Namespace list for ConfigMap bootstrap** — configuration, not variants.
-
 ## HPA-only clusters
 
 Killed now, restored later as a separate path: WVA serves
@@ -171,19 +166,34 @@ folding it into the gRPC handler.
 
 Not in this plan. Next step after it.
 
-## Increments
+## Increments — all landed
 
-1. **Registry, fed by the scaler.** New `internal/registry`. Every RPC upserts;
-   `StreamIsActive` holds. Additive — nothing reads it yet, so it can land and be
-   observed before anything depends on it.
+1. **Registry, fed by the scaler.** `internal/registry`. Every RPC upserts;
+   `StreamIsActive` holds.
 2. **Engines read the registry.** `utils.{Active,Inactive}VariantAutoscaling`
-   build from a snapshot plus one targeted `Get` per entry, instead of listing
-   ScaledObjects. The synthesized `VariantAutoscaling` stays as the internal
-   carrier; only where it comes from changes.
-3. **Remove the HPA path.** `HPAReconciler`, the HPA indexer,
-   `VariantAutoscalingFromHPA`, the coordinator's HPA discovery, the RBAC.
-4. **Retire the annotations.** Metadata becomes the only identity source; delete
-   `llm-d.ai/managed`, `model-id`, `variant-cost`, the ScaledObject reconciler and
-   the annotation predicate. Samples, fixtures and e2e follow.
+   build from a snapshot plus the enrichment cached on each entry. The
+   synthesized `VariantAutoscaling` stays as the internal carrier; only where it
+   comes from changed.
+3. **Removed the HPA path**, and the Coordinator with it — a second writer on the
+   scale subresource whose discovery was a cluster-wide listing of the two kinds
+   this work removes from WVA's read path.
+4. **Retired the annotations.** `llm-d.ai/managed`, `model-id` and
+   `variant-cost` are gone, along with the annotation predicate and the index
+   filter. Only `llm-d.ai/synthetic` survives, and only as the guard that keeps an
+   in-memory object from reaching the API server.
 
-Each increment keeps the unit gate and the kind e2e green on its own.
+## What still watches, and why
+
+One cluster-wide informer remains: **ScaledObjects**, via the field index the
+locator uses to attribute pods to variants. It is not discovery — an indexed
+ScaledObject is not a managed one — but it is a LIST+WATCH, so the "no listing"
+goal is not yet complete.
+
+Removing it means changing how attribution works. The locator resolves
+pod → Deployment → ScaledObject; the registry already holds the inverse
+(ScaledObject → scale target) for every workload WVA manages, so that last hop
+could be an in-memory lookup against the registry instead of an indexed query,
+and the informer would go. That is the natural next step and is not done here.
+
+Also still listed, deliberately (not discovery, no per-call substitute):
+node inventory, the locator's pod lookup, and the ConfigMap namespace list.

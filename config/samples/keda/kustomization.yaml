@@ -2,8 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 metadata:
   name: keda-sample
-# Annotation-based WVA discovery: no VariantAutoscaling CRD needed.
-# WVA discovers the ScaledObject via the llm-d.ai/managed annotation.
+# WVA as a KEDA external scaler. There is no annotation-based variant: KEDA
+# naming WVA in a trigger is what puts the workload under WVA's management, and
+# the trigger metadata is the whole configuration surface.
 # Apply with: kubectl kustomize config/samples/keda | kubectl apply -f -
 resources:
-- annotations/scaledobject.yaml
+- external-scaler/scaledobject.yaml

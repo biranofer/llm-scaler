@@ -154,7 +154,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 		// for wva_desired_replicas. The gauge is still emitted for observability;
 		// it is simply not how KEDA is fed.
 		err = fixtures.EnsureScaledObject(ctx, crClient, ns, scalerName, deploymentName, variantName, minReplicas, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 			fixtures.WithExternalScalerTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
 	})
@@ -291,7 +291,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "full"), Or
 
 		By("Creating annotated ScaledObject (both WVA discovery source and scaler)")
 		err = fixtures.EnsureScaledObject(ctx, crClient, ns, errorScalerName, errorTestDeploymentName, errorTestVariantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject")
 	})
 

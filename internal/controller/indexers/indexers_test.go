@@ -113,7 +113,7 @@ var _ = Describe("Indexers", Ordered, func() {
 	})
 
 	Describe("ScaledObject index", func() {
-		It("returns a managed ScaledObject for its Deployment scaleTargetRef", func() {
+		It("returns the ScaledObject for its Deployment scaleTargetRef", func() {
 			ns := namespace + "-so-1"
 			Expect(k8sClient.Create(testCtx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
 			defer func() {
@@ -122,9 +122,8 @@ var _ = Describe("Indexers", Ordered, func() {
 
 			so := &kedav1alpha1.ScaledObject{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        "managed-so",
-					Namespace:   ns,
-					Annotations: map[string]string{"llm-d.ai/managed": "true"},
+					Name:      "wva-so",
+					Namespace: ns,
 				},
 				Spec: kedav1alpha1.ScaledObjectSpec{
 					ScaleTargetRef: &kedav1alpha1.ScaleTarget{
@@ -156,10 +155,16 @@ var _ = Describe("Indexers", Ordered, func() {
 			got, err := FindSOForScaleTarget(testCtx, mgrClient, ref, ns)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(got).ToNot(BeNil())
-			Expect(got.Name).To(Equal("managed-so"))
+			Expect(got.Name).To(Equal("wva-so"))
 		})
 
-		It("ignores ScaledObjects without llm-d.ai/managed=true", func() {
+		It("indexes a ScaledObject with no WVA configuration at all", func() {
+			// The index no longer filters on an annotation. Whether a workload is
+			// WVA's is decided by KEDA calling the external scaler, which an index
+			// function cannot observe, so filtering here would drop exactly the
+			// workloads configured the current way. Being indexed is not a claim of
+			// management — it only says "this is the scaler for that workload",
+			// which is true regardless of who manages it.
 			ns := namespace + "-so-2"
 			Expect(k8sClient.Create(testCtx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).To(Succeed())
 			defer func() {
@@ -167,7 +172,7 @@ var _ = Describe("Indexers", Ordered, func() {
 			}()
 
 			so := &kedav1alpha1.ScaledObject{
-				ObjectMeta: metav1.ObjectMeta{Name: "unmanaged-so", Namespace: ns},
+				ObjectMeta: metav1.ObjectMeta{Name: "unconfigured-so", Namespace: ns},
 				Spec: kedav1alpha1.ScaledObjectSpec{
 					ScaleTargetRef: &kedav1alpha1.ScaleTarget{
 						APIVersion: "apps/v1", Kind: "Deployment", Name: "so-deploy-2",
@@ -197,7 +202,8 @@ var _ = Describe("Indexers", Ordered, func() {
 
 			got, err := FindSOForScaleTarget(testCtx, mgrClient, ref, ns)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(got).To(BeNil())
+			Expect(got).ToNot(BeNil(), "the scaler for a workload is its scaler regardless of annotations")
+			Expect(got.Name).To(Equal("unconfigured-so"))
 		})
 	})
 })

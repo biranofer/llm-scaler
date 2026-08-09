@@ -107,12 +107,12 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 
 		By("Creating annotated ScaledObjects (discovery sources) for both deployments, with distinct variant costs")
 		err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaA, modelServiceA+"-decode", variantA, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject A")
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, ns, hpaA) })
 
 		err = fixtures.EnsureScaledObject(ctx, crClient, ns, hpaB, modelServiceB+"-decode", variantB, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "40.0"))
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "40.0"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject B")
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, ns, hpaB) })
 

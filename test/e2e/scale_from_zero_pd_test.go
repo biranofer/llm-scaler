@@ -71,7 +71,7 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 			Should(Succeed(), "parking the %s workload at zero", role)
 
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerName, deployName, variantName, 0, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()),
 		)).To(Succeed(), "creating the %s ScaledObject", role)
 	}

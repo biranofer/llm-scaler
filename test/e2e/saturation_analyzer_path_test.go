@@ -234,7 +234,7 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 		// The 30 s scale-down stabilization window overrides the HPA default (300 s) so
 		// the "does not scale up" It can wait for minReplicas within EventuallyLongSec.
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"),
 			fixtures.WithExternalScalerTrigger(scalerAddress),
 			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))
 		Expect(err).NotTo(HaveOccurred())

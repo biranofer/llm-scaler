@@ -13,7 +13,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 )
 
 const (
@@ -66,16 +66,54 @@ func WithScaledObjectScaleDownStabilizationWindow(seconds int32) ScaledObjectOpt
 	}
 }
 
-// WithScaledObjectWVAAnnotations adds the WVA annotation-based discovery annotations to the
-// ScaledObject. The ScaledObject then serves as both the WVA discovery source and the KEDA scaler.
-func WithScaledObjectWVAAnnotations(modelID, cost string) ScaledObjectOption {
+// WithWVATriggerMetadata puts WVA's per-variant configuration into the trigger
+// metadata of the ScaledObject. KEDA delivers that map verbatim as scalerMetadata
+// on every external-scaler call, and the call is what registers the workload with
+// WVA — so this is both the configuration and, indirectly, the discovery.
+//
+// The values are stashed on the object and moved into every trigger's metadata
+// after all options have run — see applyWVATriggerMetadata. They cannot be
+// written to the triggers here, because the trigger options replace
+// spec.triggers wholesale and callers pass the options in either order.
+func WithWVATriggerMetadata(modelID, cost string) ScaledObjectOption {
 	return func(so *kedav1alpha1.ScaledObject) {
 		if so.Annotations == nil {
 			so.Annotations = make(map[string]string)
 		}
-		so.Annotations[annotations.Managed] = "true"
-		so.Annotations[annotations.ModelID] = modelID
-		so.Annotations[annotations.VariantCost] = cost
+		so.Annotations[pendingModelIDKey] = modelID
+		so.Annotations[pendingVariantCostKey] = cost
+	}
+}
+
+// Private carrier keys for the deferred trigger metadata. They never reach the
+// cluster: applyWVATriggerMetadata removes them.
+const (
+	pendingModelIDKey     = "e2e.llm-d.ai/pending-model-id"
+	pendingVariantCostKey = "e2e.llm-d.ai/pending-variant-cost"
+)
+
+// applyWVATriggerMetadata moves the stashed WVA configuration into every trigger.
+//
+// Trigger metadata is how WVA is configured now: KEDA delivers it verbatim as
+// scalerMetadata on every external-scaler call, and that call is what registers
+// the workload. The llm-d.ai/* annotations that used to carry this are gone.
+func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
+	modelID, ok := so.Annotations[pendingModelIDKey]
+	if !ok {
+		return
+	}
+	cost := so.Annotations[pendingVariantCostKey]
+	delete(so.Annotations, pendingModelIDKey)
+	delete(so.Annotations, pendingVariantCostKey)
+
+	for i := range so.Spec.Triggers {
+		if so.Spec.Triggers[i].Metadata == nil {
+			so.Spec.Triggers[i].Metadata = make(map[string]string)
+		}
+		so.Spec.Triggers[i].Metadata[registry.ModelIDKey] = modelID
+		if cost != "" {
+			so.Spec.Triggers[i].Metadata[registry.VariantCostKey] = cost
+		}
 	}
 }
 
@@ -231,5 +269,7 @@ func buildScaledObject(namespace, name, scaleTargetName, variantName string, min
 	for _, opt := range opts {
 		opt(so)
 	}
+	// After the options, so it lands on whatever triggers they left behind.
+	applyWVATriggerMetadata(so)
 	return so
 }

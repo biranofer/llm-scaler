@@ -113,7 +113,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, occupierSvc, occupierDeploy)).To(Succeed())
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, occupierScal, occupierDeploy,
 			occupierVar, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(occupierModel, "10.0"),
+			fixtures.WithWVATriggerMetadata(occupierModel, "10.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()),
 		)).To(Succeed())
 
@@ -202,7 +202,7 @@ func createParkedVariant(svcName, deployName, variantName, scalerName, poolName,
 
 	Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerName, deployName, variantName,
 		0, 10, cfg.MonitoringNS,
-		fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+		fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 		fixtures.WithExternalScalerPushTrigger(externalScalerAddress()),
 	)).To(Succeed())
 }

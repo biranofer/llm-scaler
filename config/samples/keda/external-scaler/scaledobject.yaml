@@ -7,9 +7,9 @@
 #
 # Discovery is the call itself: KEDA naming this scaler in a trigger is what makes
 # the workload WVA's to manage, and the trigger `metadata` below is the whole
-# per-variant configuration surface. The llm-d.ai/* annotations are on their way
-# out and are kept here only while the engines still read them
-# (docs/plans/engine/keda-driven-discovery.md).
+# per-variant configuration surface. There are no llm-d.ai/* annotations — WVA no
+# longer looks for the workloads it manages, so there is nothing for an opt-in
+# annotation to opt into (docs/plans/engine/keda-driven-discovery.md).
 #
 # Requires the external-scaler Service that routes to the WVA controller's
 # gRPC port (config/base/manager/external-scaler-service.yaml). With the deploy
@@ -27,10 +27,6 @@ kind: ScaledObject
 metadata:
   name: sample-deployment-scaler
   namespace: llm-d-sim
-  annotations:
-    llm-d.ai/managed: "true"
-    llm-d.ai/model-id: "default/default"
-    llm-d.ai/variant-cost: "10.0"
   labels:
     app: sample-deployment
     scaler: keda-workload-variant-autoscaler
@@ -80,8 +76,7 @@ spec:
       # The WVA controller's external-scaler gRPC service (host:port).
       scalerAddress: wva-external-scaler.workload-variant-autoscaler-system.svc.cluster.local:9090
       # The model this variant serves. Required: it is the grouping key for every
-      # multi-variant decision. Mirrors the llm-d.ai/model-id annotation, which is
-      # being retired in favour of this.
+      # multi-variant decision.
       modelID: default/default
       # Per-replica cost for cost-aware optimization. Optional; defaults to "10.0".
       variantCost: "10.0"

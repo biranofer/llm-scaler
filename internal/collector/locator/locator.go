@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -267,8 +266,13 @@ func (l *podLocator) resolveScaler(ctx context.Context, target chainNode) (*Mana
 	return &ManagedScaler{ScaledObject: so}, nil
 }
 
-// getManagedScaledObject fetches a ScaledObject by name and returns it only
-// if it carries llm-d.ai/managed=true.
+// getManagedScaledObject fetches a ScaledObject by name.
+//
+// It no longer filters on an annotation. Whether a workload is WVA's is decided
+// by KEDA calling the external scaler, which this lookup cannot observe, so
+// filtering here would drop exactly the workloads configured the current way —
+// by trigger metadata, with no annotations at all. The scaler for a workload is
+// its scaler regardless of who manages it; management is settled by the registry.
 func (l *podLocator) getManagedScaledObject(ctx context.Context, namespace, name string) (*kedav1alpha1.ScaledObject, error) {
 	so := &kedav1alpha1.ScaledObject{}
 	if err := l.cached.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, so); err != nil {
@@ -276,9 +280,6 @@ func (l *podLocator) getManagedScaledObject(ctx context.Context, namespace, name
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get ScaledObject %s/%s: %w", namespace, name, err)
-	}
-	if !annotations.IsManaged(so) {
-		return nil, nil
 	}
 	return so, nil
 }

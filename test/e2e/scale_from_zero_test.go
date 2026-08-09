@@ -350,7 +350,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 		// wva_desired_replicas keyed by variantName.
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, modelServiceName+"-decode", variantName, 0, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
@@ -812,7 +812,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 
@@ -1182,7 +1182,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		_ = k8sClient.AutoscalingV2().HorizontalPodAutoscalers(cfg.LLMDNamespace).Delete(ctx, hpaName+"-hpa", metav1.DeleteOptions{})
 		err = fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, hpaName, lwsName, variantName, 0, 10, cfg.MonitoringNS,
 			fixtures.WithScaledObjectScaleTargetKind("LeaderWorkerSet"),
-			fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"),
 			fixtures.WithExternalScalerPushTrigger(externalScalerAddress()))
 		Expect(err).NotTo(HaveOccurred(), "Failed to create ScaledObject with scale-to-zero")
 

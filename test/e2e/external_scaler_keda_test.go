@@ -111,7 +111,7 @@ var _ = Describe("KEDA external scaler", Label("smoke", "full"), Ordered, func()
 		// external trigger makes KEDA fetch that decision from WVA's external-scaler
 		// gRPC service instead of Prometheus. min=1, max=10.
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
-			fixtures.WithScaledObjectWVAAnnotations(modelID, "30.0"),
+			fixtures.WithWVATriggerMetadata(modelID, "30.0"),
 			fixtures.WithExternalScalerTrigger(scalerAddress),
 			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })

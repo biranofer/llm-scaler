@@ -232,12 +232,12 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			// ensuring KEDA reads only the metric series for its own namespace.
 			By("Creating annotated ScaledObjects in both namespaces with the shared variant name")
 			err = fixtures.EnsureScaledObject(ctx, crClient, primaryNamespace, sharedHPABase, primaryModelName+"-decode", sharedVariantName, 1, 10, cfg.MonitoringNS,
-				fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+				fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred(), "Failed to create primary ScaledObject")
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, primaryNamespace, sharedHPABase) })
 
 			err = fixtures.EnsureScaledObject(ctx, crClient, secondaryNamespace, sharedHPABase, secondaryModelName+"-decode", sharedVariantName, 1, 10, cfg.MonitoringNS,
-				fixtures.WithScaledObjectWVAAnnotations(cfg.ModelID, "30.0"))
+				fixtures.WithWVATriggerMetadata(cfg.ModelID, "30.0"))
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary ScaledObject")
 			DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, secondaryNamespace, sharedHPABase) })
 		})

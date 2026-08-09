@@ -32,6 +32,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	engcommon "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/common"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	vav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 	unittestutil "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
@@ -143,13 +144,18 @@ func newWakeFixture(t *testing.T, name string) wakeFixture {
 	require.NoError(t, appsV1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
+	// KEDA calling about this ScaledObject is what makes the workload WVA's.
+	so := managedSO(ns, hpaName, target, model)
+	reg := registry.New(0)
+	registerSO(reg, so)
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(
 			pool,
 			// Parked at zero: that is what makes it this engine's business.
 			unittestutil.MakeDeployment(target, ns, 0, selector_v1),
-			managedSO(ns, hpaName, target, model),
+			so,
 			unittestutil.MakeService(eppSvc, ns),
 		).
 		Build()
@@ -177,6 +183,7 @@ func newWakeFixture(t *testing.T, name string) wakeFixture {
 			recorder:       record.NewFakeRecorder(100),
 			Datastore:      stubSourceDatastore{Datastore: ds, src: src},
 			maxConcurrency: 30,
+			Variants:       reg,
 			// No gpuLimiter: with no constraints to place against, the capacity
 			// check is permissive, which isolates these tests to the wake path.
 			// Refusal on a full accelerator is covered by selection_test.go and

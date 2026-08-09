@@ -22,10 +22,8 @@ import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/annotations"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 )
 
@@ -48,16 +46,22 @@ func (r *ScaledObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	so := &kedav1alpha1.ScaledObject{}
 	if err := r.Get(ctx, req.NamespacedName, so); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Datastore.NamespaceUntrack("AnnotatedScaler", req.Name, req.Namespace)
+			r.Datastore.NamespaceUntrack("Scaler", req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	if !so.DeletionTimestamp.IsZero() || !annotations.IsManaged(so) {
-		r.Datastore.NamespaceUntrack("AnnotatedScaler", req.Name, req.Namespace)
+	// Every ScaledObject's namespace is tracked, not just annotated ones. WVA no
+	// longer knows from the object whether it is WVA's — that is decided by KEDA
+	// calling the external scaler, which this reconciler cannot see. Tracking is
+	// only used to scope ConfigMap loading, so the cost of over-tracking is
+	// watching config in a namespace WVA turns out not to manage, while
+	// under-tracking would silently drop a managed workload's configuration.
+	if !so.DeletionTimestamp.IsZero() {
+		r.Datastore.NamespaceUntrack("Scaler", req.Name, req.Namespace)
 	} else {
-		r.Datastore.NamespaceTrack("AnnotatedScaler", req.Name, req.Namespace)
+		r.Datastore.NamespaceTrack("Scaler", req.Name, req.Namespace)
 	}
 	return ctrl.Result{}, nil
 }
@@ -65,9 +69,7 @@ func (r *ScaledObjectReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // SetupWithManager registers ScaledObjectReconciler with the controller manager.
 func (r *ScaledObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&kedav1alpha1.ScaledObject{},
-			builder.WithPredicates(AnnotatedScalerPredicate()),
-		).
+		For(&kedav1alpha1.ScaledObject{}).
 		Named("scaledobject").
 		Complete(r)
 }
