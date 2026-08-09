@@ -183,8 +183,8 @@ func (r *Registry) Observe(namespace, name string, metadata map[string]string) {
 // metrics for a workload it is not scaling, so LastSeen would age out the very
 // entries whose whole purpose is to be woken from zero.
 //
-// Hold registers the entry too: the stream may be the first call WVA sees.
-// Release is idempotent.
+// Hold registers the entry too: the stream may be the first call WVA sees, and it
+// invalidates the entry's cached target read — see below. Release is idempotent.
 func (r *Registry) Hold(namespace, name string, metadata map[string]string) func() {
 	if namespace == "" || name == "" {
 		return func() {}
@@ -196,6 +196,25 @@ func (r *Registry) Hold(namespace, name string, metadata map[string]string) func
 	if e, ok := r.m[k]; ok {
 		e.holds++
 		e.Streaming = true
+		// A stream OPENING invalidates the cached target read, for the same reason
+		// changed metadata does: KEDA re-opens StreamIsActive when it rebuilds its
+		// scaler cache, which it does when the ScaledObject's generation changes.
+		// So a fresh stream is evidence the object was edited — and it catches the
+		// edits metadata comparison cannot see, because scaleTargetRef and
+		// min/maxReplicaCount are not carried in the trigger. Without this they
+		// wait out the whole freshness window.
+		//
+		// KEDA also re-opens on its own restart or a dropped connection, so this
+		// over-fires. That is the deliberate trade: the cost is one uncached GET per
+		// reconnect per workload, against a watch on every ScaledObject in the
+		// cluster. Note a KEDA restart re-opens every stream at once, so the next
+		// enrichment pass re-reads the whole fleet — bounded at one GET per variant,
+		// swept serially.
+		//
+		// Zeroes the DATE, not the target: the last known envelope keeps serving
+		// until the re-read lands, so an edit never drops a variant out of the
+		// fleet. Same policy as Observe and as a failed read.
+		e.TargetAt = time.Time{}
 	}
 	r.mu.Unlock()
 

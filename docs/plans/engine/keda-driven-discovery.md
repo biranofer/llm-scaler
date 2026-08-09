@@ -131,19 +131,30 @@ pushed to WVA for free, on the object's own edit.
 What KEDA does not forward is the rest of the object: `scaleTargetRef`,
 `minReplicaCount`, `maxReplicaCount`. So:
 
-- A call carrying metadata that differs from what is stored is treated as
-  evidence the OBJECT changed, and **invalidates the entry's target read** — the
-  next enrichment pass re-reads immediately rather than serving a stale envelope
-  for the rest of its window. The last known target keeps serving until it lands,
-  so an edit never drops a variant out of the fleet.
-- An edit that touches *only* min/max and leaves the trigger alone still waits
-  out the freshness window (≤30s). That is the accepted cost. These are envelope
-  bounds that change when someone edits a manifest, and KEDA's HPA — not WVA —
-  is what enforces them in the meantime.
+Two signals invalidate the entry's cached target read, and between them they
+cover both shapes of edit:
 
-If that window ever proves too slow, the cheaper fix than a watch is to shorten
-`DefaultTargetMaxAge`, or to move the affected field into trigger metadata where
-KEDA will push it.
+- **Metadata that differs from what is stored.** KEDA only re-sends a trigger it
+  has rebuilt, so different metadata means the object changed.
+- **A stream opening.** KEDA re-opens `StreamIsActive` when it rebuilds its
+  scaler cache, which it does on a generation change — so a fresh stream is
+  evidence of an edit even when the trigger is untouched. This is what catches
+  `scaleTargetRef` and min/max, which metadata comparison cannot see because they
+  are not carried in the trigger.
+
+Both zero the read's DATE, not the target itself: the last known envelope keeps
+serving until the fresh read lands, so an edit never drops a variant out of the
+fleet mid-cycle.
+
+Stream-open over-fires — KEDA also re-opens on its own restart or a dropped
+connection. That is the deliberate trade: one uncached GET per reconnect per
+workload, against a watch on every ScaledObject in the cluster. A KEDA restart
+re-opens every stream at once, so the next pass re-reads the whole fleet, bounded
+at one GET per variant and swept serially.
+
+What remains uncovered is an edit to a workload on a POLL trigger (`type:
+external`), which has no stream to re-open — that still waits out the freshness
+window (≤30s). Shortening `DefaultTargetMaxAge` is the lever there.
 
 ### Restart
 

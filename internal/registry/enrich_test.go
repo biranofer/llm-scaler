@@ -456,3 +456,61 @@ func TestSyncNamespacesWithoutATrackerIsANoOp(t *testing.T) {
 	e, _ := newTestEnricher(t, &now, reg)
 	e.Refresh(context.Background()) // must not panic
 }
+
+// TestStreamOpenInvalidatesTheTargetRead closes the gap metadata comparison
+// cannot: scaleTargetRef and min/maxReplicaCount are not carried in the trigger,
+// so an edit touching only those leaves the metadata identical and would
+// otherwise wait out the whole freshness window.
+//
+// KEDA re-opens StreamIsActive when it rebuilds its scaler cache, which it does
+// on a generation change — so a fresh stream is evidence the object was edited.
+func TestStreamOpenInvalidatesTheTargetRead(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	meta := map[string]string{ModelIDKey: testModel}
+	reg.Observe(testNamespace, "chat-so", meta)
+
+	e, reader := newTestEnricher(t, &now, reg,
+		scaledObject("chat-so", testTarget, nil, nil))
+	e.Refresh(context.Background())
+	if reader.gets != 1 {
+		t.Fatalf("expected the first read, have %d", reader.gets)
+	}
+
+	// Well inside the freshness window, and the metadata has NOT changed — the
+	// shape of a scaleTargetRef or min/max edit.
+	release := reg.Hold(testNamespace, "chat-so", meta)
+	defer release()
+
+	e.Refresh(context.Background())
+	if reader.gets != 2 {
+		t.Errorf("a stream re-open must force a re-read, have %d gets", reader.gets)
+	}
+}
+
+// TestStreamOpenKeepsServingTheLastEnvelope: as with a metadata change, only the
+// date is zeroed. An edit must not drop the variant out of the fleet while the
+// fresh read is pending.
+func TestStreamOpenKeepsServingTheLastEnvelope(t *testing.T) {
+	now := time.Now()
+	reg := newTestRegistry(&now)
+	reg.Observe(testNamespace, "chat-so", nil)
+
+	e, _ := newTestEnricher(t, &now, reg,
+		scaledObject("chat-so", testTarget, nil, nil))
+	e.Refresh(context.Background())
+
+	release := reg.Hold(testNamespace, "chat-so", nil)
+	defer release()
+
+	entry, ok := reg.Get(testNamespace, "chat-so")
+	if !ok {
+		t.Fatal("the workload must stay registered across a reconnect")
+	}
+	if entry.Target.Name != testTarget {
+		t.Errorf("the last known target must keep serving, have %q", entry.Target.Name)
+	}
+	if entry.Fresh(now, testTargetMaxAge) {
+		t.Error("but it must read as stale, so the next pass re-reads it")
+	}
+}
