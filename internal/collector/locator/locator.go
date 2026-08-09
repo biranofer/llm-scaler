@@ -24,10 +24,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ManagedScaler is one of the managed scaler kinds WVA recognizes.
-// Exactly one of HPA / ScaledObject is non-nil on a successful Locate.
+// ManagedScaler is the managed scaler WVA recognizes. ScaledObject is non-nil on
+// a successful Locate.
+//
+// It is a struct with one field rather than a bare *ScaledObject because KEDA is
+// currently the only actuator: the HPA path was removed with annotation-based
+// discovery and returns as an external-metrics API server, at which point a
+// second kind lands here.
 type ManagedScaler struct {
-	HPA          *autoscalingv2.HorizontalPodAutoscaler
 	ScaledObject *kedav1alpha1.ScaledObject
 }
 
@@ -162,28 +166,19 @@ func (l *podLocator) LocateByVariant(ctx context.Context, namespace, variantName
 	if variantName == "" {
 		return nil, nil
 	}
-	hpa, err := l.getManagedHPA(ctx, namespace, variantName)
+	// Skip the lookup when KEDA is absent: its informer cannot sync without the
+	// CRD, so a cached Get would error.
+	if !l.kedaEnabled {
+		return nil, nil
+	}
+	so, err := l.getManagedScaledObject(ctx, namespace, variantName)
 	if err != nil {
 		return nil, err
 	}
-	// Skip ScaledObject lookup when KEDA is absent: its informer cannot sync
-	// without the CRD, so a cached Get would error.
-	var so *kedav1alpha1.ScaledObject
-	if l.kedaEnabled {
-		if so, err = l.getManagedScaledObject(ctx, namespace, variantName); err != nil {
-			return nil, err
-		}
+	if so == nil {
+		return nil, nil
 	}
-	switch {
-	case hpa != nil && so != nil:
-		return nil, fmt.Errorf("ambiguous variant %s/%s: matched HPA and ScaledObject of the same name",
-			namespace, variantName)
-	case hpa != nil:
-		return &ManagedScaler{HPA: hpa}, nil
-	case so != nil:
-		return &ManagedScaler{ScaledObject: so}, nil
-	}
-	return nil, nil
+	return &ManagedScaler{ScaledObject: so}, nil
 }
 
 func (l *podLocator) GetPodLabels(ctx context.Context, namespace, podName string) map[string]string {
@@ -257,44 +252,19 @@ func (l *podLocator) resolveScaler(ctx context.Context, target chainNode) (*Mana
 		Kind:       target.Kind,
 		Name:       target.Name,
 	}
-	hpa, err := indexers.FindHPAForScaleTarget(ctx, asClient(l.cached), ref, target.Namespace)
+	// Skip the lookup when KEDA is absent: the ScaledObject field index is not
+	// registered, so a MatchingFields List would error.
+	if !l.kedaEnabled {
+		return nil, nil
+	}
+	so, err := indexers.FindSOForScaleTarget(ctx, asClient(l.cached), ref, target.Namespace)
 	if err != nil {
 		return nil, err
 	}
-	// Skip ScaledObject lookup when KEDA is absent: the ScaledObject field index
-	// is not registered, so a MatchingFields List would error.
-	var so *kedav1alpha1.ScaledObject
-	if l.kedaEnabled {
-		if so, err = indexers.FindSOForScaleTarget(ctx, asClient(l.cached), ref, target.Namespace); err != nil {
-			return nil, err
-		}
-	}
-	switch {
-	case hpa != nil && so != nil:
-		return nil, fmt.Errorf("ambiguous scale target %s/%s/%s: matched HPA %q and ScaledObject %q",
-			target.Namespace, target.Kind, target.Name, hpa.Name, so.Name)
-	case hpa != nil:
-		return &ManagedScaler{HPA: hpa}, nil
-	case so != nil:
-		return &ManagedScaler{ScaledObject: so}, nil
-	}
-	return nil, nil
-}
-
-// getManagedHPA fetches an HPA by name and returns it only if it carries
-// llm-d.ai/managed=true.
-func (l *podLocator) getManagedHPA(ctx context.Context, namespace, name string) (*autoscalingv2.HorizontalPodAutoscaler, error) {
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{}
-	if err := l.cached.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, hpa); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get HPA %s/%s: %w", namespace, name, err)
-	}
-	if !annotations.IsManaged(hpa) {
+	if so == nil {
 		return nil, nil
 	}
-	return hpa, nil
+	return &ManagedScaler{ScaledObject: so}, nil
 }
 
 // getManagedScaledObject fetches a ScaledObject by name and returns it only

@@ -41,12 +41,18 @@ func scaleTargetIndexKey(namespace string, ref autoscalingv2.CrossVersionObjectR
 	return fmt.Sprintf("%s/%s/%s/%s", namespace, ref.APIVersion, ref.Kind, ref.Name)
 }
 
+// scaleTargetKindSupported reports whether a scaleTargetRef.Kind is one of the
+// kinds WVA's locator handles. Today: Deployment and LeaderWorkerSet.
+func scaleTargetKindSupported(kind string) bool {
+	return kind == constants.DeploymentKind || kind == constants.LeaderWorkerSetKind
+}
+
 // SetupIndexes registers custom field indexes with the manager's cache.
 // kedaEnabled controls whether the ScaledObject index is registered; set to false when KEDA CRDs are not installed.
 func SetupIndexes(ctx context.Context, mgr manager.Manager, kedaEnabled bool) error {
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &autoscalingv2.HorizontalPodAutoscaler{}, HPAByScaleTargetKey, HPAByScaleTargetIndexFunc); err != nil {
-		return fmt.Errorf("failed to set up index by scale target for HPA: %w", err)
-	}
+	// Only ScaledObjects are indexed. Indexing a kind starts a cluster-wide
+	// LIST+WATCH informer for it, so the HPA index went with the HPA discovery
+	// path — see docs/plans/engine/keda-driven-discovery.md.
 	if kedaEnabled {
 		if err := mgr.GetFieldIndexer().IndexField(ctx, &kedav1alpha1.ScaledObject{}, ScaledObjectByScaleTargetKey, ScaledObjectByScaleTargetIndexFunc); err != nil {
 			return fmt.Errorf("failed to set up index by scale target for ScaledObject: %w", err)

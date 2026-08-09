@@ -303,39 +303,24 @@ func derefOr(v *int32, fallback int32) int32 {
 	return *v
 }
 
-// annotationSourcedVariants lists HPAs and KEDA ScaledObjects bearing llm-d.ai/managed: "true"
-// and synthesizes in-memory VariantAutoscaling objects from them. ScaledObject discovery is
-// skipped gracefully when the KEDA CRD is not installed. When both an HPA and a ScaledObject
-// target the same scale target, the ScaledObject entry wins.
+// annotationSourcedVariants lists KEDA ScaledObjects bearing llm-d.ai/managed:
+// "true" and synthesizes in-memory VariantAutoscaling objects from them,
+// skipping gracefully when the KEDA CRD is not installed.
+//
+// This is the legacy discovery path, kept only for workloads that have not yet
+// moved their configuration into trigger metadata. It is on its way out with the
+// annotations themselves; registrySourcedVariants is the replacement, and wins
+// for any workload found both ways.
+//
+// The HPA half is gone: an HPA cannot be driven by a KEDA call, so HPA-only
+// clusters return via an external-metrics API server instead
+// (docs/plans/engine/keda-driven-discovery.md).
 func annotationSourcedVariants(ctx context.Context, k8sClient client.Client) ([]wvav1alpha1.VariantAutoscaling, error) {
 	logger := ctrl.LoggerFrom(ctx)
-	// keyed by namespace/kind/name for deduplication; ScaledObject entries overwrite HPA entries.
+	// keyed by namespace/kind/name for deduplication.
 	byTarget := make(map[string]wvav1alpha1.VariantAutoscaling)
 
-	// HPAs are a core Kubernetes type — always available (lower priority for deduplication).
-	// TODO(#1134): scope to tracked namespaces only (client.InNamespace per ds.ListTrackedNamespaces())
-	// to avoid iterating the full cluster cache on every engine tick.
-	var hpaList autoscalingv2.HorizontalPodAutoscalerList
-	if err := k8sClient.List(ctx, &hpaList); err != nil {
-		return nil, fmt.Errorf("listing HPAs: %w", err)
-	}
-	for i := range hpaList.Items {
-		hpa := &hpaList.Items[i]
-		if !annotations.IsManaged(hpa) || !hpa.DeletionTimestamp.IsZero() {
-			continue
-		}
-		va, err := annotations.VariantAutoscalingFromHPA(hpa)
-		if err != nil {
-			logger.V(logging.DEBUG).Info("Skipping HPA with invalid WVA annotations",
-				"namespace", hpa.Namespace, "name", hpa.Name, "error", err)
-			continue
-		}
-		key := fmt.Sprintf("%s/%s/%s", va.Namespace, va.Spec.ScaleTargetRef.Kind, va.Spec.ScaleTargetRef.Name)
-		byTarget[key] = *va
-	}
-
 	// KEDA ScaledObjects — may not be installed; handle gracefully.
-	// ScaledObject takes precedence over HPA for the same scale target.
 	// TODO(#1134): scope to tracked namespaces only (client.InNamespace per ds.ListTrackedNamespaces())
 	// to avoid iterating the full cluster cache on every engine tick.
 	var soList kedav1alpha1.ScaledObjectList

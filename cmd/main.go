@@ -587,15 +587,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// HPAReconciler: tracks namespaces for annotation-based discovery (always registered).
-	if err = (&controller.HPAReconciler{
-		Client:    mgr.GetClient(),
-		Datastore: ds,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create HPA controller")
-		os.Exit(1)
-	}
-
 	// ScaledObjectReconciler: registered only when KEDA CRD is present.
 	if kedaEnabled {
 		if err = (&controller.ScaledObjectReconciler{

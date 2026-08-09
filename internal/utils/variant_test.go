@@ -196,24 +196,23 @@ func managedSO(ns, name, targetName, modelID string) *kedav1alpha1.ScaledObject 
 func TestAnnotationSourcedVariants(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("HPAs only", func(t *testing.T) {
+	t.Run("annotated HPAs yield nothing", func(t *testing.T) {
+		// The HPA discovery path is gone: an HPA cannot be driven by a KEDA call,
+		// so HPA-only clusters return via an external-metrics API server instead.
+		// An annotated HPA left behind on a cluster must therefore be inert, not
+		// half-managed by a WVA that can no longer actuate it.
 		s := variantTestScheme(t)
 		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
 			managedHPA("ns1", "hpa-a", "deploy-a", "model-x"),
 			managedHPA("ns1", "hpa-b", "deploy-b", "model-x"),
-			// unmanaged HPA — must be filtered out
-			&autoscalingv2.HorizontalPodAutoscaler{
-				ObjectMeta: metav1.ObjectMeta{Name: "hpa-unmanaged", Namespace: "ns1"},
-				Spec:       autoscalingv2.HorizontalPodAutoscalerSpec{MaxReplicas: 3},
-			},
 		).Build()
 
 		result, err := annotationSourcedVariants(ctx, cl)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(result) != 2 {
-			t.Errorf("want 2 VAs, got %d", len(result))
+		if len(result) != 0 {
+			t.Errorf("want no VAs from HPAs, got %d", len(result))
 		}
 	})
 
@@ -232,7 +231,7 @@ func TestAnnotationSourcedVariants(t *testing.T) {
 		}
 	})
 
-	t.Run("mixed HPAs and ScaledObjects", func(t *testing.T) {
+	t.Run("mixed HPAs and ScaledObjects — only the ScaledObject counts", func(t *testing.T) {
 		s := variantTestScheme(t)
 		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
 			managedHPA("ns1", "hpa-a", "deploy-a", "model-x"),
@@ -243,17 +242,19 @@ func TestAnnotationSourcedVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(result) != 2 {
-			t.Errorf("want 2 VAs, got %d", len(result))
+		if len(result) != 1 {
+			t.Errorf("want 1 VA (the ScaledObject), got %d", len(result))
 		}
 	})
 
 	t.Run("KEDA not installed — NoMatchError skipped gracefully", func(t *testing.T) {
+		// KEDA is the only actuator now, so a cluster without it discovers nothing.
+		// The point of the case is that this is reported as "no variants" and NOT
+		// as an error: WVA must start and stay up on a cluster where KEDA has not
+		// been installed yet.
 		s := variantTestScheme(t)
 		soGK := schema.GroupKind{Group: "keda.sh", Kind: "ScaledObject"}
-		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
-			managedHPA("ns1", "hpa-a", "deploy-a", "model-x"),
-		).WithInterceptorFuncs(interceptor.Funcs{
+		cl := fake.NewClientBuilder().WithScheme(s).WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				if _, ok := list.(*kedav1alpha1.ScaledObjectList); ok {
 					return &apimeta.NoKindMatchError{GroupKind: soGK}
@@ -266,8 +267,8 @@ func TestAnnotationSourcedVariants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(result) != 1 {
-			t.Errorf("want 1 VA from HPA, got %d", len(result))
+		if len(result) != 0 {
+			t.Errorf("want no VAs without KEDA, got %d", len(result))
 		}
 	})
 
@@ -312,17 +313,17 @@ func TestAnnotationSourcedVariants(t *testing.T) {
 func TestReadyVariantAutoscalings(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("annotated HPA yields a synthetic variant", func(t *testing.T) {
+	t.Run("annotated ScaledObject yields a synthetic variant", func(t *testing.T) {
 		s := variantTestScheme(t)
 		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
-			managedHPA("ns1", "hpa-ann", "deploy-ann", "model-ann"),
+			managedSO("ns1", "so-ann", "deploy-ann", "model-ann"),
 		).Build()
 
 		result := readyVariantAutoscalings(ctx, cl, nil)
 		if len(result) != 1 {
 			t.Fatalf("want 1 annotation-sourced variant, got %d", len(result))
 		}
-		if result[0].Name != "hpa-ann" || result[0].Spec.ModelID != "model-ann" {
+		if result[0].Name != "so-ann" || result[0].Spec.ModelID != "model-ann" {
 			t.Errorf("unexpected synthetic variant: name=%q modelID=%q", result[0].Name, result[0].Spec.ModelID)
 		}
 		if !annotations.IsSynthetic(&result[0]) {
@@ -330,7 +331,9 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 		}
 	})
 
-	t.Run("annotated HPA and ScaledObject with different targets — both returned", func(t *testing.T) {
+	t.Run("an annotated HPA alongside a ScaledObject contributes nothing", func(t *testing.T) {
+		// Different scale targets, so this is not deduplication: the HPA simply is
+		// not a discovery source any more.
 		s := variantTestScheme(t)
 		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
 			managedHPA("ns-hpa", "hpa-ann", "deploy-hpa", "model-hpa"),
@@ -338,20 +341,20 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 		).Build()
 
 		result := readyVariantAutoscalings(ctx, cl, nil)
-		if len(result) != 2 {
-			t.Errorf("want 2 variants, got %d", len(result))
+		if len(result) != 1 {
+			t.Fatalf("want 1 variant (the ScaledObject), got %d", len(result))
+		}
+		if result[0].Spec.ModelID != "model-so" {
+			t.Errorf("want the ScaledObject's variant, got modelID %q", result[0].Spec.ModelID)
 		}
 	})
 
-	t.Run("annotated HPA, KEDA listing fails — HPA variant still returned", func(t *testing.T) {
-		// annotationSourcedVariants successfully lists the HPA but then fails listing
-		// ScaledObjects with a non-NoMatch error (e.g. transient API error).
-		// readyVariantAutoscalings logs the error as non-fatal and still returns the
-		// partial annotation results, so the HPA-sourced variant is returned.
+	t.Run("a failed ScaledObject listing is non-fatal", func(t *testing.T) {
+		// readyVariantAutoscalings logs a discovery failure and returns whatever it
+		// has rather than propagating: a transient API error must not take the whole
+		// optimize cycle down.
 		s := variantTestScheme(t)
-		cl := fake.NewClientBuilder().WithScheme(s).WithObjects(
-			managedHPA("ns1", "hpa-ann", "deploy-ann", "model-ann"),
-		).WithInterceptorFuncs(interceptor.Funcs{
+		cl := fake.NewClientBuilder().WithScheme(s).WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				if _, ok := list.(*kedav1alpha1.ScaledObjectList); ok {
 					return errors.New("keda api unavailable")
@@ -360,9 +363,8 @@ func TestReadyVariantAutoscalings(t *testing.T) {
 			},
 		}).Build()
 
-		result := readyVariantAutoscalings(ctx, cl, nil)
-		if len(result) != 1 {
-			t.Errorf("want 1 variant (HPA-sourced, KEDA error is non-fatal), got %d", len(result))
+		if result := readyVariantAutoscalings(ctx, cl, nil); len(result) != 0 {
+			t.Errorf("want no variants, got %d", len(result))
 		}
 	})
 }

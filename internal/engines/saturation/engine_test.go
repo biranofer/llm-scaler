@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"strings"
 
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/model"
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -41,11 +41,12 @@ import (
 	testutils "github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
-// newManagedHPA builds a WVA-managed HorizontalPodAutoscaler targeting the given
+// newManagedScaledObject builds a WVA-managed KEDA ScaledObject targeting the given
 // Deployment. The engine discovers variants by synthesizing them from such
 // annotated HPAs.
-func newManagedHPA(name, namespace, targetDeployment, modelID string) *autoscalingv2.HorizontalPodAutoscaler {
-	return &autoscalingv2.HorizontalPodAutoscaler{
+func newManagedScaledObject(name, namespace, targetDeployment, modelID string) *kedav1alpha1.ScaledObject {
+	maxReplicas := int32(2)
+	return &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -55,13 +56,24 @@ func newManagedHPA(name, namespace, targetDeployment, modelID string) *autoscali
 				annotations.VariantCost: "10.0",
 			},
 		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+		Spec: kedav1alpha1.ScaledObjectSpec{
+			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
 				Name:       targetDeployment,
 			},
-			MaxReplicas: 2,
+			MaxReplicaCount: &maxReplicas,
+			// Required by the CRD (minItems: 1), and the shape a real WVA
+			// deployment uses: KEDA calls WVA's external scaler, and that call is
+			// what registers the workload.
+			Triggers: []kedav1alpha1.ScaleTriggers{{
+				Type: "external-push",
+				Name: "wva-external-scaler",
+				Metadata: map[string]string{
+					"scalerAddress": "wva-external-scaler.wva-system.svc:9090",
+					"modelID":       modelID,
+				},
+			}},
 		},
 	}
 }
@@ -158,7 +170,7 @@ var _ = Describe("Saturation Engine", func() {
 				Expect(k8sClient.Create(ctx, d)).To(Succeed())
 
 				// Variants are discovered from annotated HPAs targeting the Deployment.
-				Expect(k8sClient.Create(ctx, newManagedHPA(name, "default", name, modelID))).To(Succeed())
+				Expect(k8sClient.Create(ctx, newManagedScaledObject(name, "default", name, modelID))).To(Succeed())
 			}
 		})
 
@@ -182,9 +194,9 @@ var _ = Describe("Saturation Engine", func() {
 			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
-			var hpaList autoscalingv2.HorizontalPodAutoscalerList
-			err = k8sClient.List(ctx, &hpaList, client.InNamespace("default"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to list HPAs")
+			var soList kedav1alpha1.ScaledObjectList
+			err = k8sClient.List(ctx, &soList, client.InNamespace("default"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to list ScaledObjects")
 
 			var deploymentList appsv1.DeploymentList
 			err = k8sClient.List(ctx, &deploymentList, client.InNamespace("default"))
@@ -199,10 +211,10 @@ var _ = Describe("Saturation Engine", func() {
 				}
 			}
 
-			// Clean up all managed HPAs
-			for i := range hpaList.Items {
-				err = k8sClient.Delete(ctx, &hpaList.Items[i])
-				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete HPA")
+			// Clean up all managed ScaledObjects
+			for i := range soList.Items {
+				err = k8sClient.Delete(ctx, &soList.Items[i])
+				Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete ScaledObject")
 			}
 		})
 
@@ -316,7 +328,7 @@ var _ = Describe("Saturation Engine", func() {
 				Expect(k8sClient.Create(ctx, d)).To(Succeed())
 
 				// Variants are discovered from annotated HPAs targeting the Deployment.
-				Expect(k8sClient.Create(ctx, newManagedHPA(name, "default", name, modelID))).To(Succeed())
+				Expect(k8sClient.Create(ctx, newManagedScaledObject(name, "default", name, modelID))).To(Succeed())
 			}
 		})
 
@@ -340,9 +352,9 @@ var _ = Describe("Saturation Engine", func() {
 			err = k8sClient.Delete(ctx, configMap)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
-			var hpaList autoscalingv2.HorizontalPodAutoscalerList
-			err = k8sClient.List(ctx, &hpaList, client.InNamespace("default"))
-			Expect(err).NotTo(HaveOccurred(), "Failed to list HPAs")
+			var soList kedav1alpha1.ScaledObjectList
+			err = k8sClient.List(ctx, &soList, client.InNamespace("default"))
+			Expect(err).NotTo(HaveOccurred(), "Failed to list ScaledObjects")
 
 			var deploymentList appsv1.DeploymentList
 			err = k8sClient.List(ctx, &deploymentList, client.InNamespace("default"))
@@ -357,12 +369,12 @@ var _ = Describe("Saturation Engine", func() {
 				}
 			}
 
-			// Clean up all managed HPAs created by v2 tests
-			for i := range hpaList.Items {
-				hpa := &hpaList.Items[i]
-				if strings.HasPrefix(hpa.Name, "v2-test-resource") {
-					err = k8sClient.Delete(ctx, hpa)
-					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete HPA")
+			// Clean up all managed ScaledObjects created by v2 tests
+			for i := range soList.Items {
+				so := &soList.Items[i]
+				if strings.HasPrefix(so.Name, "v2-test-resource") {
+					err = k8sClient.Delete(ctx, so)
+					Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred(), "Failed to delete ScaledObject")
 				}
 			}
 
@@ -384,15 +396,15 @@ var _ = Describe("Saturation Engine", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying the annotated variants were discovered")
-			// Variants are synthesized from the annotated HPAs; confirm all test
-			// HPAs are present so the loop had the expected discovery surface.
-			var hpaList autoscalingv2.HorizontalPodAutoscalerList
-			err = k8sClient.List(ctx, &hpaList, client.InNamespace("default"))
+			// Variants are synthesized from the annotated ScaledObjects; confirm all
+			// test objects are present so the loop had the expected discovery surface.
+			var soList kedav1alpha1.ScaledObjectList
+			err = k8sClient.List(ctx, &soList, client.InNamespace("default"))
 			Expect(err).NotTo(HaveOccurred())
 
 			testVariants := 0
-			for _, hpa := range hpaList.Items {
-				if strings.HasPrefix(hpa.Name, "v2-test-resource") && hpa.DeletionTimestamp.IsZero() {
+			for _, so := range soList.Items {
+				if strings.HasPrefix(so.Name, "v2-test-resource") && so.DeletionTimestamp.IsZero() {
 					testVariants++
 				}
 			}
@@ -437,7 +449,7 @@ var _ = Describe("Saturation Engine", func() {
 			Expect(k8sClient.Create(ctx, d)).To(Succeed())
 
 			// Variant is discovered from an annotated HPA targeting the Deployment.
-			Expect(k8sClient.Create(ctx, newManagedHPA(testName, "default", testName, modelID))).To(Succeed())
+			Expect(k8sClient.Create(ctx, newManagedScaledObject(testName, "default", testName, modelID))).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -451,13 +463,13 @@ var _ = Describe("Saturation Engine", func() {
 			err := k8sClient.Delete(ctx, d)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 
-			hpa := &autoscalingv2.HorizontalPodAutoscaler{
+			so := &kedav1alpha1.ScaledObject{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: "default",
 				},
 			}
-			err = k8sClient.Delete(ctx, hpa)
+			err = k8sClient.Delete(ctx, so)
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 		})
 

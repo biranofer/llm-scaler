@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
+
 	appsV1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -136,6 +139,7 @@ func newWakeFixture(t *testing.T, name string) wakeFixture {
 	require.NoError(t, v1alpha2.Install(scheme))
 	require.NoError(t, v1.Install(scheme))
 	require.NoError(t, vav1alpha1.AddToScheme(scheme))
+	require.NoError(t, kedav1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsV1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
@@ -145,7 +149,7 @@ func newWakeFixture(t *testing.T, name string) wakeFixture {
 			pool,
 			// Parked at zero: that is what makes it this engine's business.
 			unittestutil.MakeDeployment(target, ns, 0, selector_v1),
-			managedHPA(ns, hpaName, target, model),
+			managedSO(ns, hpaName, target, model),
 			unittestutil.MakeService(eppSvc, ns),
 		).
 		Build()

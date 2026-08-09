@@ -58,16 +58,6 @@ rules:
   - list
   - watch
 - apiGroups:
-  - autoscaling
-  resources:
-  - horizontalpodautoscalers
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - inference.networking.k8s.io
   - inference.networking.x-k8s.io
   resources:

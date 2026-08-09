@@ -19,10 +19,8 @@ package controller
 import (
 	"context"
 	"testing"
-	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,92 +46,6 @@ func scalerTestScheme(t *testing.T) *runtime.Scheme {
 }
 
 // --- HPAReconciler tests ---
-
-func TestHPAReconciler_TracksNamespace(t *testing.T) {
-	s := scalerTestScheme(t)
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "hpa-a",
-			Namespace:   "ns1",
-			Annotations: map[string]string{annotations.Managed: "true"},
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{MaxReplicas: 5},
-	}
-	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(hpa).Build()
-	ds := datastore.NewDatastore(config.NewTestConfig())
-
-	r := &HPAReconciler{Client: cl, Datastore: ds}
-	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "hpa-a", Namespace: "ns1"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !ds.IsNamespaceTracked("ns1") {
-		t.Error("want ns1 tracked after managed HPA reconcile")
-	}
-}
-
-func TestHPAReconciler_UntracksOnNotFound(t *testing.T) {
-	s := scalerTestScheme(t)
-	cl := fake.NewClientBuilder().WithScheme(s).Build()
-	ds := datastore.NewDatastore(config.NewTestConfig())
-	ds.NamespaceTrack("AnnotatedScaler", "hpa-a", "ns1")
-
-	r := &HPAReconciler{Client: cl, Datastore: ds}
-	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "hpa-a", Namespace: "ns1"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ds.IsNamespaceTracked("ns1") {
-		t.Error("want ns1 untracked when HPA is not found (deleted)")
-	}
-}
-
-func TestHPAReconciler_UntracksOnDeletion(t *testing.T) {
-	s := scalerTestScheme(t)
-	now := metav1.NewTime(time.Now())
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "hpa-a",
-			Namespace:         "ns1",
-			Finalizers:        []string{"test"},
-			DeletionTimestamp: &now,
-			Annotations:       map[string]string{annotations.Managed: "true"},
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{MaxReplicas: 5},
-	}
-	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(hpa).Build()
-	ds := datastore.NewDatastore(config.NewTestConfig())
-	ds.NamespaceTrack("AnnotatedScaler", "hpa-a", "ns1")
-
-	r := &HPAReconciler{Client: cl, Datastore: ds}
-	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "hpa-a", Namespace: "ns1"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ds.IsNamespaceTracked("ns1") {
-		t.Error("want ns1 untracked when HPA has deletion timestamp")
-	}
-}
-
-func TestHPAReconciler_UntracksOnAnnotationRemoval(t *testing.T) {
-	s := scalerTestScheme(t)
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "hpa-a", Namespace: "ns1"},
-		Spec:       autoscalingv2.HorizontalPodAutoscalerSpec{MaxReplicas: 5},
-	}
-	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(hpa).Build()
-	ds := datastore.NewDatastore(config.NewTestConfig())
-	ds.NamespaceTrack("AnnotatedScaler", "hpa-a", "ns1")
-
-	r := &HPAReconciler{Client: cl, Datastore: ds}
-	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "hpa-a", Namespace: "ns1"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ds.IsNamespaceTracked("ns1") {
-		t.Error("want ns1 untracked when llm-d.ai/managed annotation is removed")
-	}
-}
 
 // --- ScaledObjectReconciler tests ---
 

@@ -9,7 +9,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,7 +42,6 @@ func newClients(t *testing.T, objs ...runtime.Object) (cached, apiReader client.
 		return fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithRuntimeObjects(objs...).
-			WithIndex(&autoscalingv2.HorizontalPodAutoscaler{}, indexers.HPAByScaleTargetKey, indexers.HPAByScaleTargetIndexFunc).
 			WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
 			Build()
 	}
@@ -59,7 +57,6 @@ func newClientsNoSOIndex(t *testing.T, objs ...runtime.Object) (cached, apiReade
 		return fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithRuntimeObjects(objs...).
-			WithIndex(&autoscalingv2.HorizontalPodAutoscaler{}, indexers.HPAByScaleTargetKey, indexers.HPAByScaleTargetIndexFunc).
 			Build()
 	}
 	return build(), build()
@@ -67,47 +64,19 @@ func newClientsNoSOIndex(t *testing.T, objs ...runtime.Object) (cached, apiReade
 
 const testNamespace = "default"
 
-func TestLocate_DeploymentChainHitsManagedHPA(t *testing.T) {
-	ns := testNamespace
-	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: ns, UID: "uid-d"}}
-	rs := &appsv1.ReplicaSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "rs", Namespace: ns, UID: "uid-rs",
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "d", UID: "uid-d", Controller: ptr.To(true)}},
+// managedSO builds a WVA-managed KEDA ScaledObject targeting the named workload.
+// The ScaledObject is the only managed scaler kind now: HPA discovery was removed
+// with annotation-based discovery, and HPA-only clusters return via an
+// external-metrics API server (docs/plans/engine/keda-driven-discovery.md).
+func managedSO(name, ns, targetKind, targetName string) *kedav1alpha1.ScaledObject {
+	return &kedav1alpha1.ScaledObject{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns,
+			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
+		Spec: kedav1alpha1.ScaledObjectSpec{
+			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
+				APIVersion: "apps/v1", Kind: targetKind, Name: targetName,
+			},
 		},
-	}
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "p", Namespace: ns,
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}},
-		},
-	}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "h", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"},
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    5,
-		},
-	}
-
-	cached, apiReader := newClients(t, deploy, rs, pod, hpa)
-	loc, err := locator.New(cached, apiReader)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	got, err := loc.Locate(context.Background(), ns, "p")
-	if err != nil {
-		t.Fatalf("Locate: %v", err)
-	}
-	if got == nil || got.HPA == nil {
-		t.Fatalf("got=%v, want HPA=h", got)
-	}
-	if got.HPA.Name != "h" {
-		t.Errorf("HPA.Name=%q, want h", got.HPA.Name)
 	}
 }
 
@@ -145,71 +114,6 @@ func TestLocate_PodNotFound(t *testing.T) {
 	}
 }
 
-func TestLocateByVariant_HPA(t *testing.T) {
-	ns := testNamespace
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    1,
-		},
-	}
-	cached, apiReader := newClients(t, hpa)
-	loc, _ := locator.New(cached, apiReader)
-	got, err := loc.LocateByVariant(context.Background(), ns, "v")
-	if err != nil {
-		t.Fatalf("LocateByVariant: %v", err)
-	}
-	if got == nil || got.HPA == nil || got.HPA.Name != "v" {
-		t.Fatalf("got=%v, want HPA=v", got)
-	}
-}
-
-func TestLocateByVariant_UnmanagedHPA(t *testing.T) {
-	ns := testNamespace
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: ns},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    1,
-		},
-	}
-	cached, apiReader := newClients(t, hpa)
-	loc, _ := locator.New(cached, apiReader)
-	got, err := loc.LocateByVariant(context.Background(), ns, "v")
-	if err != nil {
-		t.Fatalf("LocateByVariant: %v", err)
-	}
-	if got != nil {
-		t.Errorf("got=%v, want nil for unmanaged HPA", got)
-	}
-}
-
-func TestLocateByVariant_AmbiguousHPAndSO(t *testing.T) {
-	ns := testNamespace
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    1,
-		},
-	}
-	so := &kedav1alpha1.ScaledObject{
-		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: kedav1alpha1.ScaledObjectSpec{
-			ScaleTargetRef: &kedav1alpha1.ScaleTarget{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-		},
-	}
-	cached, apiReader := newClients(t, hpa, so)
-	loc, _ := locator.New(cached, apiReader)
-	if _, err := loc.LocateByVariant(context.Background(), ns, "v"); err == nil {
-		t.Errorf("expected ambiguity error, got nil")
-	}
-}
-
 func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 	ns := testNamespace
 	deploy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "d", Namespace: ns, UID: "uid-d"}}
@@ -217,16 +121,9 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "d", UID: "uid-d", Controller: ptr.To(true)}}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}}}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    1,
-		},
-	}
+	so := managedSO("h", ns, "Deployment", "d")
 
-	cached, apiReader := newClients(t, deploy, rs, pod, hpa)
+	cached, apiReader := newClients(t, deploy, rs, pod, so)
 	loc, _ := locator.New(cached, apiReader)
 
 	// Warm the cache.
@@ -235,8 +132,8 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 	}
 
 	// Delete the pod from apiReader; if the cache works, the second Locate
-	// must still resolve to the same HPA because the pod → Deployment step
-	// is cached.
+	// must still resolve to the same ScaledObject because the pod → Deployment
+	// step is cached.
 	if err := apiReader.Delete(context.Background(), pod); err != nil {
 		t.Fatalf("delete pod: %v", err)
 	}
@@ -244,7 +141,7 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Locate: %v", err)
 	}
-	if got == nil || got.HPA == nil || got.HPA.Name != "h" {
+	if got == nil || got.ScaledObject == nil || got.ScaledObject.Name != "h" {
 		t.Errorf("cache miss on second call: got=%v", got)
 	}
 }
@@ -259,20 +156,12 @@ func TestLocate_LWSChain(t *testing.T) {
 				Name: "lws", UID: "uid-lws", Controller: ptr.To(true),
 			}}},
 	}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
-				APIVersion: "leaderworkerset.x-k8s.io/v1", Kind: "LeaderWorkerSet", Name: "lws",
-			},
-			MaxReplicas: 5,
-		},
-	}
-	cached, apiReader := newClients(t, lws, pod, hpa)
+	so := managedSO("h", ns, "LeaderWorkerSet", "lws")
+	so.Spec.ScaleTargetRef.APIVersion = "leaderworkerset.x-k8s.io/v1"
+	cached, apiReader := newClients(t, lws, pod, so)
 	loc, _ := locator.New(cached, apiReader)
 	got, err := loc.Locate(context.Background(), ns, "p")
-	if err != nil || got == nil || got.HPA == nil || got.HPA.Name != "h" {
+	if err != nil || got == nil || got.ScaledObject == nil || got.ScaledObject.Name != "h" {
 		t.Fatalf("got=%v err=%v", got, err)
 	}
 }
@@ -280,7 +169,11 @@ func TestLocate_LWSChain(t *testing.T) {
 // TestLocate_KEDADisabledSkipsScaledObject verifies that when KEDA is disabled the
 // locator does not touch the (unregistered) ScaledObject field index, so Locate
 // returns the managed HPA without erroring on the missing index.
-func TestLocate_KEDADisabledSkipsScaledObject(t *testing.T) {
+// TestLocate_KEDADisabledFindsNothing: with the HPA path gone, KEDA is the only
+// actuator, so a cluster without it has no managed scalers for WVA to find. The
+// locator must report that quietly rather than erroring — the ScaledObject field
+// index is not registered, and a MatchingFields List against it would fail.
+func TestLocate_KEDADisabledFindsNothing(t *testing.T) {
 	locator.SetKEDAEnabled(false)
 	t.Cleanup(func() { locator.SetKEDAEnabled(true) })
 
@@ -294,48 +187,33 @@ func TestLocate_KEDADisabledSkipsScaledObject(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}},
 	}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    5,
-		},
-	}
-	cached, apiReader := newClientsNoSOIndex(t, deploy, rs, pod, hpa)
+	cached, apiReader := newClientsNoSOIndex(t, deploy, rs, pod)
 	loc, _ := locator.New(cached, apiReader)
+
 	got, err := loc.Locate(context.Background(), ns, "p")
 	if err != nil {
-		t.Fatalf("Locate: %v", err)
+		t.Fatalf("Locate must not error when KEDA is absent: %v", err)
 	}
-	if got == nil || got.HPA == nil || got.HPA.Name != "h" {
-		t.Fatalf("got=%v, want HPA=h", got)
+	if got != nil {
+		t.Fatalf("got=%v, want nil: nothing is managed without KEDA", got)
 	}
 }
 
-// TestLocateByVariant_KEDADisabledSkipsScaledObject verifies that LocateByVariant
-// skips the cached ScaledObject Get when KEDA is disabled, returning the HPA only.
-func TestLocateByVariant_KEDADisabledSkipsScaledObject(t *testing.T) {
+// TestLocateByVariant_KEDADisabledFindsNothing is the same for the by-variant
+// entry point, which must skip its cached ScaledObject Get for the same reason.
+func TestLocateByVariant_KEDADisabledFindsNothing(t *testing.T) {
 	locator.SetKEDAEnabled(false)
 	t.Cleanup(func() { locator.SetKEDAEnabled(true) })
 
-	ns := testNamespace
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "v", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"}},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    1,
-		},
-	}
-	cached, apiReader := newClientsNoSOIndex(t, hpa)
+	cached, apiReader := newClientsNoSOIndex(t)
 	loc, _ := locator.New(cached, apiReader)
-	got, err := loc.LocateByVariant(context.Background(), ns, "v")
+
+	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
 	if err != nil {
-		t.Fatalf("LocateByVariant: %v", err)
+		t.Fatalf("LocateByVariant must not error when KEDA is absent: %v", err)
 	}
-	if got == nil || got.HPA == nil || got.HPA.Name != "v" {
-		t.Fatalf("got=%v, want HPA=v", got)
+	if got != nil {
+		t.Fatalf("got=%v, want nil", got)
 	}
 }
 
@@ -587,7 +465,6 @@ func TestGetPodLabels_TransientGetError(t *testing.T) {
 		}).
 		Build()
 	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithIndex(&autoscalingv2.HorizontalPodAutoscaler{}, indexers.HPAByScaleTargetKey, indexers.HPAByScaleTargetIndexFunc).
 		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
 		Build()
 
@@ -636,7 +513,6 @@ func TestGetPodLabels_ResolveScaleTargetErrorSkipsCache(t *testing.T) {
 		}).
 		Build()
 	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithIndex(&autoscalingv2.HorizontalPodAutoscaler{}, indexers.HPAByScaleTargetKey, indexers.HPAByScaleTargetIndexFunc).
 		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
 		Build()
 
@@ -685,16 +561,7 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 			}},
 		},
 	}
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "h", Namespace: ns,
-			Annotations: map[string]string{"llm-d.ai/managed": "true"},
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "d"},
-			MaxReplicas:    5,
-		},
-	}
+	so := managedSO("h", ns, "Deployment", "d")
 
 	scheme := newScheme(t)
 	failOnce := true
@@ -713,8 +580,7 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 		}).
 		Build()
 	cached := fake.NewClientBuilder().WithScheme(scheme).
-		WithRuntimeObjects(hpa).
-		WithIndex(&autoscalingv2.HorizontalPodAutoscaler{}, indexers.HPAByScaleTargetKey, indexers.HPAByScaleTargetIndexFunc).
+		WithRuntimeObjects(so).
 		WithIndex(&kedav1alpha1.ScaledObject{}, indexers.ScaledObjectByScaleTargetKey, indexers.ScaledObjectByScaleTargetIndexFunc).
 		Build()
 
@@ -734,10 +600,10 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if ms == nil || ms.HPA == nil {
+	if ms == nil || ms.ScaledObject == nil {
 		t.Fatalf("Locate: expected managed HPA, got %v", ms)
 	}
-	if ms.HPA.Name != "h" {
-		t.Errorf("Locate: HPA name = %q, want %q", ms.HPA.Name, "h")
+	if ms.ScaledObject.Name != "h" {
+		t.Errorf("Locate: ScaledObject name = %q, want %q", ms.ScaledObject.Name, "h")
 	}
 }

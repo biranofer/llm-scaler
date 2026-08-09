@@ -352,12 +352,9 @@ func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespac
 			// No managed scaler in the pod's owner chain — the pod is unmanaged.
 			// Leaves vaName="" so the caller skips it.
 		default:
-			// The synthetic VariantAutoscaling is always keyed by the scaler name
-			// (the HPA or ScaledObject name), so use it directly.
-			switch {
-			case ms.HPA != nil:
-				vaName = ms.HPA.Name
-			case ms.ScaledObject != nil:
+			// The synthetic VariantAutoscaling is always keyed by the ScaledObject
+			// name, so use it directly.
+			if ms.ScaledObject != nil {
 				vaName = ms.ScaledObject.Name
 			}
 		}

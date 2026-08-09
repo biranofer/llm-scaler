@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -125,73 +124,14 @@ func TestVariantAutoscalingFromScaledObject_NoScaleTargetRef(t *testing.T) {
 	}
 }
 
-func TestVariantAutoscalingFromHPA(t *testing.T) {
-	minR := int32(2)
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "my-hpa",
-			Namespace:   "staging",
-			Annotations: wvaAnnotations("model/llama", "20.0"),
-			Labels:      map[string]string{"inference.optimization/acceleratorName": "cpu"},
-		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
-				APIVersion: "apps/v1",
-				Kind:       "Deployment",
-				Name:       "llama-deploy",
-			},
-			MinReplicas: &minR,
-			MaxReplicas: 8,
-		},
-	}
-
-	va, err := annotations.VariantAutoscalingFromHPA(hpa)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !annotations.IsSynthetic(va) {
-		t.Error("expected IsSynthetic to return true")
-	}
-	if va.Name != "my-hpa" {
-		t.Errorf("Name = %q, want %q", va.Name, "my-hpa")
-	}
-	if va.Spec.ModelID != "model/llama" {
-		t.Errorf("ModelID = %q, want %q", va.Spec.ModelID, "model/llama")
-	}
-	if va.Spec.MaxReplicas != 8 {
-		t.Errorf("MaxReplicas = %d, want %d", va.Spec.MaxReplicas, 8)
-	}
-	if va.Spec.MinReplicas == nil || *va.Spec.MinReplicas != 2 {
-		t.Errorf("MinReplicas = %v, want 2", va.Spec.MinReplicas)
-	}
-	if va.Labels["inference.optimization/acceleratorName"] != "cpu" {
-		t.Errorf("Labels[acceleratorName] = %q, want %q", va.Labels["inference.optimization/acceleratorName"], "cpu")
-	}
-}
-
-func TestVariantAutoscalingFromHPA_MissingAnnotations(t *testing.T) {
-	hpa := &autoscalingv2.HorizontalPodAutoscaler{
-		ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: "ns"},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Name: "d"},
-			MaxReplicas:    2,
-		},
-	}
-	if _, err := annotations.VariantAutoscalingFromHPA(hpa); err == nil {
-		t.Error("expected error for missing managed annotation")
-	}
-}
-
 func TestIsSynthetic_False(t *testing.T) {
-	va, _ := annotations.VariantAutoscalingFromHPA(&autoscalingv2.HorizontalPodAutoscaler{
+	va, _ := annotations.VariantAutoscalingFromScaledObject(&kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "h", Namespace: "ns",
+			Name: "s", Namespace: "ns",
 			Annotations: wvaAnnotations("m", ""),
 		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Name: "d"},
-			MaxReplicas:    1,
+		Spec: kedav1alpha1.ScaledObjectSpec{
+			ScaleTargetRef: &kedav1alpha1.ScaleTarget{Name: "d"},
 		},
 	})
 	if !annotations.IsSynthetic(va) {

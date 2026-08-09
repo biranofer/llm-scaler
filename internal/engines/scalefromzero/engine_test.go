@@ -23,8 +23,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	appsV1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,12 +60,13 @@ var (
 	variantCost     = float64(5)
 )
 
-// managedHPA builds a WVA-managed HorizontalPodAutoscaler targeting the given
-// Deployment. Variants are discovered by synthesizing them from such annotated
-// HPAs, so scale-from-zero tests seed the fake client with these instead of
-// VariantAutoscaling objects.
-func managedHPA(ns, name, targetDeployment, modelID string) *autoscalingv2.HorizontalPodAutoscaler {
-	return &autoscalingv2.HorizontalPodAutoscaler{
+// managedSO builds a WVA-managed KEDA ScaledObject targeting the given
+// Deployment. It is the annotation-sourced discovery path, which is on its way
+// out — a workload discovered this way is one whose configuration has not yet
+// moved into trigger metadata. Tests that exercise the CURRENT path register with
+// the registry instead (see wake_path_test.go).
+func managedSO(ns, name, targetDeployment, modelID string) *kedav1alpha1.ScaledObject {
+	return &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
@@ -74,14 +76,14 @@ func managedHPA(ns, name, targetDeployment, modelID string) *autoscalingv2.Horiz
 				annotations.VariantCost: "5.0",
 			},
 		},
-		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
-			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+		Spec: kedav1alpha1.ScaledObjectSpec{
+			ScaleTargetRef: &kedav1alpha1.ScaleTarget{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
 				Name:       targetDeployment,
 			},
-			MinReplicas: ptrInt32(0),
-			MaxReplicas: 2,
+			MinReplicaCount: ptrInt32(0),
+			MaxReplicaCount: ptrInt32(2),
 		},
 	}
 }
@@ -146,6 +148,7 @@ func TestSingleInactiveVariant(t *testing.T) {
 			_ = v1alpha2.Install(scheme)
 			_ = v1.Install(scheme)
 			_ = vav1alpha1.AddToScheme(scheme)
+			_ = kedav1alpha1.AddToScheme(scheme)
 			_ = appsV1.AddToScheme(scheme)
 			_ = corev1.AddToScheme(scheme)
 			fakeClientInitialObjs := []client.Object{pool1, dp, va, svc}
@@ -215,9 +218,9 @@ func TestMultipleInactiveVariants(t *testing.T) {
 	pool1.SetGroupVersionKind(gvk)
 
 	// Variants are discovered from annotated HPAs targeting each Deployment.
-	hpa1 := managedHPA(namespace, "resource-1", "resource-1-deployment", "model-1")
-	hpa2 := managedHPA(namespace, "resource-2", "resource-2-deployment", "model-2")
-	hpa3 := managedHPA(namespace, "resource-3", "resource-3-deployment", "model-3")
+	so1 := managedSO(namespace, "resource-1", "resource-1-deployment", "model-1")
+	so2 := managedSO(namespace, "resource-2", "resource-2-deployment", "model-2")
+	so3 := managedSO(namespace, "resource-3", "resource-3-deployment", "model-3")
 
 	dp1 := unittestutil.MakeDeployment("resource-1-deployment", namespace, 0, selector_v1)
 	dp2 := unittestutil.MakeDeployment("resource-2-deployment", namespace, 0, selector_v1)
@@ -229,10 +232,11 @@ func TestMultipleInactiveVariants(t *testing.T) {
 	_ = v1alpha2.Install(scheme)
 	_ = v1.Install(scheme)
 	_ = vav1alpha1.AddToScheme(scheme)
+	_ = kedav1alpha1.AddToScheme(scheme)
 	_ = appsV1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	fakeClientInitialObjs := []client.Object{pool1, dp1, dp2, dp3, hpa1, hpa2, hpa3, svc}
+	fakeClientInitialObjs := []client.Object{pool1, dp1, dp2, dp3, so1, so2, so3, svc}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -322,6 +326,7 @@ func TestEmptyInactiveVariants(t *testing.T) {
 	_ = v1alpha2.Install(scheme)
 	_ = v1.Install(scheme)
 	_ = vav1alpha1.AddToScheme(scheme)
+	_ = kedav1alpha1.AddToScheme(scheme)
 	_ = appsV1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
@@ -429,6 +434,7 @@ func TestNamespacedMetricsSourceLookup(t *testing.T) {
 			_ = v1alpha2.Install(scheme)
 			_ = v1.Install(scheme)
 			_ = vav1alpha1.AddToScheme(scheme)
+			_ = kedav1alpha1.AddToScheme(scheme)
 			_ = appsV1.AddToScheme(scheme)
 			_ = corev1.AddToScheme(scheme)
 
@@ -579,6 +585,7 @@ func TestPoolGetFromLabelsWithNamespace(t *testing.T) {
 			_ = v1alpha2.Install(scheme)
 			_ = v1.Install(scheme)
 			_ = vav1alpha1.AddToScheme(scheme)
+			_ = kedav1alpha1.AddToScheme(scheme)
 			_ = corev1.AddToScheme(scheme)
 
 			fakeClient := fake.NewClientBuilder().
