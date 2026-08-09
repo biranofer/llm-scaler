@@ -167,12 +167,30 @@ func (i *TypeInventory) SetUsed(usedByType map[string]int) {
 
 	i.usedByType = make(map[string]int, len(usedByType))
 	total := 0
+	soleType, homogeneous := i.soleAcceleratorType()
 	for declared, count := range usedByType {
 		key, ok := resolveAcceleratorKey(i.limitByType, declared)
 		if !ok {
 			// No discovered type owns this name — an unresolved accelerator, or a
-			// type that has since left the cluster. Unattributable, so not counted.
-			continue
+			// type that has since left the cluster.
+			//
+			// On a HOMOGENEOUS cluster that is still attributable: if exactly one
+			// accelerator type was discovered, whatever is holding these GPUs can
+			// only be running on it, whether or not the workload declared so. That
+			// closes the over-provisioning gap outright for single-type clusters,
+			// which is the common shape.
+			//
+			// Otherwise it stays unattributed and uncounted, and the budget check
+			// remains permissive — deliberately. Denying on unattributable usage
+			// would let one mislabelled variant block scaling for every other
+			// workload in the cluster. Operators who want a bound on it can give a
+			// quota limiter an explicit "unknown" entry, which the quota inventory
+			// honours as its own pool. The amount is reported either way
+			// (wva_unattributed_gpus).
+			if !homogeneous {
+				continue
+			}
+			key = soleType
 		}
 		i.usedByType[key] += count
 		total += count
@@ -260,3 +278,20 @@ func (i *TypeInventory) AcceleratorTypes() []string {
 
 // Ensure TypeInventory implements Inventory interface
 var _ Inventory = (*TypeInventory)(nil)
+
+// soleAcceleratorType returns the only discovered accelerator type, and whether
+// the cluster is homogeneous in that sense. Callers must already hold the lock.
+//
+// "Exactly one type" is the whole condition: with a single type there is nowhere
+// else unattributed usage could be, so charging it there is a deduction rather
+// than a guess. With two or more it would be a guess, and a wrong one silently
+// starves whichever pool it is charged to.
+func (i *TypeInventory) soleAcceleratorType() (string, bool) {
+	if len(i.limitByType) != 1 {
+		return "", false
+	}
+	for t := range i.limitByType {
+		return t, true
+	}
+	return "", false
+}

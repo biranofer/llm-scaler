@@ -22,14 +22,27 @@ import (
 // accelerator-silent-failure and synthetic-VA notes). They exist so the gap is
 // documented and cannot change silently, since both the GPU-aware optimizer and
 // the scale-from-zero placement check read these pools.
+//
+// The limitation is now scoped to HETEROGENEOUS clusters. Where exactly one
+// accelerator type was discovered the usage is attributable by deduction — there
+// is nowhere else it could be — and TypeInventory folds it in. Remaining
+// permissive elsewhere is deliberate: denying on unattributable usage would let
+// one mislabelled variant block scaling for every other workload. A quota
+// limiter can bound it explicitly with an "unknown" entry, and the amount is
+// always reported as wva_unattributed_gpus.
 
 // TestUnresolvedUsageNeverReachesAnyPool: GetResourcePools iterates the
 // DISCOVERED types, so a usage entry under a placeholder key has nowhere to land
 // and simply disappears. The per-type budgets the optimizer consumes therefore
 // over-state free capacity by however many GPUs unresolved variants hold.
 func TestUnresolvedUsageNeverReachesAnyPool(t *testing.T) {
+	// HETEROGENEOUS on purpose. With a single discovered type the unresolved GPUs
+	// are attributable by deduction and are folded in — see
+	// "TypeInventory unresolved-accelerator attribution". The gap this test pins
+	// is the one that remains when there is more than one type to choose between.
 	disc := &mockDiscovery{inventory: map[string]map[string]discovery.AcceleratorModelInfo{
 		"node-a": {"H100": {Count: 8}},
+		"node-b": {"A100": {Count: 4}},
 	}}
 	inv := NewTypeInventory("test", disc)
 	if err := inv.Refresh(context.Background()); err != nil {
@@ -68,8 +81,10 @@ func TestUnresolvedUsageNeverReachesAnyPool(t *testing.T) {
 // Nothing read the totals, so it was latent; it is now consistent by
 // construction.
 func TestUnattributableUsageIsExcludedConsistently(t *testing.T) {
+	// Heterogeneous, for the same reason as above.
 	disc := &mockDiscovery{inventory: map[string]map[string]discovery.AcceleratorModelInfo{
 		"node-a": {"H100": {Count: 8}},
+		"node-b": {"A100": {Count: 4}},
 	}}
 	inv := NewTypeInventory("test", disc)
 	if err := inv.Refresh(context.Background()); err != nil {

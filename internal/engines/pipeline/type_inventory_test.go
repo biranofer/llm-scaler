@@ -257,3 +257,58 @@ var _ = Describe("TypeInventory normalization", func() {
 		})
 	})
 })
+
+// Unattributed usage — a workload whose accelerator could not be resolved — is
+// normally dropped, because charging it to a pool it may not belong to would
+// starve that pool. A HOMOGENEOUS cluster is the exception: with exactly one
+// discovered type there is nowhere else those GPUs can be, so attributing them
+// is a deduction rather than a guess, and it closes the over-provisioning gap
+// outright for the common single-type cluster.
+var _ = Describe("TypeInventory unresolved-accelerator attribution", func() {
+	var ctx context.Context
+
+	BeforeEach(func() { ctx = context.Background() })
+
+	oneType := map[string]map[string]discovery.AcceleratorModelInfo{
+		"node-a": {"A100": {Count: 8}},
+	}
+	twoTypes := map[string]map[string]discovery.AcceleratorModelInfo{
+		"node-a": {"A100": {Count: 8}},
+		"node-b": {"H100": {Count: 4}},
+	}
+
+	It("charges unresolved usage to the sole type on a homogeneous cluster", func() {
+		inv := NewTypeInventory("test", &mockDiscovery{inventory: oneType})
+		Expect(inv.Refresh(ctx)).To(Succeed())
+
+		inv.SetUsed(map[string]int{"unknown": 3})
+
+		Expect(inv.UsedByType("A100")).To(Equal(3),
+			"with one type in the cluster the GPUs can only be on it")
+		Expect(inv.TotalAvailable()).To(Equal(5),
+			"and the pool must report them as taken, not free")
+	})
+
+	It("still drops unresolved usage when the cluster is heterogeneous", func() {
+		inv := NewTypeInventory("test", &mockDiscovery{inventory: twoTypes})
+		Expect(inv.Refresh(ctx)).To(Succeed())
+
+		inv.SetUsed(map[string]int{"unknown": 3})
+
+		Expect(inv.UsedByType("A100")).To(BeZero())
+		Expect(inv.UsedByType("H100")).To(BeZero(),
+			"guessing a pool would silently starve whichever one was picked")
+	})
+
+	It("keeps resolved usage exact on a homogeneous cluster", func() {
+		// The fallback must not disturb usage that already resolves, including
+		// the raw product label the nodeSelector deployment declares.
+		inv := NewTypeInventory("test", &mockDiscovery{inventory: oneType})
+		Expect(inv.Refresh(ctx)).To(Succeed())
+
+		inv.SetUsed(map[string]int{"NVIDIA-A100-PCIE-80GB": 2, "": 1})
+
+		Expect(inv.UsedByType("A100")).To(Equal(3),
+			"the declared label reconciles, and the blank name folds in beside it")
+	})
+})
