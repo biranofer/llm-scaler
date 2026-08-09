@@ -12,7 +12,6 @@ rules:
   - nodes
   - nodes/status
   - pods
-  - resourcequotas
   - services
   verbs:
   - get
@@ -72,10 +71,6 @@ rules:
   - scaledobjects
   verbs:
   - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - leaderworkerset.x-k8s.io
   resources:
