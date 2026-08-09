@@ -637,9 +637,13 @@ func createScaleFromZeroTriggerJob(name, namespace, gatewayService, modelID stri
 	// Enough workers that the queue stays non-empty while requests are rotating,
 	// small enough not to stress a kind cluster.
 	const workers = 4
-	// Per-request bound. Long enough to survive a cold start's first token, short
-	// enough that a worker rejoins the rotation promptly.
-	const requestTimeoutSec = 30
+	// Per-request bound. Generous on purpose: a request WAITING is the signal —
+	// it sits in the flow-control queue, which is exactly what the engine reads.
+	// Cutting it short does not help the queue and does hurt the follow-up specs,
+	// which need these requests to be answered once the model finally comes up:
+	// a cold start behind LWS can take well over half a minute to first token, and
+	// a 30s bound made every one of them fail and the job report no successes.
+	const requestTimeoutSec = 180
 	// Sustained past the specs' Eventually windows (EventuallyExtendedSec, 300s),
 	// so the demand outlives the observation rather than racing it.
 	const sustainSec = 330
