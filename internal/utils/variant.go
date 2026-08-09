@@ -248,6 +248,12 @@ func registrySourcedVariants(ctx context.Context, reg *registry.Registry) []wvav
 				// The ScaledObject names the variant: there is one per scale target.
 				Name:      entry.Name,
 				Namespace: entry.Namespace,
+				// The ScaledObject's labels come along: the accelerator lookup falls
+				// back to them when the pod template names no GPU product, and
+				// multi-controller isolation filters on the controller-instance
+				// label below. Dropping them does not fail loudly — it silently
+				// unresolves accelerators and empties the fleet.
+				Labels: target.Labels,
 				Annotations: map[string]string{
 					annotations.Synthetic: "true",
 				},

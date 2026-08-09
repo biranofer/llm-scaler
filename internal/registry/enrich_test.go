@@ -514,3 +514,23 @@ func TestStreamOpenKeepsServingTheLastEnvelope(t *testing.T) {
 		t.Error("but it must read as stale, so the next pass re-reads it")
 	}
 }
+
+// TestTargetCarriesScaledObjectLabels — the enricher is where labels enter the
+// registry, and everything downstream that reads them is silent when they are
+// missing (see TestScaledObjectLabelsReachTheVariant in internal/utils).
+func TestTargetCarriesScaledObjectLabels(t *testing.T) {
+	so := scaledObject("chat-so", testTarget, nil, nil)
+	so.Labels = map[string]string{"inference.optimization/acceleratorName": "A100"}
+
+	target := TargetFromScaledObject(so)
+	if got := target.Labels["inference.optimization/acceleratorName"]; got != "A100" {
+		t.Errorf("labels must be carried onto the target, got %q", got)
+	}
+
+	// Copied, not aliased: the ScaledObject is a decoded API object whose
+	// lifetime is the read, while the entry outlives it.
+	so.Labels["inference.optimization/acceleratorName"] = "mutated"
+	if target.Labels["inference.optimization/acceleratorName"] != "A100" {
+		t.Error("the target must not alias the object's label map")
+	}
+}

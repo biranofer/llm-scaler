@@ -77,6 +77,14 @@ type Target struct {
 	Name        string
 	MinReplicas *int32
 	MaxReplicas *int32
+	// Labels are the ScaledObject's own labels, carried because two consumers
+	// read them off the synthesized variant and silently change behaviour when
+	// they are absent: the accelerator lookup falls back to the
+	// AcceleratorNameLabel when the workload's pod template does not name a GPU
+	// product, and multi-controller isolation filters on the controller-instance
+	// label — with no labels at all, a controller configured with an instance
+	// name matches nothing and manages an empty fleet.
+	Labels map[string]string
 }
 
 // Fresh reports whether the entry's target read is recent enough to use.

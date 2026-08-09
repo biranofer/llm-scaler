@@ -128,3 +128,40 @@ func TestExpiredEntryYieldsNoVariant(t *testing.T) {
 		t.Errorf("want no variant once the entry has expired, got %d", len(result))
 	}
 }
+
+// TestScaledObjectLabelsReachTheVariant pins a regression that does not fail
+// loudly.
+//
+// Two consumers read labels off the synthesized variant and change behaviour
+// when they are absent: the accelerator lookup falls back to
+// AcceleratorNameLabel when the workload's pod template names no GPU product,
+// and multi-controller isolation filters on the controller-instance label — a
+// controller configured with an instance name matches nothing and manages an
+// empty fleet. Neither reports an error; they just quietly do less.
+func TestScaledObjectLabelsReachTheVariant(t *testing.T) {
+	ctx := context.Background()
+	reg := registry.New(time.Minute)
+	reg.Observe("ns1", "chat-so", map[string]string{registry.ModelIDKey: "meta/llama-3-8b"})
+	maxR := int32(4)
+	reg.SetTarget("ns1", "chat-so", registry.Target{
+		APIVersion:  "apps/v1",
+		Kind:        "Deployment",
+		Name:        "chat-deploy",
+		MaxReplicas: &maxR,
+		Labels: map[string]string{
+			"inference.optimization/acceleratorName": "A100",
+			"llm-d.ai/controller-instance":           "wva-a",
+		},
+	})
+
+	result := readyVariantAutoscalings(ctx, reg)
+	if len(result) != 1 {
+		t.Fatalf("want 1 variant, got %d", len(result))
+	}
+	if got := result[0].Labels["inference.optimization/acceleratorName"]; got != "A100" {
+		t.Errorf("the accelerator label must reach the variant, got %q", got)
+	}
+	if got := result[0].Labels["llm-d.ai/controller-instance"]; got != "wva-a" {
+		t.Errorf("the controller-instance label must reach the variant, got %q", got)
+	}
+}

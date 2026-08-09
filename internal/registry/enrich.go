@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
@@ -177,6 +178,7 @@ func (e *Enricher) readTarget(ctx context.Context, namespace, name string) (Targ
 // minimal `scaleTargetRef: {name: x}` resolves the same way KEDA resolves it.
 func TargetFromScaledObject(so *kedav1alpha1.ScaledObject) Target {
 	t := Target{
+		Labels:      maps.Clone(so.Labels),
 		MinReplicas: so.Spec.MinReplicaCount,
 		// GetHPAMaxReplicas applies KEDA's default rather than reporting nil, so
 		// an omitted maxReplicaCount reads as the ceiling KEDA will actually
