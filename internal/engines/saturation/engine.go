@@ -814,14 +814,31 @@ func (e *Engine) selectV2Optimizer(
 ) (pipeline.ScalingOptimizer, []*pipeline.ResourceConstraints) {
 	logger := ctrl.LoggerFrom(ctx)
 
-	currentUsage := computeCurrentGPUUsage(requests)
-	currentUsageByNS := computeCurrentGPUUsageByNamespace(requests)
+	// Usage comes from the shared snapshot, not from this cycle's population.
+	//
+	// Summing the population answered "what do MY variants hold", which is not the
+	// question a budget asks — GPUs held by anything WVA does not manage were
+	// reported as free, so every pool over-stated availability by that amount. The
+	// snapshot is discovered from the pods actually occupying GPU nodes, so it
+	// counts all of them, and it is the same picture the scale-from-zero placement
+	// check reads (see internal/gpuusage).
+	currentUsage, currentUsageByNS, haveUsage := latestGPUUsage(requests)
 
 	// GreedyByScore is currently the only GPU-aware optimizer; any future
 	// constraint-consuming optimizer must be added to this guard.
 	optimizer := e.optimizer
 	if _, ok := optimizer.(*pipeline.GreedyByScoreOptimizer); !ok {
 		return optimizer, nil
+	}
+
+	if !haveUsage {
+		// No observation yet. Constraints built on a zero usage figure would not
+		// be "unknown", they would be a confident claim that nothing is running —
+		// and GreedyByScore would allocate the whole cluster against it. Fall back
+		// to the unlimited optimizer, the same posture this function already takes
+		// when no provider can supply constraints.
+		logger.V(logging.DEBUG).Info("No GPU usage snapshot yet; using the unlimited optimizer for this cycle")
+		return pipeline.NewCostAwareOptimizer(), nil
 	}
 
 	// Collect constraints from every provider backing the GPU limiter: a single
@@ -957,33 +974,26 @@ func (e *Engine) optimizeV2(
 	}
 
 	if len(requests) == 0 {
-		// Deliberately publishes NO GPU-usage snapshot on this path.
-		//
-		// Reaching here with an empty `requests` does not mean "nothing is using
-		// GPUs". A fleet genuinely parked at zero never gets this far — optimize
-		// returns at len(activeVAs) == 0 well before optimizeV2 — so the ONLY way
-		// to be here is that active variants existed and every one of them failed
-		// collection: an unreachable Prometheus, a namespace whose config did not
-		// load, a failed prepareModelData. Publishing zeros for that would tell
-		// the scale-from-zero engine the cluster is empty at exactly the moment
-		// WVA has lost visibility, and it would wake models onto a full cluster
-		// while reporting a successful capacity check.
-		//
-		// Leaving the previous snapshot in place is safe because the consumer
-		// bounds its age (see gpuUsageMaxAge in scalefromzero).
 		return nil
 	}
 
-	// Share the GPU accounting with the scale-from-zero engine, which must know
-	// what is free before waking a variant but has no population of its own to
-	// sum. One producer keeps the two engines from disagreeing about capacity.
+	// The GPU-usage snapshot is NOT published from here any more. It is discovered
+	// independently by internal/gpuusage, which is the sole producer, so this path
+	// no longer decides what the rest of WVA believes about capacity — a cycle
+	// where every model failed collection can no longer withhold the picture, and
+	// a fleet parked at zero (which returns long before this) no longer leaves
+	// scale-from-zero with no picture at all.
 	//
-	// Published only from here, where `requests` is non-empty and therefore
-	// reflects a real measurement. It is independent of which optimizer runs —
-	// usage is a property of the population — so it must not live inside
-	// selectV2Optimizer, which returns early unless the optimizer is
-	// GreedyByScore, selected only when enableLimiter is true (default false).
-	publishPopulationGPUUsage(ctx, requests)
+	// The unattributed-GPU report stays, and stays HERE rather than inside
+	// selectV2Optimizer, which returns early unless the optimizer is GreedyByScore
+	// — reporting from behind that guard is how it went silent on default
+	// deployments before. It should now read zero: usage is attributed by the node
+	// a pod runs on, so nothing lands in the unresolved bucket. A non-zero value
+	// means a quota inventory contributed an explicit "unknown" pool, which is
+	// exactly when an operator wants to see it.
+	if usage, ok := decision.LatestGPUUsage(); ok {
+		reportUnattributedGPUs(ctx, usage.ByType)
+	}
 
 	// Stage 2: Compute GPU constraints and call optimizer
 	optimizer, constraints := e.selectV2Optimizer(ctx, requests)

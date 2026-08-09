@@ -55,10 +55,12 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/scalefromzero"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	prometheusutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/prometheus"
@@ -430,6 +432,19 @@ func main() {
 		os.Exit(1)
 	}
 	setupLog.Info("Prometheus client and API wrapper initialized and validated successfully")
+
+	// Keep the cluster's GPU usage picture current, independently of either engine.
+	//
+	// Registered BEFORE them so it takes its first observation first: both engines
+	// consume this, and until it exists the capacity checks have no evidence and
+	// degrade to "unknown", which is permissive. It is the SOLE producer of the
+	// snapshot — see internal/gpuusage.
+	if err := mgr.Add(&gpuusage.Refresher{
+		Discovery: discovery.NewK8sWithGpuOperator(mgr.GetClient()),
+	}); err != nil {
+		setupLog.Error(err, "unable to add the GPU usage refresher to the manager")
+		os.Exit(1)
+	}
 
 	// Register optimization engine loops with the manager. Only start when leader.
 	err = mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {

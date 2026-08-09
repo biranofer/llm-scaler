@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
@@ -65,7 +66,16 @@ func (selectLimiter) Name() string { return "select-limiter" }
 var _ = Describe("selectV2Optimizer", func() {
 	var ctx context.Context
 
-	BeforeEach(func() { ctx = context.Background() })
+	BeforeEach(func() {
+		ctx = context.Background()
+		// GreedyByScore now requires an OBSERVED usage figure: with none, the
+		// constraints would be built on an implicit zero and it would read the
+		// whole cluster as free. These specs are about the limiter/inventory
+		// branches, so they stand an observation up first; the "nothing observed"
+		// branch is pinned separately in gpu_usage_publish_test.go.
+		decision.PublishGPUUsage(map[string]int{}, map[string]map[string]int{})
+	})
+	AfterEach(func() { decision.DefaultGPUUsage.Reset() })
 
 	newInventoryLimiter := func(refreshErr error, pools map[string]pipeline.ResourcePool) *pipeline.DefaultLimiter {
 		return pipeline.NewDefaultLimiter("gpu-limiter",

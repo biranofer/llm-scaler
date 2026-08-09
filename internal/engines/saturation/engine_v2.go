@@ -3,6 +3,7 @@ package saturation
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -607,82 +608,54 @@ func applyUniversalThreshold(nr *pipeline.NamedAnalyzerResult, scaleUp, scaleDow
 	}
 }
 
-// gpuUsageByType accumulates a request's current GPU usage into perType.
+// latestGPUUsage reads the shared snapshot, returning both views and whether one
+// has been observed yet.
 //
-// Accelerator identity comes from the request's discovery metadata, the only
-// place that carries it. Replica counts come from VariantReplicaState rather
-// than from the analyzer's VariantCapacity: both are in scale-target units, but
-// GPU accounting must reflect what is actually allocated, not what reported
-// metrics this cycle.
+// The engine READS this now; it used to write it. internal/gpuusage is the sole
+// producer, discovering usage from the pods occupying GPU nodes rather than from
+// whatever population this cycle happened to assemble. Two consequences worth
+// stating, because they change what the numbers mean:
 //
-// KNOWN LIMITATION — unresolved accelerators are not attributable. A variant
-// with neither a nodeSelector/nodeAffinity GPU key nor the
-// inference.optimization/acceleratorName label resolves to
-// constants.DefaultAcceleratorName ("unknown"), so its GPUs are keyed under a
-// placeholder. TypeInventory.GetResourcePools iterates the DISCOVERED types, so
-// that entry never lands in a pool: the per-type budgets the GPU-aware optimizer
-// and the scale-from-zero placement check consume over-state free capacity by
-// however many GPUs those variants hold. SetUsed, meanwhile, sums every key into
-// totalUsed, so the aggregate includes them — the two views disagree, though
-// nothing reads the aggregate today.
+//   - the figure no longer depends on discovery. A population sum is blind to any
+//     workload WVA has not been called about, so it reported a full cluster as
+//     empty during the window before KEDA's first call — and that is exactly when
+//     scale-from-zero is placing wakes;
+//   - it includes GPUs held by workloads WVA does not manage, which the population
+//     sum could never see. Budgets get correspondingly tighter, which is the
+//     point: they were over-stated before.
 //
-// This is not fixable here: usage that cannot be attributed to a type cannot be
-// charged to a pool, and charging it to every candidate type would be worse.
-// The durable fix is resolving the accelerator. Both behaviours are pinned by
-// internal/engines/pipeline/unresolved_accelerator_usage_test.go so they cannot
-// drift silently.
-func gpuUsageByType(req pipeline.ModelScalingRequest, perType map[string]int) {
-	stateMap := make(map[string]domain.VariantReplicaState, len(req.VariantStates))
-	for _, s := range req.VariantStates {
-		stateMap[s.VariantName] = s
+// The requests are needed for one thing only: every namespace being optimized
+// must be PRESENT in the per-namespace view, with an empty map if it holds
+// nothing. A namespace-scoped quota is materialised only for namespaces that
+// appear there (see DefaultLimiter.ComputeConstraints), so a namespace whose
+// fleet currently holds no GPUs would silently lose its cap and be judged against
+// the cluster aggregate — able to exceed its own limit, or refused because a
+// different namespace is full. The population sum used to guarantee this by
+// construction; a discovered view cannot, because it only sees namespaces that
+// have pods holding GPUs right now.
+func latestGPUUsage(requests []pipeline.ModelScalingRequest) (map[string]int, map[string]map[string]int, bool) {
+	snap, ok := decision.LatestGPUUsage()
+	if !ok {
+		return nil, nil, false
 	}
-	for _, m := range req.Variants {
-		state := stateMap[m.VariantName]
-		gpusPerReplica := state.GPUsPerReplica
-		if gpusPerReplica <= 0 {
-			gpusPerReplica = 1
-		}
-		perType[m.AcceleratorName] += state.CurrentReplicas * gpusPerReplica
-	}
-}
 
-// computeCurrentGPUUsage iterates over model scaling requests to compute the
-// current GPU usage per accelerator type. Used to provide current usage to
-// the ConstraintProvider when building GPU constraints for the optimizer.
-func computeCurrentGPUUsage(requests []pipeline.ModelScalingRequest) map[string]int {
-	usage := make(map[string]int)
+	// The stored snapshot must not be mutated (Get documents it as shared), so
+	// materialise into a copy — and only when there is actually something to add,
+	// which is the uncommon case once a namespace has any GPU-holding pod.
+	byNamespace := snap.ByNamespace
+	copied := false
 	for _, req := range requests {
-		var satEntry *domain.AnalyzerResult
-		for _, e := range req.AnalyzerResults {
-			if e.Name == domain.SaturationAnalyzerName {
-				satEntry = e.Result
-				break
-			}
-		}
-		if satEntry == nil {
+		if _, present := byNamespace[req.Namespace]; present {
 			continue
 		}
-		gpuUsageByType(req, usage)
+		if !copied {
+			byNamespace = make(map[string]map[string]int, len(snap.ByNamespace)+1)
+			maps.Copy(byNamespace, snap.ByNamespace)
+			copied = true
+		}
+		byNamespace[req.Namespace] = map[string]int{}
 	}
-	return usage
-}
-
-// publishPopulationGPUUsage shares this cycle's GPU accounting with the
-// scale-from-zero engine, which must know what is free before waking a variant
-// but has no population of its own to sum.
-//
-// It exists as a named function so the publication can be exercised as the
-// production code path rather than restated in a test: the two views (per type,
-// and per namespace per type) must be derived from the SAME requests, or a
-// consumer that cross-checks them sees a cluster that does not add up.
-//
-// Call only with a non-empty population — an empty one is indistinguishable from
-// a failed collection, and publishing zeros for it tells the scale-from-zero
-// engine the cluster is idle exactly when WVA has lost visibility.
-func publishPopulationGPUUsage(ctx context.Context, requests []pipeline.ModelScalingRequest) {
-	byType := computeCurrentGPUUsage(requests)
-	decision.PublishGPUUsage(byType, computeCurrentGPUUsageByNamespace(requests))
-	reportUnattributedGPUs(ctx, byType)
+	return snap.ByType, byNamespace, true
 }
 
 // reportUnattributedGPUs surfaces usage that could not be charged to any
@@ -710,34 +683,6 @@ func reportUnattributedGPUs(ctx context.Context, byType map[string]int) {
 			"and a wake may be allowed onto an accelerator that is full. "+
 			"Set a GPU product nodeSelector on the workload, or the accelerator label on its scaler.",
 		"unattributedGPUs", unattributed, "underKeys", names)
-}
-
-// computeCurrentGPUUsageByNamespace mirrors computeCurrentGPUUsage but buckets
-// usage by namespace, then accelerator type. Every request's namespace is
-// represented (with at least an empty per-type map) so namespaces carrying a
-// quota but zero current usage are still surfaced as active namespaces to the
-// constraint providers (and therefore still constrained).
-func computeCurrentGPUUsageByNamespace(requests []pipeline.ModelScalingRequest) map[string]map[string]int {
-	usage := make(map[string]map[string]int)
-	for _, req := range requests {
-		perType, ok := usage[req.Namespace]
-		if !ok {
-			perType = make(map[string]int)
-			usage[req.Namespace] = perType
-		}
-		var satEntry *domain.AnalyzerResult
-		for _, e := range req.AnalyzerResults {
-			if e.Name == domain.SaturationAnalyzerName {
-				satEntry = e.Result
-				break
-			}
-		}
-		if satEntry == nil {
-			continue
-		}
-		gpuUsageByType(req, perType)
-	}
-	return usage
 }
 
 // gpuConstraintProviders returns the ConstraintProvider(s) backing the GPU

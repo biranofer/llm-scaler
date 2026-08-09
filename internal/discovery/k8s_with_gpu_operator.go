@@ -169,24 +169,51 @@ func (d *K8sWithGpuOperator) DiscoverNodes(ctx context.Context) (map[string]Node
 
 // DiscoverUsage calculates current GPU usage by summing GPU requests from running pods.
 // Returns a map of accelerator type to used GPU count.
+//
+// A projection of DiscoverUsageByNamespace, so there is one pod walk and the two
+// views cannot drift.
 func (d *K8sWithGpuOperator) DiscoverUsage(ctx context.Context) (map[string]int, error) {
-	// First, build a map of node name -> GPU type
+	byType, _, err := d.DiscoverUsageByNamespace(ctx)
+	return byType, err
+}
+
+// DiscoverUsageByNamespace sums GPU requests from the pods actually occupying GPU
+// nodes, returning the cluster-wide per-type view and the per-namespace one.
+//
+// Attribution is by the NODE the pod is scheduled to, not by anything the
+// workload declares. That is what makes this usable as the sole producer:
+//
+//   - it does not depend on WVA having discovered the workload. Usage summed from
+//     WVA's own population is blind to anything it has not been called about,
+//     which under call-driven discovery includes every workload until KEDA first
+//     calls — so a wake placed against it can be judged against an empty picture
+//     of a full cluster;
+//   - it counts GPUs held by workloads WVA does not manage at all — other
+//     namespaces, system pods, another autoscaler — which the population sum
+//     cannot see and therefore reports as free;
+//   - nothing is unattributable. A pod on a GPU node is charged to that node's
+//     type whether or not it declared a nodeSelector, so there is no "unknown"
+//     bucket to leak capacity through.
+//
+// Counts REQUESTS, not allocations, and includes pods that are scheduled but not
+// yet running (Spec.NodeName set, not Succeeded/Failed): the scheduler has already
+// committed those GPUs, so treating them as free would let two wakes place onto
+// the same device. Unscheduled pods hold nothing and are skipped.
+func (d *K8sWithGpuOperator) DiscoverUsageByNamespace(ctx context.Context) (map[string]int, map[string]map[string]int, error) {
 	nodeGPUType, err := d.discoverNodeGPUTypes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover node GPU types: %w", err)
+		return nil, nil, fmt.Errorf("failed to discover node GPU types: %w", err)
 	}
 
-	// List all pods (running or pending on a node)
 	var podList corev1.PodList
 	if err := d.Client.List(ctx, &podList); err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
+		return nil, nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 
-	// Aggregate GPU requests by accelerator type
 	usageByType := make(map[string]int)
+	usageByNamespace := make(map[string]map[string]int)
 
 	for _, pod := range podList.Items {
-		// Skip pods that aren't scheduled or are completed/failed
 		if pod.Spec.NodeName == "" {
 			continue
 		}
@@ -194,21 +221,26 @@ func (d *K8sWithGpuOperator) DiscoverUsage(ctx context.Context) (map[string]int,
 			continue
 		}
 
-		// Get the GPU type for this node
 		gpuType, ok := nodeGPUType[pod.Spec.NodeName]
 		if !ok {
 			// Node doesn't have GPUs, skip
 			continue
 		}
 
-		// Sum GPU requests from all containers
 		gpuCount := getPodGPURequests(&pod)
-		if gpuCount > 0 {
-			usageByType[gpuType] += gpuCount
+		if gpuCount <= 0 {
+			continue
 		}
+		usageByType[gpuType] += gpuCount
+		perType, seen := usageByNamespace[pod.Namespace]
+		if !seen {
+			perType = make(map[string]int)
+			usageByNamespace[pod.Namespace] = perType
+		}
+		perType[gpuType] += gpuCount
 	}
 
-	return usageByType, nil
+	return usageByType, usageByNamespace, nil
 }
 
 // discoverNodeGPUTypes returns a map of node name to GPU type (model name).

@@ -7,22 +7,22 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
-// The scale-from-zero engine's capacity check reads decision.DefaultGPUUsage and
-// treats an ABSENT snapshot as "unknown", skipping the check rather than denying
-// a wake. These specs pin what the saturation engine does and does not publish,
-// because both directions have been got wrong here:
+// The saturation engine is a CONSUMER of decision.DefaultGPUUsage now, not its
+// producer — internal/gpuusage discovers usage from the pods occupying GPU nodes
+// and is the sole writer. These specs pin the consumer half.
 //
-//   - publishing from inside selectV2Optimizer, after its optimizer guard, meant
-//     no snapshot on a default (CostAware) deployment; and
-//   - publishing an EMPTY snapshot on the empty-population path conflated "no
-//     GPUs are in use" with "nothing could be measured", which is the same
-//     branch — a failed Prometheus collection also yields no requests.
-var _ = Describe("GPU usage snapshot publication", func() {
+// The engine used to publish what its own population held, and every way of
+// getting that wrong was found the hard way: publishing from inside
+// selectV2Optimizer left default (CostAware) deployments with no snapshot at all;
+// publishing zeros on the empty-population path conflated "nothing is in use"
+// with "nothing could be measured". Both are now unreachable by construction,
+// because this engine no longer writes the store — which is the point of moving
+// the producer out.
+var _ = Describe("GPU usage snapshot consumption", func() {
 	BeforeEach(func() {
 		// Reset rather than reassigning the package global: PublishGPUUsage and
 		// LatestGPUUsage read that variable unsynchronized, so swapping the
@@ -33,11 +33,9 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		decision.DefaultGPUUsage.Reset()
 	})
 
-	It("publishes usage independently of which optimizer is selected", func() {
-		// enableLimiter defaults to false, so the optimizer is CostAware and
-		// selectV2Optimizer returns at its guard. Publication must not be owned
-		// by anything downstream of that guard, or the capacity check goes blind
-		// on every default deployment.
+	It("never writes the snapshot itself", func() {
+		// One producer. If the engine writes here too, the two writers are free to
+		// disagree about the same cluster and whichever ran last wins.
 		e := &Engine{optimizer: pipeline.NewCostAwareOptimizer()}
 
 		opt, constraints := e.selectV2Optimizer(ctx, nil)
@@ -45,8 +43,19 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		Expect(constraints).To(BeNil())
 
 		_, ok := decision.LatestGPUUsage()
-		Expect(ok).To(BeFalse(),
-			"selectV2Optimizer must not own the publish; optimizeV2 publishes ahead of it")
+		Expect(ok).To(BeFalse(), "the saturation engine must not publish; internal/gpuusage does")
+	})
+
+	It("falls back to the unlimited optimizer when nothing has been observed", func() {
+		// The dangerous alternative is treating an absent snapshot as zero usage:
+		// GreedyByScore would then read the whole cluster as free and allocate it.
+		// Absent means unknown, and unknown must not become a confident claim.
+		e := &Engine{optimizer: pipeline.NewGreedyByScoreOptimizer()}
+
+		opt, constraints := e.selectV2Optimizer(ctx, nil)
+		Expect(constraints).To(BeNil())
+		Expect(opt.Name()).To(Equal(pipeline.NewCostAwareOptimizer().Name()),
+			"with no usage observed the GPU-aware optimizer must not run on a zero baseline")
 	})
 
 	It("keeps an absent snapshot distinguishable from a measured-empty one", func() {
@@ -62,43 +71,14 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		Expect(snap.ByType).To(BeEmpty())
 	})
 
-	It("publishes what the population is holding, in both views at once", func() {
-		// Driven through the production publish, not a restatement of it: the
-		// per-type and per-namespace views must come from the SAME population or
-		// a consumer comparing them sees a cluster that does not add up.
-		publishPopulationGPUUsage(ctx, []pipeline.ModelScalingRequest{
-			satReq("chat",
-				[]domain.VariantMetadata{{VariantName: "chat-a", AcceleratorName: "A100"}},
-				[]domain.VariantReplicaState{{VariantName: "chat-a", CurrentReplicas: 3, GPUsPerReplica: 2}}),
-			satReq("batch",
-				[]domain.VariantMetadata{{VariantName: "batch-a", AcceleratorName: "A100"}},
-				[]domain.VariantReplicaState{{VariantName: "batch-a", CurrentReplicas: 1, GPUsPerReplica: 4}}),
-		})
-
-		snap, ok := decision.LatestGPUUsage()
-		Expect(ok).To(BeTrue())
-		Expect(snap.ByType).To(HaveKeyWithValue("A100", 10),
-			"the cluster view sums both namespaces")
-		Expect(snap.ByNamespace).To(HaveKeyWithValue("chat", HaveKeyWithValue("A100", 6)))
-		Expect(snap.ByNamespace).To(HaveKeyWithValue("batch", HaveKeyWithValue("A100", 4)))
-	})
-
-	It("publishes nothing from a cycle that measured no model", func() {
-		// The path that matters most and is easiest to get wrong. Reaching
-		// optimizeV2 with no usable request does NOT mean the cluster is idle —
-		// a fleet parked at zero returns from optimize long before this — it means
-		// every active model failed collection. Publishing zeros here would tell
-		// the scale-from-zero engine there is room at exactly the moment WVA has
-		// lost sight of the population.
-		//
-		// Here the models are enumerated but their namespace has no saturation
-		// config loaded, which is the bootstrap shape of that failure.
-		measured := []pipeline.ModelScalingRequest{
-			satReq("chat",
-				[]domain.VariantMetadata{{VariantName: "chat-a", AcceleratorName: "A100"}},
-				[]domain.VariantReplicaState{{VariantName: "chat-a", CurrentReplicas: 3, GPUsPerReplica: 2}}),
-		}
-		publishPopulationGPUUsage(ctx, measured)
+	It("leaves the snapshot alone through a cycle that measured no model", func() {
+		// Reaching optimizeV2 with no usable request does NOT mean the cluster is
+		// idle — it means every active model failed collection. This used to be the
+		// most dangerous path in the engine, because it decided whether the rest of
+		// WVA got a capacity picture at all. Now it cannot touch it: the observation
+		// belongs to the refresher, whose own view of the cluster is unaffected by
+		// whether Prometheus answered this cycle.
+		decision.PublishGPUUsage(map[string]int{"A100": 6}, map[string]map[string]int{"chat": {"A100": 6}})
 
 		e := &Engine{Config: config.NewTestConfig(), optimizer: pipeline.NewCostAwareOptimizer()}
 		decisions := e.optimizeV2(ctx, map[string][]llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
@@ -110,9 +90,9 @@ var _ = Describe("GPU usage snapshot publication", func() {
 		Expect(decisions).To(BeEmpty())
 
 		snap, ok := decision.LatestGPUUsage()
-		Expect(ok).To(BeTrue(), "the last measured snapshot must survive a blind cycle")
+		Expect(ok).To(BeTrue(), "a blind cycle must not clear the observation")
 		Expect(snap.ByType).To(HaveKeyWithValue("A100", 6),
-			"a blind cycle must not overwrite the last real measurement with zeros")
+			"a blind cycle must not overwrite the observation with zeros")
 	})
 })
 

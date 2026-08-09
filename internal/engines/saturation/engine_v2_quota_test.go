@@ -5,58 +5,66 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
-// satReq builds a ModelScalingRequest with a saturation analyzer entry, the
-// discovery metadata naming each variant's accelerator, and the replica states
-// counting its GPUs — the three inputs computeCurrentGPUUsageByNamespace joins.
-// Accelerator comes from the metadata because that is where identity lives; the
-// analyzer's per-variant entries no longer carry it.
-func satReq(namespace string, variants []domain.VariantMetadata, states []domain.VariantReplicaState) pipeline.ModelScalingRequest {
-	vcs := make([]domain.VariantCapacity, 0, len(variants))
-	for _, m := range variants {
-		vcs = append(vcs, domain.VariantCapacity{VariantName: m.VariantName, Role: m.Role})
-	}
-	return pipeline.ModelScalingRequest{
-		Namespace: namespace,
-		AnalyzerResults: []pipeline.NamedAnalyzerResult{{
-			Name:   domain.SaturationAnalyzerName,
-			Result: &domain.AnalyzerResult{Namespace: namespace, VariantCapacities: vcs},
-		}},
-		Variants:      variants,
-		VariantStates: states,
-	}
-}
+// latestGPUUsage replaced the population sum, but it inherited one obligation
+// from it that the discovered view cannot satisfy on its own.
+//
+// A namespace-scoped quota is materialised only for namespaces PRESENT in the
+// per-namespace usage map (DefaultLimiter.ComputeConstraints treats its keys as
+// the active set). Discovery only sees namespaces that have a pod holding a GPU
+// right now — so a namespace whose fleet is parked, or which is being optimized
+// before anything starts, would drop out and lose its cap entirely, judged
+// instead against the cluster aggregate.
+var _ = Describe("latestGPUUsage", func() {
+	BeforeEach(func() { decision.DefaultGPUUsage.Reset() })
+	AfterEach(func() { decision.DefaultGPUUsage.Reset() })
 
-var _ = Describe("computeCurrentGPUUsageByNamespace", func() {
-	It("sums currentReplicas*gpusPerReplica per (namespace, accelerator type)", func() {
-		usage := computeCurrentGPUUsageByNamespace([]pipeline.ModelScalingRequest{
-			satReq("team-a",
-				[]domain.VariantMetadata{{VariantName: "v", AcceleratorName: "A100"}},
-				[]domain.VariantReplicaState{{VariantName: "v", CurrentReplicas: 2, GPUsPerReplica: 2}}),
-			satReq("team-b",
-				[]domain.VariantMetadata{{VariantName: "w", AcceleratorName: "H100"}},
-				[]domain.VariantReplicaState{{VariantName: "w", CurrentReplicas: 1, GPUsPerReplica: 4}}),
-		})
-		Expect(usage["team-a"]).To(HaveKeyWithValue("A100", 4))
-		Expect(usage["team-b"]).To(HaveKeyWithValue("H100", 4))
+	It("reports not-observed before anything is published", func() {
+		_, _, ok := latestGPUUsage(nil)
+		Expect(ok).To(BeFalse(), "absent must stay distinguishable from zero usage")
 	})
 
-	It("defaults GPUsPerReplica <= 0 to 1", func() {
-		usage := computeCurrentGPUUsageByNamespace([]pipeline.ModelScalingRequest{
-			satReq("team-a",
-				[]domain.VariantMetadata{{VariantName: "v", AcceleratorName: "A100"}},
-				[]domain.VariantReplicaState{{VariantName: "v", CurrentReplicas: 3, GPUsPerReplica: 0}}),
-		})
-		Expect(usage["team-a"]).To(HaveKeyWithValue("A100", 3), "GPUsPerReplica defaulted to 1")
+	It("passes the discovered figures through untouched", func() {
+		decision.PublishGPUUsage(
+			map[string]int{"A100": 4, "H100": 2},
+			map[string]map[string]int{"team-a": {"A100": 4}},
+		)
+		byType, byNS, ok := latestGPUUsage([]pipeline.ModelScalingRequest{{Namespace: "team-a"}})
+		Expect(ok).To(BeTrue())
+		Expect(byType).To(HaveKeyWithValue("A100", 4))
+		Expect(byType).To(HaveKeyWithValue("H100", 2), "usage WVA does not manage is still counted")
+		Expect(byNS["team-a"]).To(HaveKeyWithValue("A100", 4))
 	})
 
-	It("marks a namespace active (empty map) even when the request has no saturation entry", func() {
-		usage := computeCurrentGPUUsageByNamespace([]pipeline.ModelScalingRequest{{Namespace: "team-z"}})
-		Expect(usage).To(HaveKey("team-z"), "zero-replica / no-saturation namespace must still be constrained")
-		Expect(usage["team-z"]).To(BeEmpty())
+	It("materialises a namespace being optimized that holds no GPUs", func() {
+		decision.PublishGPUUsage(
+			map[string]int{"A100": 4},
+			map[string]map[string]int{"team-a": {"A100": 4}},
+		)
+		_, byNS, ok := latestGPUUsage([]pipeline.ModelScalingRequest{
+			{Namespace: "team-a"}, {Namespace: "team-parked"},
+		})
+		Expect(ok).To(BeTrue())
+		Expect(byNS).To(HaveKey("team-parked"),
+			"a namespace with no GPU-holding pod must still be constrained by its quota")
+		Expect(byNS["team-parked"]).To(BeEmpty())
+	})
+
+	It("does not mutate the stored snapshot", func() {
+		// Get documents its return as the shared copy. Materialising in place
+		// would leak invented namespaces into every later reader, including the
+		// scale-from-zero engine.
+		decision.PublishGPUUsage(map[string]int{"A100": 4}, map[string]map[string]int{"team-a": {"A100": 4}})
+
+		_, _, _ = latestGPUUsage([]pipeline.ModelScalingRequest{{Namespace: "team-parked"}})
+
+		snap, ok := decision.LatestGPUUsage()
+		Expect(ok).To(BeTrue())
+		Expect(snap.ByNamespace).ToNot(HaveKey("team-parked"),
+			"the shared snapshot must be left exactly as the producer published it")
 	})
 })
 
