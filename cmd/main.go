@@ -182,15 +182,21 @@ func main() {
 		setupLog.Info("LeaderWorkerSet CRD not found - support disabled (Deployment-only mode)")
 	}
 
-	// Detect KEDA for annotation-based ScaledObject discovery
-	kedaEnabled := crd.CheckKEDACRD(restConfig, setupLog)
-	if kedaEnabled {
-		setupLog.Info("KEDA ScaledObject CRD detected - annotation-based ScaledObject discovery enabled")
+	// KEDA is not optional: WVA discovers the workloads it manages by being called
+	// about them over the external-scaler contract, and KEDA is what makes those
+	// calls. Without it nothing ever registers, so WVA runs and manages nothing —
+	// which is quiet enough to be worth saying loudly here.
+	//
+	// The CRD check is a diagnostic only. Nothing branches on it: there is no
+	// ScaledObject watch, index or cached read left to gate (see
+	// docs/plans/engine/keda-driven-discovery.md).
+	if crd.CheckKEDACRD(restConfig, setupLog) {
+		setupLog.Info("KEDA ScaledObject CRD detected - WVA will be discovered by KEDA calling its external scaler")
 	} else {
-		setupLog.Info("KEDA ScaledObject CRD not found - annotation-based discovery limited to HPAs")
+		setupLog.Info("WARNING: KEDA ScaledObject CRD not found. WVA discovers workloads only when KEDA " +
+			"calls its external scaler, so nothing will be discovered or scaled until KEDA is installed " +
+			"and a ScaledObject names this scaler in a trigger.")
 	}
-	// Gate the pod locator's ScaledObject lookups on KEDA availability. Set before
-	// the saturation engine goroutine constructs its locator.
 
 	tlsOpts := []func(*tls.Config){
 		func(c *tls.Config) {
