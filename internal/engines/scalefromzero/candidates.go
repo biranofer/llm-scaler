@@ -197,18 +197,27 @@ func resolveVariantCost(ctx context.Context, va wvav1alpha1.VariantAutoscaling) 
 // The check is therefore best-effort by construction: it prevents waking onto an
 // accelerator that is known to be full, and stays out of the way when placement
 // cannot be reasoned about.
+//
+// Every one of those exits is REPORTED (see reportUnchecked). "This wake was not
+// capacity-checked" is not a detail: it is the difference between a placement
+// decision and no decision at all, and it is invisible in the outcome — the wake
+// looks identical either way. These used to be V(4) lines, which the shipped
+// verbosity discards, so the permissive path left no trace whatsoever.
 func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeline.ResourceConstraints {
-	logger := log.FromContext(ctx)
-
 	providers := pipeline.ConstraintProvidersFrom(e.gpuLimiter)
 	if len(providers) == 0 {
+		e.reportUnchecked(ctx, namespace, "no constraint provider is configured")
 		return nil
 	}
 
 	usage, ok := decision.LatestGPUUsage()
 	if !ok {
-		logger.V(logging.DEBUG).Info("No GPU usage snapshot published yet; waking without a capacity check",
-			"namespace", namespace)
+		// Not only the first tick after a restart. The saturation engine returns
+		// at len(activeVAs) == 0 WITHOUT publishing, so a fleet that is entirely
+		// parked — which is the state scale-from-zero exists to serve — never
+		// produces a snapshot at all, and every wake taken from it is unchecked.
+		e.reportUnchecked(ctx, namespace,
+			"the saturation engine has published no GPU-usage snapshot yet (no measured cycle over an active variant)")
 		return nil
 	}
 	if age := time.Since(usage.TakenAt); age > gpuUsageMaxAge {
@@ -217,8 +226,8 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		// for a blip, but an unbounded one would have this engine placing wakes
 		// against an arbitrarily old picture of the cluster, at 10Hz, for as long
 		// as the outage lasts. Past the bound, fall back to "unknown".
-		logger.V(logging.DEBUG).Info("GPU usage snapshot is too old to place against; waking without a capacity check",
-			"namespace", namespace, "age", age, "maxAge", gpuUsageMaxAge)
+		e.reportUnchecked(ctx, namespace, fmt.Sprintf(
+			"the GPU-usage snapshot is %s old, past the %s bound", age.Truncate(time.Second), gpuUsageMaxAge))
 		return nil
 	}
 
@@ -251,8 +260,15 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 			// already queued, on the strength of a failed lookup. Fall back to
 			// unknown, matching the saturation engine, which drops to its
 			// unlimited optimizer rather than let scale-up be silently blocked.
-			logger.Info("Could not compute GPU constraints; waking without a capacity check",
-				"provider", cp.Name(), "namespace", namespace, "error", err.Error())
+			//
+			// The usual cause is the Node API: an inventory limiter's Refresh
+			// lists nodes, so losing that permission (or the API) turns the whole
+			// check off. Note a SUCCESSFUL discovery that finds no GPU nodes does
+			// the opposite — empty pools mean every demanded type is unknown, and
+			// FitsGPUBudget denies unknown types outright. Only an error is
+			// permissive.
+			e.reportUnchecked(ctx, namespace, fmt.Sprintf(
+				"provider %q could not compute constraints: %v", cp.Name(), err))
 			return nil
 		}
 		constraints = append(constraints, c)
@@ -269,23 +285,9 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 // accelerator that was supposed to be full, which looks exactly like correct
 // behaviour. This is the line that distinguishes them — it says what WVA believed
 // was free, and the measured usage it derived that from.
-//
-// Gated on a CHANGE rather than a tick: this runs at 10Hz per model with pending
-// requests, and the budgets only move when the fleet does. That makes the rate
-// proportional to real scaling events, which is what earns it Info.
 func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*pipeline.ResourceConstraints, usageByType map[string]int) {
 	budgets, nsScoped := pipeline.GPUBudgets(constraints, namespace)
-	summary := fmt.Sprintf("%v|%t|%v", budgets, nsScoped, usageByType)
-
-	e.refusalMu.Lock()
-	if e.lastBudgets == nil {
-		e.lastBudgets = make(map[string]string)
-	}
-	unchanged := e.lastBudgets[namespace] == summary
-	e.lastBudgets[namespace] = summary
-	e.refusalMu.Unlock()
-
-	if unchanged {
+	if !e.placementBasisChanged(namespace, fmt.Sprintf("ok|%v|%t|%v", budgets, nsScoped, usageByType)) {
 		return
 	}
 	log.FromContext(ctx).Info("Scale-from-zero: GPU budgets available for placement",
@@ -293,6 +295,45 @@ func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints [
 		"gpuBudgets", budgets,
 		"namespaceScoped", nsScoped,
 		"gpusInUse", usageByType)
+}
+
+// reportUnchecked records that wakes in this namespace are being published with
+// NO capacity check, and why.
+//
+// Reported at Info, at the same level as the budgets themselves, because the two
+// are the same fact: what this wake was placed against. Silence here reads as
+// "the check passed" when it means "there was no check", and that misreading is
+// expensive — it is the reason an unbounded wake onto a full accelerator can look
+// like correct behaviour for as long as it lasts.
+func (e *Engine) reportUnchecked(ctx context.Context, namespace, reason string) {
+	if !e.placementBasisChanged(namespace, "none|"+reason) {
+		return
+	}
+	log.FromContext(ctx).Info("Scale-from-zero: waking WITHOUT a GPU capacity check",
+		"namespace", namespace, "reason", reason)
+}
+
+// placementBasisChanged reports whether what this namespace's wakes are judged
+// against differs from what was last reported, recording it either way.
+//
+// Gated on a CHANGE rather than a tick: gpuConstraints runs at 10Hz for every
+// model with pending requests, but the basis only moves when the fleet does. That
+// makes the log rate proportional to real events, which is what earns these lines
+// Info. It also means the transition that matters most — checked becoming
+// unchecked, or the reverse — is always reported, since the summaries differ.
+//
+// Guarded by refusalMu; see lastBudgets.
+func (e *Engine) placementBasisChanged(namespace, summary string) bool {
+	e.refusalMu.Lock()
+	defer e.refusalMu.Unlock()
+	if e.lastBudgets == nil {
+		e.lastBudgets = make(map[string]string)
+	}
+	if e.lastBudgets[namespace] == summary {
+		return false
+	}
+	e.lastBudgets[namespace] = summary
+	return true
 }
 
 // requirePrefill reports whether the model refuses a decode-only wake.

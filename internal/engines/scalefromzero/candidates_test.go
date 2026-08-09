@@ -3,7 +3,11 @@ package scalefromzero
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/go-logr/logr/funcr"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -199,4 +203,89 @@ func (c capturingProvider) Name() string { return "capturing" }
 func (c capturingProvider) ComputeConstraints(_ context.Context, _ map[string]int, byNS map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
 	c.fn(byNS)
 	return &pipeline.ResourceConstraints{ProviderName: "capturing"}, nil
+}
+
+// TestUncheckedWakeIsReportedAtInfo pins that every exit which skips the capacity
+// check says so at a verbosity the shipped deployment keeps.
+//
+// This is the regression that made the permissive path undiagnosable: the skips
+// were V(4) lines, and the deployed logger keeps V(1) but not V(4), so a wake
+// published with NO capacity check produced a log identical to one that passed a
+// check. The sink below is deliberately configured to discard V(1) and above — a
+// stricter bar than production — so a future demotion back to a V-level fails
+// here instead of in a cluster.
+func TestUncheckedWakeIsReportedAtInfo(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func() *Engine
+		reason string
+	}{
+		{
+			name:   "no constraint provider",
+			setup:  func() *Engine { decision.DefaultGPUUsage.Reset(); return &Engine{} },
+			reason: "no constraint provider",
+		},
+		{
+			name: "no usage snapshot yet",
+			setup: func() *Engine {
+				decision.DefaultGPUUsage.Reset()
+				return &Engine{gpuLimiter: okProvider{name: "gpu-limiter"}}
+			},
+			reason: "no GPU-usage snapshot",
+		},
+		{
+			name: "a provider could not compute constraints",
+			setup: func() *Engine {
+				decision.DefaultGPUUsage.Reset()
+				decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
+				return &Engine{gpuLimiter: failingProvider{name: "quota-limiter"}}
+			},
+			reason: "could not compute constraints",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logged []string
+			sink := funcr.New(func(prefix, args string) { logged = append(logged, args) },
+				funcr.Options{Verbosity: 0}) // keeps Info only; V(1)+ discarded
+			ctx := log.IntoContext(context.Background(), sink)
+
+			e := tt.setup()
+			if got := e.gpuConstraints(ctx, "chat"); got != nil {
+				t.Fatalf("gpuConstraints = %v, want nil (unknown, so permissive)", got)
+			}
+
+			var found bool
+			for _, line := range logged {
+				if strings.Contains(line, "WITHOUT a GPU capacity check") && strings.Contains(line, tt.reason) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("the wake was published with no capacity check and nothing said so at Info; logged=%v", logged)
+			}
+		})
+	}
+}
+
+// TestPlacementBasisReportsTheTransition pins that the change-throttle cannot
+// swallow the transition that matters. Checked becoming unchecked is the whole
+// signal — throttling on "namespace already reported" rather than on the basis
+// itself would report the first state and then go quiet across the change.
+func TestPlacementBasisReportsTheTransition(t *testing.T) {
+	e := &Engine{}
+	if !e.placementBasisChanged("chat", "ok|budgets") {
+		t.Fatal("the first report for a namespace must be logged")
+	}
+	if e.placementBasisChanged("chat", "ok|budgets") {
+		t.Error("an unchanged basis must not re-log; this runs at 10Hz")
+	}
+	if !e.placementBasisChanged("chat", "none|snapshot went away") {
+		t.Error("checked -> unchecked must be reported")
+	}
+	if !e.placementBasisChanged("chat", "ok|budgets") {
+		t.Error("unchecked -> checked must be reported too")
+	}
 }
