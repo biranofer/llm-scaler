@@ -178,16 +178,60 @@ func TestSelectServingSet(t *testing.T) {
 			wantSet:     nil,
 		},
 		{
-			name: "a model already serving is reported as such, not as a refusal",
+			name: "a model already serving with nothing left to wake is reported as such, not as a refusal",
 			in: SelectionInput{
 				Namespace:     selNS,
-				Candidates:    []Candidate{cand("p", domain.RolePrefill, "H100", 2, 1)},
+				Candidates:    []Candidate{cand("d2", domain.RoleDecode, "H100", 2, 1)},
 				DecodeCovered: true,
 				Constraints:   pools(map[string]int{"H100": 8}),
 			},
 			// Distinct from the refusals: the caller must be able to stay silent
 			// for this one, since it is the steady state for every serving model
 			// with a queue and the loop runs at 10Hz.
+			wantOutcome: OutcomeAlreadyServing,
+			wantSet:     nil,
+		},
+		{
+			// The two halves of a P/D model are discovered when KEDA first calls
+			// about each, so they routinely become visible on different ticks and
+			// decode is woken alone. Without this, the parked prefill is stranded
+			// FOREVER: this engine would report already-serving from then on, and
+			// the saturation engine only scales what is already running. The model
+			// keeps serving, silently degraded, which is why it went unnoticed.
+			name: "a serving model's parked prefill is still woken",
+			in: SelectionInput{
+				Namespace:     selNS,
+				Candidates:    []Candidate{cand("p", domain.RolePrefill, "H100", 2, 1)},
+				DecodeCovered: true,
+				Constraints:   pools(map[string]int{"H100": 8}),
+			},
+			wantOutcome: OutcomePrefillCatchUp,
+			wantSet:     []string{"p"},
+		},
+		{
+			// Charged for its own demand only: the running decode already holds
+			// its GPUs and is counted as used, so billing for it again here would
+			// refuse a prefill that fits.
+			name: "the catch-up prefill is judged on its own demand",
+			in: SelectionInput{
+				Namespace:     selNS,
+				Candidates:    []Candidate{cand("p", domain.RolePrefill, "H100", 2, 1)},
+				DecodeCovered: true,
+				Constraints:   pools(map[string]int{"H100": 2}),
+			},
+			wantOutcome: OutcomePrefillCatchUp,
+			wantSet:     []string{"p"},
+		},
+		{
+			// A model that cannot complete still serves. Catching up is best
+			// effort, not a refusal to report.
+			name: "a serving model whose prefill does not fit stays already-serving",
+			in: SelectionInput{
+				Namespace:     selNS,
+				Candidates:    []Candidate{cand("p", domain.RolePrefill, "H100", 4, 1)},
+				DecodeCovered: true,
+				Constraints:   pools(map[string]int{"H100": 2}),
+			},
 			wantOutcome: OutcomeAlreadyServing,
 			wantSet:     nil,
 		},

@@ -3,8 +3,10 @@ package gpuusage
 import (
 	"context"
 	"errors"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 )
@@ -25,192 +27,144 @@ func (f *fakeDiscovery) DiscoverUsageByNamespace(context.Context) (map[string]in
 	return f.byType, f.byNamespace, nil
 }
 
-func TestRefreshPublishesBothViews(t *testing.T) {
-	store := decision.NewGPUUsageStore()
-	r := &Refresher{
-		Store: store,
-		Discovery: &fakeDiscovery{
-			byType:      map[string]int{"A100": 6},
-			byNamespace: map[string]map[string]int{"chat": {"A100": 4}, "batch": {"A100": 2}},
-		},
-	}
+var _ = Describe("Refresher", func() {
+	var (
+		ctx   context.Context
+		store *decision.GPUUsageStore
+		disc  *fakeDiscovery
+		r     *Refresher
+	)
 
-	if err := r.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
+	BeforeEach(func() {
+		ctx = context.Background()
+		store = decision.NewGPUUsageStore()
+		disc = &fakeDiscovery{}
+		r = &Refresher{Store: store, Discovery: disc}
+	})
 
-	snap, ok := store.Get()
-	if !ok {
-		t.Fatal("nothing published")
-	}
-	if snap.ByType["A100"] != 6 {
-		t.Errorf("ByType[A100] = %d, want 6", snap.ByType["A100"])
-	}
-	if snap.ByNamespace["chat"]["A100"] != 4 || snap.ByNamespace["batch"]["A100"] != 2 {
-		t.Errorf("ByNamespace = %v, want both namespaces carried through", snap.ByNamespace)
-	}
-}
+	Describe("Refresh", func() {
+		It("publishes the cluster and per-namespace views together", func() {
+			disc.byType = map[string]int{"A100": 6}
+			disc.byNamespace = map[string]map[string]int{"chat": {"A100": 4}, "batch": {"A100": 2}}
 
-// TestFailedRefreshKeepsTheLastObservation pins the difference between "unknown"
-// and "idle".
-//
-// Consumers treat an absent snapshot as unknown and bound how stale a present one
-// may be, so keeping the previous reading degrades safely. Publishing zeros for a
-// failed look would not degrade at all — it would be BELIEVED, and a capacity
-// check would report the cluster as empty at the moment WVA stopped being able to
-// see it.
-func TestFailedRefreshKeepsTheLastObservation(t *testing.T) {
-	store := decision.NewGPUUsageStore()
-	disc := &fakeDiscovery{byType: map[string]int{"A100": 8}}
-	r := &Refresher{Store: store, Discovery: disc}
+			Expect(r.Refresh(ctx)).To(Succeed())
 
-	if err := r.Refresh(context.Background()); err != nil {
-		t.Fatalf("first Refresh: %v", err)
-	}
+			snap, ok := store.Get()
+			Expect(ok).To(BeTrue())
+			Expect(snap.ByType).To(HaveKeyWithValue("A100", 6))
+			Expect(snap.ByNamespace).To(HaveKeyWithValue("chat", HaveKeyWithValue("A100", 4)))
+			Expect(snap.ByNamespace).To(HaveKeyWithValue("batch", HaveKeyWithValue("A100", 2)))
+		})
 
-	disc.err = errors.New("the node API is unreachable")
-	if err := r.Refresh(context.Background()); err == nil {
-		t.Fatal("a failed observation must be reported to the caller")
-	}
+		It("keeps the last observation when a look fails", func() {
+			// Consumers treat an ABSENT snapshot as unknown and bound how stale a
+			// present one may be, so keeping the previous reading degrades safely.
+			// Publishing zeros would not degrade at all — it would be BELIEVED, and
+			// a capacity check would report the cluster empty at exactly the moment
+			// WVA stopped being able to see it.
+			disc.byType = map[string]int{"A100": 8}
+			Expect(r.Refresh(ctx)).To(Succeed())
 
-	snap, ok := store.Get()
-	if !ok {
-		t.Fatal("the previous observation was dropped")
-	}
-	if snap.ByType["A100"] != 8 {
-		t.Errorf("ByType[A100] = %d, want the last good reading of 8, not zeros", snap.ByType["A100"])
-	}
-}
+			disc.err = errors.New("the node API is unreachable")
+			Expect(r.Refresh(ctx)).ToNot(Succeed(), "a failed observation must reach the caller")
 
-// TestStartObservesBeforeTicking pins the ordering the engines depend on: the
-// first observation happens immediately, not one interval later. An interval of
-// dead time at startup is an interval in which every scaling decision is taken
-// with no capacity evidence — which is the defect this package was added to fix.
-func TestStartObservesBeforeTicking(t *testing.T) {
-	store := decision.NewGPUUsageStore()
-	disc := &fakeDiscovery{byType: map[string]int{"H100": 2}}
-	// Long enough that a tick cannot plausibly fire during the test, so a passing
-	// run proves the FIRST refresh was not driven by the ticker.
-	r := &Refresher{Store: store, Discovery: disc, Interval: time.Hour}
+			snap, ok := store.Get()
+			Expect(ok).To(BeTrue(), "the previous observation was dropped")
+			Expect(snap.ByType).To(HaveKeyWithValue("A100", 8), "zeros must not replace the last good reading")
+		})
+	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- r.Start(ctx) }()
+	Describe("Start", func() {
+		It("observes before the first tick", func() {
+			// An interval of dead time at startup is an interval in which every
+			// scaling decision is taken with no capacity evidence — the defect this
+			// package was added to fix. The hour-long interval means a pass proves
+			// the observation was not driven by the ticker.
+			disc.byType = map[string]int{"H100": 2}
+			r.Interval = time.Hour
 
-	deadline := time.After(2 * time.Second)
-	for {
-		if _, ok := store.Get(); ok {
-			break
-		}
-		select {
-		case <-deadline:
+			runCtx, cancel := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() { done <- r.Start(runCtx) }()
+			defer cancel()
+
+			Eventually(func() bool {
+				_, ok := store.Get()
+				return ok
+			}, 2*time.Second, 5*time.Millisecond).Should(BeTrue(), "nothing published before the first tick")
+
 			cancel()
-			t.Fatal("no observation was published before the first tick")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+			Eventually(done).Should(Receive(BeNil()))
+		})
 
-	cancel()
-	if err := <-done; err != nil {
-		t.Errorf("Start returned %v, want nil on context cancellation", err)
-	}
-}
+		It("survives a failed first observation", func() {
+			// The cluster may not be reachable when the process starts; giving up
+			// there would leave WVA with no capacity picture for its whole life.
+			disc.err = errors.New("not ready")
+			r.Interval = time.Hour
 
-// TestStartSurvivesAFailedFirstObservation: the cluster may not be reachable when
-// the process starts, and a refresher that gave up there would leave WVA with no
-// capacity picture for its whole lifetime.
-func TestStartSurvivesAFailedFirstObservation(t *testing.T) {
-	disc := &fakeDiscovery{err: errors.New("not ready")}
-	r := &Refresher{Store: decision.NewGPUUsageStore(), Discovery: disc, Interval: time.Hour}
+			runCtx, cancel := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() { done <- r.Start(runCtx) }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- r.Start(ctx) }()
+			Eventually(func() int { return disc.calls }, time.Second, 5*time.Millisecond).
+				Should(BeNumerically(">", 0), "Start never attempted an observation")
 
-	// Give Start a moment to make (and survive) its first attempt.
-	time.Sleep(50 * time.Millisecond)
-	cancel()
+			cancel()
+			Eventually(done).Should(Receive(BeNil()), "a failed first observation must not be fatal")
+		})
+	})
 
-	if err := <-done; err != nil {
-		t.Errorf("Start returned %v; a failed first observation must not be fatal", err)
-	}
-	if disc.calls == 0 {
-		t.Error("Start never attempted an observation")
-	}
-}
+	Describe("EnsureFresh", func() {
+		It("observes again when the published view is stale", func() {
+			// The reason this exists: a placement is decided the instant demand
+			// appears, and the periodic observation can be a whole interval old by
+			// then. The scale-from-zero e2e failed exactly here — a workload became
+			// Ready, a wake was considered a second later, and the budget came from
+			// an observation taken before that workload existed, so it was waved
+			// onto an accelerator that was already full.
+			disc.byType = map[string]int{"A100": 0}
+			Expect(r.Refresh(ctx)).To(Succeed())
 
-// TestEnsureFreshObservesWhenStale pins the reason EnsureFresh exists: a
-// placement is decided the instant demand appears, and the periodic observation
-// can be a whole interval old by then.
-//
-// The scale-from-zero e2e failed exactly here — a workload became Ready, a wake
-// was considered a second later, and the budget was computed from an observation
-// taken before that workload existed, so it was waved onto an accelerator that
-// was already full.
-func TestEnsureFreshObservesWhenStale(t *testing.T) {
-	store := decision.NewGPUUsageStore()
-	disc := &fakeDiscovery{byType: map[string]int{"A100": 0}}
-	r := &Refresher{Store: store, Discovery: disc}
+			disc.byType = map[string]int{"A100": 4} // a workload starts and takes the pool
+			r.EnsureFresh(ctx, 0)
 
-	if err := r.Refresh(context.Background()); err != nil {
-		t.Fatalf("seed Refresh: %v", err)
-	}
-	// The cluster changes: a workload starts and takes the whole pool.
-	disc.byType = map[string]int{"A100": 4}
+			snap, _ := store.Get()
+			Expect(snap.ByType).To(HaveKeyWithValue("A100", 4),
+				"the decision would have been taken against a cluster that no longer exists")
+		})
 
-	// maxAge 0 makes any observation stale, which is what a caller asking for
-	// "current" effectively wants.
-	r.EnsureFresh(context.Background(), 0)
+		It("reuses an observation that is still current", func() {
+			// The caller runs at 10Hz; re-walking the cache every tick would buy
+			// nothing.
+			disc.byType = map[string]int{"A100": 1}
+			Expect(r.Refresh(ctx)).To(Succeed())
+			before := disc.calls
 
-	snap, _ := store.Get()
-	if snap.ByType["A100"] != 4 {
-		t.Errorf("ByType[A100] = %d, want 4 — the decision would have been taken against a "+
-			"cluster that no longer exists", snap.ByType["A100"])
-	}
-}
+			for range 20 {
+				r.EnsureFresh(ctx, time.Minute)
+			}
+			Expect(disc.calls).To(Equal(before), "a current observation must be reused")
+		})
 
-// TestEnsureFreshSkipsWhenCurrent: the caller runs at 10Hz, so a fresh-enough
-// observation must be reused rather than re-walking the cache on every tick.
-func TestEnsureFreshSkipsWhenCurrent(t *testing.T) {
-	disc := &fakeDiscovery{byType: map[string]int{"A100": 1}}
-	r := &Refresher{Store: decision.NewGPUUsageStore(), Discovery: disc}
+		It("keeps the previous observation when the look fails", func() {
+			// A blip must not become a refusal to wake.
+			disc.byType = map[string]int{"A100": 2}
+			Expect(r.Refresh(ctx)).To(Succeed())
 
-	if err := r.Refresh(context.Background()); err != nil {
-		t.Fatalf("seed Refresh: %v", err)
-	}
-	before := disc.calls
+			disc.err = errors.New("transient")
+			r.EnsureFresh(ctx, 0)
 
-	for range 20 {
-		r.EnsureFresh(context.Background(), time.Minute)
-	}
-	if disc.calls != before {
-		t.Errorf("observed %d extra times; a current observation must be reused", disc.calls-before)
-	}
-}
+			snap, ok := store.Get()
+			Expect(ok).To(BeTrue())
+			Expect(snap.ByType).To(HaveKeyWithValue("A100", 2))
+		})
 
-// TestEnsureFreshOnNilRefresherIsANoOp: the engine field is optional, and a nil
-// receiver must not panic the 10Hz loop.
-func TestEnsureFreshOnNilRefresherIsANoOp(t *testing.T) {
-	var r *Refresher
-	r.EnsureFresh(context.Background(), 0)
-}
-
-// TestEnsureFreshSurvivesAFailedObservation: a blip must leave the previous
-// observation standing rather than failing the placement, which would turn a
-// transient discovery error into a refusal to wake.
-func TestEnsureFreshSurvivesAFailedObservation(t *testing.T) {
-	store := decision.NewGPUUsageStore()
-	disc := &fakeDiscovery{byType: map[string]int{"A100": 2}}
-	r := &Refresher{Store: store, Discovery: disc}
-
-	if err := r.Refresh(context.Background()); err != nil {
-		t.Fatalf("seed Refresh: %v", err)
-	}
-	disc.err = errors.New("transient")
-	r.EnsureFresh(context.Background(), 0)
-
-	snap, ok := store.Get()
-	if !ok || snap.ByType["A100"] != 2 {
-		t.Errorf("snapshot = %v (ok=%v), want the previous observation kept", snap, ok)
-	}
-}
+		It("is a no-op on a nil Refresher", func() {
+			// The engine field is optional; a nil receiver must not panic the 10Hz
+			// loop.
+			var nilRefresher *Refresher
+			Expect(func() { nilRefresher.EnsureFresh(ctx, 0) }).ToNot(Panic())
+		})
+	})
+})

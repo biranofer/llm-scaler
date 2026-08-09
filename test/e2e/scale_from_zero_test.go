@@ -48,19 +48,16 @@ func externalScalerAddress() string {
 // anchors the log window — pass the moment the trigger job was created, so an
 // activation left over from an earlier run of the same suite (the variant names
 // are fixed) cannot satisfy the spec.
-// alsoContaining are extra substrings that must appear on the SAME activation
-// line, e.g. the serving-set outcome.
-//
 // Assert everything you care about here rather than grepping the controller log
 // after the run: kubelet rotates the container log, so a post-hoc grep can come
 // back empty for an activation that demonstrably happened.
-func expectScaleFromZeroEngineActivation(variantName string, since time.Time, alsoContaining ...string) {
+func expectScaleFromZeroEngineActivation(variantName string, since time.Time) {
 	GinkgoHelper()
 	const controllerManagerLabel = "control-plane=controller-manager"
 	// Logged by internal/engines/scalefromzero once it publishes the activation
 	// to the decision store, which is what WVA pushes to KEDA.
 	const pattern = "Published scale-from-zero activation"
-	required := append([]string{pattern, variantName}, alsoContaining...)
+	required := []string{pattern, variantName}
 	Eventually(func(g Gomega) {
 		// Recomputed per attempt so the window always starts at `since`.
 		sinceSeconds := int64(time.Since(since).Seconds()) + 1

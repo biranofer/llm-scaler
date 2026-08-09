@@ -347,24 +347,33 @@ func (e *Engine) processInactiveModel(
 		return err
 	}
 
+	// A P/D model whose decode is up but whose prefill is still parked has to be
+	// reconsidered even with an empty queue — and its queue IS empty, because the
+	// decode it is serving from drained it. Gating that on demand would make the
+	// completion depend on a queue that only exists while the model cannot serve,
+	// which is precisely the window it has already left.
+	catchUpWanted := covered.decode && !covered.prefill && hasPrefillCandidate(candidates)
+
 	// Check for pending requests using EPP flowcontrol queue size metrics
 	result := results["all_metrics"]
 	pending, pendingRequestExist := pendingRequestsForModel(result.Values, group.modelID)
-	if !pendingRequestExist {
+	if !pendingRequestExist && !catchUpWanted {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",
 			"namespace", group.namespace,
 			"modelID", group.modelID)
 		return nil
 	}
-	// DEBUG, not Info: this fires on every 100ms tick for as long as ANY request
-	// is queued, including for models that are already serving fine and for
-	// refusals whose reason has not changed. The events worth an Info line are
-	// the outcomes below — a wake, or a refusal — not the demand itself.
-	logger.V(logging.DEBUG).Info(
-		"Target workload has pending requests",
-		"metricName", pending.Labels[metricNameLabel],
-		"metric", pending.Labels, "value", pending.Value)
+	if pendingRequestExist {
+		// DEBUG, not Info: this fires on every 100ms tick for as long as ANY
+		// request is queued, including for models that are already serving fine
+		// and for refusals whose reason has not changed. The events worth an Info
+		// line are the outcomes below — a wake, or a refusal — not the demand.
+		logger.V(logging.DEBUG).Info(
+			"Target workload has pending requests",
+			"metricName", pending.Labels[metricNameLabel],
+			"metric", pending.Labels, "value", pending.Value)
+	}
 
 	constraints := e.gpuConstraints(ctx, group.namespace)
 	selected, outcome := selectServingSet(SelectionInput{

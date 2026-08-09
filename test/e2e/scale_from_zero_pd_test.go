@@ -167,16 +167,34 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 		By("Waiting for the engine to publish an activation for the decode variant")
 		// Decode is the mandatory half of the serving set: whatever happens to
 		// prefill, a model that cannot serve is a failure.
-		//
-		// The serving set is asserted here too. Nothing constrains GPUs in this
-		// environment, so both halves fit and the engine must pair them — if it
-		// reported decode-only, the prefill variant was not considered part of the
-		// model at all (a grouping or role-resolution bug), which is precisely
-		// what this suite exists to catch.
-		expectScaleFromZeroEngineActivation(decodeScal+"-so", triggerStart, `"servingSet": "decode+prefill"`)
+		expectScaleFromZeroEngineActivation(decodeScal+"-so", triggerStart)
 
 		By("Waiting for the engine to publish an activation for the prefill variant")
-		expectScaleFromZeroEngineActivation(prefillScal+"-so", triggerStart, `"servingSet": "decode+prefill"`)
+		// BOTH halves must be woken — that is what "discovered as one model with
+		// two roles" means, and it is the thing this suite exists to catch.
+		//
+		// The serving-set LABEL is deliberately not asserted. Each half is
+		// discovered when KEDA first calls about it, so the two routinely become
+		// visible on different ticks: sometimes the engine pairs them in one
+		// decision ("decode+prefill"), sometimes it wakes decode first and
+		// completes the model on a later tick ("prefill-catchup"). Both are
+		// correct, and pinning one of them made this spec assert a race rather
+		// than the contract. What must hold either way is that prefill is woken
+		// and stops being stranded at zero.
+		expectScaleFromZeroEngineActivation(prefillScal+"-so", triggerStart)
+
+		By("Verifying the prefill workload also leaves zero")
+		Eventually(func(g Gomega) {
+			deploy, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, prefillDeploy, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			var specReplicas int32
+			if deploy.Spec.Replicas != nil {
+				specReplicas = *deploy.Spec.Replicas
+			}
+			g.Expect(specReplicas).To(BeNumerically(">", 0),
+				"a disaggregated model whose prefill never leaves zero runs degraded forever")
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSlowSec)*time.Second).
+			Should(Succeed())
 
 		By("Verifying the decode workload leaves zero")
 		Eventually(func(g Gomega) {

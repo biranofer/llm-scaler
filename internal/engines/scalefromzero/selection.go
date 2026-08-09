@@ -52,12 +52,16 @@ const (
 	// OutcomeDecodeOnly woke decode alone: either the model is not
 	// disaggregated, or no prefill could be placed and requirePrefill is false.
 	OutcomeDecodeOnly SelectionOutcome = "decode-only"
-	// OutcomeAlreadyServing means the model already has a running decode, so
-	// there is nothing to wake. A queue building on a serving model is a
+	// OutcomeAlreadyServing means the model already has a running decode and
+	// nothing is left to wake. A queue building on a serving model is a
 	// saturation problem, not an activation one. Distinct from the refusals
 	// below because it is the steady state for every serving model and must not
 	// be reported as a failure to wake.
 	OutcomeAlreadyServing SelectionOutcome = "already-serving"
+	// OutcomePrefillCatchUp woke a prefill variant for a model whose decode is
+	// already up. It is not a cold start — the model can serve — but it is the
+	// only path by which a P/D model that came up decode-first ever completes.
+	OutcomePrefillCatchUp SelectionOutcome = "prefill-catchup"
 	// OutcomeNoDecodeCandidate means the model has no inactive decode variant to
 	// wake at all.
 	OutcomeNoDecodeCandidate SelectionOutcome = "no-decode-candidate"
@@ -108,7 +112,23 @@ type SelectionInput struct {
 // search exactly.
 func selectServingSet(in SelectionInput) ([]Candidate, SelectionOutcome) {
 	if in.DecodeCovered {
-		// Already serving: not a scale-from-zero case.
+		// Serving, but not necessarily finished. A P/D model whose two halves
+		// become visible on different ticks — which is the normal case, since each
+		// is discovered when KEDA first calls about it — wakes decode alone, and
+		// from the next tick onwards this branch would return here forever. The
+		// prefill half is then stranded at zero permanently: this engine has
+		// declared itself done, and the saturation engine only scales what is
+		// already running, so nothing else will ever wake it.
+		//
+		// The model keeps serving throughout, which is why this went unnoticed —
+		// the cost is a disaggregated deployment silently running degraded, with
+		// the router doing prefill on the decode worker for the life of the model.
+		//
+		// Waking prefill here is not "waking prefill alone", the one P/D outcome
+		// that is always wrong: decode is up by definition on this branch.
+		if prefill, ok := prefillCatchUp(in); ok {
+			return prefill, OutcomePrefillCatchUp
+		}
 		return nil, OutcomeAlreadyServing
 	}
 
@@ -143,6 +163,35 @@ func selectServingSet(in SelectionInput) ([]Candidate, SelectionOutcome) {
 		}
 	}
 	return nil, OutcomeNoCapacity
+}
+
+// hasPrefillCandidate reports whether any candidate is a prefill-only variant.
+func hasPrefillCandidate(candidates []Candidate) bool {
+	_, prefills := splitByRole(candidates)
+	return len(prefills) > 0
+}
+
+// prefillCatchUp returns the cheapest prefill that can be placed for a model
+// whose decode is already running and whose prefill is not.
+//
+// Judged on its own demand, not a pair's: the decode is already holding its GPUs
+// and is counted as used, so charging for it again would refuse a prefill that
+// fits.
+func prefillCatchUp(in SelectionInput) ([]Candidate, bool) {
+	if in.PrefillCovered {
+		return nil, false
+	}
+	_, prefills := splitByRole(in.Candidates)
+	if len(prefills) == 0 {
+		return nil, false
+	}
+	sortByCost(prefills)
+	for _, p := range prefills {
+		if set := []Candidate{p}; fits(in, set) {
+			return set, true
+		}
+	}
+	return nil, false
 }
 
 // cheapestFeasiblePair returns the lowest-combined-cost (decode, prefill) pair
