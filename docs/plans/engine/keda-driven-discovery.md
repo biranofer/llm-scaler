@@ -154,6 +154,27 @@ exactly the state WVA is already in before its first optimization cycle:
 `GetMetrics` returns 0 and HPA holds the target at `minReplicaCount`. No new
 failure mode, and no persistence needed.
 
+## Consequence: the Prometheus-trigger delivery mode is gone
+
+WVA could be delivered two ways: KEDA calls WVA's external scaler over gRPC, or
+WVA publishes a `wva_desired_replicas` gauge and KEDA reads it with a plain
+`prometheus` trigger. The second was the documented escape hatch.
+
+Call-driven discovery removes it, and not by choice — **a `prometheus` trigger
+never contacts WVA at all.** KEDA talks to Prometheus, not to us. There is no call,
+so there is no registration, so the workload is never discovered, so WVA never
+publishes the gauge KEDA is waiting for. The two halves deadlock.
+
+It fails quietly, which is the dangerous part: nothing errors, the workload simply
+sits at its replica count. The e2e fixture default was moved to the external
+trigger for exactly this reason (`fixtures.SetExternalScalerAddress`), so a suite
+cannot forget it and then time out with no explanation.
+
+If the metric-shop mode is ever wanted back, it needs its own registration
+channel — a config-listed set of workloads, or the external-metrics API server
+below, whose request would register the object the same way a gRPC call does. An
+annotation would work too, but that is what this design removed.
+
 ## HPA-only clusters
 
 Killed now, restored later as a separate path: WVA serves

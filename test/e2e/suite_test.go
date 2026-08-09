@@ -30,6 +30,7 @@ import (
 	infextv1alpha2 "sigs.k8s.io/gateway-api-inference-extension/apix/v1alpha2"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 	// +kubebuilder:scaffold:imports
 )
@@ -61,6 +62,12 @@ var _ = BeforeSuite(func() {
 
 	By("Loading configuration from environment")
 	cfg = LoadConfigFromEnv()
+
+	// Point every ScaledObject fixture at WVA's external scaler. That call is what
+	// registers a workload with WVA — a `prometheus` trigger never contacts WVA at
+	// all, so a fixture using one is never discovered and simply never scales.
+	fixtures.SetExternalScalerAddress(externalScalerAddress())
+
 	SetDefaultEventuallyTimeout(time.Duration(cfg.EventuallyStandardSec) * time.Second)
 	SetDefaultEventuallyPollingInterval(time.Duration(cfg.PollIntervalSec) * time.Second)
 

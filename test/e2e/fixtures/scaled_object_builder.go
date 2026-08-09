@@ -85,6 +85,21 @@ func WithWVATriggerMetadata(modelID, cost string) ScaledObjectOption {
 	}
 }
 
+// externalScalerAddr is the WVA external-scaler service every fixture points KEDA
+// at by default. Set once from the suite (SetExternalScalerAddress).
+var externalScalerAddr string
+
+// SetExternalScalerAddress configures the default trigger's target. Call it once
+// in suite setup, before building any ScaledObject.
+//
+// It exists because the default HAS to be the external scaler now. A `prometheus`
+// trigger never contacts WVA at all — KEDA reads the wva_desired_replicas gauge
+// out of Prometheus instead — so under call-driven discovery a workload scaled
+// that way is never registered, never discovered, and WVA never publishes the
+// gauge KEDA is waiting for. A fixture that forgot the trigger option would not
+// fail loudly; it would sit at its replica count until the spec timed out.
+func SetExternalScalerAddress(addr string) { externalScalerAddr = addr }
+
 // Private carrier keys for the deferred trigger metadata. They never reach the
 // cluster: applyWVATriggerMetadata removes them.
 const (
@@ -115,6 +130,37 @@ func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
 			so.Spec.Triggers[i].Metadata[registry.VariantCostKey] = cost
 		}
 	}
+}
+
+// defaultTriggers returns the trigger every fixture gets unless an option
+// replaces it: KEDA calling WVA's external scaler over gRPC.
+//
+// The prometheus fallback below is only reachable when no address has been set,
+// which in a configured suite means a programming error rather than a supported
+// mode — it is kept so a fixture built outside the suite still produces a valid
+// object rather than one the CRD rejects for having no triggers.
+func defaultTriggers(prometheusURL, query string) []kedav1alpha1.ScaleTriggers {
+	if externalScalerAddr != "" {
+		return []kedav1alpha1.ScaleTriggers{{
+			Type: "external",
+			Name: "wva-external-scaler",
+			Metadata: map[string]string{
+				"scalerAddress": externalScalerAddr,
+			},
+		}}
+	}
+	return []kedav1alpha1.ScaleTriggers{{
+		Type: "prometheus",
+		Name: "wva-desired-replicas",
+		Metadata: map[string]string{
+			"serverAddress":       prometheusURL,
+			"query":               query,
+			"threshold":           "1",
+			"activationThreshold": "0",
+			"metricType":          "Value", // desired replicas is an absolute gauge; use value directly, not per-pod average
+			"unsafeSsl":           "true",
+		},
+	}}
 }
 
 // WithExternalScalerTrigger replaces the ScaledObject's triggers with a single
@@ -243,20 +289,7 @@ func buildScaledObject(namespace, name, scaleTargetName, variantName string, min
 		CooldownPeriod:  ptr.To(int32(30)),
 		MinReplicaCount: ptr.To(minReplicas),
 		MaxReplicaCount: ptr.To(maxReplicas),
-		Triggers: []kedav1alpha1.ScaleTriggers{
-			{
-				Type: "prometheus",
-				Name: "wva-desired-replicas",
-				Metadata: map[string]string{
-					"serverAddress":       prometheusURL,
-					"query":               query,
-					"threshold":           "1",
-					"activationThreshold": "0",
-					"metricType":          "Value", // desired replicas is an absolute gauge; use value directly, not per-pod average
-					"unsafeSsl":           "true",
-				},
-			},
-		},
+		Triggers:        defaultTriggers(prometheusURL, query),
 	}
 	so := &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
