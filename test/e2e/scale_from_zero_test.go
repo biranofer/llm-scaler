@@ -226,8 +226,33 @@ func cleanupScaleFromZeroResources() {
 		}
 	}
 
-	// Wait a moment for deletions to propagate
-	time.Sleep(2 * time.Second)
+	// Wait until the workloads are actually GONE, not merely deleted.
+	//
+	// Every Delete above is asynchronous, and a two-second sleep is not a
+	// synchronisation primitive. A pod from the previous suite that is still
+	// Running still serves its model, and scale-from-zero can only be observed
+	// while nothing does: requests reach that pod instead of queueing, and the
+	// model reads as decode-covered, so the engine correctly declines to wake and
+	// the spec times out blaming it.
+	//
+	// This is what made the suite fail when run back-to-back — the second run's
+	// BeforeAll swept the first run's workloads and then immediately sent traffic
+	// that the still-terminating pods answered.
+	Eventually(func(g Gomega) {
+		pods, err := k8sClient.CoreV1().Pods(cfg.LLMDNamespace).List(ctx, metav1.ListOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		var lingering []string
+		for _, pod := range pods.Items {
+			// Trigger jobs do not serve the model, so they cannot mask a queue.
+			if isScaleFromZeroResource(pod.Name) && !strings.Contains(pod.Name, "-trigger-") {
+				lingering = append(lingering, pod.Name)
+			}
+		}
+		g.Expect(lingering).To(BeEmpty(),
+			"scale-from-zero workload pods still running; they would serve the requests this suite needs to queue")
+	}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+		Should(Succeed())
+
 	GinkgoWriter.Println("Cleanup completed")
 }
 
