@@ -245,3 +245,68 @@ func TestFitsGPUBudgetNamespaceScoped(t *testing.T) {
 		})
 	}
 }
+
+// TestGPUBudgetsExplainsTheVerdict pins the property GPUBudgets exists for: the
+// budget it reports is the one FitsGPUBudget actually compared against.
+//
+// A reported budget that merely looked plausible would be worse than no log line,
+// because it would be used to rule the capacity check out during exactly the
+// investigation it was added to serve. So the assertion is behavioural rather
+// than structural — for every reported budget, demand at the budget fits and one
+// more GPU does not.
+func TestGPUBudgetsExplainsTheVerdict(t *testing.T) {
+	tests := []struct {
+		name        string
+		constraints []*ResourceConstraints
+		wantScoped  bool
+	}{
+		{
+			name:        "cluster pools only",
+			constraints: []*ResourceConstraints{clusterPools(map[string]ResourcePool{"A100": {Limit: 4, Used: 4}, "H100": {Limit: 8, Used: 2}})},
+		},
+		{
+			name: "namespace allowlist tightens the cluster pool",
+			constraints: []*ResourceConstraints{nsPools(
+				map[string]ResourcePool{"A100": {Limit: 8, Used: 6}},
+				map[string]map[string]ResourcePool{budgetNS: {"A100": {Limit: 4, Used: 1}}},
+			)},
+			wantScoped: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			budgets, scoped := GPUBudgets(tt.constraints, budgetNS)
+			if scoped != tt.wantScoped {
+				t.Fatalf("namespace-scoped = %v, want %v", scoped, tt.wantScoped)
+			}
+			if len(budgets) == 0 {
+				t.Fatal("no budgets reported")
+			}
+			for accType, budget := range budgets {
+				if budget < 0 {
+					continue // unlimited: nothing to pin
+				}
+				if !FitsGPUBudget(tt.constraints, budgetNS, map[string]int{accType: budget}) {
+					t.Errorf("%s: demand %d was refused, but that is the budget reported", accType, budget)
+				}
+				if FitsGPUBudget(tt.constraints, budgetNS, map[string]int{accType: budget + 1}) {
+					t.Errorf("%s: demand %d was allowed, above the reported budget of %d", accType, budget+1, budget)
+				}
+			}
+		})
+	}
+}
+
+// TestGPUBudgetsUnknownIsNotZero pins that absent constraints report nothing
+// rather than an empty budget. FitsGPUBudget treats no constraints as permissive;
+// a log line saying "budgets: {}" would read as "nothing is free", inverting it.
+func TestGPUBudgetsUnknownIsNotZero(t *testing.T) {
+	budgets, scoped := GPUBudgets(nil, budgetNS)
+	if budgets != nil {
+		t.Errorf("budgets = %v, want nil for unknown constraints", budgets)
+	}
+	if scoped {
+		t.Error("no constraints cannot be namespace-scoped")
+	}
+}

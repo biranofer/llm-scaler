@@ -80,6 +80,41 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 	return true
 }
 
+// GPUBudgets reports the per-accelerator-type budgets an allocation in namespace
+// is judged against, and whether that namespace is a closed allowlist (in which
+// case a type absent from the map is denied outright rather than unconstrained).
+// A negative budget is the unlimited sentinel. Nil constraints yield nil, which
+// is "unknown" — the permissive case.
+//
+// It exists so the budgets can be REPORTED with the same resolution FitsGPUBudget
+// applies. Nothing else exposes what the check actually compared against: the
+// pools carry Limit and Used, the merge takes the minimum across providers, and a
+// namespace allowlist overrides the cluster aggregate — so a log line that summed
+// the pools itself would be free to disagree with the verdict it purports to
+// explain, which is worse than no line at all.
+func GPUBudgets(constraints []*ResourceConstraints, namespace string) (map[string]int, bool) {
+	if len(constraints) == 0 {
+		return nil, false
+	}
+
+	perType := mergeConstraints(constraints)
+	nsBudgets, nsScoped := mergeNamespaceConstraints(constraints)[namespace]
+	if !nsScoped {
+		return perType, false
+	}
+
+	// Mirrors the namespace branch of FitsGPUBudget: the allowlist decides what the
+	// namespace may use, still bounded by the cluster pool where one is known.
+	budgets := make(map[string]int, len(nsBudgets))
+	for accType, budget := range nsBudgets {
+		if clusterKey, known := resolveAcceleratorKey(perType, accType); known {
+			budget = tighterBudget(budget, perType[clusterKey])
+		}
+		budgets[accType] = budget
+	}
+	return budgets, true
+}
+
 // resolveAcceleratorKey maps an accelerator name as a WORKLOAD declares it onto
 // the key an accelerator-keyed map actually uses, reporting whether the map
 // covers it.

@@ -107,8 +107,7 @@ type Engine struct {
 	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
 	// means no capacity check — see gpuConstraints.
 	gpuLimiter pipeline.Limiter
-	// Variants is the set of workloads KEDA has called WVA about — discovery. Nil
-	// falls back to the annotation-sourced listing.
+	// Variants is the set of workloads KEDA has called WVA about — discovery.
 	Variants *registry.Registry
 	// VariantEnricher resolves each registered workload's scale target. Refreshed
 	// at the top of every cycle, which is a no-op for entries still inside their
@@ -118,6 +117,12 @@ type Engine struct {
 	// verdict repeated every 100ms is logged once rather than continuously.
 	refusalMu   sync.Mutex
 	lastRefusal map[string]SelectionOutcome
+	// lastBudgets remembers, per namespace, the GPU budgets last reported for
+	// placement, so the picture is logged when it CHANGES rather than on every
+	// tick. Guarded by refusalMu: both are per-cycle logging state written from
+	// the same loop, and a second mutex would only invite them to be taken in
+	// different orders.
+	lastBudgets map[string]string
 }
 
 // SetGPULimiter injects the limiter whose constraints bound a wake, so the
@@ -355,12 +360,13 @@ func (e *Engine) processInactiveModel(
 		"metricName", pending.Labels[metricNameLabel],
 		"metric", pending.Labels, "value", pending.Value)
 
+	constraints := e.gpuConstraints(ctx, group.namespace)
 	selected, outcome := selectServingSet(SelectionInput{
 		Namespace:      group.namespace,
 		Candidates:     candidates,
 		DecodeCovered:  covered.decode,
 		PrefillCovered: covered.prefill,
-		Constraints:    e.gpuConstraints(ctx, group.namespace),
+		Constraints:    constraints,
 		RequirePrefill: e.requirePrefill(group.modelID, group.namespace),
 	})
 	if len(selected) == 0 {
@@ -382,10 +388,23 @@ func (e *Engine) processInactiveModel(
 		// an unchanged refusal repeated at Info would bury the log at 10 lines a
 		// second for as long as the demand lasts.
 		if e.refusalChanged(group.key(), outcome) {
-			logger.Info("Scale-from-zero: no variant woken for a model with pending requests",
+			fields := []any{
 				"namespace", group.namespace,
 				"modelID", group.modelID,
-				"reason", string(outcome))
+				"reason", string(outcome),
+			}
+			if outcome == OutcomeNoCapacity {
+				// The one reason that cannot be diagnosed from the verdict alone: it
+				// says a set did not fit, not what it was measured against nor what
+				// it asked for. Both halves are needed — a budget of zero and a
+				// demand of zero produce opposite verdicts for the same log line.
+				budgets, nsScoped := pipeline.GPUBudgets(constraints, group.namespace)
+				fields = append(fields,
+					"gpuBudgets", budgets,
+					"namespaceScoped", nsScoped,
+					"demand", candidateDemand(candidates))
+			}
+			logger.Info("Scale-from-zero: no variant woken for a model with pending requests", fields...)
 		}
 		return nil
 	}

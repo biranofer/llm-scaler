@@ -17,6 +17,7 @@ limitations under the License.
 package scalefromzero
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
@@ -209,6 +210,29 @@ func demandOf(set []Candidate) map[string]int {
 			gpus = 1
 		}
 		demand[c.Accelerator] += gpus
+	}
+	return demand
+}
+
+// candidateDemand renders what each candidate would ask for, keyed by variant
+// name, for the refusal log.
+//
+// It goes through demandOf rather than reading GPUsPerReplica directly, so the
+// reported figure is the one the budget check used. That matters most for the
+// candidate demandOf drops: an unresolved accelerator contributes NOTHING, so a
+// variant that looks like it was refused for capacity was in fact never weighed
+// at all — a distinction the verdict alone cannot express.
+func candidateDemand(candidates []Candidate) map[string]string {
+	demand := make(map[string]string, len(candidates))
+	for _, c := range candidates {
+		perType := demandOf([]Candidate{c})
+		if len(perType) == 0 {
+			demand[c.VariantName] = "none (accelerator unresolved)"
+			continue
+		}
+		for accType, gpus := range perType {
+			demand[c.VariantName] = fmt.Sprintf("%s=%d", accType, gpus)
+		}
 	}
 	return demand
 }

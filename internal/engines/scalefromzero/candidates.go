@@ -19,6 +19,7 @@ package scalefromzero
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -256,7 +257,42 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		}
 		constraints = append(constraints, c)
 	}
+	e.logBudgets(ctx, namespace, constraints, usage.ByType)
 	return constraints
+}
+
+// logBudgets reports the GPU budgets this namespace's wakes are being judged
+// against, once per change.
+//
+// A wake that is ALLOWED logs no reason, so an over-permissive capacity check is
+// invisible from the outside: the only symptom is a variant coming up on an
+// accelerator that was supposed to be full, which looks exactly like correct
+// behaviour. This is the line that distinguishes them — it says what WVA believed
+// was free, and the measured usage it derived that from.
+//
+// Gated on a CHANGE rather than a tick: this runs at 10Hz per model with pending
+// requests, and the budgets only move when the fleet does. That makes the rate
+// proportional to real scaling events, which is what earns it Info.
+func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*pipeline.ResourceConstraints, usageByType map[string]int) {
+	budgets, nsScoped := pipeline.GPUBudgets(constraints, namespace)
+	summary := fmt.Sprintf("%v|%t|%v", budgets, nsScoped, usageByType)
+
+	e.refusalMu.Lock()
+	if e.lastBudgets == nil {
+		e.lastBudgets = make(map[string]string)
+	}
+	unchanged := e.lastBudgets[namespace] == summary
+	e.lastBudgets[namespace] = summary
+	e.refusalMu.Unlock()
+
+	if unchanged {
+		return
+	}
+	log.FromContext(ctx).Info("Scale-from-zero: GPU budgets available for placement",
+		"namespace", namespace,
+		"gpuBudgets", budgets,
+		"namespaceScoped", nsScoped,
+		"gpusInUse", usageByType)
 }
 
 // requirePrefill reports whether the model refuses a decode-only wake.
