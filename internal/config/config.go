@@ -21,16 +21,7 @@ type Config struct {
 	features    featureFlagsConfig
 	saturation  saturationConfig  // namespace-aware
 	scaleToZero scaleToZeroConfig // namespace-aware
-	coordinator coordinatorConfig
-	catalog     catalogConfig // cluster-scoped external-analyzer catalog
-}
-
-// coordinatorConfig holds Coordinator loop configuration. Plugin
-// sub-blocks (under coordinator.plugins.<name>) are owned by individual
-// plugins and live in their own packages.
-type coordinatorConfig struct {
-	enabled  bool
-	interval time.Duration
+	catalog     catalogConfig     // cluster-scoped external-analyzer catalog
 }
 
 // LimiterType selects which pipeline.Limiter implementation
@@ -279,24 +270,6 @@ func (c *Config) OptimizationInterval() time.Duration {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.infrastructure.optimizationInterval
-}
-
-// CoordinatorEnabled reports whether the Coordinator loop is enabled.
-// Thread-safe.
-func (c *Config) CoordinatorEnabled() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.coordinator.enabled
-}
-
-// CoordinatorInterval returns the Coordinator loop interval. Returns the
-// configured value or zero when unset; callers should treat zero as
-// "use the package default".
-// Thread-safe.
-func (c *Config) CoordinatorInterval() time.Duration {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.coordinator.interval
 }
 
 // ============================================================================

@@ -306,10 +306,9 @@ scenario:
         targetAvgValue: 1
         behavior:
           scaleUp:
-            # Match the canonical WVA install samples (config/samples/hpa/...):
-            # scaleUp is immediate so the HPA follows WVA's optimizer decisions
-            # without damping; scaleDown stays windowed to avoid flapping on
-            # brief lulls (see config/samples/hpa/co-ordinator/base).
+            # Match the canonical WVA install samples: scaleUp is immediate so
+            # the HPA follows WVA's optimizer decisions without damping;
+            # scaleDown stays windowed to avoid flapping on brief lulls.
             stabilizationWindowSeconds: 0
             policies:
               - type: Percent

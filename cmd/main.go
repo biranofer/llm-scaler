@@ -56,8 +56,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller/indexers"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/coordinator"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/coordinator/plugins/gpurebalance"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
@@ -631,37 +629,6 @@ func main() {
 	if err = configMapReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create configmap controller")
 		os.Exit(1)
-	}
-
-	// Coordinator: cluster-wide leader-elected loop that dispatches a
-	// selected set of HPAs and ScaledObjects to registered plugins.
-	// EXPERIMENTAL: off by default; opt in by setting EXPERIMENTAL_COORDINATOR_ENABLED: "true"
-	// in the manager ConfigMap.
-	if cfg.CoordinatorEnabled() {
-		setupLog.Info("WARNING: Coordinator is an experimental feature. " +
-			"It may change or be removed in future releases. " +
-			"Do not use in production without understanding the risks.")
-		plugins := []coordinator.Plugin{
-			gpurebalance.New(mgr.GetClient(), promAPI),
-		}
-		coord, err := coordinator.New(mgr.GetClient(), plugins, coordinator.Options{
-			Interval:    cfg.CoordinatorInterval(),
-			KEDAEnabled: kedaEnabled,
-		})
-		if err != nil {
-			setupLog.Error(err, "unable to construct Coordinator")
-			os.Exit(1)
-		}
-		if err := mgr.Add(coord); err != nil {
-			setupLog.Error(err, "unable to add Coordinator to manager")
-			os.Exit(1)
-		}
-		setupLog.Info("Coordinator enabled",
-			"interval", cfg.CoordinatorInterval(),
-			"kedaEnabled", kedaEnabled,
-		)
-	} else {
-		setupLog.Info("Coordinator disabled (experimental feature; set EXPERIMENTAL_COORDINATOR_ENABLED=true to enable)")
 	}
 
 	if metricsCertWatcher != nil {

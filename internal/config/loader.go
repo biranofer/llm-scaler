@@ -119,8 +119,6 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string) error
 	// Matches config/base/manager/manager-configmap.yaml so a deployment without
 	// the ConfigMap key runs at the same cadence as the shipped default.
 	v.SetDefault("GLOBAL_OPT_INTERVAL", DefaultOptimizationInterval.String())
-	v.SetDefault("EXPERIMENTAL_COORDINATOR_ENABLED", false)
-	v.SetDefault("COORDINATOR_INTERVAL", "15s")
 
 	// Load from config file (mounted in the container) — sits between env and defaults in precedence
 	if configFilePath != "" {
@@ -183,11 +181,6 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string) error
 	cfg.scaleToZero = scaleToZeroConfig{
 		global:           make(ScaleToZeroConfigData),
 		namespaceConfigs: make(map[string]ScaleToZeroConfigData),
-	}
-
-	cfg.coordinator = coordinatorConfig{
-		enabled:  v.GetBool("EXPERIMENTAL_COORDINATOR_ENABLED"),
-		interval: v.GetDuration("COORDINATOR_INTERVAL"),
 	}
 
 	// Prometheus cache config from config file / env / defaults
