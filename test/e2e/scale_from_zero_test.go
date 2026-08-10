@@ -54,6 +54,56 @@ func sfzModelID(suffix string) string {
 	return cfg.ModelID + "-" + suffix
 }
 
+// requireEmptyServingPool blocks until no pod is a ready endpoint of the
+// InferencePool the trigger job sends to, and fails naming whatever is still
+// there.
+//
+// This is the precondition every scale-from-zero spec depends on and none of them
+// stated. The EPP raises the flow-control queue gauge — the only signal the engine
+// wakes on — solely when it has NO endpoint to dispatch to. With any ready
+// endpoint present it dispatches instead, and a pod serving a different model
+// answers "the model does not exist" in about nine milliseconds. The queue is
+// never touched, so WVA truthfully reports no demand and the spec times out five
+// minutes later blaming the engine.
+//
+// Every suite passes its own poolName to the model-service fixtures, which reads
+// as isolation and is not: there is ONE InferencePool and one EPP on the cluster,
+// selecting on a guide label every fixture sets the same way. So any workload left
+// running by any other suite — or by a previous run, since only AfterSuite sweeps
+// and it does not cover every prefix — silently disables scale-from-zero for the
+// rest of the run.
+//
+// Waiting rather than asserting outright: the preceding Serial suite's teardown
+// can still be in flight, and a pod that is on its way out stops serving when it
+// goes. What must not happen is waiting in SILENCE, which is what the five-minute
+// activation timeout did.
+func requireEmptyServingPool() {
+	GinkgoHelper()
+	poolName := fixtures.ServingPoolNameForEPP(cfg.EPPServiceName)
+
+	var lastSeen []fixtures.PoolMember
+	Eventually(func(g Gomega) {
+		members, err := fixtures.ReadyPoolMembers(ctx, crClient, cfg.LLMDNamespace, poolName)
+		g.Expect(err).NotTo(HaveOccurred(), "could not read the serving pool's members")
+		lastSeen = members
+		g.Expect(members).To(BeEmpty())
+	}, time.Duration(cfg.EventuallyShortSec)*time.Second, time.Duration(cfg.PollIntervalQuickSec)*time.Second).
+		Should(Succeed(), func() string {
+			names := make([]string, 0, len(lastSeen))
+			for _, m := range lastSeen {
+				names = append(names, m.String())
+			}
+			return fmt.Sprintf(
+				"InferencePool %q still has ready endpoints, so requests are dispatched to them "+
+					"instead of queueing and scale-from-zero cannot be observed at all.\n"+
+					"Still serving: %s\n"+
+					"These belong to other suites: whichever left them behind must delete its "+
+					"workload, and cleanupTestResources must cover its name prefix so an "+
+					"interrupted run does not poison the next one.",
+				poolName, strings.Join(names, ", "))
+		})
+}
+
 // expectScaleFromZeroEngineActivation waits until the WVA controller logs the
 // scale-from-zero engine publishing an activation decision for variantName.
 //
@@ -518,6 +568,9 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			}
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
 
+			By("Requiring the serving pool to be empty, or nothing will ever queue")
+			requireEmptyServingPool()
+
 			By("Creating a job to send requests while deployment is at zero")
 			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.
 			triggerStart := time.Now()
@@ -981,6 +1034,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			}
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
 
+			By("Requiring the serving pool to be empty, or nothing will ever queue")
+			requireEmptyServingPool()
+
 			By("Creating a job to send requests while LWS is at zero")
 			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.
 			triggerStart := time.Now()
@@ -1350,6 +1406,9 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 				GinkgoWriter.Printf("No inference-gateway service found; using EPP service as gateway (standalone chart): %s\n", gatewayServiceName)
 			}
 			Expect(gatewayServiceName).NotTo(BeEmpty(), "Inference gateway service should exist")
+
+			By("Requiring the serving pool to be empty, or nothing will ever queue")
+			requireEmptyServingPool()
 
 			By("Creating a job to send requests while single-node LWS is at zero")
 			// Anchors the engine-activation log window; see expectScaleFromZeroEngineActivation.

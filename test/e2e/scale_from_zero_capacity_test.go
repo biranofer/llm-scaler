@@ -146,6 +146,11 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 	})
 
 	It("refuses to wake a variant whose accelerator is full", func() {
+		By("Requiring the serving pool to be empty, or nothing will ever queue")
+		// The occupier is deliberately NOT in this pool (WithPoolGuide), so it holds
+		// GPUs without answering the requests this spec depends on queueing.
+		requireEmptyServingPool()
+
 		By("Sending requests so both parked variants have demand")
 		triggerStart := time.Now()
 		triggerJobName = fmt.Sprintf("sfz-cap-trigger-%d", time.Now().Unix())

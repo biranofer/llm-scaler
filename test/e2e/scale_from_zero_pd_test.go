@@ -148,6 +148,9 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 			}
 		}
 
+		By("Requiring the serving pool to be empty, or nothing will ever queue")
+		requireEmptyServingPool()
+
 		By("Sending requests while both roles are parked at zero")
 		triggerStart := time.Now()
 		triggerJobName = fmt.Sprintf("sfz-pd-trigger-%d", time.Now().Unix())

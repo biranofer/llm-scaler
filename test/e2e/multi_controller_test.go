@@ -219,12 +219,32 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, primaryNamespace, primaryModelName, primaryModelName+"-decode")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create primary ServiceMonitor")
 
+			// Delete the model server when this suite is done, not at AfterSuite.
+			//
+			// It carries the guide label the single cluster InferencePool selects, so
+			// for as long as it runs the EPP has a ready endpoint and dispatches every
+			// request to it — including requests for models it does not serve, which it
+			// rejects instantly. That silently disables scale-from-zero for every later
+			// suite: the flow-control queue never fills, so the engine sees no demand
+			// and those specs time out blaming it. See requireEmptyServingPool.
+			DeferCleanup(func() {
+				_ = k8sClient.AppsV1().Deployments(primaryNamespace).Delete(
+					ctx, primaryModelName+"-decode", metav1.DeleteOptions{})
+			})
+
 			err = fixtures.EnsureModelService(ctx, k8sClient, secondaryNamespace, secondaryModelName, poolName, cfg.ModelID, sharedVariantName, cfg.UseSimulator, cfg.MaxNumSeqs)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary model service")
 			err = fixtures.EnsureService(ctx, k8sClient, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode", 8000)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary service")
 			err = fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, secondaryNamespace, secondaryModelName, secondaryModelName+"-decode")
 			Expect(err).NotTo(HaveOccurred(), "Failed to create secondary ServiceMonitor")
+
+			// Same reason as the primary above; this one is in another namespace, but
+			// the pool selects on a label, not a namespace.
+			DeferCleanup(func() {
+				_ = k8sClient.AppsV1().Deployments(secondaryNamespace).Delete(
+					ctx, secondaryModelName+"-decode", metav1.DeleteOptions{})
+			})
 
 			// Create annotated ScaledObjects with an overlapping variant name in both
 			// namespaces. Each ScaledObject's Prometheus trigger queries

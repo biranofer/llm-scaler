@@ -186,6 +186,21 @@ var _ = BeforeSuite(func() {
 			"The in-memory capacity store carries over, so results may depend on run history.\n", err)
 	}
 
+	By("Sweeping workloads an earlier run may have left behind")
+	// Symmetric with the AfterSuite sweep, and for the same reason the restart above
+	// exists: a run must not depend on the history of the cluster it lands on.
+	//
+	// AfterSuite alone is not enough, because the runs that leave the most behind are
+	// the ones that never reach it — an interrupted run, a panic, a cancelled CI job.
+	// What survives is a model server still carrying the guide label the single
+	// InferencePool selects, which gives the EPP a ready endpoint to dispatch to and
+	// so stops requests from ever queueing. Every scale-from-zero spec in the next
+	// run then waits five minutes for demand that cannot appear. A three-hour-old
+	// pod from a previous run was doing exactly that.
+	if k8sClient != nil && crClient != nil {
+		cleanupTestResources(ctx, k8sClient, crClient, cfg.LLMDNamespace)
+	}
+
 	GinkgoWriter.Println("BeforeSuite completed successfully - infrastructure ready")
 })
 
@@ -274,8 +289,24 @@ func cleanupTestResources(ctx context.Context, k8sClient *kubernetes.Clientset, 
 	GinkgoWriter.Println("Cleaning up test resources...")
 
 	// Helper function to check if resource name matches test patterns
+	// A prefix missing here is not a tidiness problem. Anything left running keeps
+	// the guide label the cluster's single InferencePool selects, so the EPP still
+	// has a ready endpoint and dispatches requests to it instead of queueing them —
+	// which disables scale-from-zero for every spec in the NEXT run too, since this
+	// sweep is the only thing that removes what an interrupted run left behind. A
+	// three-hour-old throughput-* pod did exactly that. Keep this in step with the
+	// names the fixtures generate.
 	isTestResource := func(name string) bool {
-		return strings.HasPrefix(name, "test-") || strings.HasPrefix(name, "smoke-") || strings.HasPrefix(name, "saturation-") || strings.HasPrefix(name, "error-test-") || strings.HasPrefix(name, "target-condition-") || strings.HasPrefix(name, "scale-from-zero-") || strings.HasPrefix(name, "sfz-")
+		prefixes := []string{
+			"test-", "smoke-", "saturation-", "error-test-", "target-condition-",
+			"scale-from-zero-", "sfz-", "throughput-", "multi-analyzer-",
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(name, p) {
+				return true
+			}
+		}
+		return false
 	}
 
 	// Clean up test HPAs
