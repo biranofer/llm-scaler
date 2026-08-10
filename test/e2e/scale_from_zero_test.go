@@ -75,6 +75,20 @@ func sfzModelID(suffix string) string {
 // back empty for an activation that demonstrably happened.
 func expectScaleFromZeroEngineActivation(variantName string, since time.Time) {
 	GinkgoHelper()
+	// Record the demand chain BEFORE anything is torn down.
+	//
+	// The suite-wide ReportAfterEach cannot do this: these specs live in Ordered
+	// containers, so a failure runs AfterAll immediately — deleting the trigger Job
+	// and the workload — and only then reports. The evidence that distinguishes
+	// "nothing generated demand" from "demand was generated and WVA did not see it"
+	// is gone by the time the report runs, which is why every failure so far has
+	// been diagnosed from WVA's side of the chain alone.
+	defer func() {
+		if CurrentSpecReport().Failed() {
+			utils.DumpDemandEvidence(ctx, k8sClient, cfg.LLMDNamespace, GinkgoWriter)
+		}
+	}()
+
 	const controllerManagerLabel = "control-plane=controller-manager"
 	// Logged by internal/engines/scalefromzero once it publishes the activation
 	// to the decision store, which is what WVA pushes to KEDA.

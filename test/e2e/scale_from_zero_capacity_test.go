@@ -219,6 +219,14 @@ func createParkedVariant(svcName, deployName, variantName, scalerName, poolName,
 // window has to start before the trigger.
 func expectScaleFromZeroRefusal(since time.Time, reason string) {
 	GinkgoHelper()
+	// Record the demand chain before the Ordered container's AfterAll tears it
+	// down; see the same guard in expectScaleFromZeroEngineActivation.
+	defer func() {
+		if CurrentSpecReport().Failed() {
+			utils.DumpDemandEvidence(ctx, k8sClient, cfg.LLMDNamespace, GinkgoWriter)
+		}
+	}()
+
 	const controllerManagerLabel = "control-plane=controller-manager"
 	const pattern = "no variant woken for a model with pending requests"
 	Eventually(func(g Gomega) {

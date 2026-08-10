@@ -202,6 +202,10 @@ var _ = ReportAfterEach(func(report SpecReport) {
 	GinkgoWriter.Printf("\n=== Failure diagnostics: %s ===\n", report.FullText())
 	utils.DumpControllerLogs(context.Background(), k8sClient, cfg.WVANamespace, GinkgoWriter)
 	utils.DumpManagedScalers(context.Background(), k8sClient, GinkgoWriter)
+	// The controller log shows WVA's view of the LAST link in the demand chain, and
+	// "no pending requests" there is equally consistent with every earlier link
+	// having broken. This records the earlier links — see DumpDemandEvidence.
+	utils.DumpDemandEvidence(context.Background(), k8sClient, cfg.LLMDNamespace, GinkgoWriter)
 })
 
 var _ = AfterSuite(func() {
