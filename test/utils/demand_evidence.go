@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/prometheus/common/model"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,22 +31,20 @@ import (
 // waiting in the queue would be seen at 10Hz — but it cannot say which earlier
 // link failed, because none of them was recorded.
 //
-// So this dumps the two things that separate them:
+// So this dumps the trigger Job and its pods' own output. The script echoes an HTTP
+// code per request, so it shows whether requests were sent at all, whether they
+// were answered immediately or blocked, and what the gateway said. That is what
+// identified the cause: ten instant 404s carrying vLLM's "the model does not
+// exist", meaning the request was DISPATCHED to a pod serving something else
+// rather than queued — so the queue WVA polls was never going to fill.
 //
-//   - the trigger Job and its pods' own output. The script echoes an HTTP code
-//     per request, so this shows whether requests were sent at all, whether they
-//     were answered immediately (never queued) or blocked (queued, and the gauge
-//     is the suspect), and what the gateway said;
-//   - the EPP's flow-control gauge as PROMETHEUS recorded it, independently of
-//     WVA. max_over_time answers "was this queue EVER occupied during the spec"
-//     for every model, which separates "nothing queued" from "WVA did not see
-//     what queued".
+// The other half of that picture, who was serving in the pool, is asserted up
+// front by requireEmptyServingPool rather than reported after the fact.
 //
 // Best-effort throughout: this runs on an already-failing path, so every step
 // reports what it could not collect and continues.
 func DumpDemandEvidence(ctx context.Context, k8sClient *kubernetes.Clientset, namespace string, w io.Writer) {
 	dumpTriggerJobs(ctx, k8sClient, namespace, w)
-	dumpFlowControlQueueHistory(ctx, w)
 }
 
 // triggerJobNameHints match the Jobs that generate scale-from-zero demand. They
@@ -140,71 +136,4 @@ func indentLines(s, prefix string) string {
 		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
-}
-
-// flowControlQueueMetrics are the EPP gauge families the scale-from-zero engine
-// reads, newest name first — the same preference order as
-// internal/engines/scalefromzero.targetEPPMetricNames.
-var flowControlQueueMetrics = []string{
-	"llm_d_epp_flow_control_queue_size",
-	"inference_extension_flow_control_queue_size",
-}
-
-// dumpFlowControlQueueHistory reports, per model, the highest flow-control queue
-// depth Prometheus saw in the last 15 minutes.
-//
-// This is the control for the controller log. WVA reporting an empty queue is
-// consistent with two very different failures, and only an independent observer
-// separates them: a zero here means nothing ever queued, so the demand never
-// reached the EPP and the trigger chain is broken upstream of WVA; a non-zero
-// here with WVA still reporting empty means the queue WAS occupied and WVA did
-// not match it — a label, a pool, or a scrape-target problem, none of which is
-// fixed by generating more load.
-//
-// Prometheus samples on its own interval, so this can miss a queue that was
-// occupied only briefly between scrapes. It cannot produce a false positive
-// though: a non-zero reading is proof the queue was occupied.
-func dumpFlowControlQueueHistory(ctx context.Context, w io.Writer) {
-	_, _ = fmt.Fprintf(w, "\n=== EPP flow-control queue, max over the last 15m (independent of WVA) ===\n")
-
-	client, err := NewPrometheusClient(DefaultPrometheusURL, true)
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "Could not reach Prometheus: %v\n", err)
-		return
-	}
-
-	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	for _, name := range flowControlQueueMetrics {
-		query := fmt.Sprintf("max_over_time(%s[15m])", name)
-		result, _, err := client.API().Query(queryCtx, query, time.Now())
-		if err != nil {
-			_, _ = fmt.Fprintf(w, "%s: query failed: %v\n", name, err)
-			continue
-		}
-		vector, ok := result.(model.Vector)
-		if !ok {
-			_, _ = fmt.Fprintf(w, "%s: unexpected result type %T\n", name, result)
-			continue
-		}
-		if len(vector) == 0 {
-			_, _ = fmt.Fprintf(w, "%s: not exported (or never scraped)\n", name)
-			continue
-		}
-
-		lines := make([]string, 0, len(vector))
-		for _, sample := range vector {
-			lines = append(lines, fmt.Sprintf("  max=%v  model=%q pool=%q pod=%q",
-				sample.Value,
-				sample.Metric[model.LabelName("model_name")],
-				sample.Metric[model.LabelName("inference_pool")],
-				sample.Metric[model.LabelName("pod")]))
-		}
-		sort.Strings(lines)
-		_, _ = fmt.Fprintf(w, "%s:\n%s\n", name, strings.Join(lines, "\n"))
-		// The preferred family is authoritative once present, exactly as the engine
-		// treats it; falling through would only restate the same queue.
-		return
-	}
 }
