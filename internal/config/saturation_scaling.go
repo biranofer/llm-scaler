@@ -37,11 +37,6 @@ type SaturationScalingConfig struct {
 	// QueueLengthThreshold: Replica is saturated if queue length >= this threshold
 	QueueLengthThreshold float64 `yaml:"queueLengthThreshold"`
 
-	// EnableLimiter: When true, includes the GPU limiter in the scaling pipeline
-	// to constrain scaling decisions based on available cluster resources.
-	// Default is false (limiter disabled).
-	EnableLimiter bool `yaml:"enableLimiter,omitempty"`
-
 	// EnableRescale: When true, the V2 GPU-constrained optimizer may run the
 	// priority-weighted rescale pass — under contention it redistributes the whole
 	// budget by priority x demand, reclaiming from lower-priority models so
@@ -387,9 +382,6 @@ func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
 	}
 	if override.ScaleDownBoundary != 0 {
 		c.ScaleDownBoundary = override.ScaleDownBoundary
-	}
-	if override.EnableLimiter {
-		c.EnableLimiter = override.EnableLimiter
 	}
 	if override.Priority != 0 {
 		c.Priority = override.Priority

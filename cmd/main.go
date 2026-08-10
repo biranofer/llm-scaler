@@ -441,22 +441,18 @@ func main() {
 	// physical snapshot — see internal/gpuusage.
 	//
 	// The TIMER is only worth running for a deployment that reads the physical
-	// view, so it is gated on two live conditions, re-read every tick:
+	// view, which is exactly one condition now that the limiters list is the sole
+	// source of truth: a physical limiter is declared. Nothing else consumes this.
+	// A deployment that declares no limiter is not limited at all, and one that
+	// declares only a quota is charged for WVA's own variants
+	// (pipeline.ManagedUsage) — both would otherwise list nodes and walk every pod
+	// in the cluster every interval to produce a number with no reader.
 	//
-	//   - a physical limiter is configured at all. A quota is charged for WVA's own
-	//     variants (pipeline.ManagedUsage) and never consults this, so quota mode
-	//     would otherwise list nodes and walk every pod in the cluster every
-	//     interval for a number nothing reads;
-	//   - enableLimiter is set, which is what makes the saturation engine consult a
-	//     provider. It is the only consumer that reads the PUBLISHED snapshot
-	//     without asking for a refresh first. The scale-from-zero engine calls
-	//     EnsureFresh at the moment it decides — that is not gated here, and it is
-	//     why its capacity check keeps working with the timer off.
+	// Re-read every tick, because the limiters list is live: switching it must not
+	// need a restart.
 	usageRefresher := &gpuusage.Refresher{
 		Discovery: discovery.NewK8sWithGpuOperator(mgr.GetClient()),
-		Periodic: func() bool {
-			return pipeline.PhysicalUsageConfigured(cfg) && cfg.LimiterEnabled()
-		},
+		Periodic:  func() bool { return pipeline.PhysicalUsageConfigured(cfg) },
 	}
 	if err := mgr.Add(usageRefresher); err != nil {
 		setupLog.Error(err, "unable to add the GPU usage refresher to the manager")
@@ -483,10 +479,10 @@ func main() {
 		}
 
 		// Build the initial GPU limiter from the effective limiter mode — the
-		// limiters: list on the saturation "default" config, or the inventory
-		// default when none is declared. The ConfigMaps were bootstrapped above,
-		// so the selection is already visible here. The engine rebuilds the limiter
-		// live (see SetLimiterBuilder) when the ConfigMap changes.
+		// limiters: list on the saturation "default" config, which is the sole
+		// source. The ConfigMaps were bootstrapped above, so the selection is
+		// already visible here. The engine rebuilds the limiter live (see
+		// SetLimiterBuilder) when the ConfigMap changes.
 		gpuLimiter, err := pipeline.NewLimiterFromConfig(cfg, mgr.GetClient())
 		if err != nil {
 			setupLog.Error(err, "failed to build GPU limiter")
@@ -494,15 +490,17 @@ func main() {
 		}
 		setupLog.Info("GPU limiter constructed", "type", cfg.EffectiveLimiterMode(), "name", gpuLimiter.Name())
 
-		// The GPU limiter is only consulted on the limited optimizer path, which
-		// the engine selects per-model when enableLimiter is true in the
-		// saturation-scaling ConfigMap. Selecting quota mode via limiters: alone
-		// does NOT enforce quotas unless enableLimiter is also set, so warn.
-		if cfg.EffectiveLimiterMode() == config.LimiterTypeQuota {
-			setupLog.Info("Quota limiter selected; quota caps are enforced ONLY when " +
-				"enableLimiter: true is set in the saturation-scaling ConfigMap. " +
-				"With the default enableLimiter: false the engine runs the unlimited " +
-				"optimizer and quota caps are not applied.")
+		// Declaring no limiter is a legitimate configuration, but it is worth saying
+		// out loud: it means scaling is bounded by nothing WVA knows about. The
+		// optimizer allocates without a GPU budget and a scale-from-zero wake is
+		// published without a capacity check, so a variant can be woken onto an
+		// accelerator that is already full. There is no longer a hidden default
+		// limiter making this safe.
+		if cfg.EffectiveLimiterMode() == config.LimiterTypeNone {
+			setupLog.Info("No limiters declared in the saturation-scaling ConfigMap: scaling is " +
+				"UNCONSTRAINED. The optimizer allocates without a GPU budget and scale-from-zero " +
+				"wakes are published without a capacity check. Add a limiters: entry " +
+				"(gpu-inventory or quota) to bound scaling.")
 		}
 
 		// Quota mode means "no physical-capacity discovery" — including the

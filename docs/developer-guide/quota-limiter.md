@@ -15,19 +15,16 @@ the quota limiter. The implementation closes
 Two settings must both be in place, **both in the saturation-scaling ConfigMap's
 `default` entry**, for quota enforcement to take effect:
 
-1. **A `limiters:` list containing a `quota` entry** on the `default` entry. This
-   is the sole source that selects the quota limiter (see
-   [Selection & lifecycle](#selection--lifecycle)); it is applied **live** — no
-   restart. With no `limiters:` list, the physical-inventory limiter is used.
-2. **`enableLimiter: true`** on the `default` entry. The limiter is only consulted
-   on the limited optimizer path (`GreedyByScoreOptimizer`), which the engine
-   selects when `enableLimiter` is true; with the default `enableLimiter: false`
-   the engine runs the unlimited `CostAwareOptimizer`, which ignores all
-   constraints — so quota caps are **not** enforced. This is the same coupling the
-   physical-inventory limiter has.
+**A `limiters:` list containing a `quota` entry** on the `default` entry, and
+that is the whole prerequisite. It is the sole source that selects the quota
+limiter (see [Selection & lifecycle](#selection--lifecycle)) and is applied
+**live** — no restart. With no `limiters:` list, nothing limits: neither the
+optimizer budget nor the scale-from-zero capacity check.
 
-With a `limiters: quota` entry but `enableLimiter: false`, the limiter is
-constructed but never applied; replicas scale unconstrained by quota.
+> **Changed:** this used to require a second setting, `enableLimiter: true`, and a
+> `quota` entry declared without it was constructed and then never applied —
+> replicas scaled unconstrained while the config read as capped. Declaring the
+> limiter is now the request to be limited, so that failure mode is gone.
 
 The quota entries use the same schema described below; place them inline under the
 saturation `default` entry's `limiters:` list (see
@@ -403,8 +400,7 @@ mode, add a `quota` entry to the saturation `default` entry's `limiters:` list:
 default: |
   analyzers:
     - type: saturation
-  enableLimiter: true          # required for the limiter to actually apply
-  limiters:
+  limiters:                    # declaring it is what enforces it
     - type: quota
       name: cluster-h100
       scope: cluster
@@ -448,14 +444,9 @@ effective mode from the ConfigMap):
 | `quota` | `true` | **No.** `CollectInventoryK8S` is skipped; a startup log notes the suppression. |
 
 The cluster GPU-usage observer honours this too. `internal/gpuusage.Refresher`
-publishes the physical view, which a quota never consults, so its timer is gated
-on two live conditions re-read every tick (`Refresher.Periodic`, wired in
-`cmd/main.go`):
-
-1. a physical limiter is configured at all — quota mode fails this; and
-2. `enableLimiter` is set, which is what makes the saturation engine consult a
-   provider. It is the only consumer that reads the published snapshot without
-   asking for a refresh first.
+publishes the physical view, which a quota never consults, so its timer runs only
+when a physical limiter is declared (`Refresher.Periodic`, wired in
+`cmd/main.go`) — quota mode and no-limiter mode both fail that test.
 
 So a quota-only deployment takes no periodic observation and lists no nodes or
 pods for one. The gate is re-evaluated per tick rather than latched at startup,

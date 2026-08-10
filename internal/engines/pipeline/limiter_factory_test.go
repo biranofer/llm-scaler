@@ -22,10 +22,22 @@ func configWithLimiters(limiters ...config.QuotaLimiterConfig) *config.Config {
 
 var _ = Describe("NewLimiterFromConfig", func() {
 
-	It("returns an inventory limiter when no limiters are declared", func() {
+	// Declaring no limiter must produce no limiting, not a hidden default one. A
+	// NoOpLimiter provides no constraints, so the optimizer runs unconstrained and
+	// the scale-from-zero check reports the wake as unchecked — both visible, both
+	// what the operator asked for by declaring nothing.
+	It("returns a NoOp limiter when no limiters are declared", func() {
 		l, err := NewLimiterFromConfig(config.NewTestConfig(), nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(l).NotTo(BeNil())
+		Expect(ConstraintProvidersFrom(l)).To(BeEmpty(),
+			"an undeclared limiter must not bound scaling")
+	})
+
+	It("returns an inventory limiter for an explicit inventory entry", func() {
+		cfg := configWithLimiters(config.QuotaLimiterConfig{Type: "inventory"})
+		l, err := NewLimiterFromConfig(cfg, nil)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(l.Name()).To(Equal("gpu-limiter"))
 		_, ok := l.(*DefaultLimiter)
 		Expect(ok).To(BeTrue(), "inventory mode should produce a DefaultLimiter")

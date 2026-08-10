@@ -437,7 +437,7 @@ var _ = Describe("Saturation Engine", func() {
 
 	})
 
-	Context("Optimizer selection based on EnableLimiter", func() {
+	Context("Optimizer selection based on the declared limiters", func() {
 		const testName = "optimizer-toggle-test"
 		const modelID = "test-model"
 
@@ -497,8 +497,8 @@ var _ = Describe("Saturation Engine", func() {
 			Expect(client.IgnoreNotFound(err)).NotTo(HaveOccurred())
 		})
 
-		It("should update e.optimizer when EnableLimiter toggles", func() {
-			By("Creating engine with EnableLimiter=false")
+		It("should update e.optimizer when the declared limiters change", func() {
+			By("Creating engine with no limiters declared")
 			mockPromAPI := &testutils.MockPromAPI{
 				QueryResults: map[string]model.Value{},
 				QueryErrors:  map[string]error{},
@@ -507,49 +507,55 @@ var _ = Describe("Saturation Engine", func() {
 			promSource := prometheus.NewPrometheusSource(ctx, mockPromAPI, prometheus.DefaultPrometheusSourceConfig())
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 
+			// The declared limiters are now the whole answer: a declared limiter IS
+			// the request to be limited. There is no enable flag that could leave a
+			// declared limiter inert, which is what let a quota be configured and
+			// silently not enforced.
 			testConfig := config.NewTestConfig()
-			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
-				"default": {
-					AnalyzerName:  domain.SaturationAnalyzerName, // V2 path
-					EnableLimiter: false,
-				},
-			})
+			withLimiters := func(limiters ...config.QuotaLimiterConfig) {
+				testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+					"default": {
+						AnalyzerName: domain.SaturationAnalyzerName, // V2 path
+						Limiters:     limiters,
+					},
+				})
+			}
+			withLimiters()
 			engine := NewEngine(k8sClient, k8sClient, k8sClient.Scheme(), nil, sourceRegistry, testConfig, pipeline.NewNoOpLimiter("test"))
 			engine.Variants, engine.VariantEnricher = wvaDiscovery(ctx, "default")
 
-			By("Running optimize() with EnableLimiter=false")
+			By("Running optimize() with no limiters")
 			err := engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(engine.optimizer.Name()).To(Equal("cost-aware"),
-				"Expected CostAwareOptimizer when EnableLimiter=false")
+				"Expected CostAwareOptimizer when no limiter is declared")
 
-			By("Updating config to EnableLimiter=true")
-			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
-				"default": {
-					AnalyzerName:  domain.SaturationAnalyzerName, // V2 path
-					EnableLimiter: true,
-				},
-			})
+			By("Declaring a gpu-inventory limiter")
+			withLimiters(config.QuotaLimiterConfig{Type: "gpu-inventory"})
 
-			By("Running optimize() with EnableLimiter=true")
 			err = engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(engine.optimizer.Name()).To(Equal("greedy-by-score"),
-				"Expected GreedyByScoreOptimizer when EnableLimiter=true")
+				"Expected GreedyByScoreOptimizer once a limiter is declared")
 
-			By("Updating config back to EnableLimiter=false")
-			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
-				"default": {
-					AnalyzerName:  domain.SaturationAnalyzerName, // V2 path
-					EnableLimiter: false,
-				},
+			By("Declaring a quota limiter — also limited, with no second flag to set")
+			withLimiters(config.QuotaLimiterConfig{
+				Name: "q", Type: "quota", Scope: config.QuotaScopeCluster,
+				ClusterQuotas: map[string]int{"A100": 4},
 			})
 
-			By("Running optimize() with EnableLimiter=false again")
+			err = engine.optimize(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(engine.optimizer.Name()).To(Equal("greedy-by-score"),
+				"a declared quota must be enforced without a separate enable flag")
+
+			By("Removing the limiters again")
+			withLimiters()
+
 			err = engine.optimize(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(engine.optimizer.Name()).To(Equal("cost-aware"),
-				"Expected CostAwareOptimizer when EnableLimiter=false (second toggle)")
+				"Expected CostAwareOptimizer when the limiters are removed")
 		})
 	})
 

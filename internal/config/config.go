@@ -32,8 +32,18 @@ type Config struct {
 type LimiterType string
 
 const (
+	// LimiterTypeNone means no limiter is configured: the limiters list is absent
+	// or empty. Scaling is then unconstrained — the optimizer allocates without a
+	// GPU budget and a scale-from-zero wake is published without a capacity check.
+	//
+	// This is the ScalingPolicy schema's own semantics, where limiters is "zero or
+	// more" (docs/proposals/design-scalingpolicy-crd.md §3). Declaring a limiter is
+	// what turns limiting on; there is no separate enable flag, and no implicit
+	// default limiter for an operator who declared none.
+	LimiterTypeNone LimiterType = "none"
+
 	// LimiterTypeInventory builds the TypeInventory-backed limiter
-	// (physical GPU discovery via the GPU operator). Default.
+	// (physical GPU discovery via the GPU operator).
 	LimiterTypeInventory LimiterType = "inventory"
 
 	// LimiterTypeQuota builds one or more QuotaInventory-backed limiters
@@ -690,36 +700,32 @@ func (c *Config) MarkConfigMapsBootstrapFailed(err error) {
 }
 
 // EffectiveLimiterMode returns the GPU limiter implementation to construct. The
-// limiters: list on the global saturation "default" entry is the sole source: a
-// quota entry selects LimiterTypeQuota, otherwise a gpu-inventory/inventory entry
-// selects LimiterTypeInventory. With no limiters: declared, the default is
-// LimiterTypeInventory. Because it reads the live saturation config, the value
-// changes without a restart when the ConfigMap changes.
+// limiters: list on the global saturation "default" entry is the SOLE source: no
+// entries selects LimiterTypeNone, a quota entry selects LimiterTypeQuota, and
+// otherwise a gpu-inventory/inventory entry selects LimiterTypeInventory.
+//
+// The list carries the whole intent — declaring a limiter is what turns limiting
+// on. There is no separate enable flag: enableLimiter used to gate the saturation
+// optimizer independently, so quota entries could be declared and silently not
+// enforced, while the scale-from-zero path consulted a limiter the operator never
+// asked for. Both halves now follow this one value.
+//
+// Because it reads the live saturation config, the value changes without a
+// restart when the ConfigMap changes.
 // Thread-safe.
 func (c *Config) EffectiveLimiterMode() LimiterType {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	for _, l := range c.saturation.global["default"].Limiters {
+	limiters := c.saturation.global["default"].Limiters
+	if len(limiters) == 0 {
+		return LimiterTypeNone
+	}
+	for _, l := range limiters {
 		if l.Type == string(LimiterTypeQuota) {
 			return LimiterTypeQuota
 		}
 	}
 	return LimiterTypeInventory
-}
-
-// LimiterEnabled reports whether the saturation engine will actually consult its
-// limiter, i.e. whether enableLimiter is set on the global saturation "default"
-// entry. That flag is what selects the GPU-aware optimizer; with it false the
-// engine runs the unlimited optimizer and never asks a provider for constraints.
-//
-// It does NOT govern the scale-from-zero placement check, which consults its
-// limiter whatever this says. Read the live config, so it changes without a
-// restart.
-// Thread-safe.
-func (c *Config) LimiterEnabled() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.saturation.global["default"].EnableLimiter
 }
 
 // EffectiveQuotaEntries returns the quota entries the quota limiter should

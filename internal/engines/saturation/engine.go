@@ -213,8 +213,8 @@ type Engine struct {
 	externalAnalyzers map[string]domain.Analyzer
 
 	// optimizer is the V2 scaling optimizer that produces VariantDecisions from
-	// AnalyzerResults. Selected per-cycle based on enableLimiter config:
-	// CostAwareOptimizer (unlimited) or GreedyByScoreOptimizer (limited).
+	// AnalyzerResults. Selected per-cycle from the declared limiters:
+	// CostAwareOptimizer when none is declared, GreedyByScoreOptimizer when one is.
 	optimizer pipeline.ScalingOptimizer
 
 	metricsEmitter *metrics.MetricsEmitter
@@ -244,8 +244,8 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 	satV2 := saturation_v2.NewSaturationAnalyzer(capacityStore)
 
 	// Initialize with default optimizer. The actual optimizer is selected
-	// per-cycle in optimize() based on dynamic config (enableLimiter flag
-	// from ConfigMap), since config arrives after engine init.
+	// per-cycle in optimize() from the ConfigMap's live limiters: list, since
+	// config arrives after engine init.
 	var scalingOptimizer pipeline.ScalingOptimizer = pipeline.NewCostAwareOptimizer()
 
 	// Declared before the locator so the closure below can read the field that is
@@ -488,8 +488,15 @@ func (e *Engine) recordDefaultConfigMetrics() {
 
 	globalSatCfgMap := e.Config.SaturationConfig()
 	// record global default config
+	//
+	// The limiter_enabled label keeps its name and its meaning — "is scaling being
+	// limited" — but now comes from whether any limiter is declared, since the
+	// enableLimiter flag it used to read is gone. Renaming the label would break
+	// the operational dashboard and the zero-allocatable-GPU alert, which both
+	// reference it.
 	if cfg, ok := globalSatCfgMap["default"]; ok {
-		metrics.SetConfigInfo(cfg.GetAnalyzerName(), cfg.EnableLimiter, e.Config.ScaleToZeroEnabled())
+		limiterEnabled := e.Config.EffectiveLimiterMode() != config.LimiterTypeNone
+		metrics.SetConfigInfo(cfg.GetAnalyzerName(), limiterEnabled, e.Config.ScaleToZeroEnabled())
 	}
 }
 
@@ -663,29 +670,32 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	// Keyed by VariantAutoscaling Namespace/Name
 	currentAllocations := make(map[string]*domain.Allocation)
 
-	// Read saturation config for analyzer selection and limiter flag.
+	// Read saturation config for analyzer selection.
 	globalSatCfgMap := e.Config.SaturationConfig()
 	analyzerName := ""
-	enableLimiter := false
 	if cfg, ok := globalSatCfgMap["default"]; ok {
 		cfg.ApplyDefaults()
 		analyzerName = cfg.GetAnalyzerName()
-		enableLimiter = cfg.EnableLimiter
 	}
 
-	// Select optimizer based on enableLimiter flag (both are stateless, safe to swap).
-	// V2 (saturation-token-based) is the sole analysis path and always uses the
+	// Select the optimizer from the declared limiters (both are stateless, safe to
+	// swap). A declared limiter IS the request to be limited — the separate
+	// enableLimiter flag is gone, so a quota can no longer be declared and then
+	// silently not enforced, which is what that flag allowed. V2
+	// (saturation-token-based) is the sole analysis path and always uses the
 	// optimizer pipeline.
+	limiterMode := e.Config.EffectiveLimiterMode()
 	savedOptimizer := e.optimizer
-	if enableLimiter {
-		e.optimizer = pipeline.NewGreedyByScoreOptimizer()
-	} else {
+	if limiterMode == config.LimiterTypeNone {
 		e.optimizer = pipeline.NewCostAwareOptimizer()
+	} else {
+		e.optimizer = pipeline.NewGreedyByScoreOptimizer()
 	}
 	if savedOptimizer != e.optimizer {
 		e.recordActiveOptimizer() // optimizer has changed, record active optimizer
 	}
-	logger.V(logging.DEBUG).Info("Optimizer selected", "analyzer", analyzerName, "optimizer", e.optimizer.Name(), "enableLimiter", enableLimiter)
+	logger.V(logging.DEBUG).Info("Optimizer selected", "analyzer", analyzerName,
+		"optimizer", e.optimizer.Name(), "limiter", limiterMode)
 
 	// V2 (saturation): saturation_v2.Analyzer → AnalyzerResult → Optimizer.Optimize → Enforcer bridge.
 	mode := modeLabelForAnalyzer(analyzerName)
@@ -808,7 +818,7 @@ func (e *Engine) resolveSaturationConfig(
 // a basis some provider needs, or computing them failed because, e.g., node
 // objects are not readable on this cluster — we fall back to the cost-aware
 // optimizer, which is the engine's unlimited path (the same optimizer used when
-// enableLimiter is false), so scale-up proceeds unconstrained instead of being
+// no limiter is declared), so scale-up proceeds unconstrained instead of being
 // blocked. A constraint that is present but reports zero GPUs is left intact:
 // that is a genuine "no capacity" signal and should still block scale-up.
 //

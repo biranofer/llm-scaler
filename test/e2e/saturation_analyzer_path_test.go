@@ -51,6 +51,10 @@ import (
 const fakeMetricsJSON = `{"kv-cache-usage":0.3,"waiting-requests":2,"running-requests":1}`
 
 const (
+	// The limiters: list matches the shipped ConfigMap. This entry REPLACES the
+	// cluster's "default" saturation entry, and that list is the sole source of
+	// limiter selection — omitting it would disarm the scale-from-zero capacity
+	// check cluster-wide for as long as this entry is in place.
 	saturationConfigTemplate = `
 model_id: ""
 namespace: ""
@@ -59,6 +63,8 @@ queueLengthThreshold: %d
 scaleUpThreshold: %.2f
 scaleDownBoundary: %.2f
 analyzerName: %q
+limiters:
+  - type: gpu-inventory
 `
 
 	// Scale-up arc. kvCacheThreshold is V2's KV utilization *ceiling*: capacity is

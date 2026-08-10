@@ -78,7 +78,12 @@ func UsageBasisOf(v any) UsageBasis {
 // pod cache, while not observing when something does turns the capacity check off
 // silently.
 func PhysicalUsageConfigured(cfg *config.Config) bool {
-	return cfg.EffectiveLimiterMode() != config.LimiterTypeQuota
+	switch cfg.EffectiveLimiterMode() {
+	case config.LimiterTypeNone, config.LimiterTypeQuota:
+		return false
+	default:
+		return true
+	}
 }
 
 // GPUUsageViews carries both measures of current GPU usage so a caller can serve

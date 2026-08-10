@@ -18,8 +18,11 @@ var _ = Describe("shouldCollectClusterInventory", func() {
 		return cfg
 	}
 
-	It("collects inventory when no limiters are configured (inventory default)", func() {
-		Expect(shouldCollectClusterInventory(config.NewTestConfig())).To(BeTrue())
+	// No limiter declared means nothing bounds scaling, so there is no
+	// physical-capacity path to log for either — and no reason to list Nodes. This
+	// used to collect, because an undeclared list implied an inventory limiter.
+	It("skips inventory collection when no limiters are configured", func() {
+		Expect(shouldCollectClusterInventory(config.NewTestConfig())).To(BeFalse())
 	})
 
 	It("collects inventory when a gpu-inventory limiter is configured", func() {

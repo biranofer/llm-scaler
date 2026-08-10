@@ -27,7 +27,7 @@ import (
 // case). Equivalence on scale-down and on P/D-disaggregated (per-role) requests
 // is not asserted here — the fallback's correctness does not depend on it, since
 // the cost-aware optimizer is itself a valid unlimited optimizer for those paths
-// (it is the optimizer the engine already runs when enableLimiter is false).
+// (it is the optimizer the engine already runs when no limiter is declared).
 var _ = Describe("GreedyByScore vs CostAware when GPUs are unconstrained", func() {
 	var ctx context.Context
 

@@ -12,8 +12,14 @@ import (
 
 // NewLimiterFromConfig constructs the GPU limiter selected via
 // Config.EffectiveLimiterMode — the inline limiters: list on the saturation
-// "default" config, or the LimiterTypeInventory default when none is declared.
+// "default" config.
 //
+//   - LimiterTypeNone: no limiters declared, so nothing limits. Returns a
+//     NoOpLimiter, which provides no constraints, so the optimizer runs
+//     unconstrained and a scale-from-zero wake is published without a capacity
+//     check. An operator who declares no limiter gets no limiter — there is no
+//     implicit default one, and no enable flag that could leave a declared
+//     limiter inert.
 //   - LimiterTypeInventory: a TypeInventoryWithUsage wrapped in a DefaultLimiter.
 //     Discovers physical GPUs via the GPU operator.
 //   - LimiterTypeQuota: builds one DefaultLimiter per Config.EffectiveQuotaEntries
@@ -22,18 +28,21 @@ import (
 //     operator-declared caps — physical capacity is NOT consulted.
 //
 // The kubeClient is only used by the inventory path (for GPU operator
-// discovery); the quota path ignores it. Inline limiter entries are validated at
-// ConfigMap parse time (SaturationScalingConfig.validateLimiters), so unknown
-// limiter types reaching the default branch represent a programming error.
+// discovery); the quota and none paths ignore it. Inline limiter entries are
+// validated at ConfigMap parse time (SaturationScalingConfig.validateLimiters),
+// so unknown limiter types reaching the default branch represent a programming
+// error.
 func NewLimiterFromConfig(cfg *config.Config, kubeClient client.Client) (Limiter, error) {
 	switch t := cfg.EffectiveLimiterMode(); t {
+	case config.LimiterTypeNone:
+		return NewNoOpLimiter("no-limiter"), nil
 	case config.LimiterTypeInventory:
 		return newInventoryLimiter(kubeClient), nil
 	case config.LimiterTypeQuota:
 		return newQuotaLimiter(cfg)
 	default:
-		return nil, fmt.Errorf("limiter factory: unknown limiter type %q (valid: %q, %q)",
-			t, config.LimiterTypeInventory, config.LimiterTypeQuota)
+		return nil, fmt.Errorf("limiter factory: unknown limiter type %q (valid: %q, %q, %q)",
+			t, config.LimiterTypeNone, config.LimiterTypeInventory, config.LimiterTypeQuota)
 	}
 }
 

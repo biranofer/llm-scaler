@@ -41,9 +41,12 @@ data:
     # kvCacheThreshold, and queueLengthThreshold gates the compute-bound estimate.
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    # Enable GPU limiter to constrain scaling based on available cluster resources
-    # When true, scale-up decisions are limited by available GPU capacity
-    enableLimiter: false
+    # What bounds scaling. Declaring a limiter is what turns limiting on, and
+    # declaring none means nothing is limited — the optimizer allocates without a
+    # GPU budget AND a scale-from-zero wake is published with no capacity check.
+    # There is no separate enable flag and no implicit default limiter.
+    limiters:
+      - type: gpu-inventory
     # Enable priority-weighted rescale: under GPU contention the V2 optimizer
     # redistributes the whole budget by priority x demand, reclaiming from
     # lower-priority models so higher-priority work can run. Off by default.

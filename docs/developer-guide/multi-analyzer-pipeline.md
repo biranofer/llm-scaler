@@ -449,13 +449,13 @@ and therefore how many GPUs it attracts in a constrained environment.
 ## Optimizer consumption
 
 The `[]NamedAnalyzerResult` slice is passed to one of two optimizers depending
-on the `enableLimiter` flag in `SaturationScalingConfig`:
+on whether `SaturationScalingConfig` declares any `limiters:` entry:
 
-- **`CostAwareOptimizer`** (unlimited mode, `enableLimiter: false`): operates
+- **`CostAwareOptimizer`** (unlimited mode, no limiters declared): operates
   on the saturation entry's `VariantCapacities` for cost and role data; scales
   up the cheapest variant that covers the required capacity, scales down the
   most expensive variant with spare capacity.
-- **`GreedyByScoreOptimizer`** (limited mode, `enableLimiter: true`): respects
+- **`GreedyByScoreOptimizer`** (limited mode, a limiter declared): respects
   `ResourceConstraints` (GPU budgets per accelerator type). Models are ordered
   by fair-share priority value:
   `fsv = Priority × Σᵢ Score_i × Σ_role pickerState[i][role]`,

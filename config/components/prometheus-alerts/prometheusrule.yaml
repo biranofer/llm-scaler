@@ -44,7 +44,7 @@ spec:
         severity: warning
       annotations:
         summary: "GPU-labeled {{ $labels.accelerator_type }} nodes report zero allocatable accelerators"
-        description: "WVA sees zero allocatable {{ $labels.accelerator_vendor }} {{ $labels.accelerator_model }} ({{ $labels.accelerator_type }}) GPUs for 5+ minutes. Note: this reflects node *allocatable* capacity (not free/schedulable GPUs), and wva_available_gpus is only emitted when the GPU limiter is enabled (enableLimiter=true). A GPU-labeled node advertising zero allocatable accelerators usually means it is NotReady or its device plugin/driver is not installed — check GPU node status and device-plugin pods."
+        description: "WVA sees zero allocatable {{ $labels.accelerator_vendor }} {{ $labels.accelerator_model }} ({{ $labels.accelerator_type }}) GPUs for 5+ minutes. Note: this reflects node *allocatable* capacity (not free/schedulable GPUs), and wva_available_gpus is only emitted when a gpu-inventory limiter is declared in the saturation config's limiters list. A GPU-labeled node advertising zero allocatable accelerators usually means it is NotReady or its device plugin/driver is not installed — check GPU node status and device-plugin pods."
 
     - alert: WVAReplicaScalingThrashing
       expr: sum by (namespace, variant_name) (rate(wva_replica_scaling_total[10m])) > 0.033

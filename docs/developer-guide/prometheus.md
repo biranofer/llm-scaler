@@ -622,7 +622,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 
 ### `wva_gpu_discovery_up`
 - **Type**: Gauge
-- **Description**: Indicates whether GPU discovery is on (1) or off (0). GPU discovery is enabled when the limiter configuration is active (e.g., `enableLimiter` is `true`). This metric helps operators understand whether WVA is actively discovering GPU resources.
+- **Description**: Indicates whether GPU discovery is on (1) or off (0). GPU discovery is enabled when a physical (`gpu-inventory`) limiter is declared in `limiters:`. This metric helps operators understand whether WVA is actively discovering GPU resources.
 - **Labels**: None (global metric, optional `controller_instance` label when multi-instance deployment is used)
 - **Use Case**: Monitor GPU discovery status to ensure resource discovery is functioning when expected
 - **Example**:

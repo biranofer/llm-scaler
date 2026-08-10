@@ -177,7 +177,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Indicates whether GPU discovery is on or off. WVA only discovers GPUs when a configuration such as \"enableLimiter\" is \"true\". Related metric is wva_available_gpus. Metric is wva_gpu_discovery_up.",
+      "description": "Indicates whether GPU discovery is on or off. WVA only discovers GPUs when a gpu-inventory limiter is declared in the saturation config's \"limiters\" list. Related metric is wva_available_gpus. Metric is wva_gpu_discovery_up.",
       "fieldConfig": {
         "defaults": {
           "color": {

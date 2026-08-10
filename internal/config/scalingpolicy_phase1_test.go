@@ -242,11 +242,24 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeInventory))
 	})
 
-	It("defaults to inventory when no inline limiters are declared", func() {
+	// "Zero or more" is the ScalingPolicy schema's own wording for this list, and
+	// zero has to mean zero. An implicit inventory limiter here used to bound
+	// scaling for an operator who declared nothing — invisible in the config, and
+	// impossible to turn off — while enableLimiter separately decided whether the
+	// optimizer honoured it. One list, one answer.
+	It("selects no limiter at all when none is declared", func() {
 		c := &Config{}
 		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{"default": {}})
-		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeInventory))
+		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeNone))
 		Expect(c.EffectiveQuotaEntries()).To(BeEmpty())
+	})
+
+	It("selects no limiter for an explicitly empty list", func() {
+		c := &Config{}
+		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+			"default": {Limiters: []QuotaLimiterConfig{}},
+		})
+		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeNone))
 	})
 
 	It("ignores limiters declared on a non-default (per-model) entry", func() {

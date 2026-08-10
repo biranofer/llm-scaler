@@ -141,10 +141,14 @@ when any of these hold:
 > `AcceleratorNotResolved` event otherwise), and declare an explicit quota
 > limiter if you need a hard ceiling.
 
-Note the usage snapshot is published independently of `enableLimiter`. The
-GPU-aware optimizer (`GreedyByScore`) only runs when `enableLimiter: true`, but
-the snapshot is published before that branch so scale-from-zero can still check
-placement on a default (`CostAware`) deployment.
+Note the usage snapshot is published independently of the optimizer branch, so
+scale-from-zero can check placement on a cycle the optimizer never reached.
+
+There is no separate enable flag: the `limiters` list below is the whole answer.
+Declaring a limiter selects the GPU-aware optimizer (`GreedyByScore`) *and* arms
+the scale-from-zero capacity check; declaring none leaves both off. `enableLimiter`
+used to gate only the first of those, so a quota could be declared and silently
+never enforced, while scale-from-zero consulted a limiter nobody had asked for.
 
 ### `limiters` (cluster-default only, live)
 
@@ -735,8 +739,8 @@ just one threshold, specify only that field:
 > a field to its zero value — the override is treated as "unset" and inherits from
 > `default` instead. This affects every field type, not just numeric thresholds:
 >
-> - `> - `enableLimiter: false` → inherits from `default` (cannot disable a limiter that's enabled by default)
 > - `analyzers: []` → inherits from `default` (cannot clear a non-empty analyzer list)
+> - `enableRescale: false` → inherits from `default` (cannot disable rescale per model)
 >
 > See `Merge()` in `internal/config/saturation_scaling.go`.
 
@@ -988,7 +992,6 @@ type SaturationScalingConfig struct {
     Namespace            string                `yaml:"namespace,omitempty"`
     KvCacheThreshold     float64               `yaml:"kvCacheThreshold"`
     QueueLengthThreshold float64               `yaml:"queueLengthThreshold"`
-    EnableLimiter        bool                  `yaml:"enableLimiter,omitempty"`
     EnableRescale        bool                  `yaml:"enableRescale,omitempty"`
     AnalyzerName         string                `yaml:"analyzerName,omitempty"`
     ScaleUpThreshold     float64               `yaml:"scaleUpThreshold,omitempty"`   // default 0.85

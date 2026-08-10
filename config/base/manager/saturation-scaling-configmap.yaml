@@ -39,16 +39,25 @@ data:
     # kvCacheThreshold, and queueLengthThreshold gates the compute-bound estimate.
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
-    # Enable GPU limiter to constrain scaling based on available cluster resources
-    # When true, scale-up decisions are limited by available GPU capacity
-    enableLimiter: false
+    # What bounds scaling. The list is the whole answer: declaring a limiter is
+    # what turns limiting on, and declaring none means nothing is limited — the
+    # optimizer allocates without a GPU budget AND a scale-from-zero wake is
+    # published with no capacity check, so a variant can be woken onto an
+    # accelerator that is already full. There is no separate enable flag and no
+    # implicit default limiter.
+    #
+    # gpu-inventory bounds scaling by the GPUs actually free on the nodes,
+    # measured from real pod occupancy. See the limiters section below for the
+    # quota form and for composing entries.
+    limiters:
+      - type: gpu-inventory
     # Enable priority-weighted rescale: under GPU contention the V2 optimizer
     # redistributes the whole budget by priority x demand, reclaiming from
     # lower-priority models so higher-priority work can run. Off by default.
     # Budget-scope flag (read only from this `default` entry): the value here
     # governs the cluster budget; a namespace-local config's `default` governs
     # that namespace's quota budget. Has no effect without a same-scope GPU budget
-    # (requires enableLimiter and a matching cluster/namespace budget).
+    # (requires a declared limiter and a matching cluster/namespace budget).
     enableRescale: false
   #
   # ---------------------------------------------------------------------------
@@ -73,15 +82,24 @@ data:
   #
   # Cluster GPU limiter — the sole source that selects the limiter, applied live
   # (no restart) and honored ONLY on this `default` entry (a cluster-budget scope,
-  # like enableRescale). A limiters list selects a SINGLE mode: a quota entry wins
-  # over any gpu-inventory entry, so pick one of the two forms below (not both).
-  # With no limiters: declared, the physical-inventory limiter is used.
+  # like enableRescale). Zero or more entries, per the ScalingPolicy schema
+  # (docs/proposals/design-scalingpolicy-crd.md).
   #
-  #   # (a) physical-capacity limiter:
+  #   NONE      declare nothing, or an empty list: scaling is unconstrained. Both
+  #             the optimizer budget and the scale-from-zero capacity check are
+  #             off. WVA logs this at startup.
+  #   ONE MODE  a limiters list selects a SINGLE mode today: a quota entry wins
+  #             over any gpu-inventory entry, so pick one of the two forms below,
+  #             not both. Composing them as min(physical, quota) is the limiter
+  #             chain's job, tracked in issue #1003.
+  #
+  #   # (a) physical-capacity limiter (what this ConfigMap ships above):
   #   limiters:
   #     - type: gpu-inventory
   #
-  #   # (b) operator-declared quota limiter (same schema as QuotaLimiterConfig):
+  #   # (b) operator-declared quota limiter (same schema as QuotaLimiterConfig).
+  #   # A quota is charged ONLY for the GPUs WVA's own variants hold, so it does
+  #   # not bound the cluster — see docs/developer-guide/quota-limiter.md.
   #   limiters:
   #     - type: quota
   #       name: cluster-h100

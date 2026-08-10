@@ -6,7 +6,7 @@ today, and the ways it can still over-state free capacity.
 Two consumers read these budgets:
 
 - the **GPU-aware optimizer** (`GreedyByScoreOptimizer`), active when the
-  saturation config sets `enableLimiter: true`; and
+  saturation config declares any `limiters:` entry; and
 - the **scale-from-zero placement check**, which refuses to wake a variant onto
   an accelerator with no room (see
   [`scaleFromZero`](saturation-scaling-config.md#scalefromzero)).
@@ -58,8 +58,8 @@ would place a variant onto a device that is already taken.
 
 **The physical observation is only taken when something reads it.**
 `internal/gpuusage.Refresher` runs its timer only while a physical limiter is
-configured *and* `enableLimiter` is set — the saturation engine is the only
-consumer that reads the published snapshot as-is. The scale-from-zero engine
+declared — the saturation engine is the only consumer that reads the published
+snapshot as-is. The scale-from-zero engine
 instead calls `EnsureFresh` at the moment it decides a wake, so its capacity check
 is unaffected by the timer being off, and it only asks when a physical provider
 exists. A quota-only deployment therefore never walks the cluster for a number
@@ -105,7 +105,7 @@ Pinned by `TestUsageIsReconciledOntoPoolKeys` and `TestPoolKeysAreShortNames`.
 > 0 in nodeSelector deployments, so the GPU-aware optimizer believed the cluster
 > was empty and allocated against the full installed capacity. It now sees real
 > usage and will allocate less. That is the correction, but it is a behavioural
-> change for any existing deployment running `enableLimiter: true`.
+> change for any existing deployment that declares a limiter.
 
 ## Gap 1: usage on an unresolved accelerator is still unattributable
 
