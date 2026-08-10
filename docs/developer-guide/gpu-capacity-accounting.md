@@ -56,6 +56,15 @@ the safe direction — a physical figure over-states consumption for a quota, wh
 errs toward refusing, rather than under-stating what the hardware holds, which
 would place a variant onto a device that is already taken.
 
+**The physical observation is only taken when something reads it.**
+`internal/gpuusage.Refresher` runs its timer only while a physical limiter is
+configured *and* `enableLimiter` is set — the saturation engine is the only
+consumer that reads the published snapshot as-is. The scale-from-zero engine
+instead calls `EnsureFresh` at the moment it decides a wake, so its capacity check
+is unaffected by the timer being off, and it only asks when a physical provider
+exists. A quota-only deployment therefore never walks the cluster for a number
+nothing reads. See [quota limiter](quota-limiter.md#resource-access-in-quota-mode).
+
 **A missing view is not zero.** Absent means "unknown", which both engines treat
 as permissive; an empty map is a confident claim that nothing is in use, and a
 provider handed one reports its entire capacity free. Callers check

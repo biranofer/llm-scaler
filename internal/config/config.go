@@ -707,6 +707,21 @@ func (c *Config) EffectiveLimiterMode() LimiterType {
 	return LimiterTypeInventory
 }
 
+// LimiterEnabled reports whether the saturation engine will actually consult its
+// limiter, i.e. whether enableLimiter is set on the global saturation "default"
+// entry. That flag is what selects the GPU-aware optimizer; with it false the
+// engine runs the unlimited optimizer and never asks a provider for constraints.
+//
+// It does NOT govern the scale-from-zero placement check, which consults its
+// limiter whatever this says. Read the live config, so it changes without a
+// restart.
+// Thread-safe.
+func (c *Config) LimiterEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.saturation.global["default"].EnableLimiter
+}
+
 // EffectiveQuotaEntries returns the quota entries the quota limiter should
 // enforce, taken from the inline quota entries on the global saturation "default"
 // entry (each deep-copied). Empty when none are declared. Reads the live config,

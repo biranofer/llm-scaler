@@ -34,6 +34,52 @@ func TestUsageBasisOfLimiters(t *testing.T) {
 	}
 }
 
+// PhysicalUsageConfigured answers from the limiter MODE, because the usage
+// observer needs the answer before any limiter is built. This checks that shortcut
+// against the real thing: build the limiter each mode selects, and compare what
+// its providers actually declare. A new limiter mode, or a mode that starts mixing
+// physical and quota providers, fails here rather than by silently turning the
+// cluster observation off.
+func TestPhysicalUsageConfiguredMatchesTheBuiltLimiter(t *testing.T) {
+	withLimiters := func(limiters ...config.QuotaLimiterConfig) *config.Config {
+		cfg := config.NewTestConfig()
+		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			"default": {Limiters: limiters},
+		})
+		return cfg
+	}
+
+	for _, tc := range []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{"inventory (the default, no limiters declared)", withLimiters()},
+		{"inventory (explicit gpu-inventory entry)", withLimiters(
+			config.QuotaLimiterConfig{Type: "gpu-inventory"})},
+		{"quota", withLimiters(config.QuotaLimiterConfig{
+			Name: "q", Type: "quota", Scope: config.QuotaScopeCluster,
+			ClusterQuotas: map[string]int{"A100": 4}})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			limiter, err := NewLimiterFromConfig(tc.cfg, nil)
+			if err != nil {
+				t.Fatalf("NewLimiterFromConfig: %v", err)
+			}
+			built := false
+			for _, cp := range ConstraintProvidersFrom(limiter) {
+				if UsageBasisOf(cp) == PhysicalUsage {
+					built = true
+				}
+			}
+			if got := PhysicalUsageConfigured(tc.cfg); got != built {
+				t.Errorf("PhysicalUsageConfigured = %t but the built limiter %q has a physical "+
+					"provider = %t; the observer would %s", got, limiter.Name(), built,
+					map[bool]string{true: "observe for nothing", false: "stop observing for a consumer that needs it"}[got])
+			}
+		})
+	}
+}
+
 func TestGPUUsageViewsRouting(t *testing.T) {
 	views := GPUUsageViews{
 		PhysicalByType:      map[string]int{"A100": 6},

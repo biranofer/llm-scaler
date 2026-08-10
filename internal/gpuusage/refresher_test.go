@@ -97,6 +97,48 @@ var _ = Describe("Refresher", func() {
 			Eventually(done).Should(Receive(BeNil()))
 		})
 
+		It("takes no observation at all when nothing consumes the physical view", func() {
+			// A quota is charged for WVA's own variants and never reads this. Left
+			// ungated, such a deployment lists nodes and walks every pod in the
+			// cluster on every interval to produce a number nothing reads — and
+			// needs the Node RBAC to do it.
+			r.Interval = 5 * time.Millisecond
+			r.Periodic = func() bool { return false }
+
+			runCtx, cancel := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() { done <- r.Start(runCtx) }()
+
+			Consistently(func() int { return disc.calls }, 200*time.Millisecond, 10*time.Millisecond).
+				Should(Equal(0), "the cluster was observed for a view nothing consumes")
+
+			cancel()
+			Eventually(done).Should(Receive(BeNil()))
+		})
+
+		It("follows the predicate without a restart when the configuration changes", func() {
+			// Limiter mode is live-reloadable, so the answer is re-read every tick
+			// rather than latched at startup.
+			wanted := false
+			r.Interval = 5 * time.Millisecond
+			r.Periodic = func() bool { return wanted }
+
+			runCtx, cancel := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() { done <- r.Start(runCtx) }()
+			defer cancel()
+
+			Consistently(func() int { return disc.calls }, 100*time.Millisecond, 10*time.Millisecond).
+				Should(Equal(0))
+
+			wanted = true
+			Eventually(func() int { return disc.calls }, 2*time.Second, 5*time.Millisecond).
+				Should(BeNumerically(">", 0), "a limiter mode change must not need a restart")
+
+			cancel()
+			Eventually(done).Should(Receive(BeNil()))
+		})
+
 		It("survives a failed first observation", func() {
 			// The cluster may not be reachable when the process starts; giving up
 			// there would leave WVA with no capacity picture for its whole life.
@@ -116,6 +158,22 @@ var _ = Describe("Refresher", func() {
 	})
 
 	Describe("EnsureFresh", func() {
+		It("observes even when the timer is off", func() {
+			// This is what keeps the scale-from-zero capacity check working in a
+			// deployment that does not run the timer: the engine asks at the moment
+			// it decides, and it only asks when a provider that reads this view is
+			// actually configured. A predicate saying "nobody needs it periodically"
+			// must not override a caller that has established it needs it now.
+			r.Periodic = func() bool { return false }
+			disc.byType = map[string]int{"A100": 3}
+
+			r.EnsureFresh(ctx, 0)
+
+			snap, ok := store.Get()
+			Expect(ok).To(BeTrue(), "an on-demand ask was refused because the timer is off")
+			Expect(snap.ByType).To(HaveKeyWithValue("A100", 3))
+		})
+
 		It("observes again when the published view is stale", func() {
 			// The reason this exists: a placement is decided the instant demand
 			// appears, and the periodic observation can be a whole interval old by

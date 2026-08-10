@@ -438,9 +438,25 @@ func main() {
 	// Registered BEFORE them so it takes its first observation first: both engines
 	// consume this, and until it exists the capacity checks have no evidence and
 	// degrade to "unknown", which is permissive. It is the SOLE producer of the
-	// snapshot — see internal/gpuusage.
+	// physical snapshot — see internal/gpuusage.
+	//
+	// The TIMER is only worth running for a deployment that reads the physical
+	// view, so it is gated on two live conditions, re-read every tick:
+	//
+	//   - a physical limiter is configured at all. A quota is charged for WVA's own
+	//     variants (pipeline.ManagedUsage) and never consults this, so quota mode
+	//     would otherwise list nodes and walk every pod in the cluster every
+	//     interval for a number nothing reads;
+	//   - enableLimiter is set, which is what makes the saturation engine consult a
+	//     provider. It is the only consumer that reads the PUBLISHED snapshot
+	//     without asking for a refresh first. The scale-from-zero engine calls
+	//     EnsureFresh at the moment it decides — that is not gated here, and it is
+	//     why its capacity check keeps working with the timer off.
 	usageRefresher := &gpuusage.Refresher{
 		Discovery: discovery.NewK8sWithGpuOperator(mgr.GetClient()),
+		Periodic: func() bool {
+			return pipeline.PhysicalUsageConfigured(cfg) && cfg.LimiterEnabled()
+		},
 	}
 	if err := mgr.Add(usageRefresher); err != nil {
 		setupLog.Error(err, "unable to add the GPU usage refresher to the manager")

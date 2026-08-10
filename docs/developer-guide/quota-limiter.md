@@ -447,15 +447,27 @@ effective mode from the ConfigMap):
 | `quota` | `false` | **No.** |
 | `quota` | `true` | **No.** `CollectInventoryK8S` is skipped; a startup log notes the suppression. |
 
-> **Known deviation: the process is no longer Node-API-free in quota mode.**
-> `internal/gpuusage.Refresher` is registered with the manager unconditionally in
-> `cmd/main.go` and lists nodes and pods every 15s to publish the physical view,
-> whatever the limiter mode. Nothing consults that view under a quota-only
-> configuration — `GPUUsageViews` gathers only the bases some provider asks for —
-> so the *decisions* stay independent of node discovery, but the API access and
-> its RBAC are not avoided. Gating the refresher on whether any configured
-> provider needs `PhysicalUsage` would restore the original contract and is not
-> implemented.
+The cluster GPU-usage observer honours this too. `internal/gpuusage.Refresher`
+publishes the physical view, which a quota never consults, so its timer is gated
+on two live conditions re-read every tick (`Refresher.Periodic`, wired in
+`cmd/main.go`):
+
+1. a physical limiter is configured at all — quota mode fails this; and
+2. `enableLimiter` is set, which is what makes the saturation engine consult a
+   provider. It is the only consumer that reads the published snapshot without
+   asking for a refresh first.
+
+So a quota-only deployment takes no periodic observation and lists no nodes or
+pods for one. The gate is re-evaluated per tick rather than latched at startup,
+because limiter mode is live-reloadable.
+
+> **One caveat on "no Node API access".** The gate covers the *timer*, not
+> on-demand reads. The scale-from-zero engine calls `EnsureFresh` at the moment it
+> decides a wake — that is deliberately ungated, and it is why its capacity check
+> keeps working with the timer off. It only asks when a provider that reads the
+> physical view is configured, so quota mode still never triggers it. The
+> observation walks the pod informer's cache rather than calling the API, but the
+> RBAC is held either way.
 
 ## Future work
 

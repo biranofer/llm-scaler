@@ -1,5 +1,7 @@
 package pipeline
 
+import "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+
 // Usage basis: which measure of "GPUs in use" a constraint provider must be fed.
 //
 // There are two, they answer different questions, and feeding one where the
@@ -61,6 +63,22 @@ func UsageBasisOf(v any) UsageBasis {
 		return r.UsageBasis()
 	}
 	return PhysicalUsage
+}
+
+// PhysicalUsageConfigured reports whether the limiter cfg selects contains any
+// provider that consumes the physical view.
+//
+// It answers from the mode rather than from a built limiter because callers need
+// it before (and independently of) constructing one — notably the usage observer,
+// which starts before either engine. The two must agree, which
+// TestPhysicalUsageConfiguredMatchesTheBuiltLimiter checks by building the
+// limiter for each mode and comparing the bases its providers declare.
+//
+// Unknown modes answer true: observing when nothing needs it costs a walk of the
+// pod cache, while not observing when something does turns the capacity check off
+// silently.
+func PhysicalUsageConfigured(cfg *config.Config) bool {
+	return cfg.EffectiveLimiterMode() != config.LimiterTypeQuota
 }
 
 // GPUUsageViews carries both measures of current GPU usage so a caller can serve

@@ -41,13 +41,20 @@ import (
 // exactly as it did before this existed.
 const DefaultInterval = 15 * time.Second
 
-// Refresher publishes the cluster's GPU usage on a fixed interval.
+// Refresher publishes the cluster's PHYSICAL GPU usage — every GPU held on a GPU
+// node, whoever holds it — on a fixed interval and on demand.
 //
-// It is the SOLE producer of the shared snapshot: both the saturation optimizer
-// and the scale-from-zero placement check read what it writes. A second producer
-// summing usage a different way is what this replaces — two views of "what is in
-// use" are free to disagree, and the two engines would then place decisions
-// against different pictures of the same cluster.
+// It is the SOLE producer of that view: both the saturation optimizer and the
+// scale-from-zero placement check read what it writes. A second producer summing
+// it a different way is what this replaces — two views of "what is in use" are
+// free to disagree, and the two engines would then place decisions against
+// different pictures of the same cluster.
+//
+// It is not the only MEASURE of usage. An operator-declared quota is charged for
+// WVA's own variants only, and that figure is published separately by the
+// saturation engine (see decision.DefaultManagedGPUUsage and
+// pipeline.UsageBasis). A deployment whose only limiter is a quota therefore
+// consumes nothing this produces, which is what Periodic exists to notice.
 type Refresher struct {
 	// Discovery observes the cluster. Required.
 	Discovery discovery.NamespacedUsageDiscovery
@@ -55,6 +62,20 @@ type Refresher struct {
 	Store *decision.GPUUsageStore
 	// Interval between refreshes. Defaults to DefaultInterval.
 	Interval time.Duration
+	// Periodic reports whether the PERIODIC observation is worth taking right now.
+	// Consulted on every tick, not once at startup, because the configuration it
+	// answers from is live: an operator switching limiter modes must not need a
+	// restart for this to follow. Nil means always.
+	//
+	// It does NOT gate EnsureFresh. An explicit on-demand ask comes from a caller
+	// that is about to decide something and has already established it needs this
+	// view, so a predicate saying "nobody needs it" would be answering a question
+	// the caller has just answered better.
+	Periodic func() bool
+
+	// lastPeriodic records what Periodic last said, so the transition is logged
+	// once rather than every tick.
+	lastPeriodic *bool
 
 	// freshMu serialises on-demand refreshes so concurrent callers collapse onto
 	// one observation. See EnsureFresh.
@@ -140,9 +161,11 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 // reachable yet, and the next tick retries.
 func (r *Refresher) Start(ctx context.Context) error {
 	logger := log.FromContext(ctx)
-	if err := r.Refresh(ctx); err != nil {
-		logger.Error(err, "Initial GPU usage discovery failed; scaling decisions have no capacity "+
-			"evidence until a refresh succeeds")
+	if r.periodicWanted(ctx) {
+		if err := r.Refresh(ctx); err != nil {
+			logger.Error(err, "Initial GPU usage discovery failed; scaling decisions have no capacity "+
+				"evidence until a refresh succeeds")
+		}
 	}
 
 	ticker := time.NewTicker(r.interval())
@@ -152,6 +175,9 @@ func (r *Refresher) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if !r.periodicWanted(ctx) {
+				continue
+			}
 			if err := r.Refresh(ctx); err != nil {
 				// Info, not Error: a blip is expected and the previous snapshot
 				// still stands. The condition that actually harms a decision is
@@ -161,6 +187,38 @@ func (r *Refresher) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// periodicWanted reports whether to take this tick's observation, logging the
+// answer once per change.
+//
+// Skipping is a real saving, not a micro-optimisation: an observation lists nodes
+// and walks every pod in the cluster, so a deployment whose only limiter is a
+// quota — which is charged for WVA's own variants and never consults the physical
+// picture — would otherwise pay that every interval, and hold the Node RBAC to do
+// it, for a number nothing reads.
+//
+// The previous snapshot is deliberately left in place rather than cleared. It is
+// stale, but nothing consults it in this state, and consumers bound staleness
+// themselves; clearing would only matter if something did read it, in which case
+// skipping was wrong to begin with.
+func (r *Refresher) periodicWanted(ctx context.Context) bool {
+	if r.Periodic == nil {
+		return true
+	}
+	want := r.Periodic()
+	if r.lastPeriodic == nil || *r.lastPeriodic != want {
+		r.lastPeriodic = &want
+		if want {
+			log.FromContext(ctx).Info("Observing cluster GPU usage on a timer: a configured limiter " +
+				"consumes the physical view")
+		} else {
+			log.FromContext(ctx).Info("Not observing cluster GPU usage on a timer: no configured " +
+				"limiter consumes the physical view. A scale-from-zero placement still observes " +
+				"on demand at the moment it decides.")
+		}
+	}
+	return want
 }
 
 func (r *Refresher) store() *decision.GPUUsageStore {
