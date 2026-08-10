@@ -164,11 +164,15 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 			expected: "MI300",
 		},
 		{
-			name: "fallback_to_va_label",
+			// A workload that constrains no accelerator is unresolved, whatever it
+			// claims elsewhere. The acceleratorName label used to answer here and
+			// was removed: nothing makes it true, since the scheduler is free to
+			// place an unconstrained pod on any GPU node.
+			name: "unconstrained_workload_is_unresolved",
 			va: &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						AcceleratorNameLabel: "H100",
+						"inference.optimization/acceleratorName": "H100",
 					},
 				},
 			},
@@ -179,14 +183,14 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 					},
 				},
 			},
-			expected: "H100",
+			expected: constants.DefaultAcceleratorName,
 		},
 		{
-			name: "nodeSelector_takes_precedence_over_va_label",
+			name: "nodeSelector_resolves_and_the_stale_label_is_ignored",
 			va: &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						AcceleratorNameLabel: "H100",
+						"inference.optimization/acceleratorName": "H100",
 					},
 				},
 			},
@@ -204,11 +208,11 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 			expected: "A100",
 		},
 		{
-			name: "nodeAffinity_takes_precedence_over_va_label",
+			name: "nodeAffinity_resolves_and_the_stale_label_is_ignored",
 			va: &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						AcceleratorNameLabel: "H100",
+						"inference.optimization/acceleratorName": "H100",
 					},
 				},
 			},
@@ -240,16 +244,18 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 			expected: "V100",
 		},
 		{
-			name: "nil_deployment_with_va_label",
+			// No scale target means no placement constraint to read, and a label
+			// cannot stand in for one.
+			name: "nil_deployment_is_unresolved",
 			va: &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						AcceleratorNameLabel: "T4",
+						"inference.optimization/acceleratorName": "T4",
 					},
 				},
 			},
 			deployment: nil,
-			expected:   "T4",
+			expected:   constants.DefaultAcceleratorName,
 		},
 		{
 			name:       "nil_va_and_deployment_returns_default",

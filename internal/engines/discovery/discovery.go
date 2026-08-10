@@ -14,10 +14,12 @@ import (
 	"context"
 	"strconv"
 
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
@@ -89,7 +91,7 @@ func Discover(
 			Namespace:       va.Namespace,
 			Role:            RoleFromScaleTarget(scaleTarget),
 			Cost:            costFromVA(ctx, va),
-			AcceleratorName: accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget),
+			AcceleratorName: resolveAccelerator(ctx, va, scaleTarget, k8sClient, readyReplicas),
 			Engine:          inferenceengine.Detect(scaleTarget).String(),
 			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
 			CurrentReplicas: currentReplicas,
@@ -107,6 +109,104 @@ func Discover(
 // resolveScaleTarget returns the scale target for va, preferring the pre-populated
 // map and falling back to a live fetch. Returns ok=false (VA skipped) when no
 // scale target can be resolved.
+// resolveAccelerator returns the accelerator this variant runs on, preferring
+// what the workload CONSTRAINS and falling back to what its pods are OBSERVED to
+// be running on.
+//
+// Both sources are sound, and in that order. A GPU product key in the
+// nodeSelector or nodeAffinity binds the scheduler, so it answers even for a
+// variant parked at zero. Observation answers only once pods exist, but when it
+// does it is the ground truth: it is where the scheduler actually put them.
+//
+// There is no third source. An inference.optimization/acceleratorName label used
+// to fill this gap and was removed as unsound — a workload that constrains
+// nothing can be scheduled onto any GPU node, so the label asserted a type
+// nothing enforced, and a wrong one silently billed the variant's GPUs to another
+// accelerator's pool. Observation replaces it with the same information measured
+// rather than declared.
+//
+// Costs nothing in the resolved case, which is the normal one: it is only reached
+// when the workload constrains no accelerator AND has running pods, and both
+// reads are served from the informer cache the collector already populates.
+func resolveAccelerator(
+	ctx context.Context,
+	va *llmdvariant.VariantAutoscaling,
+	scaleTarget scaletarget.ScaleTargetAccessor,
+	k8sClient client.Client,
+	readyReplicas int,
+) string {
+	declared := accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget)
+	if constants.IsAcceleratorResolved(declared) || readyReplicas <= 0 || k8sClient == nil {
+		return declared
+	}
+
+	observed, ok := observeAcceleratorFromNodes(ctx, k8sClient, va.Namespace, scaleTarget)
+	if !ok {
+		return declared
+	}
+	ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
+		"Resolved a variant's accelerator from the nodes its pods are running on; "+
+			"the workload constrains none itself",
+		"variant", va.Name, "namespace", va.Namespace, "accelerator", observed)
+	return observed
+}
+
+// observeAcceleratorFromNodes reports the accelerator the variant's pods are
+// actually scheduled onto, and whether it could be determined.
+//
+// Requires agreement. An unconstrained workload may legitimately have pods spread
+// across different accelerators, and there is no single right answer then — a
+// choice would charge one pool for GPUs held on another, which is the failure the
+// removed label produced. Disagreement therefore stays unresolved and the GPUs
+// stay visibly unattributed (wva_unattributed_gpus).
+func observeAcceleratorFromNodes(
+	ctx context.Context,
+	k8sClient client.Client,
+	namespace string,
+	scaleTarget scaletarget.ScaleTargetAccessor,
+) (string, bool) {
+	podTemplate := scaleTarget.GetLeaderPodTemplateSpec()
+	if podTemplate == nil || len(podTemplate.Labels) == 0 {
+		return "", false
+	}
+
+	var pods corev1.PodList
+	if err := k8sClient.List(ctx, &pods,
+		client.InNamespace(namespace),
+		client.MatchingLabels(podTemplate.Labels),
+	); err != nil {
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
+			"Could not list a variant's pods to observe its accelerator",
+			"namespace", namespace, "error", err.Error())
+		return "", false
+	}
+
+	productKeys := accelerator.GetProductKeys()
+	found := ""
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+			continue
+		}
+		var node corev1.Node
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: pod.Spec.NodeName}, &node); err != nil {
+			continue
+		}
+		for _, key := range productKeys {
+			product, ok := node.Labels[key]
+			if !ok || product == "" {
+				continue
+			}
+			if found != "" && found != product {
+				return "", false // spread across accelerators; no single answer
+			}
+			found = product
+			break
+		}
+	}
+	return found, found != ""
+}
+
 func resolveScaleTarget(
 	ctx context.Context,
 	va *llmdvariant.VariantAutoscaling,

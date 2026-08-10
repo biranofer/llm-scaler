@@ -6,7 +6,8 @@ today, and the ways it can still over-state free capacity.
 Two consumers read these budgets:
 
 - the **GPU-aware optimizer** (`GreedyByScoreOptimizer`), active when the
-  saturation config declares any `limiters:` entry; and
+  saturation config declares any `limiters:` entry — off in the shipped config,
+  see the caveat below; and
 - the **scale-from-zero placement check**, which refuses to wake a variant onto
   an accelerator with no room (see
   [`scaleFromZero`](saturation-scaling-config.md#scalefromzero)).
@@ -14,6 +15,15 @@ Two consumers read these budgets:
 Both over-allocate when the budget over-states availability: pods land in
 `Pending`, and for scale-from-zero the queued request that triggered the wake
 times out anyway — a wake that looks like progress and delivers none.
+
+> **Declaring a limiter requires resolvable accelerators.** The GPU-aware
+> optimizer allocates out of per-accelerator pools, so a variant whose accelerator
+> it cannot resolve (no GPU `nodeSelector`/`nodeAffinity` on the workload, and no
+> running pods to observe it from) is charged to no pool, receives
+> no budget, and **never scales up** — silently, since nothing errors. That is why
+> the shipped config declares no limiter: enabling it by default would freeze
+> exactly the workloads that are least carefully configured. Check for
+> `AcceleratorNotResolved` warning events across the fleet before declaring one.
 
 ## How a budget is computed
 
@@ -109,8 +119,8 @@ Pinned by `TestUsageIsReconciledOntoPoolKeys` and `TestPoolKeysAreShortNames`.
 
 ## Gap 1: usage on an unresolved accelerator is still unattributable
 
-A variant with neither a `nodeSelector`/`nodeAffinity` GPU key nor the
-`inference.optimization/acceleratorName` label resolves to
+A variant that constrains no accelerator and has no running pods to observe
+resolves to
 `constants.DefaultAcceleratorName` — the internal `"unknown"` placeholder. That
 name matches no discovered type, so reconciliation drops it: its GPUs are charged
 to no pool.
@@ -130,8 +140,9 @@ Pinned by `internal/engines/pipeline/unresolved_accelerator_usage_test.go`.
 **Why it is not fixed further.** Usage that cannot be attributed to a type cannot
 be charged to a pool, and charging it to every candidate type would deny
 legitimate scale-up on a guess. The durable fix is making the accelerator
-resolvable — set a `nodeSelector`/`nodeAffinity` GPU key on the workload, or the
-`inference.optimization/acceleratorName` label. WVA emits an
+resolvable — set a `nodeSelector`/`nodeAffinity` GPU key on the workload. Once it has
+running pods WVA also resolves it by observation, from the nodes the scheduler
+actually placed them on. WVA emits an
 `AcceleratorNotResolved` warning event per affected variant.
 
 ## Gap 2 (mostly closed): `Limit` is installed GPUs, not available GPUs
@@ -172,7 +183,7 @@ The scale-from-zero placement check has unit coverage on every seam, and its
 simultaneously for a denial to be reachable at all:
 
 1. the variant's accelerator resolves — a `nodeSelector` on a GPU product label,
-   or the `inference.optimization/acceleratorName` label. Without it the
+   (observation covers a running variant, but a parked one has no pods). Without it the
    candidate contributes no demand and `FitsGPUBudget` returns true having
    evaluated nothing;
 2. a GPU-usage snapshot exists for the basis the configured provider needs. For

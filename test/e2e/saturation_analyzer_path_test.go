@@ -51,10 +51,10 @@ import (
 const fakeMetricsJSON = `{"kv-cache-usage":0.3,"waiting-requests":2,"running-requests":1}`
 
 const (
-	// The limiters: list matches the shipped ConfigMap. This entry REPLACES the
-	// cluster's "default" saturation entry, and that list is the sole source of
-	// limiter selection — omitting it would disarm the scale-from-zero capacity
-	// check cluster-wide for as long as this entry is in place.
+	// No limiters, matching the shipped ConfigMap: this entry REPLACES the
+	// cluster's "default" saturation entry, so it must carry the same limiter
+	// policy. A suite that needs one declares it for itself — see the
+	// scale-from-zero capacity suite.
 	saturationConfigTemplate = `
 model_id: ""
 namespace: ""
@@ -63,8 +63,6 @@ queueLengthThreshold: %d
 scaleUpThreshold: %.2f
 scaleDownBoundary: %.2f
 analyzerName: %q
-limiters:
-  - type: gpu-inventory
 `
 
 	// Scale-up arc. kvCacheThreshold is V2's KV utilization *ceiling*: capacity is
@@ -92,6 +90,20 @@ func buildSaturationConfigYAML(analyzerName string) string {
 }
 
 // buildSaturationConfigYAMLWithThresholds builds a valid saturation config entry with explicit thresholds.
+// buildSaturationConfigYAMLWithLimiter is buildSaturationConfigYAMLWithThresholds
+// plus a declared limiter, for the one suite that asserts limiting actually
+// happens. Everything else must NOT declare one — see the template's comment.
+func buildSaturationConfigYAMLWithLimiter(
+	analyzerName string,
+	kvCacheThreshold float64, queueLengthThreshold int,
+	scaleUpThreshold, scaleDownBoundary float64,
+	limiterType string,
+) string {
+	return buildSaturationConfigYAMLWithThresholds(
+		analyzerName, kvCacheThreshold, queueLengthThreshold, scaleUpThreshold, scaleDownBoundary,
+	) + "limiters:\n  - type: " + limiterType + "\n"
+}
+
 func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThreshold float64, queueLengthThreshold int, scaleUpThreshold float64, scaleDownBoundary float64) string {
 	return fmt.Sprintf(
 		saturationConfigTemplate,

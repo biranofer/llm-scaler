@@ -822,8 +822,12 @@ func CreateVariantAutoscalingResource(namespace, resourceName, scaleTargetRefNam
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      resourceName,
 			Namespace: namespace,
+			// The accelerator is NOT taken from a label any more — only a placement
+			// constraint (or, for a running variant, the node its pods landed on)
+			// resolves it. Kept as an ordinary label so the fixture still carries the
+			// caller's intent for assertions; nothing in WVA reads it.
 			Labels: map[string]string{
-				"inference.optimization/acceleratorName": acc,
+				"test.llm-d.ai/accelerator": acc,
 			},
 		},
 		Spec: variant.VariantAutoscalingSpec{

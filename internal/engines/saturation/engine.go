@@ -1642,12 +1642,19 @@ func (e *Engine) applySaturationDecisions(
 // repeated emissions into a single Event entry with an updated count
 // rather than creating a new entry each optimization cycle.
 func (e *Engine) emitAcceleratorNotResolvedEvent(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) {
+	// A placement constraint is the only thing that resolves this now: the
+	// acceleratorName label was removed because a workload that does not constrain
+	// placement can be scheduled onto any GPU node, so the label asserted a type
+	// nothing enforced. Telling an operator to set one would be telling them to
+	// write down a guess.
 	e.recordEvent(va, corev1.EventTypeWarning, "AcceleratorNotResolved",
-		"Cannot resolve accelerator type from Deployment nodeSelector/nodeAffinity or VA label "+
-			accel.AcceleratorNameLabel+". "+
-			"Set nodeSelector on Deployment or add the label to the VariantAutoscaling resource. "+
-			"Replica scaling metrics are still emitted with accelerator_type=\"unresolved\" so HPA/KEDA can scale; "+
-			"accelerator-specific saturation/capacity metrics are withheld until the accelerator is resolved.")
+		"The workload constrains no accelerator (no GPU product key in its nodeSelector or "+
+			"nodeAffinity), so WVA cannot tell which accelerator it runs on. It is treated as "+
+			"placeable on any of them: on a single-accelerator cluster the type is deduced, but "+
+			"elsewhere its GPUs are charged to no accelerator pool (see wva_unattributed_gpus) and "+
+			"accelerator-specific saturation/capacity metrics are withheld. Replica scaling metrics "+
+			"are still emitted with accelerator_type=\"unresolved\" so HPA/KEDA can scale. "+
+			"Set a GPU product nodeSelector or nodeAffinity on the workload to resolve it.")
 }
 
 // emitSafetyNetMetrics emits fallback metrics when saturation analysis fails.

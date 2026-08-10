@@ -12,12 +12,9 @@ import (
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
-// AcceleratorNameLabel is the label key used to specify the accelerator name for a VA.
-const AcceleratorNameLabel = "inference.optimization/acceleratorName"
-
 // NormalizeAcceleratorName converts a full GPU model name to a short name.
-// This enables matching between VA labels (e.g., "A100") and discovery results
-// (e.g., "NVIDIA-A100-PCIE-80GB").
+// This enables matching between declared names (e.g., "A100") and discovery
+// results (e.g., "NVIDIA-A100-PCIE-80GB").
 //
 // Examples:
 //   - "NVIDIA-A100-PCIE-80GB" -> "A100"
@@ -81,13 +78,29 @@ func GetProductKeys() []string {
 	return slices.Sorted(maps.Keys(labels))
 }
 
-// GetAcceleratorNameFromScaleTarget extracts GPU product information from a scale target's nodeSelector or nodeAffinity.
-// GPU product information is checked against keys listed in constants.VendorResources.
-// If not found in nodeSelector or nodeAffinity, falls back to the AcceleratorNameLabel on the VariantAutoscaling.
-// Returns the first matching value found, or constants.DefaultAcceleratorName ("unknown") if none are found.
-// The sentinel allows callers to proceed without hard-stopping; the GPU limiter resolves
-// it to the real type in homogeneous clusters before it reaches status or metrics.
-func GetAcceleratorNameFromScaleTarget(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling, scaleTarget scaletarget.ScaleTargetAccessor) string {
+// GetAcceleratorNameFromScaleTarget extracts GPU product information from a scale
+// target's nodeSelector or nodeAffinity, checked against the keys listed in
+// constants.VendorResources. Returns the first matching value, or
+// constants.DefaultAcceleratorName ("unknown") when the workload constrains
+// nothing.
+//
+// Placement constraints are the ONLY source, deliberately. An
+// inference.optimization/acceleratorName label used to serve as a fallback, and it
+// was unsound: a workload whose pod spec does not constrain placement can be
+// scheduled onto any GPU node, so the label asserted a type nothing enforced. On a
+// heterogeneous cluster that is not a corner case but the expected outcome, and it
+// split the accounting in two — the physical usage view attributes by the node a
+// pod actually runs on, while the population view believed the label, so a
+// mislabelled workload was billed to one accelerator's quota while occupying
+// another. Where the label was RIGHT it merely repeated the nodeSelector.
+//
+// "unknown" is therefore the honest answer for an unconstrained workload, and it
+// is read as "any accelerator can serve this": a single-type cluster deduces the
+// type outright (TypeInventory.SetUsed), and the placement check asks whether ANY
+// pool has room rather than guessing one (FitsGPUBudget). Deriving the type from
+// the node a running variant's pods landed on would resolve it exactly, and is
+// not implemented — see docs/developer-guide/gpu-capacity-accounting.md.
+func GetAcceleratorNameFromScaleTarget(_ *llmdVariantAutoscalingV1alpha1.VariantAutoscaling, scaleTarget scaletarget.ScaleTargetAccessor) string {
 	// Check scaleTarget for accelerator name if it's not nil
 	if scaleTarget != nil {
 		podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
@@ -112,12 +125,6 @@ func GetAcceleratorNameFromScaleTarget(va *llmdVariantAutoscalingV1alpha1.Varian
 		}
 	}
 
-	// Fall back to VariantAutoscaling label
-	if va != nil && va.Labels != nil {
-		if accName, exists := va.Labels[AcceleratorNameLabel]; exists {
-			return accName
-		}
-	}
 	return constants.DefaultAcceleratorName
 }
 

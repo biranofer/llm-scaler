@@ -1,6 +1,9 @@
 package pipeline
 
-import "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+import (
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+)
 
 // FitsGPUBudget reports whether allocating demand — GPUs keyed by accelerator
 // type — is permitted in namespace under the given constraints.
@@ -38,6 +41,22 @@ func FitsGPUBudget(constraints []*ResourceConstraints, namespace string, demand 
 
 	for rawType, need := range demand {
 		if need <= 0 {
+			continue
+		}
+
+		// A workload that constrains no accelerator can be placed on any of them,
+		// so it fits if any pool does. Resolving it to a named pool would be a
+		// guess the scheduler is free to contradict; see anyPoolFits.
+		if rawType == constants.DefaultAcceleratorName {
+			if nsScoped {
+				if !anyPoolFits(nsBudgets, need) {
+					return false
+				}
+				continue
+			}
+			if !anyPoolFits(perType, need) {
+				return false
+			}
 			continue
 		}
 
@@ -122,8 +141,8 @@ func GPUBudgets(constraints []*ResourceConstraints, namespace string) (map[strin
 // The two sides are written in different vocabularies and neither can be changed
 // unilaterally. Physical pool keys come from node product labels normalized to
 // short names ("A100"); quota keys are whatever the operator typed; and a
-// workload's nodeSelector or inference.optimization/acceleratorName label may
-// carry either the full product name ("NVIDIA-A100-PCIE-80GB") or the short one.
+// workload's nodeSelector may carry either the full product name
+// ("NVIDIA-A100-PCIE-80GB") or the short one.
 //
 // Matching the declared name first and only then its normalization is what keeps
 // this correct in both directions. Normalizing unconditionally is not safe:
@@ -144,4 +163,31 @@ func resolveAcceleratorKey(known map[string]int, declared string) (string, bool)
 		}
 	}
 	return "", false
+}
+
+// anyPoolFits reports whether some pool in budgets can take need GPUs.
+//
+// This answers demand from a workload that constrains nothing. Its pod spec names
+// no accelerator, so the scheduler may place it on any GPU node — "any accelerator
+// can serve this" is the literal meaning of the configuration, not a guess about
+// it. The placement question is therefore whether ANY pool has room, and asking it
+// that way is both more correct and more permissive than the alternatives: naming
+// one pool would assert something the scheduler can contradict, and denying
+// outright would refuse a workload that several accelerators could have served.
+//
+// It subsumes the single-type case. With one pool, "any pool has room" and "the
+// sole pool has room" are the same statement, which is why there is no separate
+// homogeneous branch here.
+//
+// Attribution is a different question and is NOT answered here: which pool such a
+// workload should be CHARGED to is genuinely unknown until its pods are scheduled.
+// TypeInventory.SetUsed deduces it on a single-type cluster and leaves it
+// unattributed otherwise, reported as wva_unattributed_gpus.
+func anyPoolFits(budgets map[string]int, need int) bool {
+	for _, budget := range budgets {
+		if budget < 0 || need <= budget {
+			return true
+		}
+	}
+	return false
 }

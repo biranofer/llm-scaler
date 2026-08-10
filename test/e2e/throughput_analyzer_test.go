@@ -27,16 +27,12 @@ import (
 // The saturation thresholds (kvCacheThreshold, queueLengthThreshold, etc.) are set to
 // values that reliably cross with the simulator's kv-cache-size=1 setup.
 const (
-	// Both templates carry the same limiters: list the shipped ConfigMap declares.
-	//
-	// These entries REPLACE the cluster's "default" saturation entry wholesale, and
-	// that list is now the sole source of limiter selection — so omitting it here
-	// would not merely leave this suite unconstrained, it would disarm the
-	// scale-from-zero capacity check cluster-wide for as long as the entry is in
-	// place, and for the rest of the run if the AfterAll restore never happens.
-	// Keeping it in step with config/base/manager/saturation-scaling-configmap.yaml
-	// means a suite that overrides analyzers does not quietly change scaling policy
-	// along with them.
+	// No limiters, matching the shipped ConfigMap. These entries REPLACE the
+	// cluster's "default" saturation entry wholesale, so they must carry its
+	// limiter policy — and declaring gpu-inventory here would freeze this suite
+	// outright: its workloads set no GPU nodeSelector, so a GPU-aware optimizer
+	// resolves their accelerator to "unknown", charges them to no pool, and
+	// allocates them nothing. That timed two specs out at 600s each.
 	throughputBothEnabledConfig = `
 model_id: ""
 namespace: ""
@@ -44,8 +40,6 @@ kvCacheThreshold: 0.80
 queueLengthThreshold: 5
 scaleUpThreshold: 0.85
 scaleDownBoundary: 0.70
-limiters:
-  - type: gpu-inventory
 analyzers:
   - name: saturation
     enabled: true
@@ -62,8 +56,6 @@ kvCacheThreshold: 0.80
 queueLengthThreshold: 5
 scaleUpThreshold: 0.85
 scaleDownBoundary: 0.70
-limiters:
-  - type: gpu-inventory
 analyzers:
   - name: saturation
     enabled: false

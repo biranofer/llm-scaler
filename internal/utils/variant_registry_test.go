@@ -132,12 +132,12 @@ func TestExpiredEntryYieldsNoVariant(t *testing.T) {
 // TestScaledObjectLabelsReachTheVariant pins a regression that does not fail
 // loudly.
 //
-// Two consumers read labels off the synthesized variant and change behaviour
-// when they are absent: the accelerator lookup falls back to
-// AcceleratorNameLabel when the workload's pod template names no GPU product,
-// and multi-controller isolation filters on the controller-instance label — a
+// Multi-controller isolation filters on the controller-instance label, so a
 // controller configured with an instance name matches nothing and manages an
-// empty fleet. Neither reports an error; they just quietly do less.
+// empty fleet when the label does not reach the variant. It reports no error; it
+// just quietly does less. (The accelerator lookup used to read a label here too,
+// until that label was removed as unsound — only a placement constraint can say
+// which accelerator a workload runs on.)
 func TestScaledObjectLabelsReachTheVariant(t *testing.T) {
 	ctx := context.Background()
 	reg := registry.New(time.Minute)

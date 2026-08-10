@@ -42,11 +42,13 @@ data:
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
     # What bounds scaling. Declaring a limiter is what turns limiting on, and
-    # declaring none means nothing is limited — the optimizer allocates without a
-    # GPU budget AND a scale-from-zero wake is published with no capacity check.
-    # There is no separate enable flag and no implicit default limiter.
-    limiters:
-      - type: gpu-inventory
+    # declaring none — as shipped — means nothing is limited. There is no separate
+    # enable flag and no implicit default limiter.
+    #
+    # Ships empty deliberately: a GPU-aware optimizer can only allocate to a
+    # variant whose accelerator it can resolve, so enabling it by default would
+    # silently freeze every workload that has no GPU nodeSelector. Declare
+    # `limiters: [{type: gpu-inventory}]` once the fleet's accelerators resolve.
     # Enable priority-weighted rescale: under GPU contention the V2 optimizer
     # redistributes the whole budget by priority x demand, reclaiming from
     # lower-priority models so higher-priority work can run. Off by default.

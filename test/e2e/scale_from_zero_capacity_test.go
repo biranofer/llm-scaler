@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -69,10 +70,41 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 	// occupier claims all of them so the pool has nothing left.
 	const gpusPerNode = 4
 
+	var (
+		cmOriginal      *corev1.ConfigMap
+		cmExistedBefore bool
+	)
+
 	BeforeAll(func() {
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: set SCALE_TO_ZERO_ENABLED=true")
 		}
+
+		// This suite asserts a REFUSAL, so it needs a limiter — and the shipped
+		// ConfigMap declares none, because a GPU-aware optimizer cannot allocate to
+		// a workload whose accelerator does not resolve and most do not set one.
+		// The variants here do (WithAcceleratorNodeSelector), so declaring it for
+		// the duration of this suite is safe and is what the suite is about: with
+		// no limiter there is no ConstraintProvider, every wake is published
+		// unchecked, and the refusal this spec waits for can never be logged.
+		By("Declaring the physical limiter this suite exists to exercise")
+		cmName := saturationConfigMapName()
+		cm, getErr := k8sClient.CoreV1().ConfigMaps(cfg.WVANamespace).Get(ctx, cmName, metav1.GetOptions{})
+		if getErr == nil {
+			cmExistedBefore = true
+			cmOriginal = cm.DeepCopy()
+		} else {
+			Expect(errors.IsNotFound(getErr)).To(BeTrue(), "unexpected error reading %s", cmName)
+		}
+		Expect(upsertSaturationConfigEntry(ctx, cfg.WVANamespace, cmName, defaultConfigKey,
+			buildSaturationConfigYAMLWithLimiter("saturation",
+				saturationKVCacheThreshold, saturationQueueLengthThreshold,
+				saturationScaleUpThreshold, saturationScaleDownBoundary,
+				"gpu-inventory"),
+		)).To(Succeed())
+		DeferCleanup(func() {
+			restoreSaturationConfigMap(ctx, cfg.WVANamespace, cmName, cmOriginal, cmExistedBefore)
+		})
 
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()

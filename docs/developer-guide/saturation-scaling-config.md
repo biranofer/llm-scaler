@@ -125,10 +125,10 @@ when any of these hold:
 
 | condition | why |
 | --- | --- |
-| the limiter could not be built at startup | there is nothing to place against. Note that declaring no `limiters:` list does **not** land here — it selects the inventory mode, which builds a physical limiter that does supply constraints |
+| no limiter is configured | declaring no `limiters:` list means nothing bounds scaling, so there is nothing to place against. This is the shipped default |
 | no usage snapshot yet | the saturation engine is the sole producer of GPU usage; until it completes one cycle there is no denominator. This is the state on the first cycle after a restart — exactly when a request may be queued |
 | a provider failed to compute constraints | a partial view would deny any accelerator type the surviving providers happen not to mention, turning "could not reach this provider" into "cannot place this variant" |
-| — | *(An unresolved accelerator does not skip the check: that candidate simply contributes no demand, and the rest of the set is still checked. A variant with no nodeSelector/nodeAffinity GPU key and no `inference.optimization/acceleratorName` label cannot be charged to any pool, so it is not counted rather than denied.)* |
+| — | *(An unresolved accelerator does not skip the check: that candidate simply contributes no demand, and the rest of the set is still checked. A variant with no nodeSelector/nodeAffinity GPU key cannot be charged to any pool, so it is not counted rather than denied.)* |
 
 > **The GPU budget can still over-state free capacity**, affecting the
 > GPU-aware optimizer as well as scale-from-zero: usage on an unresolved
@@ -136,10 +136,10 @@ when any of these hold:
 > *installed* GPU rather than what is actually available. Both are described,
 > with their fixes and current status, in
 > [GPU Capacity Accounting](gpu-capacity-accounting.md). The short version: make
-> the accelerator resolvable (`nodeSelector`/`nodeAffinity` GPU key, or the
-> `inference.optimization/acceleratorName` label — WVA emits an
-> `AcceleratorNotResolved` event otherwise), and declare an explicit quota
-> limiter if you need a hard ceiling.
+> the accelerator resolvable with a `nodeSelector`/`nodeAffinity` GPU key — WVA
+> emits an `AcceleratorNotResolved` event otherwise, and resolves a RUNNING
+> variant by observing the nodes its pods landed on — and declare an explicit
+> quota limiter if you need a hard ceiling.
 
 Note the usage snapshot is published independently of the optimizer branch, so
 scale-from-zero can check placement on a cycle the optimizer never reached.

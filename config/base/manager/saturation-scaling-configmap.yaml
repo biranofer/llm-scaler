@@ -40,17 +40,23 @@ data:
     kvCacheThreshold: 0.80
     queueLengthThreshold: 5
     # What bounds scaling. The list is the whole answer: declaring a limiter is
-    # what turns limiting on, and declaring none means nothing is limited — the
-    # optimizer allocates without a GPU budget AND a scale-from-zero wake is
-    # published with no capacity check, so a variant can be woken onto an
-    # accelerator that is already full. There is no separate enable flag and no
-    # implicit default limiter.
+    # what turns limiting on, and declaring none — as shipped — means nothing is
+    # limited. There is no separate enable flag and no implicit default limiter.
     #
-    # gpu-inventory bounds scaling by the GPUs actually free on the nodes,
-    # measured from real pod occupancy. See the limiters section below for the
-    # quota form and for composing entries.
-    limiters:
-      - type: gpu-inventory
+    # Ships empty deliberately. Declaring gpu-inventory makes the optimizer
+    # GPU-aware, and a GPU-aware optimizer can only allocate to a variant whose
+    # accelerator it can resolve: a workload with no GPU nodeSelector/nodeAffinity,
+    # and no running pods to observe it from, is charged to no accelerator pool,
+    # so it receives no budget and never scales up. Turning that
+    # on by default would break exactly the workloads that are least carefully
+    # configured, and it would do it silently.
+    #
+    # So declare a limiter once the fleet's accelerators resolve — WVA emits an
+    # AcceleratorNotResolved warning event per variant that does not. See the
+    # limiters section below for both forms. The trade-off to know: with no
+    # limiter, a scale-from-zero wake is published with NO capacity check, so a
+    # variant can be woken onto an accelerator that is already full.
+    #
     # Enable priority-weighted rescale: under GPU contention the V2 optimizer
     # redistributes the whole budget by priority x demand, reclaiming from
     # lower-priority models so higher-priority work can run. Off by default.
@@ -93,7 +99,7 @@ data:
   #             not both. Composing them as min(physical, quota) is the limiter
   #             chain's job, tracked in issue #1003.
   #
-  #   # (a) physical-capacity limiter (what this ConfigMap ships above):
+  #   # (a) physical-capacity limiter:
   #   limiters:
   #     - type: gpu-inventory
   #

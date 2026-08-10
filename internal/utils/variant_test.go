@@ -21,7 +21,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
 
@@ -40,7 +39,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 						Name:      "va-a100",
 						Namespace: "default",
 						Labels: map[string]string{
-							accelerator.AcceleratorNameLabel: "A100",
+							"example.com/accelerator": "A100",
 						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
@@ -52,7 +51,7 @@ func TestGroupVariantAutoscalingByModel(t *testing.T) {
 						Name:      "va-h100",
 						Namespace: "default",
 						Labels: map[string]string{
-							accelerator.AcceleratorNameLabel: "H100",
+							"example.com/accelerator": "H100",
 						},
 					},
 					Spec: wvav1alpha1.VariantAutoscalingSpec{
