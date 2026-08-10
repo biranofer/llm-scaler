@@ -98,14 +98,22 @@ func (f failingProvider) ComputeConstraints(context.Context, map[string]int, map
 	return nil, errors.New("cluster unreachable")
 }
 
-// okProvider returns a fixed constraint.
+// okProvider returns a fixed constraint, and records the usage it was fed so a
+// test can assert WHICH measure reached it. The zero basis is PhysicalUsage,
+// which is what an undeclared provider gets.
 type okProvider struct {
 	name  string
 	pools map[string]pipeline.ResourcePool
+	basis pipeline.UsageBasis
+	fed   *map[string]int // optional; set to capture the usage handed over
 }
 
-func (o okProvider) Name() string { return o.name }
-func (o okProvider) ComputeConstraints(context.Context, map[string]int, map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+func (o okProvider) Name() string                    { return o.name }
+func (o okProvider) UsageBasis() pipeline.UsageBasis { return o.basis }
+func (o okProvider) ComputeConstraints(_ context.Context, usageByType map[string]int, _ map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+	if o.fed != nil {
+		*o.fed = usageByType
+	}
 	return &pipeline.ResourceConstraints{ProviderName: o.name, Pools: o.pools}, nil
 }
 
@@ -157,6 +165,45 @@ func TestGPUConstraintsPosture(t *testing.T) {
 			t.Fatalf("gpuConstraints = %+v, want the single healthy provider's constraints", got)
 		}
 	})
+}
+
+// TestGPUConstraintsFeedsEachProviderItsOwnUsageBasis pins the split that a
+// single broadcast figure got wrong.
+//
+// A physical inventory must see every GPU held on the nodes, because the
+// scheduler will not place a variant on a device something else already holds. A
+// quota must see only what WVA's own variants hold, because that is all an
+// allowance granted to WVA can be spent on — charged the physical figure, an
+// unrelated job in the same namespace exhausts the operator's WVA quota without
+// WVA having placed a single replica, and every wake is refused.
+func TestGPUConstraintsFeedsEachProviderItsOwnUsageBasis(t *testing.T) {
+	decision.DefaultGPUUsage.Reset()
+	decision.DefaultManagedGPUUsage.Reset()
+	defer func() {
+		decision.DefaultGPUUsage.Reset()
+		decision.DefaultManagedGPUUsage.Reset()
+	}()
+
+	// 6 GPUs held on the nodes; 2 of them by WVA's own variants.
+	decision.PublishGPUUsage(map[string]int{"A100": 6}, map[string]map[string]int{"chat": {"A100": 6}})
+	decision.PublishManagedGPUUsage(map[string]int{"A100": 2}, map[string]map[string]int{"chat": {"A100": 2}})
+
+	var physicalFed, quotaFed map[string]int
+	e := &Engine{gpuLimiter: pipeline.NewCompositeLimiter("composite", []pipeline.Limiter{
+		okProvider{name: "gpu-limiter", basis: pipeline.PhysicalUsage, fed: &physicalFed},
+		okProvider{name: "quota-limiter", basis: pipeline.ManagedUsage, fed: &quotaFed},
+	})}
+
+	if got := e.gpuConstraints(context.Background(), "chat"); len(got) != 2 {
+		t.Fatalf("gpuConstraints returned %d constraint(s), want both providers consulted", len(got))
+	}
+	if physicalFed["A100"] != 6 {
+		t.Errorf("physical provider was fed %v, want every GPU held on the nodes (6)", physicalFed)
+	}
+	if quotaFed["A100"] != 2 {
+		t.Errorf("quota provider was fed %v, want only what WVA holds (2); charging a quota for "+
+			"workloads it does not govern exhausts the allowance with somebody else's GPUs", quotaFed)
+	}
 }
 
 // TestGPUConstraintsMaterializesTheAskedNamespace: a namespace-scoped quota is

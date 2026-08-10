@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 )
 
 // A wake published with NO capacity check used to produce a log identical to one
@@ -57,7 +58,21 @@ var _ = Describe("Reporting a wake with no capacity check", func() {
 		logged := captureAtInfo(func(ctx context.Context) {
 			Expect(e.gpuConstraints(ctx, "chat")).To(BeNil())
 		})
-		expectReported(logged, "no GPU-usage snapshot")
+		expectReported(logged, "no cluster GPU-usage snapshot has been published")
+	})
+
+	It("says so when the physical view is there but a quota's managed view is not", func() {
+		// The two measures are published by different producers, so one can be
+		// present while the other is not. A quota provider handed the physical
+		// figure would bind on GPUs it does not govern; handed nothing at all it
+		// would report its whole allowance free. Neither is acceptable, so the wake
+		// is reported as unchecked instead.
+		decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
+		e := &Engine{gpuLimiter: okProvider{name: "quota-limiter", basis: pipeline.ManagedUsage}}
+		logged := captureAtInfo(func(ctx context.Context) {
+			Expect(e.gpuConstraints(ctx, "chat")).To(BeNil())
+		})
+		expectReported(logged, "no WVA-managed GPU-usage snapshot")
 	})
 
 	It("says so when a provider could not compute constraints", func() {

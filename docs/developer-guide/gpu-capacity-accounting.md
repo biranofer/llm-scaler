@@ -21,13 +21,49 @@ times out anyway — a wake that looks like progress and delivers none.
 
 ```
 Limit = sum of node Allocatable for that GPU type, across nodes  (node discovery)
-Used  = GPUs WVA believes its own managed variants hold       (caller-supplied)
+Used  = GPUs in use, on the basis this provider asked for      (caller-supplied)
 Available() = max(0, Limit - Used)
 ```
 
-`Used` is not measured. It is passed in by the saturation engine, which sums
-`CurrentReplicas × GPUsPerReplica` over the variants it manages
-(`gpuUsageByType`), and is keyed by the variant's resolved accelerator type.
+## `Used` depends on the question the provider is answering
+
+There are two measures of "GPUs in use", they are not interchangeable, and each
+provider declares which one it needs via `pipeline.UsageBasis`. The caller
+(`gpuUsageViews` in the saturation engine, `Engine.gpuUsageViews` in
+scale-from-zero) hands each provider the matching view.
+
+| basis | counts | produced by | consumed by |
+|---|---|---|---|
+| `PhysicalUsage` | every GPU held on the cluster's GPU nodes, whoever holds it | `internal/gpuusage`, on its own 15s ticker | physical inventory (`TypeInventory`) |
+| `ManagedUsage` | only what WVA's own variants hold | the saturation engine's population sum (`gpuUsageByType`) | quota inventory (`QuotaInventory`) |
+
+The split exists because the two answer different questions:
+
+- a **physical inventory** asks *"will the scheduler find a free device?"*. Every
+  GPU-requesting pod counts, whoever owns it — a training job in another
+  namespace is as real an obstacle as one of WVA's own replicas. This view is
+  attributed by the **node** a pod runs on, so nothing is unattributable and it
+  does not depend on WVA having discovered the workload;
+- a **quota** asks *"how much of the operator's declared allowance has WVA
+  consumed?"*. A quota governs WVA-managed variants and nothing else. Charged the
+  physical figure, a namespace with a 4-GPU WVA quota and an unrelated 4-GPU
+  training job reads as fully spent while WVA has placed nothing, and every
+  scale-up is refused. The managed view sums `CurrentReplicas × GPUsPerReplica`
+  over the variants WVA manages, keyed by each variant's resolved accelerator.
+
+Physical is the default: anything that does not declare a basis gets it. That is
+the safe direction — a physical figure over-states consumption for a quota, which
+errs toward refusing, rather than under-stating what the hardware holds, which
+would place a variant onto a device that is already taken.
+
+**A missing view is not zero.** Absent means "unknown", which both engines treat
+as permissive; an empty map is a confident claim that nothing is in use, and a
+provider handed one reports its entire capacity free. Callers check
+`GPUUsageViews.MissingBasis` before computing any constraint, and fall back to
+the unlimited optimizer (saturation) or an unchecked wake (scale-from-zero) when
+a needed view has not been observed. Only the bases some provider actually asks
+for are gathered, so a quota-only deployment is never held up waiting for a
+physical observation it does not consult, and vice versa.
 
 ## Key reconciliation: `Used` vs `Limit` (fixed)
 
@@ -89,72 +125,53 @@ resolvable — set a `nodeSelector`/`nodeAffinity` GPU key on the workload, or t
 `inference.optimization/acceleratorName` label. WVA emits an
 `AcceleratorNotResolved` warning event per affected variant.
 
-## Gap 2 (future work): `Limit` is installed GPUs, not available GPUs
+## Gap 2 (mostly closed): `Limit` is installed GPUs, not available GPUs
 
-`Limit` sums each node's **Allocatable** for the GPU resource and `Used` counts
-only what WVA itself manages. Allocatable is the node's total for that resource;
-it does not subtract what running pods have requested, and it does not go to zero
-when a node is cordoned or `NotReady`. Everything else competing
-for those GPUs is invisible:
+`Limit` sums each node's **Allocatable** for the GPU resource. Allocatable is the
+node's total; it does not subtract what running pods have requested, and it does
+not go to zero when a node is cordoned or `NotReady`.
+
+The `Used` side of that gap is **closed for physical providers**.
+`internal/gpuusage` observes the cluster directly — walking the pods that occupy
+GPU nodes and attributing each to the node it is scheduled to — so a physical
+pool now nets out:
 
 - workloads in other namespaces, or not managed by WVA at all;
 - system/DaemonSet pods holding GPUs;
-- variants whose accelerator is unresolved (Gap 1);
-- GPUs on nodes that are cordoned, `NotReady`, or otherwise unschedulable.
+- pods scheduled but not yet running (the scheduler has already committed those
+  devices; treating them as free would let two wakes land on the same one).
 
-So a cluster whose GPUs are fully consumed by non-WVA workloads still reports
-its full complement as available, and WVA will happily scale into capacity that
-does not exist.
+Gap 1 does not apply to that view either: attribution is by node, so there is no
+unresolved bucket to leak through. Budgets are correspondingly **tighter** than
+they were before this landed, which is the correction — they were over-stated.
 
-**Most of the machinery exists but is not wired end-to-end.**
-`limiter_factory.go` builds the inventory with `NewTypeInventoryWithUsage`, which
-supplies a `FullDiscovery` whose `DiscoverUsage` lists pods and sums their actual
-GPU requests. Reaching it requires `RefreshAll` (limits **and** usage), but
-`DefaultLimiter.ComputeConstraints` calls `Refresh` — limits only — and then
-overwrites usage with the caller's WVA-only figure via `SetUsed`.
+Two pieces remain open:
 
-Switching the call is not sufficient on its own. A fix must:
-
-1. **Normalize the discovered usage keys.** `DiscoverUsage` keys its result by the
-   raw node product label (`NVIDIA-A100-PCIE-80GB`), while `Refresh` normalizes
-   *limit* keys to short names via `NormalizeAcceleratorName`. Calling
-   `RefreshAll` today would file usage under keys `GetResourcePools` never reads —
-   reproducing Gap 1's silent drop rather than fixing Gap 2.
-2. Call `RefreshAll` (or `DiscoverUsage` directly) so `Used` reflects real
-   cluster-wide GPU consumption.
-3. Decide how discovered usage composes with WVA's own accounting — they overlap,
-   since WVA's managed pods are also real pods, so they must not be summed. The
-   discovered figure most likely **replaces** the supplied one, with WVA's
-   accounting kept only for in-flight replicas not yet visible as pods.
-4. Exclude unschedulable nodes (cordoned / `NotReady`), which Allocatable alone
-   does not do, so drained capacity is not counted as available.
-5. Keep the "unknown means do not block" posture — a discovery failure must not
-   deny scale-up, matching the existing fallback when no provider can supply
-   constraints.
-
-Step 3 is the substantive one: naively switching to discovered usage without
-reconciling the overlap would double-count WVA's own replicas and under-state
-availability, which fails in the opposite direction.
-
-Until then, treat the physical limiter as an upper bound on what WVA *itself*
-has allocated, not as a statement about cluster-wide GPU availability. Operators
-who need a hard ceiling should declare an explicit quota limiter (see
-[`limiters`](saturation-scaling-config.md#limiters-cluster-default-only-live)),
-which is enforced independently of physical discovery.
+1. **Unschedulable nodes still contribute their GPUs to `Limit`.** Allocatable
+   alone does not exclude cordoned or `NotReady` nodes, so drained capacity reads
+   as available.
+2. **Quota providers still use the population sum**, and deliberately so — see
+   the usage-basis section above. Gap 1 therefore still applies to them: a variant
+   with an unresolved accelerator is charged to no pool, so a quota reports more
+   of its allowance free than it has. `wva_unattributed_gpus` reports the amount.
 
 ## Testing the placement check end-to-end
 
-The scale-from-zero placement check has unit coverage on every seam, but its
-**deny** branch is not yet exercised end-to-end. Three conditions must hold
+The scale-from-zero placement check has unit coverage on every seam, and its
+**deny** branch is exercised end-to-end by
+`test/e2e/scale_from_zero_capacity_test.go`. Three conditions must hold
 simultaneously for a denial to be reachable at all:
 
 1. the variant's accelerator resolves — a `nodeSelector` on a GPU product label,
    or the `inference.optimization/acceleratorName` label. Without it the
    candidate contributes no demand and `FitsGPUBudget` returns true having
    evaluated nothing;
-2. a GPU-usage snapshot exists — which requires at least one **active**
-   WVA-managed variant, since the saturation engine publishes only measured
-   cycles; and
+2. a GPU-usage snapshot exists for the basis the configured provider needs. For
+   the default physical provider this no longer requires an active WVA variant —
+   `internal/gpuusage` observes on its own ticker from process start, which is
+   what makes the check meaningful for a fleet parked at zero. A quota provider
+   does still need a completed saturation cycle, which publishes the managed view
+   (including as an explicit zero when nothing is active); and
 3. that usage is attributed to the same pool key the limits use (see the key
    reconciliation above).
 
@@ -165,12 +182,11 @@ pool under test, or it serves the requests itself. The one-model-one-pool
 contract makes that natural: the occupier serves its own model, so it belongs to
 its own pool (`fixtures.WithPoolGuide`).
 
-`test/e2e/scale_from_zero_capacity_test.go` implements the scenario but is
-**pending** (`XDescribe`) — it does not yet reproduce. The occupier runs, holds
-its GPUs, and is discovered with a resolved accelerator, but the engine reaches
-no verdict for the parked variant at all, which points at the EPP not queueing
-for that model rather than at the capacity check. Until it passes, treat the deny
-branch as **unit-tested only**.
+The suite went green once `internal/gpuusage` became an independent producer.
+Before that it could not pass: the parked fleet meant the saturation engine
+returned without publishing, no snapshot existed when the wake was decided, and
+"unknown" is permissive by design — so the wake the suite requires to be refused
+was allowed, with nothing in the logs saying the check had been skipped.
 
 ## Assumption: one model, one InferencePool
 

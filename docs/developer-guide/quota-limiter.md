@@ -194,6 +194,26 @@ Enforcement happens in the optimizer, which is the single decision-maker (see
 `Refresh` is a no-op: quotas are operator-declared and have no external
 source.
 
+### A quota is charged for WVA's variants only
+
+`QuotaInventory` declares `UsageBasis() == pipeline.ManagedUsage`, so the usage it
+is fed counts only what WVA's own variants hold — summed from the saturation
+engine's population, not from the cluster-wide pod walk that feeds a physical
+inventory. Both figures are assembled per cycle and routed per provider; see
+[GPU capacity accounting](gpu-capacity-accounting.md) for the two bases.
+
+This is not a detail. A quota is an allowance granted to WVA and may only be spent
+by WVA. Charged the physical figure, a namespace with a 4-GPU WVA quota sharing
+space with an unrelated 4-GPU training job reads as fully spent while WVA has
+placed nothing, and every scale-up is refused with the allowance nominally
+untouched. The hardware being full is a separate statement, made by the physical
+limiter.
+
+The corollary is that a quota does **not** bound the cluster: it can hand out
+capacity that non-WVA workloads have already taken. Deployments that need both
+guarantees compose a physical limiter and a quota limiter, and each is then fed
+the measure it is asking about.
+
 ### `GetResourcePools` representation
 
 `GetResourcePools` returns `map[string]ResourcePool` keyed by accelerator type.
@@ -359,11 +379,19 @@ concrete `pipeline.Limiter`:
 
 ### Per-namespace usage feeding
 
-`DefaultLimiter.Limit` feature-detects `NamespaceAwareInventory` and calls
-`SetUsedByNamespace(usedByNS)` in addition to the always-safe `SetUsed`.
-`usedByNS` is derived from the decisions slice the same way per-type usage is —
-`CurrentReplicas * GPUsPerReplica` summed by `(Namespace, AcceleratorName)`.
-No additional discovery or API calls are needed.
+`DefaultLimiter.ComputeConstraints` feature-detects `NamespaceAwareInventory` and
+calls `SetUsedByNamespace(usedByNS)` in addition to the always-safe `SetUsed`.
+For a quota the caller supplies the managed view, so `usedByNS` is
+`CurrentReplicas * GPUsPerReplica` summed by `(Namespace, AcceleratorName)` over
+the cycle's population (`computeCurrentGPUUsageByNamespace`). No additional
+discovery or API calls are needed.
+
+Every namespace being decided about must be **present** in that map, with an
+empty inner map when it holds nothing: `NamespaceResourcePools` materialises caps
+only for the namespaces it is given, so an absent one silently loses its quota and
+is judged against the cluster aggregate instead. Both callers guarantee this — the
+saturation engine for every namespace it is optimizing, the scale-from-zero engine
+for the namespace it is placing into.
 
 ### Example configuration
 
@@ -391,16 +419,15 @@ an error log/metric, exactly like any other invalid saturation entry.
 
 ## Resource access in quota mode
 
-Quota mode makes the controller fully independent of physical node
-discovery. When the effective limiter mode is quota:
+Quota mode keeps the **limiter path** independent of physical node discovery.
+When the effective limiter mode is quota:
 
 - The limiter, inventory, allocator, and factory paths do not call
   `discovery.K8sWithGpuOperator.Discover` / `DiscoverUsage` /
   `DiscoverNodes`.
-- No controller-runtime informer for `corev1.NodeList` is instantiated.
-- `QuotaInventory.Refresh` is a deliberate no-op; usage is derived from
-  the in-memory decisions slice via `DefaultLimiter.calculateUsedGPUs` and
-  `calculateUsedGPUsByNamespace`.
+- `QuotaInventory.Refresh` is a deliberate no-op; its usage comes from the
+  saturation engine's population sum (`ManagedUsage`), which needs no cluster
+  discovery of its own.
 - `collector.CollectInventoryK8S` (called from the saturation engine's
   per-cycle `optimize` when `WVA_LIMITED_MODE=true`) is **also** gated on
   the effective limiter mode via `shouldCollectClusterInventory` — it only runs
@@ -410,14 +437,25 @@ discovery. When the effective limiter mode is quota:
   `main.go` emits an informational log so the operator sees that their inventory
   logging is intentionally suppressed.
 
-Combination matrix (limiter mode is the effective mode from the ConfigMap):
+Combination matrix — **limiter-path** Node API access (limiter mode is the
+effective mode from the ConfigMap):
 
-| Effective limiter mode | `WVA_LIMITED_MODE` | Node API access? |
+| Effective limiter mode | `WVA_LIMITED_MODE` | Node API access from the limiter? |
 |------------------------|--------------------|------------------|
 | `inventory` (default) | `false` (default) | Yes, via the limiter's `Refresh` cycle. |
 | `inventory` | `true` | Yes, via both the limiter and `CollectInventoryK8S`. |
 | `quota` | `false` | **No.** |
 | `quota` | `true` | **No.** `CollectInventoryK8S` is skipped; a startup log notes the suppression. |
+
+> **Known deviation: the process is no longer Node-API-free in quota mode.**
+> `internal/gpuusage.Refresher` is registered with the manager unconditionally in
+> `cmd/main.go` and lists nodes and pods every 15s to publish the physical view,
+> whatever the limiter mode. Nothing consults that view under a quota-only
+> configuration — `GPUUsageViews` gathers only the bases some provider asks for —
+> so the *decisions* stay independent of node discovery, but the API access and
+> its RBAC are not avoided. Gating the refresher on whether any configured
+> provider needs `PhysicalUsage` would restore the original contract and is not
+> implemented.
 
 ## Future work
 

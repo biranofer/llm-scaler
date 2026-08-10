@@ -35,6 +35,16 @@ func (l *DefaultLimiter) Name() string {
 	return l.name
 }
 
+// UsageBasis reports which measure of "GPUs in use" this limiter must be fed,
+// which is entirely a property of the inventory it wraps: a physical inventory
+// needs every GPU on the node, an operator-declared quota needs only what WVA
+// itself holds. The same DefaultLimiter shape serves both, so it cannot answer
+// this on its own — it delegates, and defaults to physical for an inventory that
+// does not declare a basis.
+func (l *DefaultLimiter) UsageBasis() UsageBasis {
+	return UsageBasisOf(l.inventory)
+}
+
 // ComputeConstraints refreshes the inventory and returns its resource availability.
 // It exposes constraints for the optimizer, which is the only component that
 // decides how the available resources are distributed.
@@ -58,15 +68,16 @@ func (l *DefaultLimiter) Name() string {
 func (l *DefaultLimiter) ComputeConstraints(ctx context.Context, usageByType map[string]int, usageByNamespace map[string]map[string]int) (*ResourceConstraints, error) {
 	// Step 1: Refresh inventory to get latest limits from the cluster
 	//
-	// FUTURE WORK — this is Refresh (limits only), so Limit is every GPU
-	// INSTALLED on every node, and Used below is only what WVA itself manages.
-	// GPUs held by non-WVA workloads, other namespaces, system pods, or nodes
-	// that are cordoned/NotReady are invisible, so free capacity is over-stated.
-	// The inventory is already built with NewTypeInventoryWithUsage, whose
-	// DiscoverUsage sums actual pod GPU requests; reaching it needs RefreshAll,
-	// plus a decision on how discovered usage composes with the caller's figure
-	// (they overlap — WVA's managed pods are also real pods — so they must not be
-	// summed). See docs/developer-guide/gpu-capacity-accounting.md.
+	// This is Refresh (limits only), so Limit is every GPU INSTALLED on every
+	// node. Usage arrives from the caller, on the basis this limiter's inventory
+	// asked for (see UsageBasis): a physical inventory is fed every GPU held on
+	// the nodes — including by workloads WVA does not manage, which used to be
+	// invisible here and made free capacity over-stated — while a quota is fed
+	// only what WVA's own variants hold, since that is what the allowance
+	// governs. See docs/developer-guide/gpu-capacity-accounting.md.
+	//
+	// Remaining gap: a node that is cordoned or NotReady still contributes its
+	// GPUs to Limit.
 	if err := l.inventory.Refresh(ctx); err != nil {
 		return nil, fmt.Errorf("failed to refresh inventory: %w", err)
 	}
@@ -149,3 +160,6 @@ var _ Limiter = (*DefaultLimiter)(nil)
 
 // Ensure DefaultLimiter implements ConstraintProvider interface
 var _ ConstraintProvider = (*DefaultLimiter)(nil)
+
+// Ensure DefaultLimiter reports the usage basis its inventory needs
+var _ UsageBasisReporter = (*DefaultLimiter)(nil)

@@ -5,16 +5,18 @@ import (
 	"time"
 )
 
-// GPUUsage is a snapshot of how many GPUs are currently in use, as the
-// saturation engine accounted for them on its last cycle.
+// GPUUsage is a snapshot of how many GPUs are currently in use.
 //
 // It exists so the scale-from-zero engine can ask whether a variant it is about
-// to wake would actually get GPUs, without standing up a second accounting path.
-// ConstraintProvider.ComputeConstraints takes usage as an input, and the
-// saturation engine already computes exactly these two maps every cycle; a
-// second implementation summing replicas independently would be free to drift
-// from the one the optimizer actually honours, and the two engines would then
-// disagree about what is free.
+// to wake would actually get GPUs, without standing up a second accounting path
+// of its own: ConstraintProvider.ComputeConstraints takes usage as an input, and
+// a second implementation summing it independently would be free to drift from
+// the one the optimizer honours, leaving the two engines disagreeing about what
+// is free.
+//
+// The same type carries either MEASURE of usage — physical or WVA-managed — one
+// per store; see DefaultGPUUsage and DefaultManagedGPUUsage for which is which
+// and why both exist.
 type GPUUsage struct {
 	// ByType maps accelerator type to GPUs in use cluster-wide.
 	ByType map[string]int
@@ -64,7 +66,7 @@ func (s *GPUUsageStore) Publish(byType map[string]int, byNamespace map[string]ma
 // Get returns the latest snapshot and whether one has been published. The
 // returned value is the stored copy and must not be mutated.
 //
-// A false second return means the saturation engine has not completed a cycle
+// A false second return means this store's producer has not completed a pass
 // yet. Callers must treat that as "unknown", not "nothing is in use": denying a
 // wake because usage is unknown would keep a model down for the first cycle
 // after every restart, which is exactly when a queued request is waiting.
@@ -90,19 +92,55 @@ func (s *GPUUsageStore) Reset() {
 	s.snap = nil
 }
 
-// DefaultGPUUsage is the process-wide snapshot store, written by the saturation
-// engine and read by the scale-from-zero engine.
+// DefaultGPUUsage is the process-wide PHYSICAL usage snapshot: every GPU held on
+// the cluster's GPU nodes, whoever holds it. Written by internal/gpuusage, which
+// observes the cluster on its own interval and is its sole producer; read by the
+// saturation optimizer and the scale-from-zero placement check.
+//
+// This is the figure that answers "will the scheduler find a free device?", so
+// it must count consumers WVA does not manage. It is NOT the figure a quota
+// draws against — see DefaultManagedGPUUsage.
 //
 // Treat this as immutable after init: use Reset to clear it rather than
 // assigning a new store, for the reason given there.
 var DefaultGPUUsage = NewGPUUsageStore()
 
-// PublishGPUUsage records a snapshot in the default store.
+// DefaultManagedGPUUsage is the process-wide MANAGED usage snapshot: only what
+// WVA's own variants hold, summed from the population the saturation engine is
+// optimizing, which is its sole producer.
+//
+// It exists because an operator-declared quota is an allowance granted to WVA and
+// may only be spent by WVA. Charged the physical figure it binds on consumption
+// it does not govern — a namespace with a 4-GPU WVA quota and an unrelated 4-GPU
+// job reads as fully spent while WVA has placed nothing — so the two measures
+// cannot share a store, and a provider is fed whichever one it declares (see
+// pipeline.UsageBasis).
+//
+// Published on every completed saturation cycle INCLUDING one that finds nothing
+// active, because "WVA holds no GPUs" is a true and useful statement there: it is
+// the state scale-from-zero exists to serve, and a wake refused for want of a
+// figure that only a running fleet could produce would never be able to start
+// one. It is deliberately not published when collection FAILED, where an empty
+// population means "we could not see", not "nothing is running".
+var DefaultManagedGPUUsage = NewGPUUsageStore()
+
+// PublishGPUUsage records a physical-usage snapshot in the default store.
 func PublishGPUUsage(byType map[string]int, byNamespace map[string]map[string]int) {
 	DefaultGPUUsage.Publish(byType, byNamespace)
 }
 
-// LatestGPUUsage reads the default store's snapshot.
+// LatestGPUUsage reads the default physical-usage snapshot.
 func LatestGPUUsage() (*GPUUsage, bool) {
 	return DefaultGPUUsage.Get()
+}
+
+// PublishManagedGPUUsage records a WVA-managed usage snapshot in the default
+// managed store.
+func PublishManagedGPUUsage(byType map[string]int, byNamespace map[string]map[string]int) {
+	DefaultManagedGPUUsage.Publish(byType, byNamespace)
+}
+
+// LatestManagedGPUUsage reads the default WVA-managed usage snapshot.
+func LatestManagedGPUUsage() (*GPUUsage, bool) {
+	return DefaultManagedGPUUsage.Get()
 }

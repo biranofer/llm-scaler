@@ -186,11 +186,10 @@ func resolveVariantCost(ctx context.Context, va wvav1alpha1.VariantAutoscaling) 
 //     returns the inventory mode, which builds a DefaultLimiter — and that IS a
 //     ConstraintProvider, so the physical check still runs.
 //
-//   - No usage snapshot has been published. The saturation engine is the sole
-//     producer; until it completes a cycle over a non-empty population there is
-//     no denominator. Note this is independent of enableLimiter — the snapshot is
-//     published before the optimizer guard precisely so that a default
-//     (CostAware) deployment still feeds this path.
+//   - No usage snapshot has been published on a basis some provider needs, or the
+//     one that has is too old. Note this is independent of enableLimiter — the
+//     snapshots are published outside the optimizer guard precisely so that a
+//     default (CostAware) deployment still feeds this path.
 //
 //   - A provider could not compute constraints (see below): a partial view would
 //     deny types the surviving providers happen not to mention.
@@ -211,55 +210,15 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		return nil
 	}
 
-	// Observe before deciding. A wake is considered the instant demand appears,
-	// which is routinely within a second of the cluster changing, so the periodic
-	// observation alone can be a whole interval out of date at exactly the moment
-	// it is consulted — and a workload that has just started holding GPUs is
-	// precisely what a placement must not miss.
-	e.UsageRefresher.EnsureFresh(ctx, gpuusage.DecisionMaxAge)
-
-	usage, ok := decision.LatestGPUUsage()
+	views, ok := e.gpuUsageViews(ctx, namespace, providers)
 	if !ok {
-		// Not only the first tick after a restart. The saturation engine returns
-		// at len(activeVAs) == 0 WITHOUT publishing, so a fleet that is entirely
-		// parked — which is the state scale-from-zero exists to serve — never
-		// produces a snapshot at all, and every wake taken from it is unchecked.
-		e.reportUnchecked(ctx, namespace,
-			"the saturation engine has published no GPU-usage snapshot yet (no measured cycle over an active variant)")
-		return nil
-	}
-	if age := time.Since(usage.TakenAt); age > gpuUsageMaxAge {
-		// The producer publishes only measured cycles, so it deliberately leaves
-		// the last snapshot alone when collection fails. That is the right call
-		// for a blip, but an unbounded one would have this engine placing wakes
-		// against an arbitrarily old picture of the cluster, at 10Hz, for as long
-		// as the outage lasts. Past the bound, fall back to "unknown".
-		e.reportUnchecked(ctx, namespace, fmt.Sprintf(
-			"the GPU-usage snapshot is %s old, past the %s bound", age.Truncate(time.Second), gpuUsageMaxAge))
-		return nil
-	}
-
-	// Make sure THIS namespace is in the active set handed to the providers.
-	//
-	// A namespace-scoped quota is only materialised for namespaces present in
-	// usageByNamespace, and that map is built from ACTIVE variants — so a
-	// namespace whose fleet is entirely parked, which is every namespace this
-	// engine asks about, would be absent and its quota simply would not apply.
-	// The wake would then be judged against the cluster aggregate instead: it
-	// could exceed the namespace's own cap, or be refused because a DIFFERENT
-	// namespace is full. Present with zero usage is the accurate statement.
-	byNamespace := usage.ByNamespace
-	if _, present := byNamespace[namespace]; !present {
-		byNamespace = make(map[string]map[string]int, len(usage.ByNamespace)+1)
-		for ns, perType := range usage.ByNamespace {
-			byNamespace[ns] = perType
-		}
-		byNamespace[namespace] = map[string]int{}
+		return nil // gpuUsageViews reported why
 	}
 
 	var constraints []*pipeline.ResourceConstraints
 	for _, cp := range providers {
-		c, err := cp.ComputeConstraints(ctx, usage.ByType, byNamespace)
+		usageByType, usageByNamespace := views.For(cp)
+		c, err := cp.ComputeConstraints(ctx, usageByType, usageByNamespace)
 		if err != nil {
 			// A partial view is worse than none. FitsGPUBudget denies any
 			// accelerator type its constraints do not mention, so proceeding with
@@ -281,8 +240,114 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		}
 		constraints = append(constraints, c)
 	}
-	e.logBudgets(ctx, namespace, constraints, usage.ByType)
+	e.logBudgets(ctx, namespace, constraints, views)
 	return constraints
+}
+
+// gpuUsageViews assembles the usage measures this namespace's providers need,
+// reporting and returning false if one of them has not been observed.
+//
+// Only the measures some provider actually asks for are gathered. A quota-only
+// deployment must not be held up waiting for a physical observation it never
+// consults, and a physical-only one — the default — must not be held up waiting
+// for a saturation cycle to publish a managed figure nothing reads.
+//
+// A missing view cannot be substituted with zeros. Absent means "unknown", which
+// this engine treats as permissive; an empty map is a confident claim that
+// nothing is in use, and a provider handed one reports its entire capacity free.
+// The two are opposite answers, and only one of them is honest here.
+func (e *Engine) gpuUsageViews(
+	ctx context.Context,
+	namespace string,
+	providers []pipeline.ConstraintProvider,
+) (pipeline.GPUUsageViews, bool) {
+	var views pipeline.GPUUsageViews
+	needed := make(map[pipeline.UsageBasis]bool, 2)
+	for _, cp := range providers {
+		needed[pipeline.UsageBasisOf(cp)] = true
+	}
+
+	if needed[pipeline.PhysicalUsage] {
+		// Observe before deciding. A wake is considered the instant demand appears,
+		// which is routinely within a second of the cluster changing, so the periodic
+		// observation alone can be a whole interval out of date at exactly the moment
+		// it is consulted — and a workload that has just started holding GPUs is
+		// precisely what a placement must not miss.
+		e.UsageRefresher.EnsureFresh(ctx, gpuusage.DecisionMaxAge)
+
+		usage, ok := e.freshUsage(ctx, namespace, decision.LatestGPUUsage,
+			"no cluster GPU-usage snapshot has been published yet")
+		if !ok {
+			return views, false
+		}
+		views.PhysicalByType = usage.ByType
+		views.PhysicalByNamespace = withNamespace(usage.ByNamespace, namespace)
+	}
+
+	if needed[pipeline.ManagedUsage] {
+		// Published by the saturation engine, which is the only place the managed
+		// population exists — including as an explicit zero when its fleet is
+		// entirely parked, so a quota can still be evaluated for the very workloads
+		// this engine wakes.
+		usage, ok := e.freshUsage(ctx, namespace, decision.LatestManagedGPUUsage,
+			"the saturation engine has published no WVA-managed GPU-usage snapshot yet (no completed cycle)")
+		if !ok {
+			return views, false
+		}
+		views.ManagedByType = usage.ByType
+		views.ManagedByNamespace = withNamespace(usage.ByNamespace, namespace)
+	}
+
+	return views, true
+}
+
+// freshUsage reads a snapshot and bounds how old it may be, reporting the wake as
+// unchecked and returning false when it is missing or stale.
+//
+// The bound matters because a producer publishes only measured passes, deliberately
+// leaving the last snapshot alone when one fails. That is right for a blip, but an
+// unbounded one would have this engine placing wakes against an arbitrarily old
+// picture of the cluster, at 10Hz, for as long as the outage lasts.
+func (e *Engine) freshUsage(
+	ctx context.Context,
+	namespace string,
+	read func() (*decision.GPUUsage, bool),
+	missingReason string,
+) (*decision.GPUUsage, bool) {
+	usage, ok := read()
+	if !ok {
+		e.reportUnchecked(ctx, namespace, missingReason)
+		return nil, false
+	}
+	if age := time.Since(usage.TakenAt); age > gpuUsageMaxAge {
+		e.reportUnchecked(ctx, namespace, fmt.Sprintf(
+			"a GPU-usage snapshot is %s old, past the %s bound", age.Truncate(time.Second), gpuUsageMaxAge))
+		return nil, false
+	}
+	return usage, true
+}
+
+// withNamespace returns byNamespace with an entry for namespace, adding an empty
+// one if absent. The stored snapshot must not be mutated (GPUUsageStore.Get
+// documents it as shared), so it copies when it has to.
+//
+// A namespace-scoped quota is only materialised for namespaces present in the map
+// handed to the provider, and both producers build theirs from what is currently
+// HOLDING GPUs — so a namespace whose fleet is entirely parked, which is every
+// namespace this engine asks about, would be absent and its quota simply would not
+// apply. The wake would then be judged against the cluster aggregate instead: it
+// could exceed the namespace's own cap, or be refused because a DIFFERENT namespace
+// is full. Present with zero usage is the accurate statement.
+func withNamespace(byNamespace map[string]map[string]int, namespace string) map[string]map[string]int {
+	if _, present := byNamespace[namespace]; present {
+		return byNamespace
+	}
+	out := make(map[string]map[string]int, len(byNamespace)+1)
+	for ns, perType := range byNamespace {
+		out[ns] = perType
+	}
+	out[namespace] = map[string]int{}
+	return out
 }
 
 // logBudgets reports the GPU budgets this namespace's wakes are being judged
@@ -293,16 +358,27 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 // accelerator that was supposed to be full, which looks exactly like correct
 // behaviour. This is the line that distinguishes them — it says what WVA believed
 // was free, and the measured usage it derived that from.
-func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*pipeline.ResourceConstraints, usageByType map[string]int) {
+// Both usage measures are reported when both were consulted: a budget that looks
+// wrong is almost always one of the two being fed where the other belongs, and
+// that is only visible if the line says which is which.
+func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*pipeline.ResourceConstraints, views pipeline.GPUUsageViews) {
 	budgets, nsScoped := pipeline.GPUBudgets(constraints, namespace)
-	if !e.placementBasisChanged(namespace, fmt.Sprintf("ok|%v|%t|%v", budgets, nsScoped, usageByType)) {
+	if !e.placementBasisChanged(namespace, fmt.Sprintf("ok|%v|%t|%v|%v",
+		budgets, nsScoped, views.PhysicalByType, views.ManagedByType)) {
 		return
 	}
-	log.FromContext(ctx).Info("Scale-from-zero: GPU budgets available for placement",
+	kv := []any{
 		"namespace", namespace,
 		"gpuBudgets", budgets,
 		"namespaceScoped", nsScoped,
-		"gpusInUse", usageByType)
+	}
+	if views.Has(pipeline.PhysicalUsage) {
+		kv = append(kv, "gpusInUse", views.PhysicalByType)
+	}
+	if views.Has(pipeline.ManagedUsage) {
+		kv = append(kv, "gpusInUseByWVA", views.ManagedByType)
+	}
+	log.FromContext(ctx).Info("Scale-from-zero: GPU budgets available for placement", kv...)
 }
 
 // reportUnchecked records that wakes in this namespace are being published with

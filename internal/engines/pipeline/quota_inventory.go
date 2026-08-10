@@ -53,7 +53,21 @@ func NewQuotaInventory(cfg config.QuotaLimiterConfig) *QuotaInventory {
 var (
 	_ Inventory               = (*QuotaInventory)(nil)
 	_ NamespaceAwareInventory = (*QuotaInventory)(nil)
+	_ UsageBasisReporter      = (*QuotaInventory)(nil)
 )
+
+// UsageBasis returns ManagedUsage: a quota is an allowance granted to WVA, so
+// only the GPUs WVA's own variants hold may be drawn against it.
+//
+// Fed the physical figure instead, the cap binds on consumption it does not
+// govern — an unrelated training job sharing the namespace spends the operator's
+// WVA allowance without WVA having placed a single replica, and scale-up is
+// refused with the allowance nominally untouched. The physical constraint still
+// applies separately; that is the limiter that exists to say "the hardware is
+// full".
+func (q *QuotaInventory) UsageBasis() UsageBasis {
+	return ManagedUsage
+}
 
 // Name returns the limiter identifier (e.g., "cluster-quota"). Used in logs
 // and DecisionStep traces (the trace format is `limited by quota[scope=...]`,
