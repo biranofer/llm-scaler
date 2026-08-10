@@ -204,7 +204,7 @@ func resolveVariantCost(ctx context.Context, va wvav1alpha1.VariantAutoscaling) 
 // looks identical either way. These used to be V(4) lines, which the shipped
 // verbosity discards, so the permissive path left no trace whatsoever.
 func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeline.ResourceConstraints {
-	providers := pipeline.ConstraintProvidersFrom(e.gpuLimiter)
+	providers := pipeline.ConstraintProvidersFrom(e.currentGPULimiter())
 	if len(providers) == 0 {
 		e.reportUnchecked(ctx, namespace, "no constraint provider is configured")
 		return nil

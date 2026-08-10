@@ -18,7 +18,6 @@ package saturation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -540,13 +539,11 @@ func (e *Engine) refreshLimiter(ctx context.Context) {
 		"type", e.Config.EffectiveLimiterMode(), "name", limiter.Name())
 }
 
-// limiterSignature is a deterministic fingerprint of the config inputs that
-// determine the GPU limiter, used to detect when a rebuild is needed. Quota
-// entry maps are marshaled with sorted keys by encoding/json, so equal configs
-// always produce equal signatures.
+// limiterSignature detects when the limiter config changed. Delegates to the
+// shared implementation so this engine and the scale-from-zero engine cannot
+// disagree about what a change is.
 func limiterSignature(cfg *config.Config) string {
-	entries, _ := json.Marshal(cfg.EffectiveQuotaEntries())
-	return string(cfg.EffectiveLimiterMode()) + "|" + string(entries)
+	return pipeline.LimiterSignature(cfg)
 }
 
 // currentGPULimiter returns the active GPU limiter, read under limiterMu so it is

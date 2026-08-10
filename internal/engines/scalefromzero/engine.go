@@ -106,8 +106,22 @@ type Engine struct {
 	maxConcurrency int
 	config         *config.Config // Unified configuration (injected from main.go)
 	// gpuLimiter supplies the GPU/quota constraints a wake must fit within. Nil
-	// means no capacity check — see gpuConstraints.
+	// means no capacity check — see gpuConstraints. Read and written only under
+	// limiterMu, because refreshLimiter may replace it while a placement is being
+	// decided.
 	gpuLimiter pipeline.Limiter
+	// limiterBuilder rebuilds gpuLimiter from the live config, and limiterSig is
+	// the config fingerprint it was last built from.
+	//
+	// This engine used to build its limiter ONCE at startup, so an operator editing
+	// the limiters: list changed the saturation engine's behaviour immediately and
+	// this engine's not at all — until a restart. The ConfigMap documents that list
+	// as applied live, and it is now the sole switch for both, so half of it
+	// honouring the edit was a trap: capacity checks silently kept using whatever
+	// was configured when the process started.
+	limiterMu      sync.Mutex
+	limiterBuilder func() (pipeline.Limiter, error)
+	limiterSig     string
 	// UsageRefresher brings the cluster's GPU usage up to date immediately before
 	// a placement is decided. A nil pointer is a no-op (EnsureFresh has a nil
 	// receiver guard), so the periodic observation is then the only input — which
@@ -136,7 +150,59 @@ type Engine struct {
 // with no limiter the engine wakes without a capacity check, which is the
 // behaviour it had before selection existed.
 func (e *Engine) SetGPULimiter(l pipeline.Limiter) {
+	e.limiterMu.Lock()
+	defer e.limiterMu.Unlock()
 	e.gpuLimiter = l
+}
+
+// SetLimiterBuilder installs a builder that rebuilds the limiter from the current
+// effective config, so a limiters: edit reaches this engine without a restart —
+// matching the saturation engine, which has always worked that way.
+//
+// The signature is seeded from the config as it stands, so the first cycle does
+// not rebuild a limiter that was just constructed from the same config.
+func (e *Engine) SetLimiterBuilder(builder func() (pipeline.Limiter, error)) {
+	e.limiterMu.Lock()
+	defer e.limiterMu.Unlock()
+	e.limiterBuilder = builder
+	e.limiterSig = pipeline.LimiterSignature(e.config)
+}
+
+// refreshLimiter rebuilds the limiter when the effective limiter config changed
+// since it was last built. A build error keeps the previous limiter, so a
+// transient bad config never silently turns the capacity check off.
+//
+// Called once per cycle. The comparison is a fingerprint, not a rebuild: this
+// loop runs at 10Hz and constructing a limiter per tick would re-create the
+// inventory (and its discovery client) ten times a second.
+func (e *Engine) refreshLimiter(ctx context.Context) {
+	e.limiterMu.Lock()
+	defer e.limiterMu.Unlock()
+	if e.limiterBuilder == nil {
+		return
+	}
+	sig := pipeline.LimiterSignature(e.config)
+	if sig == e.limiterSig && e.gpuLimiter != nil {
+		return
+	}
+	limiter, err := e.limiterBuilder()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to rebuild the GPU limiter from config; "+
+			"keeping the previous one", "effectiveMode", e.config.EffectiveLimiterMode())
+		return
+	}
+	e.gpuLimiter = limiter
+	e.limiterSig = sig
+	log.FromContext(ctx).Info("Scale-from-zero: GPU limiter (re)built from config",
+		"type", e.config.EffectiveLimiterMode(), "name", limiter.Name())
+}
+
+// currentGPULimiter reads the active limiter under the lock, so a placement is
+// never decided against a limiter being replaced mid-cycle.
+func (e *Engine) currentGPULimiter() pipeline.Limiter {
+	e.limiterMu.Lock()
+	defer e.limiterMu.Unlock()
+	return e.gpuLimiter
 }
 
 // NewEngine creates a new instance of the scale-from-zero engine.
@@ -181,6 +247,7 @@ func (e *Engine) StartOptimizeLoop(ctx context.Context) {
 func (e *Engine) optimize(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
+	e.refreshLimiter(ctx) // pick up a limiters: edit without a restart
 	// Get all inactive (replicas == 0) VAs
 	e.VariantEnricher.Refresh(ctx) // resolve the scale target of anything newly registered
 
