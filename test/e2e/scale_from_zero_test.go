@@ -644,9 +644,20 @@ func createScaleFromZeroTriggerJob(name, namespace, gatewayService, modelID stri
 	// a cold start behind LWS can take well over half a minute to first token, and
 	// a 30s bound made every one of them fail and the job report no successes.
 	const requestTimeoutSec = 180
-	// Sustained past the specs' Eventually windows (EventuallyExtendedSec, 300s),
-	// so the demand outlives the observation rather than racing it.
-	const sustainSec = 330
+	// Sustained past the LONGEST window that waits on this job.
+	//
+	// Two different specs wait on it: the wake assertions (EventuallyExtendedSec,
+	// 300s) and "requests are processed after scaling up", which waits
+	// ScaleUpTimeout (600s) for the Job to report Succeeded. Sizing for the first
+	// broke the second — the job closed its window at 330s, exited non-zero
+	// because a cold LeaderWorkerSet had not answered anything yet, and the Job's
+	// backoff then restarted it, so Succeeded stayed 0 past the spec's deadline
+	// on a model that had in fact scaled up correctly.
+	//
+	// Just under ScaleUpTimeout, so the job is still generating demand for as long
+	// as anything is still waiting on it, and still exits early the moment the
+	// model demonstrably serves.
+	const sustainSec = 570
 	// Successes that prove the model is genuinely serving, after which there is
 	// nothing left to demonstrate.
 	const successTarget = 3
