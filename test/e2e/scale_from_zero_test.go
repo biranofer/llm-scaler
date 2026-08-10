@@ -605,110 +605,55 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 	})
 })
 
-// createScaleFromZeroTriggerJob creates a job that holds a QUEUE open at the
-// inference gateway, so the scale-from-zero engine has something to observe.
-//
-// The queue is the whole signal. Requests route through EPP, and with no ready
-// endpoint for the model GIE flow-control holds them, which is what WVA reads
-// via inference_extension_flow_control_queue_size.
-//
-// This used to send ten requests SERIALLY — one blocking curl at a time with a
-// two-second sleep between — so the queue was at most one deep and was empty
-// during every gap. WVA samples that metric on its collection cycle, so whether
-// a spec passed came down to whether a sample landed inside one of the windows
-// where a single request happened to be in flight. That is the coin flip behind
-// every intermittent "engine never published an activation" failure in this
-// suite, and no amount of waiting elsewhere fixes it: by the time the pipeline
-// is ready, the demand it was supposed to observe may already be gone.
-//
-// So the demand is now CONTINUOUS and CONCURRENT:
-//
-//   - several workers in parallel, each re-issuing as soon as its request ends,
-//     so the queue depth never drops to zero between requests;
-//   - a bounded per-request timeout, so one stuck request cannot silently retire
-//     a worker for minutes;
-//   - the whole thing sustained past the assertion window rather than for a
-//     fixed request count, so the observer cannot miss it by being slow.
-//
-// It still exits as soon as the wake demonstrably worked — a few 200s mean the
-// model is up and serving — so a passing spec stays fast.
+// createScaleFromZeroTriggerJob creates a job that sends requests to the inference gateway to trigger scale-from-zero
+// Requests go through the gateway (port 80) which routes through EPP, creating the flow control queue
+// that the scale-from-zero engine monitors via the inference_extension_flow_control_queue_size metric
 func createScaleFromZeroTriggerJob(name, namespace, gatewayService, modelID string) *batchv1.Job {
 	backoffLimit := int32(3)
-	// Enough workers that the queue stays non-empty while requests are rotating,
-	// small enough not to stress a kind cluster.
-	const workers = 4
-	// Per-request bound. Generous on purpose: a request WAITING is the signal —
-	// it sits in the flow-control queue, which is exactly what the engine reads.
-	// Cutting it short does not help the queue and does hurt the follow-up specs,
-	// which need these requests to be answered once the model finally comes up:
-	// a cold start behind LWS can take well over half a minute to first token, and
-	// a 30s bound made every one of them fail and the job report no successes.
-	const requestTimeoutSec = 180
-	// Sustained past the LONGEST window that waits on this job.
-	//
-	// Two different specs wait on it: the wake assertions (EventuallyExtendedSec,
-	// 300s) and "requests are processed after scaling up", which waits
-	// ScaleUpTimeout (600s) for the Job to report Succeeded. Sizing for the first
-	// broke the second — the job closed its window at 330s, exited non-zero
-	// because a cold LeaderWorkerSet had not answered anything yet, and the Job's
-	// backoff then restarted it, so Succeeded stayed 0 past the spec's deadline
-	// on a model that had in fact scaled up correctly.
-	//
-	// Just under ScaleUpTimeout, so the job is still generating demand for as long
-	// as anything is still waiting on it, and still exits early the moment the
-	// model demonstrably serves.
-	const sustainSec = 570
-	// Successes that prove the model is genuinely serving, after which there is
-	// nothing left to demonstrate.
-	const successTarget = 3
+	numRequests := 10
 
 	script := fmt.Sprintf(`#!/bin/sh
-echo "Scale-from-zero trigger: %d concurrent workers, sustaining demand for up to %ds"
-echo "Gateway: %s:80   Model: %s"
+echo "Scale-from-zero trigger job starting..."
+echo "Sending %d requests to gateway %s:80"
+echo "Model ID: %s"
 
-OKDIR=/tmp/ok
-mkdir -p "$OKDIR"
-DEADLINE=$(( $(date +%%s) + %d ))
+# Send requests with delays to allow scale-from-zero engine to detect them
+SENT=0
+SUCCESS=0
+FAILED=0
 
-worker() {
-  while [ "$(date +%%s)" -lt "$DEADLINE" ]; do
-    CODE=$(curl -s -o /dev/null -w "%%{http_code}" --max-time %d -X POST http://%s:80/v1/completions \
-      -H "Content-Type: application/json" \
-      -d '{"model":"%s","prompt":"Test prompt for scale-from-zero","max_tokens":50}' 2>/dev/null)
-    if [ "$CODE" = "200" ]; then
-      touch "$OKDIR/$(date +%%s%%N)-$$"
-    fi
-    # No sleep: re-issue immediately so this worker's slot in the queue is never
-    # empty. The whole point is that the queue does not blink.
-  done
-}
-
-W=0
-while [ $W -lt %d ]; do
-  worker &
-  W=$((W + 1))
-done
-
-# Exit as soon as the wake has demonstrably worked, or when the demand window
-# closes. Either way the workers go with the container.
-while [ "$(date +%%s)" -lt "$DEADLINE" ]; do
-  OK=$(ls -1 "$OKDIR" 2>/dev/null | wc -l)
-  if [ "$OK" -ge %d ]; then
-    echo "Model is serving: $OK successful requests"
-    exit 0
+while [ $SENT -lt %d ]; do
+  echo "Sending request $((SENT + 1)) / %d..."
+  
+  RESPONSE=$(curl -s -w "\n%%{http_code}" --max-time 180 -X POST http://%s:80/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model":"%s","prompt":"Test prompt for scale-from-zero","max_tokens":50}' 2>&1)
+  
+  HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+  
+  if [ "$HTTP_CODE" = "200" ]; then
+    SUCCESS=$((SUCCESS + 1))
+    echo "Request $((SENT + 1)) succeeded (HTTP $HTTP_CODE)"
+  else
+    FAILED=$((FAILED + 1))
+    echo "Request $((SENT + 1)) failed (HTTP $HTTP_CODE)"
   fi
-  sleep 1
+  
+  SENT=$((SENT + 1))
+  
+  # Small delay between requests to allow scale-from-zero engine to detect pending requests
+  sleep 2
 done
 
-OK=$(ls -1 "$OKDIR" 2>/dev/null | wc -l)
-echo "Demand window closed: $OK successful requests"
-if [ "$OK" -gt 0 ]; then
+echo "Job completed: sent=$SENT, success=$SUCCESS, failed=$FAILED"
+
+# Consider job successful if at least some requests succeeded
+if [ $SUCCESS -gt 0 ]; then
   exit 0
+else
+  exit 1
 fi
-exit 1
-`, workers, sustainSec, gatewayService, modelID,
-		sustainSec, requestTimeoutSec, gatewayService, modelID,
-		workers, successTarget)
+`, numRequests, gatewayService, modelID, numRequests, numRequests, gatewayService, modelID)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
