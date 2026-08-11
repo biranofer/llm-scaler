@@ -18,10 +18,10 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpunodes"
 )
 
-type AcceleratorModelInfo = discovery.AcceleratorModelInfo
+type AcceleratorModelInfo = gpunodes.AcceleratorModelInfo
 
 // The WVA currently operates in unlimited mode only, where each variant receives
 // optimal allocation independently without cluster capacity constraints.
@@ -38,6 +38,6 @@ func CollectInventoryK8S(ctx context.Context, r interface{}) (map[string]map[str
 
 	// Use the K8sWithGpuOperator discovery mechanism
 	// TODO: Make this configurable or dynamic based on environment
-	disc := &discovery.K8sWithGpuOperator{Client: c}
+	disc := &gpunodes.K8sWithGpuOperator{Client: c}
 	return disc.Discover(ctx)
 }

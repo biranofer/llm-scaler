@@ -55,11 +55,11 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/saturation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/scalefromzero"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/steadystate"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpunodes"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
@@ -445,14 +445,14 @@ func main() {
 	// source of truth: a physical limiter is declared. Nothing else consumes this.
 	// A deployment that declares no limiter is not limited at all, and one that
 	// declares only a quota is charged for WVA's own variants
-	// (pipeline.ManagedUsage) — both would otherwise list nodes and walk every pod
+	// (allocation.ManagedUsage) — both would otherwise list nodes and walk every pod
 	// in the cluster every interval to produce a number with no reader.
 	//
 	// Re-read every tick, because the limiters list is live: switching it must not
 	// need a restart.
 	usageRefresher := &gpuusage.Refresher{
-		Discovery: discovery.NewK8sWithGpuOperator(mgr.GetClient()),
-		Periodic:  func() bool { return pipeline.PhysicalUsageConfigured(cfg) },
+		Discovery: gpunodes.NewK8sWithGpuOperator(mgr.GetClient()),
+		Periodic:  func() bool { return allocation.PhysicalUsageConfigured(cfg) },
 	}
 	if err := mgr.Add(usageRefresher); err != nil {
 		setupLog.Error(err, "unable to add the GPU usage refresher to the manager")
@@ -483,7 +483,7 @@ func main() {
 		// source. The ConfigMaps were bootstrapped above, so the selection is
 		// already visible here. The engine rebuilds the limiter live (see
 		// SetLimiterBuilder) when the ConfigMap changes.
-		gpuLimiter, err := pipeline.NewLimiterFromConfig(cfg, mgr.GetClient())
+		gpuLimiter, err := allocation.NewLimiterFromConfig(cfg, mgr.GetClient())
 		if err != nil {
 			setupLog.Error(err, "failed to build GPU limiter")
 			return err
@@ -505,7 +505,7 @@ func main() {
 
 		// Quota mode means "no physical-capacity discovery" — including the
 		// inventory-collection call in the saturation engine. We honor that
-		// at the call site (see saturation.shouldCollectClusterInventory),
+		// at the call site (see steadystate.shouldCollectClusterInventory),
 		// but warn loudly here so an operator who explicitly enabled
 		// WVA_LIMITED_MODE sees that their inventory log will be suppressed.
 		if cfg.EffectiveLimiterMode() == config.LimiterTypeQuota && cfg.LimitedModeEnabled() {
@@ -516,7 +516,7 @@ func main() {
 				"limitedModeEnabled", cfg.LimitedModeEnabled())
 		}
 
-		engine := saturation.NewEngine(
+		engine := steadystate.NewEngine(
 			mgr.GetClient(),
 			mgr.GetAPIReader(),
 			mgr.GetScheme(),
@@ -538,8 +538,8 @@ func main() {
 		engine.VariantEnricher.Tracker = ds
 		// Rebuild the limiter live when the saturation ConfigMap's limiters: list
 		// changes — no restart required. The builder re-reads the effective config.
-		engine.SetLimiterBuilder(func() (pipeline.Limiter, error) {
-			return pipeline.NewLimiterFromConfig(cfg, mgr.GetClient())
+		engine.SetLimiterBuilder(func() (allocation.Limiter, error) {
+			return allocation.NewLimiterFromConfig(cfg, mgr.GetClient())
 		})
 		if taRegistered {
 			registration.RegisterThroughputAnalyzerQueries(sourceRegistry)
@@ -592,13 +592,13 @@ func main() {
 		// the list now the sole switch for both, that split is a trap. A limiter
 		// that cannot be built is not fatal: the engine then wakes without a
 		// capacity check, which is what it did before selection existed.
-		if sfzLimiter, limErr := pipeline.NewLimiterFromConfig(cfg, mgr.GetClient()); limErr != nil {
+		if sfzLimiter, limErr := allocation.NewLimiterFromConfig(cfg, mgr.GetClient()); limErr != nil {
 			setupLog.Error(limErr, "failed to build GPU limiter for scale-from-zero; waking without a capacity check")
 		} else {
 			engine.SetGPULimiter(sfzLimiter)
 		}
-		engine.SetLimiterBuilder(func() (pipeline.Limiter, error) {
-			return pipeline.NewLimiterFromConfig(cfg, mgr.GetClient())
+		engine.SetLimiterBuilder(func() (allocation.Limiter, error) {
+			return allocation.NewLimiterFromConfig(cfg, mgr.GetClient())
 		})
 		go engine.StartOptimizeLoop(ctx)
 		return nil

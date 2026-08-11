@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 )
 
 // The limiters: list is documented as applied live, and it is the sole switch for
@@ -26,10 +26,10 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 	builds := 0
 	withLimiters() // none
 	e := &Engine{config: cfg}
-	e.SetGPULimiter(pipeline.NewNoOpLimiter("startup"))
-	e.SetLimiterBuilder(func() (pipeline.Limiter, error) {
+	e.SetGPULimiter(allocation.NewNoOpLimiter("startup"))
+	e.SetLimiterBuilder(func() (allocation.Limiter, error) {
 		builds++
-		return pipeline.NewLimiterFromConfig(cfg, nil)
+		return allocation.NewLimiterFromConfig(cfg, nil)
 	})
 
 	// Unchanged config must not rebuild: this runs at 10Hz, and rebuilding would
@@ -39,7 +39,7 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 	if builds != 0 {
 		t.Fatalf("rebuilt %d times with an unchanged config, want 0", builds)
 	}
-	if got := pipeline.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 0 {
+	if got := allocation.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 0 {
 		t.Fatalf("no limiter declared, so nothing should provide constraints; got %d", len(got))
 	}
 
@@ -52,7 +52,7 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 	if builds != 1 {
 		t.Fatalf("rebuilt %d times after a config change, want 1", builds)
 	}
-	if got := pipeline.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 1 {
+	if got := allocation.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 1 {
 		t.Fatalf("declared quota must supply constraints to the capacity check; got %d providers", len(got))
 	}
 
@@ -60,7 +60,7 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 	// a limit the operator has deleted.
 	withLimiters()
 	e.refreshLimiter(ctx)
-	if got := pipeline.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 0 {
+	if got := allocation.ConstraintProvidersFrom(e.currentGPULimiter()); len(got) != 0 {
 		t.Fatalf("limiter removed from config but still providing %d constraint(s)", len(got))
 	}
 }
@@ -78,11 +78,11 @@ func TestAFailedRebuildKeepsThePreviousLimiter(t *testing.T) {
 
 	fail := false
 	e := &Engine{config: cfg}
-	e.SetLimiterBuilder(func() (pipeline.Limiter, error) {
+	e.SetLimiterBuilder(func() (allocation.Limiter, error) {
 		if fail {
 			return nil, errors.New("cluster unreachable")
 		}
-		return pipeline.NewLimiterFromConfig(cfg, nil)
+		return allocation.NewLimiterFromConfig(cfg, nil)
 	})
 	e.refreshLimiter(ctx) // seeded signature differs from a nil limiter, so this builds
 	before := e.currentGPULimiter()

@@ -26,7 +26,7 @@ operating point, and scales before demand exceeds that supply.
 > **Runtime toggling requires a restart.** Registration is frozen after `StartOptimizeLoop`;
 > editing the configmap to add `throughput` takes effect only after a controller restart.
 > This restart requirement is about registration, not participation: the per-cycle
-> `effectiveEnabled` gate (see the [multi-analyzer pipeline guide](multi-analyzer-pipeline.md))
+> `ScalingPolicy.AnalyzerEnabled` gate (see the [multi-analyzer pipeline guide](multi-analyzer-pipeline.md))
 > governs whether an already-registered analyzer participates in a given cycle, and is
 > independent of this startup-time registration gate.
 >
@@ -424,7 +424,7 @@ On leader failover the incoming leader starts with an empty analyzer. During war
                    ↓
 ┌──────────────────────────────────────┐
 │ Multi-analyzer optimizer             │  ← slice-predicate any-up/all-down
-│ (internal/engines/pipeline)          │
+│ (internal/engines/allocation)          │
 └──────────────────┬───────────────────┘
                    │ VariantDecisions → Controller
                    ↓

@@ -15,14 +15,14 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 )
 
 // ModelServiceOption adjusts a model-service Deployment before it is applied.
 type ModelServiceOption func(*appsv1.Deployment)
 
 // WithRole stamps the P/D disaggregation role on the pod template, which is
-// where WVA reads it from (discovery.RoleFromScaleTarget). Use
+// where WVA reads it from (variantmeta.RoleFromScaleTarget). Use
 // domain.RolePrefill / domain.RoleDecode; an unlabelled workload reads as
 // "both", i.e. non-disaggregated.
 func WithRole(role string) ModelServiceOption {
@@ -30,7 +30,7 @@ func WithRole(role string) ModelServiceOption {
 		if d.Spec.Template.Labels == nil {
 			d.Spec.Template.Labels = map[string]string{}
 		}
-		d.Spec.Template.Labels[discovery.RoleLabel] = role
+		d.Spec.Template.Labels[variantmeta.RoleLabel] = role
 	}
 }
 

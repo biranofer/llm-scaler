@@ -313,7 +313,7 @@ kubectl logs -n workload-variant-autoscaler-system \
 
 ### Modifying Optimization Logic
 
-1. Update code in `internal/engines/pipeline/` or `internal/queueing/analyzer/`
+1. Update code in `internal/engines/allocation/` or `internal/queueing/analyzer/`
 2. Add/update unit tests
 3. Run `make test`
 4. Update design documentation if algorithm changes

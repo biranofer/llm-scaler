@@ -231,7 +231,7 @@ When modifying queue models in `internal/queueing/analyzer/`:
 
 ### Optimization Algorithms
 
-When modifying optimizers in `internal/engines/pipeline/`:
+When modifying optimizers in `internal/engines/allocation/`:
 
 - Consider computational complexity
 - Test edge cases (zero load, overload, etc.)

@@ -5,18 +5,18 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 )
 
 const selNS = "chat"
 
 // pools builds a single cluster-scoped provider with the given free capacity.
-func pools(free map[string]int) []*pipeline.ResourceConstraints {
-	p := make(map[string]pipeline.ResourcePool, len(free))
+func pools(free map[string]int) []*allocation.ResourceConstraints {
+	p := make(map[string]allocation.ResourcePool, len(free))
 	for accType, avail := range free {
-		p[accType] = pipeline.ResourcePool{Limit: avail, Used: 0}
+		p[accType] = allocation.ResourcePool{Limit: avail, Used: 0}
 	}
-	return []*pipeline.ResourceConstraints{{ProviderName: "gpu-limiter", Pools: p}}
+	return []*allocation.ResourceConstraints{{ProviderName: "gpu-limiter", Pools: p}}
 }
 
 func cand(name, role, accel string, gpus int, cost float64) Candidate {
@@ -276,10 +276,10 @@ func TestSelectServingSet(t *testing.T) {
 			in: SelectionInput{
 				Namespace:  selNS,
 				Candidates: []Candidate{cand("d", domain.RoleDecode, "H100", 1, 1)},
-				Constraints: []*pipeline.ResourceConstraints{{
+				Constraints: []*allocation.ResourceConstraints{{
 					ProviderName: "quota-limiter",
-					Pools:        map[string]pipeline.ResourcePool{"H100": {Limit: 64}},
-					NamespacePools: map[string]map[string]pipeline.ResourcePool{
+					Pools:        map[string]allocation.ResourcePool{"H100": {Limit: 64}},
+					NamespacePools: map[string]map[string]allocation.ResourcePool{
 						selNS: {"L4": {Limit: 8}},
 					},
 				}},

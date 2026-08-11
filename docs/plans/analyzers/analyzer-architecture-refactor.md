@@ -15,7 +15,7 @@
 WVA's analyzers carry three coupled problems:
 
 1. **The saturation analyzer is privileged as the metadata keeper.** `saturationEntry`
-   (`internal/engines/pipeline/analyzer_helpers.go:87`) is the sole source of per-variant identity
+   (`internal/engines/allocation/analyzer_helpers.go:87`) is the sole source of per-variant identity
    (`Cost`, `AcceleratorName`, `Role`, replica counts) the optimizer reads. Every other analyzer must
    either piggyback on it or be special-cased. The de-privilege TODO is already written in the code
    (`analyzer_helpers.go:90`: *"remove the sat_v2 special role once all analyzers populate variant
@@ -217,7 +217,7 @@ cluster `wva-analyzers` ConfigMap; a policy entry's `name` resolves **built-in r
 >
 > 1. `AnalyzerResult` was trimmed to `{AnalyzerName, ModelID, Namespace, AnalyzedAt,
 >    VariantCapacities, TotalDemand, RoleDemand}`. The engine-owned fields moved to
->    `pipeline.NamedAnalyzerResult` rather than being deleted outright — the optimizer needs
+>    `allocation.NamedAnalyzerResult` rather than being deleted outright — the optimizer needs
 >    them, it just must not receive them *from an analyzer*.
 > 2. `VariantCapacity` was trimmed in place rather than renamed to `VariantTarget`, and it
 >    **keeps `ReplicaCount`/`PendingReplicas`** (engine-instance units — see the boxed note
@@ -279,7 +279,7 @@ today); no-op on paths that don't run discovery. `saturationEntry` deletion is d
 - *(3.4, increment 1)* **The result-level type trim landed.** `TotalSupply`,
   `TotalAnticipatedSupply`, `Utilization`, `RequiredCapacity`, `SpareCapacity` and
   `RoleCapacities` are gone from `domain.AnalyzerResult` and now live on
-  `pipeline.NamedAnalyzerResult`, which the capacity-build step owns. `AnalyzerResult` is
+  `allocation.NamedAnalyzerResult`, which the capacity-build step owns. `AnalyzerResult` is
   down to `{AnalyzerName, ModelID, Namespace, AnalyzedAt, VariantCapacities, TotalDemand,
   RoleDemand}` — the pure `(D, P)`. The linearity invariant is now enforced by the type
   system: an analyzer *cannot* write a supply or a scaling signal.
@@ -305,9 +305,9 @@ the same fixture problem.
 
 - Delete `TotalSupply`, `TotalAnticipatedSupply`, `Utilization`, `RequiredCapacity`,
   `SpareCapacity`, `RoleCapacities` from `domain.AnalyzerResult`; add them to
-  `pipeline.NamedAnalyzerResult`.
+  `allocation.NamedAnalyzerResult`.
 - `buildCapacities`, `applyUniversalThreshold` and `warnUnsizableShortfall` take
-  `*pipeline.NamedAnalyzerResult` instead of `*domain.AnalyzerResult`.
+  `*allocation.NamedAnalyzerResult` instead of `*domain.AnalyzerResult`.
 - `runAnalyzersAndScore` constructs the `NamedAnalyzerResult` *before* calling
   `buildCapacities(&nr, ...)`, then seeds `Remaining`/`Spare` from `nr.RequiredCapacity`/
   `nr.SpareCapacity` (they are the optimizer's mutable copies, so they can only be set
@@ -318,7 +318,7 @@ the same fixture problem.
   `modelDemandGPUs` change signature to take the named result.
 
 **The hard part is the fixtures, not the code.** ~160 field sites across six
-`internal/engines/pipeline/*_test.go` files set these fields inside
+`internal/engines/allocation/*_test.go` files set these fields inside
 `domain.AnalyzerResult` literals. They appear in **four** shapes, and a regex that
 handles one corrupts another:
 
@@ -356,7 +356,7 @@ populations, and each got a different treatment:
    split in one place (`named()`).
 2. *Engine tests* (`engine_v2_capacity_build*_test.go`, `engine_v2_threshold_test.go`,
    `engine_v2_test.go` — 33 literals) pin the derivation itself, so they use the real
-   `pipeline.NamedAnalyzerResult`. Here fields genuinely move, so a brace-aware,
+   `allocation.NamedAnalyzerResult`. Here fields genuinely move, so a brace-aware,
    **per-literal** script regrouped them (engine fields stay outer, `(D, P)` fields move into
    a nested `Result:`), copying each field's text verbatim. Never a global `str.replace`.
 
@@ -367,7 +367,7 @@ committed:**
   tree — the diff contained *only* the intended `NamedAnalyzerResult` collapses, proving no
   fixture value changed;
 - population 2: per file, the Nth `&domain.AnalyzerResult{` literal in `HEAD` was matched to
-  the Nth `&pipeline.NamedAnalyzerResult{` literal now, and their field-line multisets
+  the Nth `&allocation.NamedAnalyzerResult{` literal now, and their field-line multisets
   compared (minus the two wrapper lines). 29/29 verified identical.
 
 Run `gofmt` afterwards: regrouping leaves stale alignment padding. On this Windows checkout
@@ -547,8 +547,8 @@ references below are from the pre-removal plan and no longer resolve.
 
 ## 9. Open questions
 
-- **Discovery placement:** a new `internal/discovery` package, or a method on the engine consuming
-  `internal/utils/variant.go`? (Leaning: thin `internal/engines/discovery` that returns
+- **Discovery placement:** a new `internal/gpunodes` package, or a method on the engine consuming
+  `internal/utils/variant.go`? (Leaning: thin `internal/engines/variantmeta` that returns
   `[]VariantMetadata`, so analyzers/optimizer import a type, not the engine.)
 - **`VariantReplicaState` vs new `VariantMetadata`:** extend the former in place, or introduce the
   latter and deprecate? (Leaning: introduce `VariantMetadata`, alias/embed during transition.)

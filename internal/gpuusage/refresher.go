@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpunodes"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 )
 
@@ -57,7 +57,7 @@ const DefaultInterval = 15 * time.Second
 // consumes nothing this produces, which is what Periodic exists to notice.
 type Refresher struct {
 	// Discovery observes the cluster. Required.
-	Discovery discovery.NamespacedUsageDiscovery
+	Discovery gpunodes.NamespacedUsageDiscovery
 	// Store receives each observation. Defaults to decision.DefaultGPUUsage.
 	Store *decision.GPUUsageStore
 	// Interval between refreshes. Defaults to DefaultInterval.

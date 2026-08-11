@@ -31,7 +31,7 @@ only *which knob expresses it*.
 **It is redundant with `scaleUpThreshold`.** Replica sizing is
 
 ```go
-// internal/engines/pipeline/greedy_score_optimizer.go
+// internal/engines/allocation/greedy_score_optimizer.go
 fairShareCap := int(math.Ceil(target / vc.PerReplicaCapacity))   // target = demand / scaleUpThreshold
 ```
 

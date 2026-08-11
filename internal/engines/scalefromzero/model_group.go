@@ -20,7 +20,7 @@ import (
 	"sort"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -149,7 +149,7 @@ func activeRoleCoverage(
 		// A nil target resolves to RoleBoth, which counts as decode — the safe
 		// direction, since over-reporting coverage only declines a wake for a
 		// model something else is already running.
-		switch discovery.RoleFromScaleTarget(target) {
+		switch variantmeta.RoleFromScaleTarget(target) {
 		case domain.RolePrefill:
 			c.prefill = true
 		default:

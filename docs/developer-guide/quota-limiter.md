@@ -168,7 +168,7 @@ controller restart — no `kubectl rollout restart` required.
 ## Pipeline integration
 
 `QuotaInventory` implements the `Inventory` interface from
-`internal/engines/pipeline/limiter_interfaces.go` plus the
+`internal/engines/allocation/limiter_interfaces.go` plus the
 `NamespaceAwareInventory` extension. The lifecycle mirrors `TypeInventory`:
 
 1. The controller constructs `QuotaInventory` from a validated config entry.
@@ -193,7 +193,7 @@ source.
 
 ### A quota is charged for WVA's variants only
 
-`QuotaInventory` declares `UsageBasis() == pipeline.ManagedUsage`, so the usage it
+`QuotaInventory` declares `UsageBasis() == allocation.ManagedUsage`, so the usage it
 is fed counts only what WVA's own variants hold — summed from the saturation
 engine's population, not from the cluster-wide pod walk that feeds a physical
 inventory. Both figures are assembled per cycle and routed per provider; see
@@ -363,8 +363,8 @@ The selection is exposed on `*config.Config` as `EffectiveLimiterMode()` and
 `EffectiveQuotaEntries()`, both reading the live ConfigMap. The saturation engine
 rebuilds the limiter when they change (`Engine.refreshLimiter`), so edits apply
 without a restart. The factory in
-`internal/engines/pipeline/limiter_factory.go` translates the selection into a
-concrete `pipeline.Limiter`:
+`internal/engines/allocation/limiter_factory.go` translates the selection into a
+concrete `allocation.Limiter`:
 
 - **Inventory** — `DefaultLimiter` wrapping `TypeInventoryWithUsage`.
 - **Single quota entry** — `DefaultLimiter` wrapping one `QuotaInventory`.

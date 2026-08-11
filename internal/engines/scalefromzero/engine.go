@@ -37,9 +37,9 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/common"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/executor"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
@@ -109,7 +109,7 @@ type Engine struct {
 	// means no capacity check — see gpuConstraints. Read and written only under
 	// limiterMu, because refreshLimiter may replace it while a placement is being
 	// decided.
-	gpuLimiter pipeline.Limiter
+	gpuLimiter allocation.Limiter
 	// limiterBuilder rebuilds gpuLimiter from the live config, and limiterSig is
 	// the config fingerprint it was last built from.
 	//
@@ -120,7 +120,7 @@ type Engine struct {
 	// honouring the edit was a trap: capacity checks silently kept using whatever
 	// was configured when the process started.
 	limiterMu      sync.Mutex
-	limiterBuilder func() (pipeline.Limiter, error)
+	limiterBuilder func() (allocation.Limiter, error)
 	limiterSig     string
 	// UsageRefresher brings the cluster's GPU usage up to date immediately before
 	// a placement is decided. A nil pointer is a no-op (EnsureFresh has a nil
@@ -149,7 +149,7 @@ type Engine struct {
 // engine does not wake a variant onto an accelerator with no free GPUs. Optional:
 // with no limiter the engine wakes without a capacity check, which is the
 // behaviour it had before selection existed.
-func (e *Engine) SetGPULimiter(l pipeline.Limiter) {
+func (e *Engine) SetGPULimiter(l allocation.Limiter) {
 	e.limiterMu.Lock()
 	defer e.limiterMu.Unlock()
 	e.gpuLimiter = l
@@ -161,11 +161,11 @@ func (e *Engine) SetGPULimiter(l pipeline.Limiter) {
 //
 // The signature is seeded from the config as it stands, so the first cycle does
 // not rebuild a limiter that was just constructed from the same config.
-func (e *Engine) SetLimiterBuilder(builder func() (pipeline.Limiter, error)) {
+func (e *Engine) SetLimiterBuilder(builder func() (allocation.Limiter, error)) {
 	e.limiterMu.Lock()
 	defer e.limiterMu.Unlock()
 	e.limiterBuilder = builder
-	e.limiterSig = pipeline.LimiterSignature(e.config)
+	e.limiterSig = allocation.LimiterSignature(e.config)
 }
 
 // refreshLimiter rebuilds the limiter when the effective limiter config changed
@@ -181,7 +181,7 @@ func (e *Engine) refreshLimiter(ctx context.Context) {
 	if e.limiterBuilder == nil {
 		return
 	}
-	sig := pipeline.LimiterSignature(e.config)
+	sig := allocation.LimiterSignature(e.config)
 	if sig == e.limiterSig && e.gpuLimiter != nil {
 		return
 	}
@@ -199,7 +199,7 @@ func (e *Engine) refreshLimiter(ctx context.Context) {
 
 // currentGPULimiter reads the active limiter under the lock, so a placement is
 // never decided against a limiter being replaced mid-cycle.
-func (e *Engine) currentGPULimiter() pipeline.Limiter {
+func (e *Engine) currentGPULimiter() allocation.Limiter {
 	e.limiterMu.Lock()
 	defer e.limiterMu.Unlock()
 	return e.gpuLimiter
@@ -480,7 +480,7 @@ func (e *Engine) processInactiveModel(
 				// says a set did not fit, not what it was measured against nor what
 				// it asked for. Both halves are needed — a budget of zero and a
 				// demand of zero produce opposite verdicts for the same log line.
-				budgets, nsScoped := pipeline.GPUBudgets(constraints, group.namespace)
+				budgets, nsScoped := allocation.GPUBudgets(constraints, group.namespace)
 				fields = append(fields,
 					"gpuBudgets", budgets,
 					"namespaceScoped", nsScoped,

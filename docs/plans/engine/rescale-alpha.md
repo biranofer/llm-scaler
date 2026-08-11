@@ -95,10 +95,10 @@ A flag with no same-scope budget is a no-op.
 | `internal/interfaces/saturation_analyzer.go` | add `DecisionReasonRescale` |
 | `config/base/manager/saturation-scaling-configmap.yaml`, `deploy/configmap-saturation-scaling.yaml` | document flag (commented, off; cluster-default / per-namespace) |
 | `internal/config/config.go` (or accessor) | namespace-local-only saturation lookup (distinguish own-config vs global fallback) |
-| `internal/engines/saturation/engine.go` | resolve `{cluster, byNamespace}` rescale flags; pass to optimizer |
-| `internal/engines/pipeline/greedy_score_optimizer.go` | group by `(type, scope)`; branch to rescale on enabled+contended groups, else existing path |
-| new `internal/engines/pipeline/rescale.go` | water-fill (`computeRescaleTargets`, pure) + reclaim/fill wiring |
-| new `internal/engines/pipeline/rescale_test.go` | unit tests |
+| `internal/engines/steadystate/engine.go` | resolve `{cluster, byNamespace}` rescale flags; pass to optimizer |
+| `internal/engines/allocation/greedy_score_optimizer.go` | group by `(type, scope)`; branch to rescale on enabled+contended groups, else existing path |
+| new `internal/engines/allocation/rescale.go` | water-fill (`computeRescaleTargets`, pure) + reclaim/fill wiring |
+| new `internal/engines/allocation/rescale_test.go` | unit tests |
 
 ## Tests (proposal's worked examples)
 - Water-fill: budget 8 — A(prio 1, dem 8, holds 8) & B(prio 3, dem 8, holds 0) → **A=2, B=6**; B dem 4 →

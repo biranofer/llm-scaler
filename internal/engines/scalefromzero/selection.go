@@ -22,7 +22,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 )
 
 // Candidate is one inactive variant that could be woken, reduced to what
@@ -88,7 +88,7 @@ type SelectionInput struct {
 	PrefillCovered bool
 	// Constraints are the GPU/quota constraints to place within. Empty means
 	// unknown, which FitsGPUBudget treats as permissive.
-	Constraints []*pipeline.ResourceConstraints
+	Constraints []*allocation.ResourceConstraints
 	// RequirePrefill refuses a decode-only wake for a disaggregated model.
 	RequirePrefill bool
 }
@@ -225,7 +225,7 @@ func cheapestFeasiblePair(in SelectionInput, decodes, prefills []Candidate) ([]C
 // fits reports whether the set can be placed within the GPU budget, testing the
 // combined demand rather than each member alone.
 func fits(in SelectionInput, set []Candidate) bool {
-	return pipeline.FitsGPUBudget(in.Constraints, in.Namespace, demandOf(set))
+	return allocation.FitsGPUBudget(in.Constraints, in.Namespace, demandOf(set))
 }
 
 // demandOf sums one replica of each candidate, keyed by accelerator type. Two

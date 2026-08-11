@@ -7,7 +7,7 @@ model-level totals, and (for P/D disaggregated models) per-role capacity.
 The engine post-step calibrates `RequiredCapacity` / `SpareCapacity` at
 every scope using a uniform threshold formula. The optimizer reads a
 per-analyzer slice (`[]NamedAnalyzerResult`) and decides scaling actions
-over it via shared free functions in `internal/engines/pipeline/`.
+over it via shared free functions in `internal/engines/allocation/`.
 
 ---
 
@@ -30,7 +30,7 @@ over it via shared free functions in `internal/engines/pipeline/`.
 │     from ScaleTarget / VA labels)                        │
 │   • CollectSchedulerQueueMetrics (shared across          │
 │     analyzers)                                           │
-│   • resolveThresholds(name, cfg) per analyzer            │
+│   • cfg.AnalyzerThresholds(name) per analyzer           │
 │     (per-analyzer override over model-level globals)     │
 └──────────────────────────┬───────────────────────────────┘
                            │
@@ -102,12 +102,12 @@ over it via shared free functions in `internal/engines/pipeline/`.
 
 ## Components
 
-- **Registration** — `internal/engines/saturation/engine.go`:
+- **Registration** — `internal/engines/steadystate/engine.go`:
   `RegisterAnalyzer(name, analyzer) error`. `cmd/main.go` registers external
   analyzers (e.g., throughput) before `StartOptimizeLoop`. Saturation V2 is
   pre-registered at slot 0. The registry is snapshotted at `StartOptimizeLoop`;
   late registration returns an error.
-- **Engine post-step** — `internal/engines/saturation/engine_v2.go`:
+- **Engine post-step** — `internal/engines/steadystate/engine_v2.go`:
   `applyUniversalThreshold(*AnalyzerResult, scaleUp, scaleDown)` applies the
   formula `RC = max(0, TotalDemand/scaleUp − TotalAnticipatedSupply)` /
   `SC = max(0, TotalSupply − TotalDemand/scaleDown)` at model scope and
@@ -116,7 +116,7 @@ over it via shared free functions in `internal/engines/pipeline/`.
   `SumTotalSupply`, `SumTotalAnticipatedSupply`, `SumTotalDemand`,
   `AggregateByRole` over `[]VariantCapacity`. Analyzer authors use these to
   populate per-scope `Total*` fields without reimplementing the math.
-- **Optimizer slice flow** — `internal/engines/pipeline/`:
+- **Optimizer slice flow** — `internal/engines/allocation/`:
   `NamedAnalyzerResult` slice carries each analyzer's calibrated result plus
   working scratch state for the allocation loop. `CostAwareOptimizer` and
   `GreedyByScoreOptimizer` consume the slice via shared free functions
@@ -251,7 +251,7 @@ same live-only filter.
 **Liveness.** An analyzer is live for the current cycle iff it produced a
 non-error, capacity-bearing result within the staleness window (a fixed
 multiple of the optimization interval, `analyzerLivenessStaleCycles` in
-`internal/engines/saturation/engine_v2.go`). The resolved interval falls back
+`internal/engines/steadystate/engine_v2.go`). The resolved interval falls back
 to a 30s default whenever `Config` is absent **or** reports a non-positive
 value, so a misconfigured interval can never zero the staleness window and
 latch every analyzer non-live. An informative result with a zero-valued
@@ -352,7 +352,7 @@ The engine owns its calibration:
    mutates `Result` again. `Result.*` values are stable read-only data for the
    rest of the cycle.
 
-**`pipeline.NamedAnalyzerResult`** is the working unit the optimizer operates on.
+**`allocation.NamedAnalyzerResult`** is the working unit the optimizer operates on.
 Its fields fall into three categories:
 
 | Field | Category | Description |
@@ -378,8 +378,8 @@ allocation pass.
 ## Optimizer internals and helper composition
 
 Both optimizers share the same allocation and scale-down primitives from
-`internal/engines/pipeline/analyzer_helpers.go` and
-`internal/engines/pipeline/cost_aware_optimizer.go`. The optimizers own the
+`internal/engines/allocation/analyzer_helpers.go` and
+`internal/engines/allocation/cost_aware_optimizer.go`. The optimizers own the
 *when* and *which model*; the helpers own the *how*.
 
 ### Scale-up path

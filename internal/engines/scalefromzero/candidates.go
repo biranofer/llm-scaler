@@ -29,8 +29,8 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpuusage"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
@@ -118,7 +118,7 @@ func (e *Engine) buildCandidates(
 		candidates = append(candidates, Candidate{
 			VariantName:     va.Name,
 			ScaleTargetName: va.GetScaleTargetName(),
-			Role:            discovery.RoleFromScaleTarget(scaleTarget),
+			Role:            variantmeta.RoleFromScaleTarget(scaleTarget),
 			Accelerator:     candidateAccelerator(&va, scaleTarget),
 			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
 			Cost:            resolveVariantCost(ctx, va),
@@ -203,8 +203,8 @@ func resolveVariantCost(ctx context.Context, va wvav1alpha1.VariantAutoscaling) 
 // decision and no decision at all, and it is invisible in the outcome — the wake
 // looks identical either way. These used to be V(4) lines, which the shipped
 // verbosity discards, so the permissive path left no trace whatsoever.
-func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeline.ResourceConstraints {
-	providers := pipeline.ConstraintProvidersFrom(e.currentGPULimiter())
+func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*allocation.ResourceConstraints {
+	providers := allocation.ConstraintProvidersFrom(e.currentGPULimiter())
 	if len(providers) == 0 {
 		e.reportUnchecked(ctx, namespace, "no constraint provider is configured")
 		return nil
@@ -215,7 +215,7 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 		return nil // gpuUsageViews reported why
 	}
 
-	var constraints []*pipeline.ResourceConstraints
+	var constraints []*allocation.ResourceConstraints
 	for _, cp := range providers {
 		usageByType, usageByNamespace := views.For(cp)
 		c, err := cp.ComputeConstraints(ctx, usageByType, usageByNamespace)
@@ -259,15 +259,15 @@ func (e *Engine) gpuConstraints(ctx context.Context, namespace string) []*pipeli
 func (e *Engine) gpuUsageViews(
 	ctx context.Context,
 	namespace string,
-	providers []pipeline.ConstraintProvider,
-) (pipeline.GPUUsageViews, bool) {
-	var views pipeline.GPUUsageViews
-	needed := make(map[pipeline.UsageBasis]bool, 2)
+	providers []allocation.ConstraintProvider,
+) (allocation.GPUUsageViews, bool) {
+	var views allocation.GPUUsageViews
+	needed := make(map[allocation.UsageBasis]bool, 2)
 	for _, cp := range providers {
-		needed[pipeline.UsageBasisOf(cp)] = true
+		needed[allocation.UsageBasisOf(cp)] = true
 	}
 
-	if needed[pipeline.PhysicalUsage] {
+	if needed[allocation.PhysicalUsage] {
 		// Observe before deciding. A wake is considered the instant demand appears,
 		// which is routinely within a second of the cluster changing, so the periodic
 		// observation alone can be a whole interval out of date at exactly the moment
@@ -284,7 +284,7 @@ func (e *Engine) gpuUsageViews(
 		views.PhysicalByNamespace = withNamespace(usage.ByNamespace, namespace)
 	}
 
-	if needed[pipeline.ManagedUsage] {
+	if needed[allocation.ManagedUsage] {
 		// Published by the saturation engine, which is the only place the managed
 		// population exists — including as an explicit zero when its fleet is
 		// entirely parked, so a quota can still be evaluated for the very workloads
@@ -361,8 +361,8 @@ func withNamespace(byNamespace map[string]map[string]int, namespace string) map[
 // Both usage measures are reported when both were consulted: a budget that looks
 // wrong is almost always one of the two being fed where the other belongs, and
 // that is only visible if the line says which is which.
-func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*pipeline.ResourceConstraints, views pipeline.GPUUsageViews) {
-	budgets, nsScoped := pipeline.GPUBudgets(constraints, namespace)
+func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints []*allocation.ResourceConstraints, views allocation.GPUUsageViews) {
+	budgets, nsScoped := allocation.GPUBudgets(constraints, namespace)
 	if !e.placementBasisChanged(namespace, fmt.Sprintf("ok|%v|%t|%v|%v",
 		budgets, nsScoped, views.PhysicalByType, views.ManagedByType)) {
 		return
@@ -372,10 +372,10 @@ func (e *Engine) logBudgets(ctx context.Context, namespace string, constraints [
 		"gpuBudgets", budgets,
 		"namespaceScoped", nsScoped,
 	}
-	if views.Has(pipeline.PhysicalUsage) {
+	if views.Has(allocation.PhysicalUsage) {
 		kv = append(kv, "gpusInUse", views.PhysicalByType)
 	}
-	if views.Has(pipeline.ManagedUsage) {
+	if views.Has(allocation.ManagedUsage) {
 		kv = append(kv, "gpusInUseByWVA", views.ManagedByType)
 	}
 	log.FromContext(ctx).Info("Scale-from-zero: GPU budgets available for placement", kv...)

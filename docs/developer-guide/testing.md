@@ -448,7 +448,7 @@ var _ = Describe("Controller", func() {
 
 ```bash
 # Run with verbose output
-go test -v ./internal/engines/pipeline/...
+go test -v ./internal/engines/allocation/...
 
 # Enable Ginkgo trace
 go test -v ./internal/queueing/analyzer/... -ginkgo.trace

@@ -34,7 +34,7 @@ Watch surfaces in Phase 1: both **KEDA ScaledObject** and **HPA** (any object be
 **Discovery entry points (the key refactor surface)**
 - `internal/utils/variant.go` L77-91 — `ActiveVariantAutoscaling` / `InactiveVariantAutoscaling`
 - `internal/utils/variant.go` L93+ — `filterVariantsByScaleTargetAccessor`, `readyVariantAutoscalings`, `GroupVariantAutoscalingByModel`
-- `internal/engines/saturation/engine.go` L259 — single call site of `ActiveVariantAutoscaling`
+- `internal/engines/steadystate/engine.go` L259 — single call site of `ActiveVariantAutoscaling`
 - `internal/datastore/datastore.go` — `NamespaceTrack("VariantAutoscaling", …)` for ConfigMap discovery
 
 **RBAC**
@@ -99,7 +99,7 @@ Modify `internal/utils/variant.go`:
 - Extend `ActiveVariantAutoscaling` (and `Inactive…`) to concatenate CRD-sourced + annotation-sourced results, deduplicating by `(namespace, scaleTargetRef)` with CRD winning a tie (explicit beats implicit during dual-mode).
 - Keep `GroupVariantAutoscalingByModel` unchanged — it already works on any `VariantAutoscaling` slice.
 
-The single engine entry point at `internal/engines/saturation/engine.go:259` continues to call `ActiveVariantAutoscaling` — no change there.
+The single engine entry point at `internal/engines/steadystate/engine.go:259` continues to call `ActiveVariantAutoscaling` — no change there.
 
 ### 1.4 Status writeback handles both sources
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 )
@@ -32,7 +32,7 @@ func nodeSelectorTarget(productLabelValue string) scaletarget.ScaleTargetAccesso
 
 // TestCandidateAcceleratorIsDeclaredVerbatim: the candidate keeps the name the
 // workload declares. Reconciling it with pool keys happens at lookup time
-// (pipeline.FitsGPUBudget), because normalizing here mangles short names with a
+// (allocation.FitsGPUBudget), because normalizing here mangles short names with a
 // hyphen — NormalizeAcceleratorName("Gaudi-2") is "2", which matches no pool.
 func TestCandidateAcceleratorIsDeclaredVerbatim(t *testing.T) {
 	for _, declared := range []string{"NVIDIA-A100-PCIE-80GB", "A100", "Gaudi-2"} {
@@ -94,7 +94,7 @@ func TestResolveVariantCost(t *testing.T) {
 type failingProvider struct{ name string }
 
 func (f failingProvider) Name() string { return f.name }
-func (f failingProvider) ComputeConstraints(context.Context, map[string]int, map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+func (f failingProvider) ComputeConstraints(context.Context, map[string]int, map[string]map[string]int) (*allocation.ResourceConstraints, error) {
 	return nil, errors.New("cluster unreachable")
 }
 
@@ -103,18 +103,18 @@ func (f failingProvider) ComputeConstraints(context.Context, map[string]int, map
 // which is what an undeclared provider gets.
 type okProvider struct {
 	name  string
-	pools map[string]pipeline.ResourcePool
-	basis pipeline.UsageBasis
+	pools map[string]allocation.ResourcePool
+	basis allocation.UsageBasis
 	fed   *map[string]int // optional; set to capture the usage handed over
 }
 
-func (o okProvider) Name() string                    { return o.name }
-func (o okProvider) UsageBasis() pipeline.UsageBasis { return o.basis }
-func (o okProvider) ComputeConstraints(_ context.Context, usageByType map[string]int, _ map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+func (o okProvider) Name() string                      { return o.name }
+func (o okProvider) UsageBasis() allocation.UsageBasis { return o.basis }
+func (o okProvider) ComputeConstraints(_ context.Context, usageByType map[string]int, _ map[string]map[string]int) (*allocation.ResourceConstraints, error) {
 	if o.fed != nil {
 		*o.fed = usageByType
 	}
-	return &pipeline.ResourceConstraints{ProviderName: o.name, Pools: o.pools}, nil
+	return &allocation.ResourceConstraints{ProviderName: o.name, Pools: o.pools}, nil
 }
 
 // TestGPUConstraintsPosture pins "unknown must not become denied".
@@ -125,7 +125,7 @@ func (o okProvider) ComputeConstraints(_ context.Context, usageByType map[string
 // requests already queued, on the strength of a failed lookup.
 func TestGPUConstraintsPosture(t *testing.T) {
 	ctx := context.Background()
-	healthy := okProvider{name: "gpu-limiter", pools: map[string]pipeline.ResourcePool{"H100": {Limit: 8}}}
+	healthy := okProvider{name: "gpu-limiter", pools: map[string]allocation.ResourcePool{"H100": {Limit: 8}}}
 
 	t.Run("no limiter means no capacity check", func(t *testing.T) {
 		e := &Engine{}
@@ -146,8 +146,8 @@ func TestGPUConstraintsPosture(t *testing.T) {
 		decision.DefaultGPUUsage.Reset()
 		decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
 
-		e := &Engine{gpuLimiter: pipeline.NewCompositeLimiter("composite",
-			[]pipeline.Limiter{healthy, failingProvider{name: "quota-limiter"}})}
+		e := &Engine{gpuLimiter: allocation.NewCompositeLimiter("composite",
+			[]allocation.Limiter{healthy, failingProvider{name: "quota-limiter"}})}
 
 		if got := e.gpuConstraints(ctx, "chat"); got != nil {
 			t.Fatalf("gpuConstraints returned %d constraint(s); a partial view must degrade to "+
@@ -189,9 +189,9 @@ func TestGPUConstraintsFeedsEachProviderItsOwnUsageBasis(t *testing.T) {
 	decision.PublishManagedGPUUsage(map[string]int{"A100": 2}, map[string]map[string]int{"chat": {"A100": 2}})
 
 	var physicalFed, quotaFed map[string]int
-	e := &Engine{gpuLimiter: pipeline.NewCompositeLimiter("composite", []pipeline.Limiter{
-		okProvider{name: "gpu-limiter", basis: pipeline.PhysicalUsage, fed: &physicalFed},
-		okProvider{name: "quota-limiter", basis: pipeline.ManagedUsage, fed: &quotaFed},
+	e := &Engine{gpuLimiter: allocation.NewCompositeLimiter("composite", []allocation.Limiter{
+		okProvider{name: "gpu-limiter", basis: allocation.PhysicalUsage, fed: &physicalFed},
+		okProvider{name: "quota-limiter", basis: allocation.ManagedUsage, fed: &quotaFed},
 	})}
 
 	if got := e.gpuConstraints(context.Background(), "chat"); len(got) != 2 {
@@ -243,7 +243,7 @@ type capturingProvider struct {
 }
 
 func (c capturingProvider) Name() string { return "capturing" }
-func (c capturingProvider) ComputeConstraints(_ context.Context, _ map[string]int, byNS map[string]map[string]int) (*pipeline.ResourceConstraints, error) {
+func (c capturingProvider) ComputeConstraints(_ context.Context, _ map[string]int, byNS map[string]map[string]int) (*allocation.ResourceConstraints, error) {
 	c.fn(byNS)
-	return &pipeline.ResourceConstraints{ProviderName: "capturing"}, nil
+	return &allocation.ResourceConstraints{ProviderName: "capturing"}, nil
 }

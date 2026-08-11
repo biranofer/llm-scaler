@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/pipeline"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 )
 
 // A wake published with NO capacity check used to produce a log identical to one
@@ -68,7 +68,7 @@ var _ = Describe("Reporting a wake with no capacity check", func() {
 		// would report its whole allowance free. Neither is acceptable, so the wake
 		// is reported as unchecked instead.
 		decision.PublishGPUUsage(map[string]int{"H100": 1}, nil)
-		e := &Engine{gpuLimiter: okProvider{name: "quota-limiter", basis: pipeline.ManagedUsage}}
+		e := &Engine{gpuLimiter: okProvider{name: "quota-limiter", basis: allocation.ManagedUsage}}
 		logged := captureAtInfo(func(ctx context.Context) {
 			Expect(e.gpuConstraints(ctx, "chat")).To(BeNil())
 		})

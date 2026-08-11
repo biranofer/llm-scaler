@@ -26,8 +26,8 @@
 **Modified files:**
 - `internal/controller/indexers/indexers.go` — slimmed to `SetupIndexes` + shared `scaleTargetIndexKey` helper; registers all three indexes
 - `internal/collector/replica_metrics.go` — `NewReplicaMetricsCollector` accepts a `locator.PodLocator`; `buildInstanceKey` falls back to `Locate` when `llm_d_ai_variant` is empty
-- `internal/engines/saturation/engine.go` — `NewEngine` constructs a `PodLocator` and threads it into the collector
-- `cmd/main.go` — no direct edit; `saturation.NewEngine` does the construction internally
+- `internal/engines/steadystate/engine.go` — `NewEngine` constructs a `PodLocator` and threads it into the collector
+- `cmd/main.go` — no direct edit; `steadystate.NewEngine` does the construction internally
 - `config/rbac/role.yaml` and `charts/workload-variant-autoscaler/templates/rbac/manager-clusterrole.yaml` — add Pod / ReplicaSet read grants (Deployment / LWS already present via existing reconcilers)
 - `docs/design/controller-behavior.md` — flip the "Prerequisites" section to mark `llm-d.ai/variant` required only for shadow pods
 - `go.mod`, `go.sum` — add `github.com/hashicorp/golang-lru/v2`
@@ -1734,14 +1734,14 @@ git commit -m "feat(collector): use PodLocator as fallback when llm_d_ai_variant
 
 ---
 
-## Task 10: Construct the locator in `saturation.NewEngine` and pass it to the collector
+## Task 10: Construct the locator in `steadystate.NewEngine` and pass it to the collector
 
 **Files:**
-- Modify: `internal/engines/saturation/engine.go`
+- Modify: `internal/engines/steadystate/engine.go`
 
 - [ ] **Step 1: Add the constructor wiring**
 
-Edit `internal/engines/saturation/engine.go`. Find `NewEngine` (around line 180) and the `collector.NewReplicaMetricsCollector` call (line 221). Add the locator construction just before the engine struct literal:
+Edit `internal/engines/steadystate/engine.go`. Find `NewEngine` (around line 180) and the `collector.NewReplicaMetricsCollector` call (line 221). Add the locator construction just before the engine struct literal:
 
 Add the import:
 
@@ -1786,10 +1786,10 @@ Add `"fmt"` to imports if it isn't already there.
 
 - [ ] **Step 2: Update `cmd/main.go` to pass the apiReader**
 
-Find the `saturation.NewEngine(...)` call (line 450). Update:
+Find the `steadystate.NewEngine(...)` call (line 450). Update:
 
 ```go
-engine := saturation.NewEngine(
+engine := steadystate.NewEngine(
 	mgr.GetClient(),
 	mgr.GetAPIReader(),
 	mgr.GetScheme(),
@@ -1818,7 +1818,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/engines/saturation/engine.go cmd/main.go
+git add internal/engines/steadystate/engine.go cmd/main.go
 git commit -m "feat(saturation): construct PodLocator and inject into ReplicaMetricsCollector"
 ```
 

@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/discovery"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -30,7 +30,7 @@ func va(name, namespace, modelID, scaleTargetName string) wvav1alpha1.VariantAut
 func roleTarget(role string) scaletarget.ScaleTargetAccessor {
 	labels := map[string]string{}
 	if role != "" {
-		labels[discovery.RoleLabel] = role
+		labels[variantmeta.RoleLabel] = role
 	}
 	return scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{

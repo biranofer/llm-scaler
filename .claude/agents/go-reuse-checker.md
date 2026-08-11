@@ -73,7 +73,7 @@ Do NOT flag:
 List the files you reviewed, then for each issue:
 
 ```
-[confidence: 95] internal/engines/saturation/engine.go:792-801 — sortedRoleKeys reimplements maps.Keys + slices.Sort
+[confidence: 95] internal/engines/steadystate/engine.go:792-801 — sortedRoleKeys reimplements maps.Keys + slices.Sort
 Available as: maps.Keys(groups) returns []string; slices.Sort sorts in place.
 Fix: replace the function body with:
     keys := maps.Keys(groups)

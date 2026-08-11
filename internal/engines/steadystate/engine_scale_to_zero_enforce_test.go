@@ -1,0 +1,176 @@
+package steadystate
+
+import (
+	"context"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
+)
+
+// applyScaleToZeroEnforcement is the single seam every optimize path (V1, V2,
+// queueing-model) routes its enforcement through. These specs drive that seam with
+// a real, idle (request count 0) Enforcer and assert the gate's outcome end-to-end:
+// an SGLang model is left untouched while an otherwise-identical vLLM model is zeroed.
+// The vLLM case is the canary — it proves the SGLang case isn't passing simply because
+// the enforcer never ran; inverting the engine gate would flip both and fail here.
+var _ = Describe("applyScaleToZeroEnforcement", func() {
+	const (
+		modelID   = "test-model"
+		namespace = "test-ns"
+	)
+
+	var ctx = context.Background()
+
+	target := func(image string) scaletarget.ScaleTargetAccessor {
+		return scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{Name: "server", Image: image}},
+					},
+				},
+			},
+		})
+	}
+
+	// engineWithIdleEnforcer builds an Engine whose enforcer always reads zero
+	// traffic and whose config enables scale-to-zero for the test model — so the
+	// enforcer will zero any model it is actually allowed to act on.
+	engineWithIdleEnforcer := func() *Engine {
+		cfg := config.NewTestConfig()
+		// Scale-to-zero policy lives on the scaling entry now, keyed the same way
+		// every other per-model setting is.
+		cfg.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m",
+			}},
+		})
+		return &Engine{
+			Config: cfg,
+			ScaleToZeroEnforcer: allocation.NewEnforcer(
+				func(context.Context, string, string, time.Duration) (float64, error) {
+					return 0, nil // idle: enforcer would scale to zero unless gated off
+				},
+			),
+		}
+	}
+
+	decisions := func() []domain.VariantDecision {
+		return []domain.VariantDecision{
+			{VariantName: "v1", ModelID: modelID, Namespace: namespace, Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
+		}
+	}
+
+	It("zeroes an idle all-vLLM model (canary: the enforcer does run when ungated)", func() {
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v1-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeTrue())
+		Expect(d[0].TargetReplicas).To(Equal(0))
+	})
+
+	It("does NOT zero a model still inside its scale-from-zero retention period", func() {
+		// A model just woken from zero has served nothing yet — the request that
+		// woke it is still queued in the EPP — so the enforcer's request counter
+		// reads idle for exactly the model that has demand waiting on it. Without
+		// this gate the wake is undone before it can serve that request.
+		decision.DefaultActivations.Mark(namespace, modelID)
+		DeferCleanup(func() { decision.DefaultActivations.Clear(namespace, modelID) })
+
+		e := engineWithIdleEnforcer() // configured retention: 10m
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2),
+			"a model woken from zero must keep its replicas for the retention period")
+	})
+
+	It("zeroes an idle model once its scale-from-zero retention has lapsed", func() {
+		// The hold is a grace period, not a permanent exemption: the canary spec
+		// above zeroes this same model with no activation recorded at all.
+		decision.DefaultActivations.Mark(namespace, modelID)
+		decision.DefaultActivations.Clear(namespace, modelID)
+
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeTrue())
+		Expect(d[0].TargetReplicas).To(Equal(0))
+	})
+
+	It("does NOT zero an idle SGLang model (engine gate skips the enforcer)", func() {
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("lmsysorg/sglang:latest")}, nil)
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2), "SGLang model must not be scaled to zero by the vLLM-hardcoded counter")
+	})
+
+	It("does NOT zero a mixed vLLM+SGLang model", func() {
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "queueing-model",
+			d, map[string]scaletarget.ScaleTargetAccessor{
+				"a": target("vllm/vllm-openai:latest"),
+				"b": target("lmsysorg/sglang:latest"),
+			}, nil)
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2))
+	})
+
+	It("does NOT zero a vLLM model whose variant declares minReplicas > 0", func() {
+		e := engineWithIdleEnforcer()
+		d := decisions()
+		min := 1
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v1-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")},
+			[]domain.VariantReplicaState{{VariantName: "v1", MinReplicas: &min}})
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2))
+	})
+
+	It("does NOT zero an idle vLLM model when a per-model override disables it", func() {
+		// The entry's "default" enables scale-to-zero; the model's own
+		// "{modelID}#{namespace}" override disables it and must win. That is the
+		// whole resolveScalingPolicy → EnforcePolicyOnDecisions →
+		// ResolveScaleToZeroEnabled wiring, end to end.
+		//
+		// This used to prove something weaker — that an inline setting beat a
+		// separate scale-to-zero ConfigMap. With one surface there is no second
+		// source to beat, so the meaningful precedence is override over default,
+		// and an explicit false must survive an inherited true.
+		e := engineWithIdleEnforcer()
+		e.Config.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m",
+			}},
+			modelID + "#" + namespace: {
+				ModelID:     modelID,
+				Namespace:   namespace,
+				ScaleToZero: &config.ScaleToZeroEnvelope{Enabled: ptrTo(false)},
+			},
+		})
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2), "a per-model scaleToZero:false must override the default entry")
+	})
+})
+
+// ptrTo returns a pointer to v. Local helper so this file stays self-contained.
+func ptrTo[T any](v T) *T { return &v }

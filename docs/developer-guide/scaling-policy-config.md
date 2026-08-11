@@ -705,7 +705,7 @@ kubectl apply -f deploy/configmap-saturation-scaling.yaml
 Add model-specific configuration entries to override defaults for specific model/namespace pairs.
 
 The saturation engine resolves per-model config using a lookup key in the format
-`{modelID}#{namespace}` (see `internal/engines/saturation/engine.go` — `resolveSaturationConfig()`).
+`{modelID}#{namespace}` (see `internal/config/scaling_policy.go` — `ResolveScalingPolicy()`).
 The ConfigMap data key **must** match this format for overrides to take effect.
 Lookup order: `modelID#namespace` → `default` → zero-value with defaults applied.
 
@@ -817,7 +817,7 @@ During the optimization loop, the engine reads config from the in-memory cache:
 saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
 
 // Resolve per-model config using "{modelID}#{namespace}" lookup
-saturationConfig := resolveSaturationConfig(saturationConfigMap, modelID, namespace)
+scalingPolicy := config.ResolveScalingPolicy(scalingPolicyConfigMap, modelID, namespace)
 
 // Use saturationConfig for saturation-based scaling decisions
 // (thresholds drive the analyzer's saturation detection)

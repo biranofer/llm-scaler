@@ -38,7 +38,7 @@ Available() = max(0, Limit - Used)
 ## `Used` depends on the question the provider is answering
 
 There are two measures of "GPUs in use", they are not interchangeable, and each
-provider declares which one it needs via `pipeline.UsageBasis`. The caller
+provider declares which one it needs via `allocation.UsageBasis`. The caller
 (`gpuUsageViews` in the saturation engine, `Engine.gpuUsageViews` in
 scale-from-zero) hands each provider the matching view.
 
@@ -135,7 +135,7 @@ What changed is that the inconsistency is gone: dropped usage is excluded from
 Previously `SetUsed` summed every key while the pools iterated only discovered
 types, leaving the two views contradicting each other in opposite directions.
 
-Pinned by `internal/engines/pipeline/unresolved_accelerator_usage_test.go`.
+Pinned by `internal/engines/allocation/unresolved_accelerator_usage_test.go`.
 
 **Why it is not fixed further.** Usage that cannot be attributed to a type cannot
 be charged to a pool, and charging it to every candidate type would deny
