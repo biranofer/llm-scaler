@@ -124,9 +124,20 @@ main() {
     # to reconcile it.
     install_default_scaledobjects
 
-    verify_deployment
+    # Honour the verdict. `verify_deployment` computed one and threw it away, so a
+    # controller that never started still ended with "complete!" and exit 0 — the
+    # two things a wrapper or a CI job actually reads.
+    local verified=true
+    verify_deployment || verified=false
 
     print_summary
+
+    if [ "$verified" != true ]; then
+        echo ""
+        log_warning "Deployment on $ENVIRONMENT FINISHED WITH ERRORS — the WVA controller is not ready."
+        log_warning "Everything above was created; nothing is scaling. Diagnose with the commands printed above, then re-run this script (it is idempotent)."
+        return 1
+    fi
 
     log_success "Deployment on $ENVIRONMENT complete!"
 }

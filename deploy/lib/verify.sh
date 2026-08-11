@@ -6,19 +6,35 @@
 # Uses constants: DEFAULT_VERIFY_STARTUP_SLEEP_SECONDS and shared selectors.
 #
 
+# verify_deployment returns non-zero when the thing this script exists to install
+# is not running. The caller MUST honour that: it used to compute `all_good` and
+# then discard it, so an install whose controller never started printed
+# "Deployment complete!" and exited 0 — which is what CI and every wrapper script
+# reads. A silent false success is worse than a loud failure.
+#
+# Only WVA itself is fatal. Prometheus, Grafana and KEDA may be pre-existing,
+# externally managed, or genuinely still pulling images; they stay warnings.
 verify_deployment() {
     log_info "Verifying deployment..."
 
     local all_good=true
 
     # --- WVA
-    log_info "Checking WVA controller pods..."
-    sleep "$DEFAULT_VERIFY_STARTUP_SLEEP_SECONDS"
-    if kubectl get pods -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" 2>/dev/null | grep -q Running; then
-        log_success "WVA controller is running"
+    log_info "Waiting for the WVA controller to become available..."
+    # `kubectl get pods | grep Running` was not a readiness check: a pod stuck at
+    # "0/1 Running" — crash-looping on a bad config, or unable to reach Prometheus —
+    # matches it. Ask the Deployment whether it is Available instead, which is the
+    # condition that means the container passed its probes.
+    if kubectl wait --for=condition=Available \
+        deployment -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+        --timeout="${WVA_VERIFY_TIMEOUT:-180s}" >/dev/null 2>&1; then
+        log_success "WVA controller is running and ready"
     else
-        log_warning "WVA controller may still be starting"
         all_good=false
+        log_warning "WVA controller did NOT become ready within ${WVA_VERIFY_TIMEOUT:-180s}."
+        kubectl get pods -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" >&2 2>/dev/null || true
+        log_warning "  Logs:   kubectl -n $WVA_NS logs -l $WVA_CONTROLLER_LABEL_SELECTOR --tail=50"
+        log_warning "  Events: kubectl -n $WVA_NS get events --sort-by=.lastTimestamp | tail -20"
     fi
 
     # --- Monitoring
@@ -54,9 +70,9 @@ verify_deployment() {
 
     if [ "$all_good" = true ]; then
         log_success "All components verified successfully!"
-    else
-        log_warning "Some components may still be starting. Check the logs above."
+        return 0
     fi
+    return 1
 }
 
 # print_summary is the most-read text this install produces: it is what someone

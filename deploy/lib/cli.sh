@@ -24,20 +24,65 @@ Deprecated (ignored by install.sh; Helm chart removed):
   --accelerator TYPE           Same as ACCELERATOR_TYPE env
 
 Environment Variables:
+
+ The install
   IMG                          WVA image as repo:tag (alternative to -i)
-  SKIP_CHECKS                  Skip kubectl/helm/git prerequisite check (default: false). Install scripts are non-interactive and fail fast on errors.
-  DEPLOY_PROMETHEUS            Deploy Prometheus stack (default: true)
-  DEPLOY_OPERATIONAL_DASHBOARD Deploy Grafana and operational dashboard (default: true)
+  WVA_NS                       Namespace to install the controller into (default: workload-variant-autoscaler-system)
+  WVA_SCOPE                    cluster | namespace. Narrows what the controller READS; both create
+                               cluster-scoped RBAC (default: cluster, or namespace on openshift)
+  WVA_REPLICAS                 Controller replicas. >1 is leader-election failover, NOT more throughput (default: 1)
   DEPLOY_WVA                   Deploy WVA controller (default: true)
-  SCALER_BACKEND               keda (default) or none
-  KEDA_HELM_INSTALL            Install KEDA via Helm on kubernetes when true (default: false)
+  WVA_ALLOW_COEXIST            Permit a second WVA alongside an incompatible one (default: false — the
+                               contract is ONE cluster-scoped install, or N namespace-scoped, one per namespace)
+  SKIP_CHECKS                  Skip the prerequisite and permission checks (default: false)
+
+ Scaling behaviour
+  WVA_LIMITER                  none (default) | gpu-inventory | quota. none means scaling is UNBOUNDED.
+                               gpu-inventory requires the controller to be able to list nodes.
+  ENABLE_SCALE_TO_ZERO         Allow parking idle models at 0 replicas (default: false)
+  WVA_DEFAULT_SO               Create default ScaledObjects for what is already running:
+                               false (default) | plan (print and stop) | edit (plan, \$EDITOR, apply) | true (apply all)
+  WVA_DEFAULT_SO_PLAN          Plan file. If it exists, apply exactly it and skip discovery.
+  WVA_DEFAULT_SO_NS            A namespace, "wva" for WVA's own, or "all" (default: derived from WVA_SCOPE)
+
+ Monitoring
+  DEPLOY_PROMETHEUS            Deploy the Prometheus stack (default: true). Skipped automatically when the
+                               cluster already has a Prometheus outside MONITORING_NAMESPACE.
+  PROMETHEUS_FORCE_INSTALL     Install even then (default: false). Two operators will contend over the same CRs.
+  PROMETHEUS_URL               Where WVA reads metrics from. Required when Prometheus is not deployed here.
+  PROMETHEUS_TLS_INSECURE_SKIP_VERIFY  Skip Prometheus certificate verification (default: false)
+  DEPLOY_OPERATIONAL_DASHBOARD Publish the WVA Grafana dashboard (default: true). Works against an
+                               existing Grafana — it is a sidecar-labelled ConfigMap.
+  DASHBOARD_NS                 Namespace to publish the dashboard into (default: MONITORING_NAMESPACE)
+  MONITORING_NAMESPACE         Namespace for the monitoring stack
+
+ Scaler backend and CRDs
+  SCALER_BACKEND               keda (default) or none. WVA needs KEDA to actuate.
+  KEDA_HELM_INSTALL            Install KEDA via Helm on kubernetes (default: false — assumes cluster KEDA)
   KEDA_NAMESPACE               Namespace for KEDA (default: keda-system)
+  CRD_INSTALL                  if-missing (default) | always | never. Gateway API and GAIE CRDs are
+                               cluster-scoped and shared; 'always' overwrites what other controllers use.
+  DEPLOY_LWS                   Install the LeaderWorkerSet CRD if absent (default: false)
+
+ Undeploy
   UNDEPLOY                     Undeploy mode (default: false)
-  DELETE_NAMESPACES            Delete namespaces after undeploy (default: false)
-  LLMD_NS                      Namespace WVA watches for workloads (default: llm-d-optimized-baseline)
+  UNDEPLOY_SHARED              Also remove Prometheus, KEDA and EPP (default: false — they are shared
+                               and this install may not have created them)
+  DELETE_NAMESPACES            Delete WVA and monitoring namespaces afterwards (default: false)
+  DELETE_LLMD_NS               Also delete LLMD_NS — it holds the model servers (default: false)
+
+ Other
+  LLMD_NS                      Namespace used for EPP/model-server setup by the e2e and sample paths.
+                               It does NOT scope what WVA manages: WVA has no watch and no listing, and
+                               learns of a workload only when KEDA calls it about one.
 
 Examples:
+  # New cluster, everything
   $(basename "$0")
+
+  # Existing llm-d cluster: use its Prometheus and KEDA, touch neither
+  PROMETHEUS_URL=https://prom.monitoring.svc:9090 DEPLOY_PROMETHEUS=false \\
+    SCALER_BACKEND=keda CRD_INSTALL=never $(basename "$0")
 
   IMG=registry.example.com/wva:dev $(basename "$0") -e kind-emulator
 

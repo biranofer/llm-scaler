@@ -127,6 +127,28 @@ check_prerequisites() {
 #                         capacity model cannot reuse learned capacity. A warning,
 #                         not a refusal — and it says what changes if the limiter is
 #                         turned on later.
+# can_i_as answers a permission question ABOUT ANOTHER SUBJECT, distinguishing
+# "no" from "could not ask".
+#
+# `kubectl auth can-i --as` impersonates, which the CALLER must be allowed to do.
+# A cluster admin can; plenty of legitimate installers cannot. Both cases exit
+# non-zero, so treating non-zero as "denied" turned "I lack impersonate" into
+# "the controller cannot read nodes" — a hard, wrong refusal to install, and one
+# that gets worse the less privileged the user is.
+#
+# Echoes: yes | no | unknown
+can_i_as() {
+    local subject="$1"; shift
+    local out rc
+    out=$(kubectl auth can-i "$@" --as "$subject" 2>&1)
+    rc=$?
+    case "$out" in
+        yes*) echo yes ;;
+        no*)  [ $rc -ne 0 ] && echo no || echo unknown ;;
+        *)    echo unknown ;;
+    esac
+}
+
 check_permissions() {
     log_info "Checking permissions..."
 
@@ -143,8 +165,20 @@ check_permissions() {
         verb="${check%% *}"; res="${check#* }"
         kubectl auth can-i "$verb" "$res" >/dev/null 2>&1 || denied+=("$verb $res (cluster-scoped)")
     done
-    kubectl auth can-i create deployments -n "$ns" >/dev/null 2>&1 || denied+=("create deployments in $ns")
-    kubectl auth can-i create configmaps -n "$ns" >/dev/null 2>&1 || denied+=("create configmaps in $ns")
+    # Every namespaced kind the overlay creates. Checking a subset let an install
+    # pass preflight and then die partway through — after the namespace, the RBAC
+    # and the ServiceAccount already existed, which is the state that is annoying
+    # to clean up by hand.
+    local -a ns_kinds=(deployments configmaps serviceaccounts services)
+    for res in "${ns_kinds[@]}"; do
+        kubectl auth can-i create "$res" -n "$ns" >/dev/null 2>&1 || denied+=("create $res in $ns")
+    done
+    # The namespace itself, only when it does not exist yet — requiring namespace
+    # creation from someone installing into a namespace an admin already made for
+    # them would refuse a perfectly good install.
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        kubectl auth can-i create namespaces >/dev/null 2>&1 || denied+=("create namespace $ns (it does not exist yet)")
+    fi
 
     if [ ${#denied[@]} -ne 0 ]; then
         log_error "You cannot create everything this install produces. Denied:
@@ -156,22 +190,41 @@ Ask for the objects above, or have an admin run the install."
     fi
 
     # What the CONTROLLER will need once it is running.
+    local node_read
+    node_read="$(can_i_as "$sa" list nodes)"
     if [ "${WVA_LIMITER:-none}" = "gpu-inventory" ]; then
-        if ! kubectl auth can-i list nodes --as "$sa" >/dev/null 2>&1; then
-            log_error "WVA_LIMITER=gpu-inventory needs the controller to list nodes, and $sa cannot.
+        case "$node_read" in
+            yes)
+                log_success "The controller can list nodes, which the gpu-inventory limiter requires"
+                ;;
+            no)
+                log_error "WVA_LIMITER=gpu-inventory needs the controller to list nodes, and $sa cannot.
 
 A GPU-aware limiter allocates out of per-accelerator pools. Without nodes, a
 variant's accelerator never resolves, it is charged to no pool, it receives no
 budget, and it NEVER SCALES UP — with nothing in the logs to say why.
 
 Either grant the node read, or install without the limiter (WVA_LIMITER=none)."
-        fi
-        log_success "The controller can list nodes, which the gpu-inventory limiter requires"
+                ;;
+            *)
+                # Cannot impersonate, so this is unanswerable from here. It is not a
+                # reason to refuse: the install itself grants the node read, and the
+                # controller publishes wva_node_access_denied if it turns out not to
+                # have it. Say what to watch instead of guessing.
+                log_warning "Could not verify that $sa may list nodes (checking needs impersonate permission, which you do not have)."
+                log_warning "  WVA_LIMITER=gpu-inventory requires it. After the install, confirm with: kubectl get --raw /metrics | grep wva_node_access_denied — 1 means every variant is getting no GPU budget and will not scale up."
+                ;;
+        esac
     else
-        if ! kubectl auth can-i list nodes --as "$sa" >/dev/null 2>&1; then
-            log_warning "$sa cannot list nodes. Without a physical limiter this is survivable but degraded: accelerators stay unresolved, so metrics lose the accelerator label and the capacity model cannot reuse learned capacity across variants."
-            log_warning "  It stops being fine the moment someone sets a gpu-inventory limiter: every variant would then get no GPU budget and stop scaling up. Watch wva_node_access_denied."
-        fi
+        case "$node_read" in
+            no)
+                log_warning "$sa cannot list nodes. Without a physical limiter this is survivable but degraded: accelerators stay unresolved, so metrics lose the accelerator label and the capacity model cannot reuse learned capacity across variants."
+                log_warning "  It stops being fine the moment someone sets a gpu-inventory limiter: every variant would then get no GPU budget and stop scaling up. Watch wva_node_access_denied."
+                ;;
+            unknown)
+                log_info "Skipped the controller's node-read check (needs impersonate permission). No limiter is configured, so nothing depends on it yet."
+                ;;
+        esac
     fi
 
     log_success "Permissions look sufficient"

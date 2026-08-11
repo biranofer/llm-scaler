@@ -10,19 +10,61 @@
 #
 
 GATEWAY_API_VERSION=${GATEWAY_API_VERSION:-"v1.2.0"}
+# Pinned HERE, not only in the Makefile. install.sh is a supported entry point and
+# the guides invoke it directly, where a Makefile-only default leaves the ref EMPTY
+# — `?ref=` resolves to the project's default branch, so a direct install pulled
+# whatever was on GAIE main that morning onto the user's cluster.
+GAIE_VERSION=${GAIE_VERSION:-"v1.5.0"}
 
-# Install Gateway API and GAIE CRDs.
-# Called from deploy_wva_prerequisites before the WVA controller starts so its
-# InferencePool watches succeed on the first attempt. Also called inside deploy_epp
-# — idempotent, kubectl apply is a no-op when the CRDs are already present.
+# install_inference_crds installs the Gateway API and GAIE CRDs IF THEY ARE ABSENT.
+#
+# CRDs are cluster-scoped and shared. On an existing llm-d cluster they are already
+# there, installed by llm-d at a version llm-d chose — and `kubectl apply` is not
+# the no-op the old comment here claimed: it REPLACES the spec, so installing WVA
+# silently rewrote a running llm-d's CRDs to our pins. Downgrading a served version
+# out from under live InferencePools breaks the cluster's own controllers, and
+# nothing in this script would have said so.
+#
+# So the default is to install only what is missing. Adopting the cluster's existing
+# version is also the correct outcome for WVA: it only ever READS these types.
+#   CRD_INSTALL=if-missing  (default) install absent CRDs, report and keep present ones
+#   CRD_INSTALL=always      apply unconditionally — for a cluster you own
+#   CRD_INSTALL=never       assume they are present (same as the old SKIP_CLUSTER_CRDS=true)
 install_inference_crds() {
-    log_info "Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
-    kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" || \
-        log_warning "Gateway API CRD install returned non-zero — may already be present"
+    local mode="${CRD_INSTALL:-if-missing}"
+    # SKIP_CLUSTER_CRDS predates this and still works.
+    [ "${SKIP_CLUSTER_CRDS:-false}" = "true" ] && mode="never"
 
-    log_info "Installing GAIE CRDs (ref=${GAIE_VERSION})..."
-    kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}" || \
-        log_warning "GAIE CRD install returned non-zero — may already be present"
+    if [ "$mode" = "never" ]; then
+        log_info "Skipping CRD installation (CRD_INSTALL=never) — assuming Gateway API and GAIE CRDs are present"
+        return 0
+    fi
+
+    _install_crd_group "Gateway API" "${GATEWAY_API_VERSION}" \
+        "gateways.gateway.networking.k8s.io" \
+        -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml"
+
+    _install_crd_group "GAIE" "${GAIE_VERSION}" \
+        "inferencepools.inference.networking.x-k8s.io" \
+        -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}"
+}
+
+# _install_crd_group applies one CRD set, honouring CRD_INSTALL.
+# Args: <label> <version> <probe-crd> <kubectl apply args...>
+_install_crd_group() {
+    local label="$1" version="$2" probe="$3"
+    shift 3
+
+    if [ "${CRD_INSTALL:-if-missing}" != "always" ] && kubectl get crd "$probe" >/dev/null 2>&1; then
+        local established
+        established=$(kubectl get crd "$probe" -o jsonpath='{.spec.versions[*].name}' 2>/dev/null || true)
+        log_info "${label} CRDs already on this cluster (served versions: ${established:-unknown}) — keeping them, not applying ${version}."
+        log_info "  WVA only reads these types, so the cluster's own version is the right one. Pass CRD_INSTALL=always to overwrite (this can break other controllers using them)."
+        return 0
+    fi
+
+    log_info "Installing ${label} CRDs (${version})..."
+    kubectl apply "$@" || log_warning "${label} CRD install returned non-zero — check whether they are usable before continuing"
 }
 
 deploy_epp() {
@@ -31,19 +73,11 @@ deploy_epp() {
     local _lib_dir
     _lib_dir="$(dirname "${BASH_SOURCE[0]}")"
 
-    # CRD installation — skipped on shared clusters where CRDs are pre-installed
-    # (e.g. OpenShift e2e). Set SKIP_CLUSTER_CRDS=true to skip.
-    if [ "${SKIP_CLUSTER_CRDS:-false}" != "true" ]; then
-        log_info "Installing Gateway API CRDs (${GATEWAY_API_VERSION})..."
-        kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" || \
-            log_warning "Gateway API CRD install returned non-zero — may already be present"
-
-        log_info "Installing GAIE CRDs (ref=${GAIE_VERSION})..."
-        kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-extension/config/crd/?ref=${GAIE_VERSION}" || \
-            log_warning "GAIE CRD install returned non-zero — may already be present"
-    else
-        log_info "Skipping CRD installation (SKIP_CLUSTER_CRDS=true — pre-installed on shared cluster)"
-    fi
+    # One implementation, called from both places. This block used to be a second,
+    # slightly different copy of install_inference_crds: only this one honoured
+    # SKIP_CLUSTER_CRDS, so the earlier call from deploy_wva_prerequisites applied
+    # the CRDs anyway on exactly the shared clusters the flag exists to protect.
+    install_inference_crds
 
     # llm-d namespace and dummy HF token secret for emulated environments.
     log_info "Creating llm-d namespace ($LLMD_NS)..."

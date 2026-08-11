@@ -36,16 +36,7 @@ deploy_prometheus_kube_stack() {
     rm -f /tmp/prometheus-tls.key /tmp/prometheus-tls.crt
 
     log_info "Installing kube-prometheus-stack with TLS configuration"
-    # Create the wva-operation-dashboard ConfigMap from the JSON file with Grafana sidecar label
-    local WVA_DASHBOARD_JSON="$WVA_PROJECT/deploy/grafana/operational-dashboard.json"
-    if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
-        kubectl create configmap wva-operation-dashboard \
-            --from-file=operational-dashboard.json="$WVA_DASHBOARD_JSON" \
-            -n "$MONITORING_NAMESPACE" \
-            --dry-run=client -o yaml | \
-        kubectl label --local -f - grafana_dashboard=1 -o yaml | \
-        kubectl apply -f -
-    fi
+    install_operational_dashboard
 
     helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n "$MONITORING_NAMESPACE" \
