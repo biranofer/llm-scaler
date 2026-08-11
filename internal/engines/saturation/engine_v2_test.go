@@ -227,7 +227,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 				Priority:         5.0,
 			},
 		}
-		cfg := resolveScalingPolicy(configMap, "llama-70b", "production")
+		cfg := config.ResolveScalingPolicy(configMap, "llama-70b", "production")
 		// Overridden fields
 		Expect(cfg.KvCacheThreshold).To(Equal(0.85))
 		Expect(cfg.Priority).To(Equal(5.0))
@@ -243,14 +243,14 @@ var _ = Describe("resolveScalingPolicy", func() {
 				AnalyzerName:     "saturation",
 			},
 		}
-		cfg := resolveScalingPolicy(configMap, "unknown-model", "default")
+		cfg := config.ResolveScalingPolicy(configMap, "unknown-model", "default")
 		Expect(cfg.KvCacheThreshold).To(Equal(0.80))
 		Expect(cfg.Priority).To(Equal(config.DefaultPriority))
 	})
 
 	It("should return V1 defaults when map is empty", func() {
 		configMap := map[string]config.ScalingPolicy{}
-		cfg := resolveScalingPolicy(configMap, "model-1", "ns-1")
+		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.Priority).To(Equal(config.DefaultPriority))
 		Expect(cfg.KvCacheThreshold).To(Equal(config.DefaultKvCacheThreshold))
 		Expect(cfg.QueueLengthThreshold).To(Equal(config.DefaultQueueLengthThreshold))
@@ -262,7 +262,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 				AnalyzerName: "saturation",
 			},
 		}
-		cfg := resolveScalingPolicy(configMap, "model-1", "ns-1")
+		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.ScaleUpThreshold).To(Equal(config.DefaultScaleUpThreshold))
 		Expect(cfg.ScaleDownBoundary).To(Equal(config.DefaultScaleDownBoundary))
 		Expect(cfg.Priority).To(Equal(config.DefaultPriority))
@@ -280,7 +280,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 				KvCacheThreshold: 0.90,
 			},
 		}
-		cfg := resolveScalingPolicy(configMap, "model-1", "ns-1")
+		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.KvCacheThreshold).To(Equal(0.90))
 		Expect(cfg.QueueLengthThreshold).To(Equal(5.0))
 		// A V1-style entry stays V1 (selection is decided globally, not here), but the
@@ -309,7 +309,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 			"default":                   def,
 			"meta/llama-70b#production": override,
 		}
-		cfg := resolveScalingPolicy(configMap, "meta/llama-70b", "production")
+		cfg := config.ResolveScalingPolicy(configMap, "meta/llama-70b", "production")
 		Expect(cfg.KvCacheThreshold).To(Equal(0.90))
 		Expect(cfg.ScaleUpThreshold).To(Equal(0.95), "tuned global scaleUpThreshold must survive a V1-style override")
 		Expect(cfg.ScaleDownBoundary).To(Equal(config.DefaultScaleDownBoundary))
@@ -330,7 +330,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 			"default":      def,
 			"model-1#ns-1": override,
 		}
-		cfg := resolveScalingPolicy(configMap, "model-1", "ns-1")
+		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.IsV2()).To(BeFalse())
 		Expect(cfg.ScaleUpThreshold).To(Equal(0.90), "explicit override must win")
 		Expect(cfg.ScaleDownBoundary).To(Equal(config.DefaultScaleDownBoundary), "missing sibling must be defaulted post-merge")
@@ -352,7 +352,7 @@ var _ = Describe("resolveScalingPolicy", func() {
 			"default":      def,
 			"model-1#ns-1": override,
 		}
-		cfg := resolveScalingPolicy(configMap, "model-1", "ns-1")
+		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.ScaleUpThreshold).To(Equal(config.DefaultScaleUpThreshold))
 		Expect(cfg.ScaleDownBoundary).To(Equal(config.DefaultScaleDownBoundary))
 		Expect(cfg.ScaleUpThreshold).To(BeNumerically(">", cfg.ScaleDownBoundary))

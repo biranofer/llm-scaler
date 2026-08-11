@@ -124,7 +124,7 @@ func (e *Engine) runAnalyzersAndScore(
 		return nil, err
 	}
 
-	satUp, satDown := resolveThresholds(domain.SaturationAnalyzerName, config)
+	satUp, satDown := config.AnalyzerThresholds(domain.SaturationAnalyzerName)
 
 	// Build AnalyzerInput once; shared by all non-saturation analyzers.
 	// Note: &config has had saturation's per-entry threshold overrides applied
@@ -156,14 +156,14 @@ func (e *Engine) runAnalyzersAndScore(
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
 		}
-		if !effectiveEnabled(entry.name, config) {
+		if !config.AnalyzerEnabled(entry.name) {
 			continue
 		}
 		result := runRegisteredAnalyzer(ctx, logger, entry, modelID, input)
 		if result == nil {
 			continue
 		}
-		up, down := resolveThresholds(entry.name, config)
+		up, down := config.AnalyzerThresholds(entry.name)
 		namedResults = append(namedResults,
 			buildNamedResult(ctx, entry.name, result, config, metaByVariant, up, down))
 	}
@@ -471,52 +471,6 @@ func (e *Engine) pruneLastGoodAnalysis(activeKeys map[string]bool) {
 			delete(e.lastGoodAnalysis, modelKey)
 		}
 	}
-}
-
-// scoreForAnalyzer returns the AnalyzerScoreConfig.Score for the named analyzer,
-// defaulting to 1.0 when the analyzer has no explicit entry in cfg.Analyzers.
-// This value is the per-analyzer weight used by GreedyByScoreOptimizer for
-// fair-share priority ordering across models.
-func scoreForAnalyzer(analyzerName string, cfg config.ScalingPolicy) float64 {
-	for _, aw := range cfg.Analyzers {
-		if aw.EffectiveType() == analyzerName {
-			if aw.Score > 0 {
-				return aw.Score
-			}
-			return 1.0
-		}
-	}
-	return 1.0
-}
-
-func resolveThresholds(analyzerName string, cfg config.ScalingPolicy) (scaleUp, scaleDown float64) {
-	for _, aw := range cfg.Analyzers {
-		if aw.EffectiveType() == analyzerName {
-			return aw.EffectiveScaleUpThreshold(cfg.ScaleUpThreshold),
-				aw.EffectiveScaleDownBoundary(cfg.ScaleDownBoundary)
-		}
-	}
-	return cfg.ScaleUpThreshold, cfg.ScaleDownBoundary
-}
-
-// effectiveEnabled reports whether the named analyzer should participate in this
-// cycle's scaling decision. An analyzer is opt-in: it participates only when it has
-// an explicit entry in cfg.Analyzers whose Enabled is true (or nil, i.e. present but
-// not yet defaulted). An analyzer registered in code but ABSENT from cfg.Analyzers
-// does NOT participate — this prevents a registered-but-unconfigured analyzer (e.g.
-// throughput) from returning SpareCapacity=0 and silently vetoing scale-down.
-// Saturation is exempt: it is guarded by the SaturationAnalyzerName check upstream
-// (engine_v2.go ~L136) before effectiveEnabled is ever called.
-func effectiveEnabled(analyzerName string, cfg config.ScalingPolicy) bool {
-	for _, aw := range cfg.Analyzers {
-		if aw.EffectiveType() == analyzerName {
-			if aw.Enabled != nil {
-				return *aw.Enabled
-			}
-			return true // present, not yet defaulted → participates
-		}
-	}
-	return false // absent → opt-in: does not participate
 }
 
 // runRegisteredAnalyzer invokes a single non-saturation analyzer's Analyze
@@ -864,7 +818,7 @@ func buildNamedResult(
 	nr := pipeline.NamedAnalyzerResult{
 		Name:              name,
 		Result:            result,
-		Score:             scoreForAnalyzer(name, config),
+		Score:             config.AnalyzerScore(name),
 		ScaleUpThreshold:  scaleUp,
 		ScaleDownBoundary: scaleDown,
 	}

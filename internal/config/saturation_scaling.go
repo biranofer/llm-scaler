@@ -569,3 +569,52 @@ func (c *ScalingPolicy) validateLimiters() error {
 	}
 	return nil
 }
+
+// AnalyzerScore returns the AnalyzerScoreConfig.Score for the named analyzer,
+// defaulting to 1.0 when the analyzer has no explicit entry in c.Analyzers.
+// This value is the per-analyzer weight used by GreedyByScoreOptimizer for
+// fair-share priority ordering across models.
+func (c ScalingPolicy) AnalyzerScore(analyzerName string) float64 {
+	for _, aw := range c.Analyzers {
+		if aw.EffectiveType() == analyzerName {
+			if aw.Score > 0 {
+				return aw.Score
+			}
+			return 1.0
+		}
+	}
+	return 1.0
+}
+
+// AnalyzerThresholds returns the scale-up/scale-down band the named analyzer
+// votes against: its own per-analyzer override where it declares one, and the
+// policy's band otherwise.
+func (c ScalingPolicy) AnalyzerThresholds(analyzerName string) (scaleUp, scaleDown float64) {
+	for _, aw := range c.Analyzers {
+		if aw.EffectiveType() == analyzerName {
+			return aw.EffectiveScaleUpThreshold(c.ScaleUpThreshold),
+				aw.EffectiveScaleDownBoundary(c.ScaleDownBoundary)
+		}
+	}
+	return c.ScaleUpThreshold, c.ScaleDownBoundary
+}
+
+// AnalyzerEnabled reports whether the named analyzer should participate in this
+// cycle's scaling decision. An analyzer is opt-in: it participates only when it has
+// an explicit entry in c.Analyzers whose Enabled is true (or nil, i.e. present but
+// not yet defaulted). An analyzer registered in code but ABSENT from c.Analyzers
+// does NOT participate — this prevents a registered-but-unconfigured analyzer (e.g.
+// throughput) from returning SpareCapacity=0 and silently vetoing scale-down.
+// Saturation is exempt: it is guarded by the SaturationAnalyzerName check upstream
+// (engine_v2.go ~L136) before AnalyzerEnabled is ever called.
+func (c ScalingPolicy) AnalyzerEnabled(analyzerName string) bool {
+	for _, aw := range c.Analyzers {
+		if aw.EffectiveType() == analyzerName {
+			if aw.Enabled != nil {
+				return *aw.Enabled
+			}
+			return true // present, not yet defaulted → participates
+		}
+	}
+	return false // absent → opt-in: does not participate
+}

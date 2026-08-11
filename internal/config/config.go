@@ -337,7 +337,7 @@ func (c *Config) ScalingPolicyConfig() map[string]ScalingPolicy {
 
 // resolveScalingPolicy resolves saturation config for a namespace (namespace-local > global).
 // Must be called while holding at least a read lock.
-func (c *Config) resolveScalingPolicy(namespace string) map[string]ScalingPolicy {
+func (c *Config) resolveScalingPolicyConfigMap(namespace string) map[string]ScalingPolicy {
 	// Check namespace-local first (if namespace is provided)
 	if namespace != "" {
 		if nsConfig, exists := c.saturation.namespaceConfigs[namespace]; exists {
@@ -362,7 +362,7 @@ func (c *Config) resolveScalingPolicy(namespace string) map[string]ScalingPolicy
 func (c *Config) ScalingPolicyConfigForNamespace(namespace string) map[string]ScalingPolicy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	sourceConfig := c.resolveScalingPolicy(namespace)
+	sourceConfig := c.resolveScalingPolicyConfigMap(namespace)
 	return copyScalingPolicyConfig(sourceConfig)
 }
 

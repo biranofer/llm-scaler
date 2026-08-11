@@ -26,7 +26,7 @@ func (f *fakeAnalyzerWithResult) Analyze(_ context.Context, _ domain.AnalyzerInp
 
 var _ = Describe("Engine config-population helpers", func() {
 
-	Describe("scoreForAnalyzer", func() {
+	Describe("AnalyzerScore", func() {
 		It("returns the configured score when the analyzer is present with a positive score", func() {
 			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
@@ -34,12 +34,12 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "throughput", Score: 0.5},
 				},
 			}
-			Expect(scoreForAnalyzer("saturation", cfg)).To(Equal(2.5))
-			Expect(scoreForAnalyzer("throughput", cfg)).To(Equal(0.5))
+			Expect(cfg.AnalyzerScore("saturation")).To(Equal(2.5))
+			Expect(cfg.AnalyzerScore("throughput")).To(Equal(0.5))
 		})
 
 		It("returns 1.0 when the analyzer is absent from config", func() {
-			Expect(scoreForAnalyzer("unknown", config.ScalingPolicy{})).To(Equal(1.0))
+			Expect(config.ScalingPolicy{}.AnalyzerScore("unknown")).To(Equal(1.0))
 		})
 
 		It("returns 1.0 when the analyzer's Score is zero (field not set in config)", func() {
@@ -48,7 +48,7 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "saturation", Score: 0},
 				},
 			}
-			Expect(scoreForAnalyzer("saturation", cfg)).To(Equal(1.0))
+			Expect(cfg.AnalyzerScore("saturation")).To(Equal(1.0))
 		})
 
 		It("returns the first matching score when multiple entries share a name", func() {
@@ -58,13 +58,13 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "sat", Score: 7.0}, // duplicate — first wins
 				},
 			}
-			Expect(scoreForAnalyzer("sat", cfg)).To(Equal(3.0))
+			Expect(cfg.AnalyzerScore("sat")).To(Equal(3.0))
 		})
 	})
 
-	Describe("effectiveEnabled", func() {
+	Describe("AnalyzerEnabled", func() {
 		It("returns false when the analyzer is absent from config (opt-in)", func() {
-			Expect(effectiveEnabled("throughput", config.ScalingPolicy{})).To(BeFalse())
+			Expect(config.ScalingPolicy{}.AnalyzerEnabled("throughput")).To(BeFalse())
 		})
 
 		It("returns false when other analyzers are configured but the target is absent", func() {
@@ -73,7 +73,7 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "other"},
 				},
 			}
-			Expect(effectiveEnabled("throughput", cfg)).To(BeFalse())
+			Expect(cfg.AnalyzerEnabled("throughput")).To(BeFalse())
 		})
 
 		It("returns true when Enabled is nil for the matching entry", func() {
@@ -82,7 +82,7 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "throughput"}, // Enabled nil → default true
 				},
 			}
-			Expect(effectiveEnabled("throughput", cfg)).To(BeTrue())
+			Expect(cfg.AnalyzerEnabled("throughput")).To(BeTrue())
 		})
 
 		It("returns false when Enabled is explicitly false", func() {
@@ -92,7 +92,7 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "throughput", Enabled: &f},
 				},
 			}
-			Expect(effectiveEnabled("throughput", cfg)).To(BeFalse())
+			Expect(cfg.AnalyzerEnabled("throughput")).To(BeFalse())
 		})
 
 		It("returns true when Enabled is explicitly true", func() {
@@ -102,7 +102,7 @@ var _ = Describe("Engine config-population helpers", func() {
 					{Name: "throughput", Enabled: &t},
 				},
 			}
-			Expect(effectiveEnabled("throughput", cfg)).To(BeTrue())
+			Expect(cfg.AnalyzerEnabled("throughput")).To(BeTrue())
 		})
 	})
 

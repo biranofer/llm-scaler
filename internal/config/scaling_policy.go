@@ -50,3 +50,76 @@ func NamedPolicies(configMap map[string]ScalingPolicy) map[string]ScalingPolicy 
 	}
 	return policies
 }
+
+// ResolveScalingPolicy resolves config for a model.
+// Starts from the "default" entry (or zero-value), then merges the model-specific
+// override "{modelID}#{namespace}" on top (if present). This allows per-model
+// overrides to specify only the fields they want to change.
+// After merging, ApplyDefaults fills remaining zero-valued fields, then
+// ApplyV2ThresholdDefaults calibrates the V2 thresholds on the final config and an
+// inconsistent (inverted) threshold pair is reset to the defaults.
+func ResolveScalingPolicy(
+	configMap map[string]ScalingPolicy,
+	modelID, namespace string,
+) ScalingPolicy {
+	return ResolveScalingPolicyForTier(configMap, modelID, namespace, "")
+}
+
+// ResolveScalingPolicyForTier resolves the effective entry, layering the
+// named policy tier the variant selected between the cluster default and any
+// per-model override:
+//
+//	default entry            fleet-wide fallback
+//	  â–¼ overridden by
+//	named policy tier        the variant's scalingPolicy, or defaultPolicy
+//	  â–¼ overridden by
+//	{modelID}#{namespace}    per-model override, most specific
+//
+// Most specific wins, per docs/proposals/wva-keda-external-scaler.md Â§7.5. The
+// per-model override stays the innermost layer so existing configs keep working
+// while tiers are adopted: a fleet moves to policies model by model, not all at
+// once.
+//
+// An unknown policy name resolves to the default entry â€” the same outcome as
+// naming none, which is the right behaviour but a bad silence, so the caller
+// reports it (see policyResolution).
+func ResolveScalingPolicyForTier(
+	configMap map[string]ScalingPolicy,
+	modelID, namespace, policy string,
+) ScalingPolicy {
+	// Start with default config as base
+	base := ScalingPolicy{}
+	if defaultCfg, ok := configMap[GlobalDefaultsKey]; ok {
+		base = defaultCfg
+	}
+	// Overlay the named policy tier, falling back to the cluster's defaultPolicy.
+	// Read from the DEFAULT entry only: a fleet-wide fallback chosen by a policy or
+	// a per-model entry would be that entry choosing for everyone but itself.
+	if policy == "" {
+		policy = base.DefaultPolicy
+	}
+	if policy != "" {
+		if tier, ok := configMap[policy]; ok && PolicyEntryKey(policy) {
+			base.Merge(tier)
+		}
+	}
+	// Overlay model-specific override if present (non-zero fields win)
+	if override, ok := configMap[ModelOverrideKey(modelID, namespace)]; ok {
+		base.Merge(override)
+	}
+	base.ApplyDefaults()
+	// Calibrate V2 thresholds on the final merged config. Analyzer selection is
+	// global, so this entry may run on the V2 path even when written V1-style;
+	// applied here (post-merge) rather than in ApplyDefaults so a V1-style override
+	// cannot clobber a tuned global threshold during Merge.
+	base.ApplyV2ThresholdDefaults()
+	// Per-entry V2 thresholds are range-validated at load, but a merge can still
+	// produce an inconsistent pair across entries (e.g. an override raises
+	// scaleDownBoundary above the base scaleUpThreshold). Rather than feed the
+	// optimizer an inverted pair, fall back to the defaults for both.
+	if base.ScaleUpThreshold <= base.ScaleDownBoundary {
+		base.ScaleUpThreshold = DefaultScaleUpThreshold
+		base.ScaleDownBoundary = DefaultScaleDownBoundary
+	}
+	return base
+}
