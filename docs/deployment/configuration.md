@@ -54,6 +54,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `KEDA_CHART_VERSION` | KEDA Helm chart version | `2.19.0` |
 | `UNDEPLOY` | Remove instead of install (`install.sh` doubles as the uninstaller) | `false` |
 | `DELETE_NAMESPACES` | With `UNDEPLOY=true`, also delete the namespaces | `false` |
+| `UNDEPLOY_SHARED` | With `UNDEPLOY=true`, also remove Prometheus, the scaler backend and EPP. **Off by default**: they are shared, this install may not have created them, and removing them takes out everything else on the cluster that uses them | `false` |
 
 > `make deploy-e2e-infra` passes `ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED)`,
 > whose Makefile default is **`false`** — the opposite of `install.sh`'s. So an
@@ -160,7 +161,6 @@ shipped default and **exits at startup** if nothing answers there
 |----------|-------------|---------|
 | `SKIP_TLS_VERIFY` | Skip Prometheus TLS verification | `false`, forced to `true` on OpenShift and for in-cluster self-signed Prometheus |
 | `WVA_LOG_LEVEL` | WVA logging level | `info` |
-| `WVA_METRICS_SECURE` | Serve the WVA metrics endpoint over HTTPS with authn/authz | `true` |
 | `PROMETHEUS_SECRET_NAME` | Secret holding the Prometheus serving cert | `prometheus-web-tls` |
 | `PROMETHEUS_SECRET_NS` | Namespace of that secret | `$MONITORING_NAMESPACE` |
 | `PROM_CA_CERT_PATH` | Where the extracted Prometheus CA is written | `/tmp/prometheus-ca.crt` |

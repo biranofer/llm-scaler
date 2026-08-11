@@ -55,7 +55,6 @@ DEPLOY_OPERATIONAL_DASHBOARD=${DEPLOY_OPERATIONAL_DASHBOARD:-true}
 DEPLOY_ALERTING_RULES=${DEPLOY_ALERTING_RULES:-false}
 DEPLOY_WVA=${DEPLOY_WVA:-true}
 SKIP_CHECKS=${SKIP_CHECKS:-false}
-WVA_METRICS_SECURE=${WVA_METRICS_SECURE:-true}
 
 # Scaler backend: keda | none.
 # - keda on kubernetes: expects cluster CRD unless KEDA_HELM_INSTALL=true (then this script installs Helm KEDA).
@@ -144,6 +143,10 @@ WVA_DEFAULT_SO_TEMPLATE=${WVA_DEFAULT_SO_TEMPLATE:-}
 WVA_DEFAULT_SO_MIN=${WVA_DEFAULT_SO_MIN:-1}
 WVA_DEFAULT_SO_MAX=${WVA_DEFAULT_SO_MAX:-10}
 DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}
+# With UNDEPLOY=true, also remove Prometheus, the scaler backend and EPP. Off by
+# default: those are shared, this install may not have created them, and removing
+# them takes out every other thing on the cluster that uses them.
+UNDEPLOY_SHARED=${UNDEPLOY_SHARED:-false}
 
 # Orchestration lives in deploy/lib/install_core.sh (keeps this entrypoint to variable defaults + sourcing only).
 main "$@"

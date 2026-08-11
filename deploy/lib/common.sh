@@ -65,6 +65,47 @@ wva_install_scope() {
     esac
 }
 
+# WVA_SHARED_CLUSTER_ROLE_BINDINGS are the cluster-scoped bindings every overlay
+# applies under fixed names. They are renamed per install so two installs cannot
+# take them from one another.
+WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
+    wva-epp-metrics-reader-role-binding
+    wva-manager-cluster-monitoring-view
+    wva-manager-rolebinding
+    wva-metrics-auth-rolebinding
+    wva-metrics-reader-rolebinding
+    wva-prometheus-cluster-monitoring-view
+)
+
+# wva_ns_suffix echoes the per-namespace suffix appended to those names.
+wva_ns_suffix() {
+    printf '%s' "$1" | sha256sum | cut -c1-8
+}
+
+# wva_append_crb_name_patches appends the rename patches to a kustomization file.
+#
+# Deploy AND undeploy must both use this. They diverged once, with real cost: the
+# install renamed the bindings and the uninstall did not, so `kubectl delete -k`
+# resolved the FIXED names and removed whichever install currently owned them —
+# an uninstall of one WVA stripping a different, healthy one of its permissions —
+# while leaking its own suffixed bindings. One definition, used by both.
+wva_append_crb_name_patches() {
+    local kustomization="$1" ns="$2" suffix crb
+    suffix="$(wva_ns_suffix "$ns")"
+    printf 'patches:\n' >> "$kustomization"
+    for crb in "${WVA_SHARED_CLUSTER_ROLE_BINDINGS[@]}"; do
+        cat >> "$kustomization" <<EOF
+- patch: |-
+    - op: replace
+      path: /metadata/name
+      value: ${crb}-${suffix}
+  target:
+    kind: ClusterRoleBinding
+    name: ${crb}
+EOF
+    done
+}
+
 # wva_overlay_dir echoes the absolute Kustomize overlay directory for the selected
 # scope and platform. Deploy and cleanup MUST resolve it the same way, or an
 # uninstall leaves behind exactly the resources the other overlay owns.

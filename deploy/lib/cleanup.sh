@@ -37,15 +37,16 @@ resources:
 - ./base
 EOF
 
+    # The SAME rename the install applied. Without it, `delete -k` resolves the
+    # FIXED binding names and removes whichever install currently owns them — so
+    # uninstalling one WVA stripped a different, healthy one of its permissions —
+    # while leaking this install's own suffixed bindings. Found by installing and
+    # uninstalling side by side on kind.
+    wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
+
     kubectl delete -k "$tmp_overlay" --ignore-not-found 2>/dev/null || \
         log_warning "Workload-Variant-Autoscaler resources not found or already removed"
     rm -rf "$tmp_overlay"
-
-    # Remove the per-deployment ClusterRoleBindings created for shared-cluster isolation.
-    kubectl delete clusterrolebinding "workload-variant-autoscaler-manager-${WVA_NS}" \
-        --ignore-not-found 2>/dev/null || true
-    kubectl delete clusterrolebinding "workload-variant-autoscaler-cluster-monitoring-view-${WVA_NS}" \
-        --ignore-not-found 2>/dev/null || true
 
     rm -f "$PROM_CA_CERT_PATH"
 
@@ -57,25 +58,35 @@ cleanup() {
     log_info "======================================"
     echo ""
 
-    # Undeploy environment-specific components (Prometheus, etc.)
-    if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
-        undeploy_prometheus_stack
-    fi
-
-    # Undeploy scaler backend (KEDA or none). Mirror deploy_scaler_backend()'s
-    # supported-value check so an unknown SCALER_BACKEND is surfaced rather than
-    # silently leaving a previously-installed backend orphaned. Warn (not error)
-    # so the rest of the teardown still runs.
-    if [ "$SCALER_BACKEND" = "keda" ]; then
-        undeploy_keda
-    elif [ "$SCALER_BACKEND" = "none" ]; then
-        log_info "Skipping scaler backend undeployment (SCALER_BACKEND=none)"
+    # Shared infrastructure — Prometheus, KEDA, llm-d's EPP — is left alone unless
+    # you ask for it, and this default is not symmetry with the install.
+    #
+    # It used to key off DEPLOY_PROMETHEUS / SCALER_BACKEND, whose defaults say what
+    # a FRESH install would deploy, not what THIS install actually did. So
+    # `make undeploy-wva-on-k8s WVA_NS=mine` on a cluster that already had them tore
+    # down the cluster's Prometheus, KEDA and EPP — infrastructure the install never
+    # touched and other things depend on. Reproduced here: an undeploy of a scratch
+    # namespace emptied the monitoring namespace, and every WVA on the cluster lost
+    # its metrics backend.
+    #
+    # Removing WVA is the job. Removing what WVA was pointed AT is a separate
+    # decision, and now an explicit one.
+    if [ "${UNDEPLOY_SHARED:-false}" = "true" ]; then
+        log_warning "UNDEPLOY_SHARED=true: also removing Prometheus, the scaler backend and EPP. Anything else on this cluster using them will lose them."
+        if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
+            undeploy_prometheus_stack
+        fi
+        if [ "$SCALER_BACKEND" = "keda" ]; then
+            undeploy_keda
+        elif [ "$SCALER_BACKEND" = "none" ]; then
+            log_info "Skipping scaler backend undeployment (SCALER_BACKEND=none)"
+        else
+            log_warning "Unsupported SCALER_BACKEND: $SCALER_BACKEND (supported: keda, none); skipping scaler backend undeployment — any installed backend may be left behind"
+        fi
+        undeploy_epp
     else
-        log_warning "Unsupported SCALER_BACKEND: $SCALER_BACKEND (supported: keda, none); skipping scaler backend undeployment — any installed backend may be left behind"
+        log_info "Leaving Prometheus, the scaler backend and EPP in place — they are shared and this install may not have created them. Pass UNDEPLOY_SHARED=true to remove them too."
     fi
-
-    # EPP (llm-d-router-standalone chart) is torn down via undeploy_epp() from infra_epp.sh.
-    undeploy_epp
 
     if [ "$DEPLOY_WVA" = "true" ]; then
         undeploy_wva_controller

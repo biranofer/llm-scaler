@@ -716,6 +716,17 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@echo "Checking for mangled line continuations..."
+	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
+	@# the \n becomes a literal argument. It shipped once, in the limiter path,
+	@# where it turned WVA_LIMITER=gpu-inventory into an install that aborted.
+	@# A real continuation is a backslash at END of line; a mangled one has command
+	@# text after it.
+	@if grep -rnE '[^"'"'"']\\n[[:space:]]' deploy/install.sh deploy/install-epp.sh deploy/lib/*.sh deploy/*/install.sh 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#'; then \
+		echo "ERROR: literal '\\n' inside a command — a line continuation was collapsed by an edit."; \
+		exit 1; \
+	fi
+	@echo "deploy script line continuations OK"
 	@echo "deploy script syntax OK"
 
 .PHONY: smoke-deploy-scripts

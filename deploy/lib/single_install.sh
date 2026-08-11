@@ -36,13 +36,6 @@ wva_installations() {
         -o go-template='{{range .items}}{{.metadata.namespace}} {{.metadata.name}}{{"\n"}}{{end}}' 2>/dev/null
 }
 
-# wva_binding_owner echoes the namespace a shared ClusterRoleBinding currently
-# points at — i.e. which install owns the cluster-scoped RBAC right now.
-wva_binding_owner() {
-    kubectl get clusterrolebinding wva-manager-rolebinding \
-        -o go-template='{{range .subjects}}{{.namespace}}{{end}}' 2>/dev/null
-}
-
 check_single_installation() {
     local found=0 other_ns="" ns name
     while read -r ns name; do
@@ -57,9 +50,6 @@ check_single_installation() {
     done < <(wva_installations)
 
     [ "$found" -gt 0 ] || return 0
-
-    local owner
-    owner=$(wva_binding_owner)
 
     # A named instance is the supported way to run several controllers: each
     # manages only the workloads whose ScaledObject carries its name, and each
@@ -82,9 +72,9 @@ check_single_installation() {
 
 WVA is one per cluster, or one per namespace. Two unpartitioned controllers both
 manage every unlabelled workload and both publish a decision for the same
-ScaledObject${owner:+ (cluster RBAC currently owned by $owner)}: the replica count
-becomes whichever wrote last, and no decision can be attributed to either. Nothing
-errors — the fleet just scales non-deterministically.
+ScaledObject: the replica count becomes whichever wrote last, and no decision can
+be attributed to either. Nothing errors — the fleet just scales
+non-deterministically.
 
 Pick one:
   - upgrade the existing install:   WVA_NS=${other_ns%%/*} ...

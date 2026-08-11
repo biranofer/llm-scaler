@@ -118,26 +118,7 @@ EOF
     # Upgrades of an install that predates this keep working: the old un-suffixed
     # binding still names the same ServiceAccount, so nothing is lost while it
     # lingers, and `undeploy` removes both.
-    local ns_hash
-    ns_hash="$(printf '%s' "${WVA_NS}" | sha256sum | cut -c1-8)"
-    printf 'patches:\n' >> "$tmp_overlay/kustomization.yaml"
-    for crb in \
-        wva-epp-metrics-reader-role-binding \
-        wva-manager-cluster-monitoring-view \
-        wva-manager-rolebinding \
-        wva-metrics-auth-rolebinding \
-        wva-metrics-reader-rolebinding \
-        wva-prometheus-cluster-monitoring-view; do
-        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
-- patch: |-
-    - op: replace
-      path: /metadata/name
-      value: ${crb}-${ns_hash}
-  target:
-    kind: ClusterRoleBinding
-    name: ${crb}
-EOF
-    done
+    wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
     # CONTROLLER_INSTANCE partitions one cluster across several controllers: an
     # instance manages only the workloads whose ScaledObject carries
@@ -213,7 +194,8 @@ EOF
         gpu-inventory|quota)
             log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap..."
             local policy_cm current_default updated_default
-             policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null \n                | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
+            policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null \
+                | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
             if [ -z "$policy_cm" ]; then
                 log_error "No scaling-policy ConfigMap found in $WVA_NS"
             fi
@@ -224,8 +206,9 @@ EOF
             # Idempotent, and it REPLACES rather than appends: re-running with a
             # different WVA_LIMITER must not leave both declared, since a quota
             # entry would then win over the gpu-inventory one by mode precedence.
-            updated_default=$(echo "$current_default"                 | yq ".limiters = [{\"type\": \"${WVA_LIMITER}\"}]")
-            kubectl patch configmap "$policy_cm" -n "$WVA_NS" --type=merge                 -p "$(jq -n --arg d "$updated_default" '{data:{"default":$d}}')"
+            updated_default=$(echo "$current_default" | yq ".limiters = [{\"type\": \"${WVA_LIMITER}\"}]")
+            kubectl patch configmap "$policy_cm" -n "$WVA_NS" --type=merge \
+                -p "$(jq -n --arg d "$updated_default" '{data:{"default":$d}}')"
             log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter."
             # A GPU-aware optimizer allocates out of per-accelerator pools, so a
             # workload whose accelerator cannot be resolved gets no budget and stops
