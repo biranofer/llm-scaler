@@ -85,6 +85,22 @@ func WithWVATriggerMetadata(modelID, cost string) ScaledObjectOption {
 	}
 }
 
+// WithScalingPolicy names the scaling policy TIER this workload belongs to, the
+// way a real one does: as trigger metadata, resolved against a ConfigMap entry of
+// that name. The tier carries no identity, so naming it here is the only thing
+// that binds this workload to it.
+//
+// Deferred like WithWVATriggerMetadata, and for the same reason — the trigger
+// options replace spec.triggers wholesale and callers pass options in any order.
+func WithScalingPolicy(policy string) ScaledObjectOption {
+	return func(so *kedav1alpha1.ScaledObject) {
+		if so.Annotations == nil {
+			so.Annotations = make(map[string]string)
+		}
+		so.Annotations[pendingScalingPolicyKey] = policy
+	}
+}
+
 // externalScalerAddr is the WVA external-scaler service every fixture points KEDA
 // at by default. Set once from the suite (SetExternalScalerAddress).
 var externalScalerAddr string
@@ -103,8 +119,9 @@ func SetExternalScalerAddress(addr string) { externalScalerAddr = addr }
 // Private carrier keys for the deferred trigger metadata. They never reach the
 // cluster: applyWVATriggerMetadata removes them.
 const (
-	pendingModelIDKey     = "e2e.llm-d.ai/pending-model-id"
-	pendingVariantCostKey = "e2e.llm-d.ai/pending-variant-cost"
+	pendingModelIDKey       = "e2e.llm-d.ai/pending-model-id"
+	pendingVariantCostKey   = "e2e.llm-d.ai/pending-variant-cost"
+	pendingScalingPolicyKey = "e2e.llm-d.ai/pending-scaling-policy"
 )
 
 // applyWVATriggerMetadata moves the stashed WVA configuration into every trigger.
@@ -118,8 +135,10 @@ func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
 		return
 	}
 	cost := so.Annotations[pendingVariantCostKey]
+	policy := so.Annotations[pendingScalingPolicyKey]
 	delete(so.Annotations, pendingModelIDKey)
 	delete(so.Annotations, pendingVariantCostKey)
+	delete(so.Annotations, pendingScalingPolicyKey)
 
 	for i := range so.Spec.Triggers {
 		if so.Spec.Triggers[i].Metadata == nil {
@@ -128,6 +147,9 @@ func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
 		so.Spec.Triggers[i].Metadata[registry.ModelIDKey] = modelID
 		if cost != "" {
 			so.Spec.Triggers[i].Metadata[registry.VariantCostKey] = cost
+		}
+		if policy != "" {
+			so.Spec.Triggers[i].Metadata[registry.ScalingPolicyKey] = policy
 		}
 	}
 }

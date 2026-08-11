@@ -473,6 +473,26 @@ func upsertSaturationConfigEntry(ctx context.Context, cmNamespace, cmName, key, 
 	return err
 }
 
+// deleteSaturationConfigEntry removes one entry from the scaling policy ConfigMap,
+// leaving the rest intact. A missing ConfigMap or a missing key is success: the
+// caller wants the entry gone, and it is.
+func deleteSaturationConfigEntry(ctx context.Context, cmNamespace, cmName, key string) error {
+	cmClient := k8sClient.CoreV1().ConfigMaps(cmNamespace)
+	cm, err := cmClient.Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if _, ok := cm.Data[key]; !ok {
+		return nil
+	}
+	delete(cm.Data, key)
+	_, err = cmClient.Update(ctx, cm, metav1.UpdateOptions{})
+	return err
+}
+
 // saturationConfigMapForRecreate returns a copy of orig suitable for Create after Delete,
 // with apiserver-owned fields cleared so admission succeeds.
 func saturationConfigMapForRecreate(orig *corev1.ConfigMap) *corev1.ConfigMap {
