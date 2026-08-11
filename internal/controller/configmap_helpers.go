@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"maps"
+	"slices"
 
 	"github.com/go-logr/logr"
 	yaml "gopkg.in/yaml.v3"
@@ -63,6 +65,18 @@ func parseSaturationConfig(cmData map[string]string, logger logr.Logger) (config
 		if key != config.GlobalDefaultsKey && len(satConfig.Limiters) > 0 {
 			logger.Info("Ignoring limiters on a non-default saturation config entry; "+
 				"the GPU limiter is selected only from the \"default\" entry", "key", key)
+		}
+		// Analyzer DEFINITIONS are tier-level, like limiters. A named policy
+		// selects and weights analyzers by name; it does not get to invent the
+		// PromQL behind one, because that query runs against the shared Prometheus
+		// every cycle and a wrongly-shaped one mis-scales silently. Ignoring it
+		// quietly would leave a policy that reads as if it defined an analyzer and
+		// an analyzer that does not exist.
+		if key != config.GlobalDefaultsKey && len(satConfig.AnalyzerDefinitions) > 0 {
+			logger.Info("Ignoring analyzerDefinitions on a non-default saturation config entry; "+
+				"policies select and weight analyzers by name but do not define them — "+
+				"declare the analyzer on the \"default\" entry and reference it here",
+				"key", key, "analyzers", slices.Sorted(maps.Keys(satConfig.AnalyzerDefinitions)))
 		}
 		configs[key] = satConfig
 		count++

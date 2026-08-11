@@ -136,28 +136,36 @@ var _ = Describe("reconcileExternalAnalyzers", func() {
 	})
 
 	It("registers a catalog analyzer and retires it when it leaves the catalog", func() {
-		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
-			"ttft-slo": {Query: "q", Threshold: "0.5"},
+		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
+				"ttft-slo": {Query: "q", Threshold: "0.5"},
+			}},
 		})
 		e.reconcileExternalAnalyzers(context.Background())
 		Expect(e.externalAnalyzerNames()).To(ContainElement("ttft-slo"))
 
-		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{})
+		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{}},
+		})
 		e.reconcileExternalAnalyzers(context.Background())
 		Expect(e.externalAnalyzerNames()).NotTo(ContainElement("ttft-slo"))
 	})
 
 	It("skips a catalog label that collides with a built-in", func() {
-		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
-			domain.SaturationAnalyzerName: {Query: "q", Threshold: "0.5"},
+		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
+				domain.SaturationAnalyzerName: {Query: "q", Threshold: "0.5"},
+			}},
 		})
 		e.reconcileExternalAnalyzers(context.Background())
 		Expect(e.externalAnalyzerNames()).NotTo(ContainElement(domain.SaturationAnalyzerName))
 	})
 
 	It("skips a malformed definition (unparseable threshold)", func() {
-		cfg.UpdateExternalAnalyzerCatalog(config.ExternalAnalyzerCatalog{
-			"bad": {Query: "q", Threshold: "nope"},
+		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
+				"bad": {Query: "q", Threshold: "nope"},
+			}},
 		})
 		e.reconcileExternalAnalyzers(context.Background())
 		Expect(e.externalAnalyzerNames()).NotTo(ContainElement("bad"))

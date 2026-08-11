@@ -7,54 +7,85 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseAnalyzerCatalogConfigMap(t *testing.T) {
-	data := map[string]string{
-		"ttft-slo": "engines:\n" +
-			"  vllm:\n    query: q_vllm\n    threshold: \"0.5\"\n" +
-			"  sglang:\n    query: q_sglang\n    threshold: \"0.4\"\n",
-		"pool-queue": "query: q_agnostic\nthreshold: \"1.0\"\n",
-		"broken":     "not-a-mapping",
-	}
+// External analyzers are DECLARED on the cluster "default" scaling entry and
+// SELECTED by name in policy tiers — "policies select/weight; they don't define"
+// (docs/proposals/wva-keda-external-scaler.md §7.6). They used to live in a
+// ConfigMap of their own (wva-analyzers), two objects away from the policies that
+// reference them.
+func TestExternalAnalyzerCatalogComesFromTheDefaultEntry(t *testing.T) {
+	c := &Config{}
+	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		GlobalDefaultsKey: {
+			AnalyzerDefinitions: ExternalAnalyzerCatalog{
+				"ttft-slo": {Engines: map[string]ExternalAnalyzerBody{
+					"vllm":   {Query: "q_vllm", Threshold: "0.5"},
+					"sglang": {Query: "q_sglang", Threshold: "0.4"},
+				}},
+				"pool-queue": {Query: "q_agnostic", Threshold: "1.0"},
+			},
+		},
+	})
 
-	cat := ParseAnalyzerCatalogConfigMap(data)
-
-	// A malformed entry is skipped, not fatal.
+	cat := c.ExternalAnalyzerCatalog()
 	require.Contains(t, cat, "ttft-slo")
 	require.Contains(t, cat, "pool-queue")
-	assert.NotContains(t, cat, "broken")
 
-	// Per-engine bodies.
+	// An analyzer is a CONCEPT; the backend is a per-engine query variant of it, so
+	// a policy enables "ttft-slo" and never "ttft-slo-vllm".
 	assert.Equal(t, "q_vllm", cat["ttft-slo"].Engines["vllm"].Query)
 	assert.Equal(t, "0.5", cat["ttft-slo"].Engines["vllm"].Threshold)
 	assert.Equal(t, "q_sglang", cat["ttft-slo"].Engines["sglang"].Query)
 
-	// Engine-agnostic body (top-level query/threshold, no engines map).
+	// Engine-agnostic analyzers carry a single body.
 	assert.Equal(t, "q_agnostic", cat["pool-queue"].Query)
-	assert.Equal(t, "1.0", cat["pool-queue"].Threshold)
-	assert.Empty(t, cat["pool-queue"].Engines)
 }
 
-func TestParseAnalyzerCatalogConfigMap_Nil(t *testing.T) {
-	cat := ParseAnalyzerCatalogConfigMap(nil)
-	assert.NotNil(t, cat)
-	assert.Empty(t, cat)
-}
-
-func TestConfig_ExternalAnalyzerCatalog_RoundTripAndIsolation(t *testing.T) {
-	cfg := NewTestConfig()
-
-	assert.Empty(t, cfg.ExternalAnalyzerCatalog())
-
-	cfg.UpdateExternalAnalyzerCatalog(ExternalAnalyzerCatalog{
-		"a": {Engines: map[string]ExternalAnalyzerBody{"vllm": {Query: "q", Threshold: "1"}}},
+// The returned catalog must not alias the stored one, or a consumer mutating what
+// it was handed would rewrite the queries WVA runs.
+func TestExternalAnalyzerCatalogIsIsolated(t *testing.T) {
+	c := &Config{}
+	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		GlobalDefaultsKey: {
+			AnalyzerDefinitions: ExternalAnalyzerCatalog{
+				"a": {Engines: map[string]ExternalAnalyzerBody{"vllm": {Query: "original"}}},
+			},
+		},
 	})
 
-	got := cfg.ExternalAnalyzerCatalog()
-	require.Contains(t, got, "a")
-	assert.Equal(t, "q", got["a"].Engines["vllm"].Query)
-
-	// Mutating the returned copy must not affect the stored catalog.
+	got := c.ExternalAnalyzerCatalog()
 	got["a"].Engines["vllm"] = ExternalAnalyzerBody{Query: "mutated"}
-	again := cfg.ExternalAnalyzerCatalog()
-	assert.Equal(t, "q", again["a"].Engines["vllm"].Query)
+	got["injected"] = ExternalAnalyzerDef{Query: "nope"}
+
+	fresh := c.ExternalAnalyzerCatalog()
+	assert.Equal(t, "original", fresh["a"].Engines["vllm"].Query,
+		"a per-engine body must not be mutable through the returned copy")
+	assert.NotContains(t, fresh, "injected")
+}
+
+// Definitions are cluster-scope: a tier declaring them is a policy trying to
+// define, which the design forbids. Nothing outside the default entry contributes.
+func TestOnlyTheDefaultEntryContributesDefinitions(t *testing.T) {
+	c := &Config{}
+	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		GlobalDefaultsKey: {
+			AnalyzerDefinitions: ExternalAnalyzerCatalog{"cluster-wide": {Query: "q"}},
+		},
+		"interactive": {
+			AnalyzerDefinitions: ExternalAnalyzerCatalog{"tier-local": {Query: "q"}},
+		},
+		ModelOverrideKey("m", "ns"): {
+			AnalyzerDefinitions: ExternalAnalyzerCatalog{"model-local": {Query: "q"}},
+		},
+	})
+
+	cat := c.ExternalAnalyzerCatalog()
+	assert.Contains(t, cat, "cluster-wide")
+	assert.NotContains(t, cat, "tier-local", "a policy tier must not define analyzers")
+	assert.NotContains(t, cat, "model-local", "a per-model override must not define analyzers")
+}
+
+func TestExternalAnalyzerCatalogEmptyWhenUndeclared(t *testing.T) {
+	c := &Config{}
+	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{GlobalDefaultsKey: {}})
+	assert.Empty(t, c.ExternalAnalyzerCatalog())
 }

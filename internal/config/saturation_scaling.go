@@ -93,6 +93,24 @@ type SaturationScalingConfig struct {
 	// When nil, the defaults documented on ScaleFromZeroEnvelope apply.
 	ScaleFromZero *ScaleFromZeroEnvelope `yaml:"scaleFromZero,omitempty"`
 
+	// AnalyzerDefinitions declares EXTERNAL analyzers — a name, and the PromQL that
+	// computes its demand and per-replica target. Honored only on a `default`
+	// entry: definitions are a tier-level concern, never a policy one.
+	//
+	// "Policies select/weight; they don't define"
+	// (docs/proposals/wva-keda-external-scaler.md §7.6). A named policy references
+	// an analyzer by name and sets `enabled`, `score` and a threshold; it cannot
+	// invent the query behind it. Two reasons, and both are about the query rather
+	// than about trust: an expensive or high-cardinality one runs against the
+	// SHARED Prometheus every cycle, and a wrongly-shaped one (count/avg where a
+	// sum is required — see ExternalAnalyzerBody) mis-scales without erroring.
+	// Keeping every query in one reviewable place is what makes "what does WVA run
+	// against Prometheus?" an answerable question.
+	//
+	// Internal analyzers are compiled-in Go and are not declared here; a policy
+	// references them by name exactly the same way.
+	AnalyzerDefinitions ExternalAnalyzerCatalog `yaml:"analyzerDefinitions,omitempty"`
+
 	// DefaultPolicy names the policy tier a variant scales under when its scaler's
 	// trigger metadata names none. Honored only on the cluster "default" entry —
 	// it is a fleet-wide fallback, so a policy or a per-model entry declaring one

@@ -92,8 +92,6 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch name {
 	case config.SaturationConfigMapName():
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	case config.AnalyzerCatalogConfigMapName():
-		r.handleAnalyzerCatalogConfigMap(ctx, cm, isGlobal)
 	default:
 		logger.V(1).Info("Ignoring unrecognized ConfigMap", "name", name, "namespace", namespace)
 	}
@@ -186,6 +184,18 @@ func (r *ConfigMapReconciler) handleSaturationConfigMap(ctx context.Context, cm 
 					"system namespace's ConfigMap. Move this block there, or it has no effect.",
 					"namespace", namespace, "entry", key, "systemNamespace", config.SystemNamespace())
 			}
+			// Same scope as limiters, for a different reason: analyzer definitions
+			// are PromQL run against the shared Prometheus, and the analyzer
+			// registry is process-wide, so two namespaces defining the same name
+			// would collide. A per-namespace WVA install can still declare its own,
+			// because that install's own namespace IS its system namespace.
+			if len(satConfig.AnalyzerDefinitions) > 0 {
+				logger.Info("Ignoring analyzerDefinitions in a namespace-local saturation ConfigMap: "+
+					"analyzer definitions are cluster-scope and are read only from the system "+
+					"namespace's ConfigMap. A namespace may still SELECT and weight them in its "+
+					"policies.",
+					"namespace", namespace, "entry", key, "systemNamespace", config.SystemNamespace())
+			}
 		}
 		r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
 		logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
@@ -230,20 +240,4 @@ func (r *ConfigMapReconciler) warnIfThroughputRegistrationDiverged(logger logr.L
 			want, r.ThroughputRegistered)
 		r.Recorder.Event(cm, corev1.EventTypeWarning, constants.K8SEventThroughputAnalyzerRestartRequired, msg)
 	}
-}
-
-// handleAnalyzerCatalogConfigMap handles updates to the external-analyzer catalog
-// ConfigMap (wva-analyzers). The catalog is cluster-scoped, so only the global
-// ConfigMap in the controller namespace is applied; a namespace-local copy is
-// ignored. The engine picks up the refreshed catalog on its next optimize cycle.
-func (r *ConfigMapReconciler) handleAnalyzerCatalogConfigMap(ctx context.Context, cm *corev1.ConfigMap, isGlobal bool) {
-	logger := log.FromContext(ctx)
-	if !isGlobal {
-		logger.V(1).Info("Ignoring namespace-local analyzer catalog ConfigMap (catalog is cluster-scoped)",
-			"name", cm.GetName(), "namespace", cm.GetNamespace())
-		return
-	}
-	catalog := config.ParseAnalyzerCatalogConfigMap(cm.Data)
-	r.Config.UpdateExternalAnalyzerCatalog(catalog)
-	logger.Info("Updated external-analyzer catalog from ConfigMap", "entries", len(catalog))
 }

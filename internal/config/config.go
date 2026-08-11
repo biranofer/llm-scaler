@@ -20,7 +20,6 @@ type Config struct {
 	// epp            eppConfig
 	features   featureFlagsConfig
 	saturation saturationConfig // namespace-aware
-	catalog    catalogConfig    // cluster-scoped external-analyzer catalog
 }
 
 // LimiterType selects which pipeline.Limiter implementation

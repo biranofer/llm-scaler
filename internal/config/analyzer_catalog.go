@@ -1,26 +1,5 @@
 package config
 
-import (
-	"os"
-	"sort"
-
-	"gopkg.in/yaml.v3"
-	ctrl "sigs.k8s.io/controller-runtime"
-)
-
-// DefaultAnalyzerCatalogConfigMapName is the default name of the external-analyzer
-// catalog ConfigMap.
-const DefaultAnalyzerCatalogConfigMapName = "wva-analyzers"
-
-// AnalyzerCatalogConfigMapName returns the external-analyzer catalog ConfigMap
-// name, honoring the ANALYZER_CATALOG_CONFIG_MAP_NAME override.
-func AnalyzerCatalogConfigMapName() string {
-	if name := os.Getenv("ANALYZER_CATALOG_CONFIG_MAP_NAME"); name != "" {
-		return name
-	}
-	return DefaultAnalyzerCatalogConfigMapName
-}
-
 // ExternalAnalyzerBody is one inference engine's query and per-replica target in
 // a catalog definition. The field names mirror KEDA's Prometheus scaler
 // (threshold is a string, e.g. "0.5").
@@ -47,50 +26,23 @@ type ExternalAnalyzerDef struct {
 // ExternalAnalyzerCatalog maps an analyzer label to its definition.
 type ExternalAnalyzerCatalog map[string]ExternalAnalyzerDef
 
-// ParseAnalyzerCatalogConfigMap parses the external-analyzer catalog ConfigMap.
-// Each data key is an analyzer label whose value is the YAML ExternalAnalyzerDef.
-// A malformed entry is skipped (logged) so one bad definition cannot break the
-// whole catalog. Keys are processed in sorted order for deterministic logging.
-func ParseAnalyzerCatalogConfigMap(data map[string]string) ExternalAnalyzerCatalog {
-	out := make(ExternalAnalyzerCatalog)
-	if data == nil {
-		return out
-	}
-	labels := make([]string, 0, len(data))
-	for k := range data {
-		labels = append(labels, k)
-	}
-	sort.Strings(labels)
-	for _, label := range labels {
-		var def ExternalAnalyzerDef
-		if err := yaml.Unmarshal([]byte(data[label]), &def); err != nil {
-			ctrl.Log.Info("Failed to parse analyzer catalog entry, skipping", "label", label, "error", err)
-			continue
-		}
-		out[label] = def
-	}
-	return out
-}
-
-// catalogConfig holds the parsed external-analyzer catalog. Unlike the saturation
-// and scale-to-zero configs it is cluster-scoped (not namespace-aware) — the
-// catalog defines analyzers for the whole cluster; policies select them per tier.
-type catalogConfig struct {
-	catalog ExternalAnalyzerCatalog
-}
-
-// ExternalAnalyzerCatalog returns a copy of the current external-analyzer catalog.
+// ExternalAnalyzerCatalog returns a copy of the external analyzers declared on the
+// cluster "default" scaling entry.
+//
+// It used to come from a ConfigMap of its own (wva-analyzers). Folding it onto the
+// scaling-policy surface leaves one place to look for "how is scaling configured",
+// and puts definitions in the same object as the tiers that select them — related
+// settings that were previously two ConfigMaps apart, with nothing tying a
+// policy's analyzer name to the definition it resolves against.
+//
+// Cluster-scoped, like limiters: read from the SYSTEM namespace's ConfigMap only.
+// A workload namespace declaring analyzers is reported and ignored — see
+// parseSaturationConfig. Note this still lets a per-namespace WVA install define
+// its own, since that install's own namespace IS its system namespace.
 func (c *Config) ExternalAnalyzerCatalog() ExternalAnalyzerCatalog {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return copyAnalyzerCatalog(c.catalog.catalog)
-}
-
-// UpdateExternalAnalyzerCatalog replaces the external-analyzer catalog.
-func (c *Config) UpdateExternalAnalyzerCatalog(cat ExternalAnalyzerCatalog) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.catalog.catalog = copyAnalyzerCatalog(cat)
+	return copyAnalyzerCatalog(c.saturation.global[GlobalDefaultsKey].AnalyzerDefinitions)
 }
 
 // copyAnalyzerCatalog deep-copies a catalog (including each def's Engines map) so

@@ -30,9 +30,8 @@ func ConfigMapPredicate(ds datastore.Datastore, cfg *config.Config) predicate.Pr
 
 		// Well-known ConfigMap names
 		wellKnownNames := map[string]bool{
-			config.ConfigMapName():                true,
-			config.SaturationConfigMapName():      true,
-			config.AnalyzerCatalogConfigMapName(): true,
+			config.ConfigMapName():           true,
+			config.SaturationConfigMapName(): true,
 		}
 
 		// Check if this is a well-known ConfigMap name
