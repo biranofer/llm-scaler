@@ -264,8 +264,9 @@ func registrySourcedVariants(ctx context.Context, reg *registry.Registry) []wvav
 					Kind:       defaulted(target.Kind, constants.DeploymentKind),
 					Name:       target.Name,
 				},
-				ModelID:     meta.ModelID,
-				MinReplicas: target.MinReplicas,
+				ModelID:       meta.ModelID,
+				ScalingPolicy: meta.ScalingPolicy,
+				MinReplicas:   target.MinReplicas,
 				// MaxReplicas is a plain int32 on the spec, and enrichment always
 				// resolves one (KEDA's own default fills an omitted
 				// maxReplicaCount), so a nil here means the entry has not been

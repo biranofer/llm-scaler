@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -75,13 +77,49 @@ func resolveSaturationConfig(
 	configMap map[string]config.SaturationScalingConfig,
 	modelID, namespace string,
 ) config.SaturationScalingConfig {
+	return resolveSaturationConfigForPolicy(configMap, modelID, namespace, "")
+}
+
+// resolveSaturationConfigForPolicy resolves the effective entry, layering the
+// named policy tier the variant selected between the cluster default and any
+// per-model override:
+//
+//	default entry            fleet-wide fallback
+//	  ▼ overridden by
+//	named policy tier        the variant's scalingPolicy, or defaultPolicy
+//	  ▼ overridden by
+//	{modelID}#{namespace}    per-model override, most specific
+//
+// Most specific wins, per docs/proposals/wva-keda-external-scaler.md §7.5. The
+// per-model override stays the innermost layer so existing configs keep working
+// while tiers are adopted: a fleet moves to policies model by model, not all at
+// once.
+//
+// An unknown policy name resolves to the default entry — the same outcome as
+// naming none, which is the right behaviour but a bad silence, so the caller
+// reports it (see policyResolution).
+func resolveSaturationConfigForPolicy(
+	configMap map[string]config.SaturationScalingConfig,
+	modelID, namespace, policy string,
+) config.SaturationScalingConfig {
 	// Start with default config as base
 	base := config.SaturationScalingConfig{}
-	if defaultCfg, ok := configMap["default"]; ok {
+	if defaultCfg, ok := configMap[config.GlobalDefaultsKey]; ok {
 		base = defaultCfg
 	}
+	// Overlay the named policy tier, falling back to the cluster's defaultPolicy.
+	// Read from the DEFAULT entry only: a fleet-wide fallback chosen by a policy or
+	// a per-model entry would be that entry choosing for everyone but itself.
+	if policy == "" {
+		policy = base.DefaultPolicy
+	}
+	if policy != "" {
+		if tier, ok := configMap[policy]; ok && config.PolicyEntryKey(policy) {
+			base.Merge(tier)
+		}
+	}
 	// Overlay model-specific override if present (non-zero fields win)
-	if override, ok := configMap[modelID+"#"+namespace]; ok {
+	if override, ok := configMap[config.ModelOverrideKey(modelID, namespace)]; ok {
 		base.Merge(override)
 	}
 	base.ApplyDefaults()
@@ -112,6 +150,11 @@ type Engine struct {
 	// vaEventTracker tracks whether a K8S event has been issued for a variant in an optimization cycle.
 	// Key is namespace/name from utils.GetNamespacedKey.
 	vaEventTracker map[string]bool
+
+	// policies reports which scaling policy tier each model resolved to, and the
+	// two ways that resolution goes wrong silently — an unknown tier name, and one
+	// model's variants naming different tiers. Change-throttled; see policyReporter.
+	policies *policyReporter
 
 	Config *config.Config // Unified configuration (injected from main.go)
 
@@ -266,6 +309,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, recorder, podLocator),
 		ScaleToZeroEnforcer:     pipeline.NewEnforcer(requestCountFunc),
 		GPULimiter:              gpuLimiter,
+		policies:                newPolicyReporter(),
 		metricsRegistry:         metricsRegistry,
 		saturationV2Analyzer:    satV2,
 		capacityStore:           capacityStore,
@@ -793,12 +837,60 @@ func (e *Engine) recordScalingEvent(
 	}
 }
 
-// Resolve saturation config and record config metrics
-func (e *Engine) resolveSaturationConfig(
+// resolveModelPolicy resolves the effective config for a model, layering in the
+// policy tier its variants selected via trigger metadata.
+//
+// The policy is resolved for the MODEL, not per variant, because that is the unit
+// WVA scales: the optimizer distributes the model's replicas across its variants
+// against one set of thresholds. Variants that disagree are a configuration error,
+// reported and resolved deterministically rather than silently half-applied.
+func (e *Engine) resolveModelPolicy(
+	ctx context.Context,
 	configMap map[string]config.SaturationScalingConfig,
 	modelID, namespace string,
+	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
 ) config.SaturationScalingConfig {
-	return resolveSaturationConfig(configMap, modelID, namespace)
+	policy, conflicting := modelPolicy(vas)
+	if len(conflicting) > 1 {
+		e.policies.reportPolicyConflict(ctx, namespace, modelID, conflicting, policy)
+	}
+
+	// A named-but-absent tier resolves to the default entry, which is the right
+	// outcome and the wrong silence — report it against the variants that asked.
+	if policy != "" {
+		if _, ok := configMap[policy]; !ok || !config.PolicyEntryKey(policy) {
+			known := slices.Sorted(maps.Keys(config.ScalingPolicies(configMap)))
+			for i := range vas {
+				if vas[i].Spec.ScalingPolicy == policy {
+					e.policies.reportUnknownPolicy(ctx, namespace, vas[i].Name, policy, known)
+				}
+			}
+		}
+	}
+
+	resolved := resolveSaturationConfigForPolicy(configMap, modelID, namespace, policy)
+	e.policies.reportEffectivePolicy(ctx, namespace, modelID, policy, resolved)
+	return resolved
+}
+
+// modelPolicy returns the policy tier a model scales under, plus every distinct
+// tier its variants named when they disagree.
+//
+// Ties break on the lexicographically smallest name so a conflict resolves the
+// same way on every cycle and every replica of the controller: an allocation that
+// flips between tiers as map order changes would be worse than either tier.
+func modelPolicy(vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling) (string, []string) {
+	var named []string
+	for i := range vas {
+		if p := vas[i].Spec.ScalingPolicy; p != "" && !slices.Contains(named, p) {
+			named = append(named, p)
+		}
+	}
+	if len(named) == 0 {
+		return "", nil
+	}
+	slices.Sort(named)
+	return named[0], named
 }
 
 // selectV2Optimizer chooses the optimizer and GPU constraints for a V2
@@ -956,7 +1048,7 @@ func (e *Engine) optimizeV2(
 			continue
 		}
 
-		saturationConfig := e.resolveSaturationConfig(saturationConfigMap, modelID, namespace)
+		saturationConfig := e.resolveModelPolicy(ctx, saturationConfigMap, modelID, namespace, modelVAs)
 		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
 		if err != nil {
 			msg := "Model data preparation failed"

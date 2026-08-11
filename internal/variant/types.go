@@ -29,6 +29,12 @@ type VariantAutoscalingSpec struct {
 	// ModelID specifies the unique identifier of the model to be autoscaled.
 	ModelID string `json:"modelID"`
 
+	// ScalingPolicy names the reusable policy tier this variant scales under
+	// (e.g. "interactive", "batch"), taken from the scaler's trigger metadata.
+	// Empty means the cluster default. Policies carry no model identity, so one
+	// tier serves many models.
+	ScalingPolicy string `json:"scalingPolicy,omitempty"`
+
 	// MinReplicas is the lower bound on the number of replicas for this variant.
 	// A value of 0 enables scale-to-zero when the model is idle.
 	MinReplicas *int32 `json:"minReplicas,omitempty"`

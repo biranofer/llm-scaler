@@ -93,6 +93,15 @@ type SaturationScalingConfig struct {
 	// When nil, the defaults documented on ScaleFromZeroEnvelope apply.
 	ScaleFromZero *ScaleFromZeroEnvelope `yaml:"scaleFromZero,omitempty"`
 
+	// DefaultPolicy names the policy tier a variant scales under when its scaler's
+	// trigger metadata names none. Honored only on the cluster "default" entry —
+	// it is a fleet-wide fallback, so a policy or a per-model entry declaring one
+	// would be choosing a default for everyone but itself.
+	//
+	// Empty means no fallback tier: such a variant scales under the "default" entry
+	// alone.
+	DefaultPolicy string `yaml:"defaultPolicy,omitempty"`
+
 	// Limiters is the sole source that selects the GPU limiter for the scaling
 	// pipeline; it is applied live (no restart) and is honored only on the cluster
 	// "default" entry (a budget-scope setting, like EnableRescale). A limiters list

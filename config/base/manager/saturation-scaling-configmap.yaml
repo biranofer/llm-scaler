@@ -86,6 +86,52 @@ data:
   #     - type: saturation
   #       parameters: { scaleUpThreshold: 0.95 }
   #
+  # ---------------------------------------------------------------------------
+  # Named scaling policies (tiers) — docs/proposals/wva-keda-external-scaler.md §7.5
+  # ---------------------------------------------------------------------------
+  #
+  # A policy is a reusable TIER, not a per-model entry: it carries no model_id and
+  # no namespace. A variant selects one with `scalingPolicy` in its ScaledObject
+  # trigger metadata, so one tier serves many models and retuning it is a single
+  # edit rather than an edit per model.
+  #
+  # Entry keys distinguish the three kinds:
+  #   default                 this cluster default entry
+  #   {modelID}#{namespace}   a per-model override (contains "#")
+  #   anything else           a named policy tier
+  #
+  # Resolution, most specific winning:
+  #   default entry → named policy tier → {modelID}#{namespace} override
+  #
+  # Policies may set thresholds, priority, scaleToZero and analyzer selection.
+  # They may NOT set limiters or quotas — those are cluster-scope and read only
+  # from the `default` entry, so a tenant cannot grant themselves capacity by
+  # naming a policy.
+  #
+  # A variant naming a tier that does not exist scales under the `default` entry
+  # and WVA logs it. Set `defaultPolicy:` on the `default` entry above to give
+  # variants that name none a fleet-wide fallback tier.
+  #
+  # interactive: |
+  #   scaleUpThreshold: 0.60      # scale out sooner; latency over cost
+  #   scaleDownBoundary: 0.45
+  #   priority: 2.0
+  #   scaleToZero: { enabled: false }
+  #
+  # batch: |
+  #   scaleUpThreshold: 0.95      # pack hard; throughput over latency
+  #   priority: 0.5
+  #   scaleToZero: { enabled: true, retentionPeriod: 2m }
+  #
+  # ...selected from the workload's ScaledObject:
+  #
+  #   triggers:
+  #     - type: external
+  #       metadata:
+  #         scalerAddress: wva-external-scaler.workload-variant-autoscaler-system:9090
+  #         modelID: meta/llama-70b
+  #         scalingPolicy: interactive
+  #
   # Cluster GPU limiter — the sole source that selects the limiter, applied live
   # (no restart) and honored ONLY on this `default` entry (a cluster-budget scope,
   # like enableRescale). Zero or more entries, per the ScalingPolicy schema

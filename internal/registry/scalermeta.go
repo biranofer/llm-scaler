@@ -26,6 +26,23 @@ const (
 	// read that would otherwise resolve it from scaleTargetRef.name. Optional.
 	VariantNameKey = "variantName"
 
+	// ScalingPolicyKey names the scaling policy — a reusable TIER such as
+	// "interactive", "standard" or "batch" — whose thresholds, analyzer selection
+	// and scale-to-zero settings this variant scales under. Optional; when absent
+	// the cluster default entry's defaultPolicy applies, and failing that the
+	// default entry alone.
+	//
+	// The policy is named, not described, precisely so it is reusable: policies
+	// carry no model identity, so one tier serves many models and changing the tier
+	// changes all of them at once. That is what per-(model, namespace) config keys
+	// cannot express — they bind settings to identity, so a fleet-wide change is an
+	// edit per model.
+	//
+	// It rides trigger metadata because the trigger is already the registration:
+	// selecting by policy name needs nothing watched, listed, or matched, unlike
+	// resolving policy from an InferencePool's selector.
+	ScalingPolicyKey = "scalingPolicy"
+
 	// ScalerAddressKey is KEDA's own key naming this scaler's address. It is
 	// consumed by KEDA, never by WVA; named here only so it is not mistaken for a
 	// WVA key when reading a trigger.
@@ -47,6 +64,9 @@ type Meta struct {
 	// VariantName overrides the scale-target name, or is empty to resolve it from
 	// the ScaledObject.
 	VariantName string
+	// ScalingPolicy names the reusable policy tier this variant scales under, or
+	// is empty to take the cluster default.
+	ScalingPolicy string
 }
 
 // ParseMeta validates a trigger's metadata.
@@ -74,8 +94,9 @@ func ParseMeta(metadata map[string]string) (Meta, error) {
 	}
 
 	return Meta{
-		ModelID:     modelID,
-		VariantCost: cost,
-		VariantName: metadata[VariantNameKey],
+		ModelID:       modelID,
+		VariantCost:   cost,
+		VariantName:   metadata[VariantNameKey],
+		ScalingPolicy: metadata[ScalingPolicyKey],
 	}, nil
 }
