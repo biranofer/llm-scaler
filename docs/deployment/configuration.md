@@ -54,6 +54,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `KEDA_CHART_VERSION` | KEDA Helm chart version | `2.19.0` |
 | `UNDEPLOY` | Remove instead of install (`install.sh` doubles as the uninstaller) | `false` |
 | `DELETE_NAMESPACES` | With `UNDEPLOY=true`, also delete the namespaces | `false` |
+| `WVA_REPLICAS` | Controller replicas. The manifest already elects a leader, so extra replicas are **warm standbys, not extra throughput** — only the leader runs the optimization loops. Two turns a node drain from "no decisions until rescheduled" into a lease timeout | `1` |
 | `UNDEPLOY_SHARED` | With `UNDEPLOY=true`, also remove Prometheus, the scaler backend and EPP. **Off by default**: they are shared, this install may not have created them, and removing them takes out everything else on the cluster that uses them | `false` |
 
 > `make deploy-e2e-infra` passes `ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED)`,
@@ -154,6 +155,60 @@ shipped default and **exits at startup** if nothing answers there
 | `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` | Connect without verifying the server certificate | `true` in the shipped config |
 | `DEPLOY_PROMETHEUS` | Deploy a Prometheus stack. `false` to use yours | `true` |
 | `DEPLOY_LLMD_NS` | Create the llm-d namespace. `false` when llm-d runs elsewhere — an empty one looks like the place to deploy models, and WVA would not be watching it | `true` |
+
+## Living beside what the cluster already has
+
+**KEDA is never overwritten.** On `kubernetes` and `openshift` the install does not
+Helm-install KEDA at all — it checks that `scaledobjects.keda.sh` exists and fails
+with instructions if it does not. Your KEDA, its version and its configuration are
+untouched. `KEDA_HELM_INSTALL=true` is the opt-in that would install one; even then
+it skips when a working KEDA (CRD + running operator + metrics APIService) is
+already there. `SCALER_BACKEND=none` skips the check entirely.
+
+**Uninstalling WVA does not uninstall KEDA, Prometheus or EPP.** Removing WVA is the
+job; removing what WVA was pointed at is a separate decision, and an explicit one —
+`UNDEPLOY_SHARED=true`.
+
+**A second WVA is refused** unless you give it a `CONTROLLER_INSTANCE` — see
+[One WVA per cluster](existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-managing-the-same-workloads).
+
+## Adding a model later
+
+Deploy the model server, then re-run:
+
+```bash
+make scaledobjects-apply LLMD_NS=<your namespace>
+```
+
+It creates a ScaledObject for the **new** workload and leaves every existing one
+alone — a workload that already has one is reported as such and skipped, so this is
+safe to run as often as you like:
+
+```
+[SUCCESS]   llm-d-sim/model-new (Deployment) -> ScaledObject model-new-wva (modelID: org/new-model)
+[SUCCESS] Default ScaledObjects: 1 created, 1 not applied
+```
+
+Use `make scaledobjects-plan` first if you want to see the list before anything is
+created. Nothing about the controller needs restarting or reconfiguring: it learns
+about the workload from the first KEDA call.
+
+## High availability
+
+The controller elects a leader (`--leader-elect=true`, with tunable lease, renew and
+retry durations), so more than one replica is safe — but the extra replicas are
+**standbys**. Only the leader runs the collection and optimization loops; the others
+wait on the lease.
+
+```bash
+make deploy-wva-on-k8s WVA_REPLICAS=2
+```
+
+What that buys is failover: a node drain or a crash costs you a lease timeout rather
+than the time to reschedule a pod. What it does not buy is throughput — WVA's cycle
+is one process reasoning about the whole fleet at once, deliberately, because a GPU
+budget cannot be split across controllers that cannot see each other's decisions. To
+divide the work, partition the fleet with `CONTROLLER_INSTANCE` instead.
 
 ## Advanced
 

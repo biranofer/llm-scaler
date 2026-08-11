@@ -147,6 +147,9 @@ DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}
 # default: those are shared, this install may not have created them, and removing
 # them takes out every other thing on the cluster that uses them.
 UNDEPLOY_SHARED=${UNDEPLOY_SHARED:-false}
+# Controller replicas. Leader-elected, so extras are warm standbys for failover,
+# not extra throughput — only the leader runs the optimization loops.
+WVA_REPLICAS=${WVA_REPLICAS:-1}
 
 # Orchestration lives in deploy/lib/install_core.sh (keeps this entrypoint to variable defaults + sourcing only).
 main "$@"

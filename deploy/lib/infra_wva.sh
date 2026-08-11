@@ -120,6 +120,29 @@ EOF
     # lingers, and `undeploy` removes both.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
+    # WVA_REPLICAS runs the controller with a warm standby.
+    #
+    # The manifest already sets --leader-elect=true, and cmd/main.go exposes the
+    # lease/renew/retry durations, so the capability was there — the Deployment just
+    # had no replicas field (defaulting to 1) and the installer no way to set one.
+    #
+    # This is FAILOVER, not throughput: only the leader runs the optimization loops,
+    # and the standbys sit on the lease doing nothing until it lapses. Two replicas
+    # turn a node drain or a crash from "no scaling decisions until the pod is
+    # rescheduled" into a lease timeout.
+    if [ -n "${WVA_REPLICAS:-}" ] && [ "${WVA_REPLICAS}" != "1" ]; then
+        log_info "Controller replicas: $WVA_REPLICAS (leader-elected; standbys take over on failure, they do not share the work)"
+        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- patch: |-
+    - op: add
+      path: /spec/replicas
+      value: ${WVA_REPLICAS}
+  target:
+    kind: Deployment
+    name: wva-controller-manager
+EOF
+    fi
+
     # CONTROLLER_INSTANCE partitions one cluster across several controllers: an
     # instance manages only the workloads whose ScaledObject carries
     # wva.llmd.ai/controller-instance with its name (see
