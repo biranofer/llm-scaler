@@ -57,6 +57,31 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 > lead without cluster rights cannot install it themselves; a cluster admin does the
 > install, and the tenant gets a controller that only touches their namespace.
 
+#### If you are a namespace admin, not a cluster admin
+
+You cannot install WVA yourself, and no combination of flags changes that — the
+overlays create cluster-scoped RBAC, and creating it is the permission you do not
+have. `./deploy/install.sh --check` will tell you so before anything is created.
+
+What to hand your cluster admin. The second form is better for both of you: the
+controller lives in a namespace you do not administer, so nothing you do to your
+own namespace can break it — and its GPU bound is one you cannot lift, which is
+what lets an admin grant you a bigger one with confidence.
+
+```bash
+# simplest: controller runs inside your namespace
+make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace>
+
+# better: controller runs outside it, manages yours
+make deploy-wva-on-k8s WVA_SCOPE=namespace \
+  WVA_NS=wva-<your-namespace> \
+  WVA_WATCH_NS=<your-namespace>
+```
+
+Everything after the install is yours: you create the ScaledObjects that register
+your workloads, and you set thresholds and policy tiers. See
+[After the install](operations.md).
+
 ### How many WVAs a cluster has
 
 WVA installs at one of two scopes, and a cluster uses one shape or the other:
@@ -188,10 +213,15 @@ bash install.sh [OPTIONS]
 
 Options:
   -i, --wva-image IMAGE    WVA container image (default: ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest)
+  -c, --check              Run the prerequisite and permission checks, then exit
   -u, --undeploy           Undeploy WVA, monitoring, and scaler (not llm-d)
   -e, --environment ENV    kubernetes | openshift | kind-emulator
   -h, --help               Show help
 ```
+
+`--check` is what `make check-prereqs` runs. Use it before a real install: it
+verifies the tools, the cluster connection, and that you can create everything the
+install produces — the last of which is the usual reason an install dies halfway.
 
 **llm-d stack** (gateway, EPP, ModelService): deploy using the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) directly. For EPP-only setup (llm-d-router-standalone chart + tokenreview RBAC), use `deploy/install-epp.sh` after `install.sh`.
 

@@ -17,6 +17,8 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
+| `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
+| `WVA_POLICY_NS` | Admin-owned namespace to read limiters and quotas from, instead of the controller's own. A guardrail, not a boundary — read [Read this before relying on it](gpu-limiter.md#read-this-before-relying-on-it) | the controller's own namespace |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
 ## Image
