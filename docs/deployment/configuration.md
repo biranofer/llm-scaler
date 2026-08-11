@@ -15,7 +15,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](installation.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 | `CONTROLLER_INSTANCE` | Instance name for running several WVAs on one cluster | `""` (single instance) |
@@ -118,6 +118,8 @@ do is also reachable through plan-then-apply, which does not.
 | `WVA_DEFAULT_SO_PLAN` | An existing file is applied as-is, edits included. Otherwise, where the generated plan is written | a temp file |
 | `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on generated objects. Not `0` even with scale-to-zero on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
 | `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
+| `WVA_DEFAULT_SO_ADOPT` | Repoint a workload's **existing** ScaledObject at WVA instead of leaving it alone. Patches only its `triggers`; envelope and behavior are untouched, and no second object is created | `false` |
+| `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
 
 Set them on a deploy to do this during install:
 
@@ -136,6 +138,20 @@ mis-scales both.
 Generated objects use an `external-push` trigger, so KEDA holds a stream open and
 WVA pushes activation the moment it decides — the difference between waking a
 parked workload in about the detection interval and waiting out a poll.
+
+## Pointing at an existing Prometheus
+
+Required whenever this install did not deploy Prometheus itself. `PROMETHEUS_URL`
+is written into the controller's config; without it the controller keeps the
+shipped default and **exits at startup** if nothing answers there
+(`CRITICAL: Failed to connect to Prometheus`).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PROMETHEUS_URL` | Full base URL, e.g. `https://prom.monitoring.svc.cluster.local:9090` | the kube-prometheus-stack this install deploys |
+| `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` | Connect without verifying the server certificate | `true` in the shipped config |
+| `DEPLOY_PROMETHEUS` | Deploy a Prometheus stack. `false` to use yours | `true` |
+| `DEPLOY_LLMD_NS` | Create the llm-d namespace. `false` when llm-d runs elsewhere — an empty one looks like the place to deploy models, and WVA would not be watching it | `true` |
 
 ## Advanced
 

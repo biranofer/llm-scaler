@@ -114,10 +114,17 @@ so_target_namespaces() {
 # workload. Never adopt or overwrite one: it may be hand-tuned or GitOps-managed,
 # and two ScaledObjects on one target is two HPAs fighting over a replica count.
 scaledobject_exists() {
+    [ -n "$(so_existing_name "$1" "$2")" ]
+}
+
+# so_existing_name echoes the name of the ScaledObject already targeting a
+# workload, if any. Adoption has to patch THAT object: creating our own alongside
+# it would put two ScaledObjects on one target, which is two HPAs writing the same
+# replica count — the exact failure the skip-by-default exists to avoid.
+so_existing_name() {
     local ns="$1" target="$2"
-    kubectl get scaledobject -n "$ns" \
-        -o jsonpath='{range .items[*]}{.spec.scaleTargetRef.name}{"\n"}{end}' 2>/dev/null \
-        | grep -qx "$target"
+    kubectl get scaledobject -n "$ns" -o go-template='{{range .items}}{{.metadata.name}} {{.spec.scaleTargetRef.name}}{{"\n"}}{{end}}' 2>/dev/null \
+        | awk -v t="$target" '$2 == t {print $1; exit}'
 }
 
 # so_discover writes plan rows to stdout, one per candidate workload. A row is
@@ -147,7 +154,16 @@ so_discover() {
                     model="UNKNOWN"
                 fi
                 if scaledobject_exists "$ns" "$name"; then
-                    apply=no; note="already has a ScaledObject"
+                    # Default is to leave it: it may be hand-tuned or
+                    # GitOps-managed. WVA_DEFAULT_SO_ADOPT=true says you want it
+                    # pointed at WVA, which is the case when you are adding WVA to
+                    # a cluster whose workloads are already scaled by something
+                    # else. The row is still yours to flip either way.
+                    if [ "${WVA_DEFAULT_SO_ADOPT:-false}" = "true" ]; then
+                        note="has a ScaledObject; will be UPDATED to use WVA (WVA_DEFAULT_SO_ADOPT=true)"
+                    else
+                        apply=no; note="already has a ScaledObject; set WVA_DEFAULT_SO_ADOPT=true to point it at WVA instead"
+                    fi
                 fi
                 pool=$(so_pool "$ns" "$labels")
                 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -185,7 +201,23 @@ so_apply_plan() {
             log_warning "  $ns/$name: marked yes but modelID is UNKNOWN — skipping rather than guessing"
             skipped=$((skipped + 1)); continue
         fi
-        if render_default_scaledobject "$ns" "$kind" "$name" "$model" "$scaler_addr" \
+        local existing
+        existing=$(so_existing_name "$ns" "$name")
+        if [ -n "$existing" ]; then
+            # Adoption: replace the triggers on the object that is already there,
+            # leaving its envelope, behavior and everything else alone. Whoever
+            # tuned min/max and stabilization had reasons; the only thing being
+            # changed is who decides the count.
+            if kubectl patch scaledobject "$existing" -n "$ns" --type=merge \
+                -p "$(so_trigger_patch "$model" "$scaler_addr")" > /dev/null; then
+                log_success "  $ns/$name ($kind) -> UPDATED existing ScaledObject $existing to scale on WVA (modelID: $model)"
+                created=$((created + 1))
+            else
+                log_warning "  $ns/$name: failed to update ScaledObject $existing"
+            fi
+            continue
+        fi
+        if render_scaledobject "$ns" "$kind" "$name" "$model" "$scaler_addr" \
             "${min:-1}" "${max:-10}" | kubectl apply -f - > /dev/null; then
             log_success "  $ns/$name ($kind) -> ScaledObject ${name}-wva (modelID: $model)"
             created=$((created + 1))
@@ -249,6 +281,57 @@ install_default_scaledobjects() {
     esac
 
     so_apply_plan "$plan"
+}
+
+# so_trigger_patch prints the merge patch that repoints an existing ScaledObject at
+# WVA. Triggers only: the envelope, behavior and everything else on that object
+# stay as whoever tuned them left them.
+#
+# `triggers` is a list, so a merge patch REPLACES it wholesale — which is what is
+# wanted. An object scaled by a prometheus or cpu trigger must stop being scaled by
+# it, or two scalers feed one HPA and the larger answer silently wins.
+so_trigger_patch() {
+    local model="$1" scaler_addr="$2"
+    jq -nc --arg m "$model" --arg a "$scaler_addr" \
+        '{spec:{triggers:[{type:"external-push",name:"wva-external-scaler",
+          metadata:{scalerAddress:$a, modelID:$m}}]}}'
+}
+
+# render_scaledobject prints one ScaledObject: the shipped shape, or yours.
+#
+# WVA_DEFAULT_SO_TEMPLATE=<file> substitutes your own template instead, so a fleet
+# with house conventions — fallback policy, stabilization windows, labels its
+# tooling expects — gets those rather than a shape it then has to edit back.
+# Placeholders, all optional:
+#
+#   {{NAMESPACE}} {{NAME}} {{KIND}} {{APIVERSION}} {{MODEL_ID}}
+#   {{SCALER_ADDRESS}} {{MIN}} {{MAX}}
+#
+# Substitution is literal, so a template is also just a valid manifest with the
+# placeholders written in — you can `kubectl apply` it by hand to check the shape
+# before letting the installer fill it in for every model server you have.
+render_scaledobject() {
+    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7"
+    local api="apps/v1"
+    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+
+    local tmpl="${WVA_DEFAULT_SO_TEMPLATE:-}"
+    if [ -n "$tmpl" ]; then
+        if [ ! -f "$tmpl" ]; then
+            log_error "WVA_DEFAULT_SO_TEMPLATE=$tmpl does not exist"
+        fi
+        sed -e "s|{{NAMESPACE}}|${ns}|g" \
+            -e "s|{{NAME}}|${target}|g" \
+            -e "s|{{KIND}}|${kind}|g" \
+            -e "s|{{APIVERSION}}|${api}|g" \
+            -e "s|{{MODEL_ID}}|${model}|g" \
+            -e "s|{{SCALER_ADDRESS}}|${scaler_addr}|g" \
+            -e "s|{{MIN}}|${min}|g" \
+            -e "s|{{MAX}}|${max}|g" \
+            "$tmpl"
+        return
+    fi
+    render_default_scaledobject "$ns" "$kind" "$target" "$model" "$scaler_addr" "$min" "$max"
 }
 
 # render_default_scaledobject prints one ScaledObject.

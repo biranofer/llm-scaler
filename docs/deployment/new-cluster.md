@@ -1,8 +1,13 @@
-# Installing WVA
+# Installing on a new cluster
 
-The two install methods, and the four decisions each one takes.
+The full stack: WVA, Prometheus, KEDA, and the namespaces to run llm-d in. Use this
+when you are building a cluster up from nothing, or standing up a test environment.
 
 > Part of the [WVA deployment guide](../../deploy/README.md).
+>
+> **Already running llm-d?** Do not use this page — it deploys a Prometheus and an
+> llm-d namespace you do not want. See
+> [Adding WVA to a cluster that already runs llm-d](existing-cluster.md).
 
 ## Choosing your install
 
@@ -182,7 +187,7 @@ export DEPLOY_LWS=true
 Install the WVA controller directly into an existing cluster using Kustomize. This is the recommended method when you already have Prometheus and want to manage the controller install without the full automated script.
 
 Scope, namespace and limiter are the same four decisions as above — see
-[Choosing your install](installation.md#choosing-your-install). This method just applies the
+[Choosing your install](new-cluster.md#choosing-your-install). This method just applies the
 overlays by hand instead of through `make`.
 
 #### Applying the overlays directly

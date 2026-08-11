@@ -141,26 +141,26 @@ EOF
         kubectl delete prometheusrule controller-manager-alerts -n "$WVA_NS" --ignore-not-found=true
     fi
 
+    # Point the controller at THIS cluster's Prometheus.
+    #
+    # PROMETHEUS_URL used to be accepted, logged, and then dropped: the shipped
+    # ConfigMap hardcodes a kube-prometheus-stack address in the monitoring
+    # namespace and nothing ever overwrote it. Installing against a Prometheus this
+    # script did not deploy therefore produced a controller that could not reach
+    # one — and WVA exits on that ("CRITICAL: Failed to connect to Prometheus"), so
+    # it presented as CrashLoopBackOff, reading like a cluster fault rather than a
+    # setting that was silently ignored.
+    if [ -n "${PROMETHEUS_URL:-}" ]; then
+        log_info "Pointing WVA at Prometheus: $PROMETHEUS_URL"
+        patch_manager_config ".PROMETHEUS_BASE_URL = \"$PROMETHEUS_URL\""
+    fi
+    if [ -n "${PROMETHEUS_TLS_INSECURE_SKIP_VERIFY:-}" ]; then
+        patch_manager_config ".PROMETHEUS_TLS_INSECURE_SKIP_VERIFY = \"${PROMETHEUS_TLS_INSECURE_SKIP_VERIFY}\""
+    fi
+
     if [ "${ENABLE_SCALE_TO_ZERO:-false}" = "true" ]; then
         log_info "Enabling scale-to-zero in WVA ConfigMap (ENABLE_SCALE_TO_ZERO=true)..."
-        # Flip WVA_SCALE_TO_ZERO inside data["config.yaml"] — the file the
-        # controller actually reads (mounted at /etc/wva/config.yaml).
-        # Patch only that single field so we don't echo back server-managed
-        # metadata (resourceVersion, managedFields, etc.). Use yq so the edit
-        # is idempotent and tolerates quoting/whitespace variance — sed would
-        # silently fail to match e.g. unquoted or single-quoted values.
-        local current_config
-        current_config=$(kubectl get configmap wva-manager-config -n "$WVA_NS" \
-            -o jsonpath='{.data.config\.yaml}')
-        if [ -z "$current_config" ]; then
-            log_error "ConfigMap wva-manager-config has no data['config.yaml'] key"
-        fi
-
-        local updated_config
-        updated_config=$(echo "$current_config" | yq '.WVA_SCALE_TO_ZERO = "true"')
-
-        kubectl patch configmap wva-manager-config -n "$WVA_NS" --type=merge \
-            -p "$(jq -n --arg cfg "$updated_config" '{data:{"config.yaml":$cfg}}')"
+        patch_manager_config '.WVA_SCALE_TO_ZERO = "true"'
     fi
 
     # Declare a GPU limiter, if asked.
@@ -230,10 +230,40 @@ EOF
 
 # Shared namespace creation loop for deploy/*/install.sh environment plugins.
 # Platform adapter provides materialize_namespace(ns), then calls this helper.
+# patch_manager_config applies one yq expression to data["config.yaml"] of the
+# manager ConfigMap — the file the controller actually reads, mounted at
+# /etc/wva/config.yaml.
+#
+# Patches that one key rather than replacing the object, so nothing echoes back
+# server-managed metadata (resourceVersion, managedFields). yq rather than sed
+# because the edit must be idempotent and survive quoting and whitespace variance:
+# sed would silently fail to match an unquoted or single-quoted value and leave the
+# setting untouched, which is the failure mode hardest to notice.
+patch_manager_config() {
+    local expr="$1" current updated
+    current=$(kubectl get configmap wva-manager-config -n "$WVA_NS" \
+        -o jsonpath='{.data.config\.yaml}')
+    if [ -z "$current" ]; then
+        log_error "ConfigMap wva-manager-config has no data['config.yaml'] key"
+    fi
+    updated=$(echo "$current" | yq "$expr")
+    kubectl patch configmap wva-manager-config -n "$WVA_NS" --type=merge \
+        -p "$(jq -n --arg cfg "$updated" '{data:{"config.yaml":$cfg}}')"
+}
+
 create_namespaces_shared_loop() {
     log_info "Creating namespaces..."
 
-    for ns in $WVA_NS $MONITORING_NAMESPACE $LLMD_NS; do
+    # Only namespaces this run actually puts something in. Creating the others
+    # leaves empty namespaces behind on a cluster that already had its own —
+    # llm-d's workloads are somewhere else, and its Prometheus is not ours to
+    # place — and an empty llm-d namespace is worse than absent: it looks like the
+    # place to deploy models, and WVA is not watching it.
+    local wanted="$WVA_NS"
+    [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] && wanted="$wanted $MONITORING_NAMESPACE"
+    [ "${DEPLOY_LLMD_NS:-true}" = "true" ] && wanted="$wanted $LLMD_NS"
+
+    for ns in $wanted; do
         local ns_exists=false
         local ns_terminating=false
 
@@ -290,9 +320,19 @@ deploy_wva_prerequisites_kube_like() {
     # watch fails. install-epp.sh installs them again later (idempotent).
     install_inference_crds
 
-    # Extract Prometheus CA certificate (used by the Prometheus Adapter scaler backend).
-    log_info "Extracting Prometheus TLS certificate"
-    kubectl get secret "$PROMETHEUS_SECRET_NAME" -n "$MONITORING_NAMESPACE" -o jsonpath='{.data.tls\.crt}' | base64 -d > "$PROM_CA_CERT_PATH"
+    # Extract the Prometheus CA, if this cluster's Prometheus is one we recognise.
+    #
+    # Guarded, because this script runs under `set -e -o pipefail`: on a cluster
+    # whose Prometheus predates the install — different namespace, different secret
+    # name, or plain HTTP — the unguarded pipe aborted the whole installation over
+    # a certificate that is optional to begin with.
+    if kubectl get secret "$PROMETHEUS_SECRET_NAME" -n "$MONITORING_NAMESPACE" &> /dev/null; then
+        log_info "Extracting Prometheus TLS certificate"
+        kubectl get secret "$PROMETHEUS_SECRET_NAME" -n "$MONITORING_NAMESPACE" \
+            -o jsonpath='{.data.tls\.crt}' | base64 -d > "$PROM_CA_CERT_PATH"
+    else
+        log_warning "No secret $PROMETHEUS_SECRET_NAME in $MONITORING_NAMESPACE — skipping CA extraction. Expected when using a Prometheus this install did not deploy. Point PROMETHEUS_SECRET_NAME/PROMETHEUS_SECRET_NS at yours, or set PROMETHEUS_TLS_INSECURE_SKIP_VERIFY=true to connect without verifying it."
+    fi
 
     # LeaderWorkerSet (WVA dependency; see upstream chart / #910).
     if [ "${DEPLOY_LWS:-true}" = "true" ]; then
