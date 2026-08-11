@@ -106,6 +106,8 @@ source "$DEPLOY_LIB_DIR/infra_wva.sh"
 source "$DEPLOY_LIB_DIR/infra_epp.sh"
 # shellcheck source=lib/infra_monitoring.sh
 source "$DEPLOY_LIB_DIR/infra_monitoring.sh"
+# shellcheck source=lib/single_install.sh
+source "$DEPLOY_LIB_DIR/single_install.sh"
 # shellcheck source=lib/scaledobject.sh
 source "$DEPLOY_LIB_DIR/scaledobject.sh"
 # shellcheck source=lib/cleanup.sh
@@ -118,6 +120,10 @@ UNDEPLOY=${UNDEPLOY:-false}
 # takes, so "make check-prereqs" passing and the install then failing on a
 # prerequisite is not a state these two can reach.
 CHECK_ONLY=${CHECK_ONLY:-false}
+# Allow a second WVA alongside an existing one. Only sensible when each has its own
+# RBAC names and CONTROLLER_INSTANCE; otherwise the newer install silently strips
+# the older one's permissions. See deploy/lib/single_install.sh.
+WVA_ALLOW_COEXIST=${WVA_ALLOW_COEXIST:-false}
 
 # Default ScaledObjects. A ScaledObject is the REGISTRATION — WVA is only asked
 # about workloads KEDA calls it about — so an install with none anywhere is a

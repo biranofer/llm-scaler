@@ -46,6 +46,41 @@ Both work on both platforms — `config/overlays/` carries all four combinations
 The default preserves the historical behaviour: `namespace` on OpenShift,
 `cluster` elsewhere.
 
+### One WVA per cluster, or one per namespace — never two sharing RBAC
+
+WVA installs at one of two scopes, and the install **refuses** to put a second one
+next to an existing install:
+
+```
+[ERROR] WVA is already installed in this cluster: workload-variant-autoscaler-system/wva-controller-manager
+```
+
+This is not fussiness about scope. Every overlay, at either scope, applies the same
+cluster-scoped RoleBindings under fixed names — `wva-manager-rolebinding`,
+`wva-metrics-auth-rolebinding`, `wva-epp-metrics-reader-role-binding`. A
+ClusterRoleBinding's subject list is *replaced* by an apply, so a second install
+repoints all three at its own namespace, and the first controller keeps running
+with its ServiceAccount stripped of permissions: no error at install time, no
+restart, no event — it just starts failing every API call it makes.
+
+Because the bindings are in the shared base, even a namespace-scoped install into
+an unrelated namespace does this to a cluster-scoped one.
+
+So:
+
+| you want | do |
+| --- | --- |
+| to update the WVA you have | install into the **same** `WVA_NS` — that is an upgrade, and is allowed |
+| to move it to another namespace | `make undeploy-wva-on-k8s WVA_NS=<old>` first |
+| one WVA per team | namespace-scoped installs, each with **its own RBAC names** |
+| to partition one fleet across controllers | give each its own RBAC names and `CONTROLLER_INSTANCE`, then `WVA_ALLOW_COEXIST=true` |
+
+`WVA_ALLOW_COEXIST=true` does not make the collision safe — it says you have
+already handled it. It warns, naming the install whose permissions it is about to
+take.
+
+`make check-prereqs` runs this check too, so you can find out before installing.
+
 ### Bounding scaling with a GPU limiter
 
 The shipped configuration declares **no limiter**, so a fresh install scales

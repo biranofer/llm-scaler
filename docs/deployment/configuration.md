@@ -47,6 +47,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `DEPLOY_ALERTING_RULES` | Install the PrometheusRule alerts | `false` |
 | `ENABLE_SCALE_TO_ZERO` | Allow a model to be parked at zero replicas, and enable the EPP `flowControl` gate that makes waking it possible | `true` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
+| `WVA_ALLOW_COEXIST` | Install alongside an existing WVA. Refused by default: the shared ClusterRoleBindings would be repointed and the existing controller left without permissions, silently. Only set it when each install has its own RBAC names and `CONTROLLER_INSTANCE` | `false` |
 | `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
 | `KEDA_NAMESPACE` | Namespace KEDA is installed in | `keda-system` |
 | `KEDA_HELM_INSTALL` | Install KEDA with Helm rather than assuming it is present | `false` |

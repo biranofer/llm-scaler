@@ -28,6 +28,7 @@ main() {
                 check_specific_prerequisites
             fi
         fi
+        check_single_installation
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi
@@ -55,6 +56,13 @@ main() {
 
     if [ "$SKIP_CHECKS" != "true" ]; then
         check_prerequisites
+    fi
+
+    # Before anything is created: a second install repoints the shared
+    # ClusterRoleBindings and leaves the existing controller without permissions,
+    # which nothing reports.
+    if [ "$DEPLOY_WVA" = "true" ]; then
+        check_single_installation
     fi
 
     set_tls_verification
