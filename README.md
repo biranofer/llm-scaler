@@ -22,6 +22,19 @@ Use cases include:
 - **Intelligent Autoscaling**: Optimizes replica count by observing the current state of the system
 - **Cost Optimization**: Minimizes infrastructure costs by picking the correct accelerator variant
 
+## Installing
+
+| You have | Start here |
+| --- | --- |
+| A cluster with llm-d already running | [Existing llm-d cluster](docs/deployment/existing-cluster.md) |
+| An empty cluster, or you want a demo | [New cluster](docs/deployment/new-cluster.md) |
+| It is installed and you want to run it | [After the install](docs/deployment/operations.md) |
+
+Full options and the flag reference: **[deployment guide](deploy/README.md)**.
+
+Nothing scales until a **KEDA ScaledObject** names WVA's external scaler — the
+install can generate them for what is already running (`make scaledobjects-plan`).
+
 ## Documentation
 
 See the [architecture and autoscaling design](https://llm-d.ai/docs/architecture/advanced/autoscaling) docs for high-level algorithm details.

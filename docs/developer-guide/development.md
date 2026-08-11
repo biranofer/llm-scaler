@@ -328,7 +328,7 @@ After code changes, update relevant docs in:
 - `docs/design/` - Architecture/design changes
 - `docs/integrations/` - Integration guide updates
 
-**Note**: Documentation updates are partially automated via the [Update Docs workflow](agentic-workflows.md#update-docs). The workflow analyzes code changes and creates draft PRs with documentation updates.
+**Note**: Documentation updates are partially automated via the [Update Docs workflow](../../.github/workflows/update-docs.md). The workflow analyzes code changes and creates draft PRs with documentation updates.
 
 ### Testing Documentation
 
@@ -349,7 +349,7 @@ Key workflows:
 - **Create Agentic Workflow**: Interactive workflow designer
 - **Debug Agentic Workflow**: Workflow debugging assistant
 
-See [Agentic Workflows Guide](agentic-workflows.md) for detailed information on working with these automation tools.
+See the workflow definitions under [`.github/workflows/`](../../.github/workflows/) for details on these automation tools.
 
 ## Release Process
 

@@ -235,13 +235,24 @@ export DEPLOY_LWS=true
 ./deploy/install.sh -e kubernetes
 ```
 
-### Method 2: Kustomize (direct controller install)
+### Method 2: Kustomize (GitOps and direct installs)
 
-Install the WVA controller directly into an existing cluster using Kustomize. This is the recommended method when you already have Prometheus and want to manage the controller install without the full automated script.
+The overlays are plain Kustomize, so you can apply them yourself — for Argo CD or
+Flux, or to review exactly what lands. Scope, namespace and limiter are the same
+decisions as above; see [Choosing your install](#choosing-your-install).
 
-Scope, namespace and limiter are the same four decisions as above — see
-[Choosing your install](new-cluster.md#choosing-your-install). This method just applies the
-overlays by hand instead of through `make`.
+**The overlays alone are not a complete install.** `deploy/install.sh` does four
+things around them that the raw apply does not, and each one has bitten somebody:
+
+| What the script does | If you skip it |
+| --- | --- |
+| Writes `PROMETHEUS_URL` into the controller ConfigMap | The controller starts, looks healthy, and reads no metrics — it uses the shipped in-cluster default, which is not your Prometheus |
+| Renames the shared ClusterRoleBindings per install | A second install **takes the bindings from the first**, which silently loses all its permissions |
+| Checks no incompatible WVA is already installed | Two controllers scaling the same workloads |
+| Refuses to delete the namespace and shared ClusterRoles on undeploy | `kubectl delete -k` removes the **Namespace** — taking the model servers in it — and the shared **ClusterRoles**, breaking every other WVA on the cluster |
+
+So use this method when you are installing **one** WVA and wiring Prometheus
+yourself, or when a GitOps tool owns the manifests. Otherwise prefer Method 1.
 
 #### Applying the overlays directly
 
@@ -257,11 +268,36 @@ kubectl apply -k ../../overlays/cluster-scoped/kubernetes
 #             ../../overlays/namespace-scoped/openshift
 ```
 
-#### Undeploy
+Then point the controller at your Prometheus — without this it will not collect
+anything:
 
 ```bash
-kubectl delete -k config/overlays/cluster-scoped/kubernetes    # match the overlay you installed
+kubectl -n workload-variant-autoscaler-system edit configmap wva-manager-config
+# under config.yaml, set:
+#   prometheus:
+#     baseURL: https://<your-prometheus>.<ns>.svc.cluster.local:9090
+kubectl -n workload-variant-autoscaler-system rollout restart deployment wva-controller-manager
 ```
+
+If you will run **more than one** WVA on this cluster, rename the shared
+ClusterRoleBindings in your overlay first — otherwise the second install takes them
+from the first. `deploy/lib/common.sh:wva_append_crb_name_patches` is the patch set
+the script generates; the names are listed in `WVA_SHARED_CLUSTER_ROLE_BINDINGS`.
+
+#### Undeploy
+
+`kubectl delete -k` is **not** the inverse of the apply: the overlay contains a
+Namespace and the shared ClusterRoles, and deleting those takes the workloads in
+that namespace and the permissions of every other WVA with it. Delete the
+install's own objects and leave the shared ones:
+
+```bash
+kubectl kustomize config/overlays/cluster-scoped/kubernetes \
+  | yq 'select(.kind != "Namespace" and .kind != "ClusterRole")' \
+  | kubectl delete -f - --ignore-not-found
+```
+
+Or just use `./deploy/install.sh --undeploy`, which does exactly this.
 
 
 ## Platform-specific guides

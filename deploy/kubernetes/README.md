@@ -64,12 +64,11 @@ This script automates the complete deployment process on kubernetes cluster incl
 # Required: Set your HuggingFace token
 export HF_TOKEN="your-hf-token-here"
 
-# Optional: Customize deployment (basename under llm-d guides/; llm-d main uses optimized-baseline)
-export GUIDE_NAME="optimized-baseline"                                  # Default guide name
-export MODEL_ID="unsloth/Meta-Llama-3.1-8B"                               # Default
-export WVA_IMAGE_REPO="ghcr.io/llm-d/llm-d-workload-variant-autoscaler"         # Default
+# Optional
+export WVA_IMAGE_REPO="ghcr.io/llm-d/llm-d-workload-variant-autoscaler"   # Default
 export WVA_IMAGE_TAG="latest"                                             # Default
-export ACCELERATOR_TYPE="H100"                                            # Auto-detected or default
+export WVA_NS="workload-variant-autoscaler-system"                        # Default
+export WVA_SCOPE="cluster"                                                # cluster | namespace
 ```
 
 ### 2. Run the Deployment Script using Make
@@ -124,21 +123,21 @@ export SCALER_BACKEND=keda                  # Deploy KEDA for external metrics
 
 ```bash
 export HF_TOKEN="hf_xxxxx"
-export DEPLOY_VA=true
-export DEPLOY_HPA=true
 make deploy-wva-on-k8s
 ```
 
-### Example 2: Custom Model and Namespace
+### Example 2: A different namespace
 
 ```bash
 export HF_TOKEN="hf_xxxxx"
-export BASE_NAME="my-inference"
-export MODEL_ID="meta-llama/Llama-2-7b-hf"
-export DEPLOY_VA=true
-export DEPLOY_HPA=true
+export WVA_NS="my-inference"     # where the controller runs
 make deploy-wva-on-k8s
 ```
+
+The model is not chosen here. WVA does not deploy models — it scales the ones
+already running, and it learns which ones from the ScaledObjects that name its
+external scaler. Deploy models with the llm-d guides, then see
+[Default ScaledObjects](../README.md#default-scaledobjects).
 
 ### Example 3: CI-style stack (WVA + llm-d)
 

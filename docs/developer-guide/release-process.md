@@ -25,7 +25,7 @@ A full release typically involves:
    - Once the release is out, the [workload-autoscaling](https://github.com/llm-d/llm-d/tree/main/guides/workload-autoscaling) guide in [llm-d/llm-d](https://github.com/llm-d/llm-d) must be updated to the new WVA version so users get consistent instructions and correct CRD/sample URLs.
 
 3. **Documentation in this repo**  
-   - Changelog and, if needed, [upstream version pins](../upstream-versions.md).
+   - Changelog and, if needed, upstream version pins (`LLM_D_ROUTER_VERSION`, `GAIE_VERSION` in the [Makefile](../../Makefile)).
 
 ---
 
@@ -49,7 +49,7 @@ Do these on the branch you intend to tag (e.g. `main`).
    - If you want the default kustomize install to use the new version, update `config/base/manager/kustomization.yaml`: set `newTag` to the new version (e.g. `v0.5.2`) and commit.  
 
 3. **Upstream dependency pins**  
-   - If this release pins a new version of an upstream dependency (e.g. [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), update [docs/upstream-versions.md](../upstream-versions.md) and the referenced files (e.g. `test/e2e/fixtures/model_service_builder.go`, `test/utils/resources/llmdsim.go`) before releasing.
+   - If this release pins a new version of an upstream dependency (e.g. [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim)), update the version pins in the [Makefile](../../Makefile) and the referenced files (e.g. `test/e2e/fixtures/model_service_builder.go`, `test/utils/resources/llmdsim.go`) before releasing.
 
 ---
 

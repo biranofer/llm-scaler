@@ -120,14 +120,17 @@ export HF_TOKEN="hf_xxxxx"
 make deploy-wva-on-openshift
 ```
 
-### Example 2: Custom Model and Namespace
+### Example 2: A different namespace
 
 ```bash
 export HF_TOKEN="hf_xxxxx"
-export BASE_NAME="my-inference"
-export MODEL_ID="meta-llama/Llama-2-7b-hf"
+export WVA_NS="my-inference"     # where the controller runs
 make deploy-wva-on-openshift
 ```
+
+The model is not chosen here. WVA does not deploy models — it scales the ones
+already running, and it learns which ones from the ScaledObjects that name its
+external scaler.
 
 ### Example 3: CI-style stack (WVA + llm-d)
 

@@ -34,14 +34,97 @@ kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler   | gr
 
 ## Watching what WVA decides
 
-The log lines worth knowing, all at Info:
+WVA writes no custom resource. Its decisions are visible in three places, and you
+want them in this order: the **dashboard** for whether things are healthy, the
+**metrics** for a specific question, the **logs** only for why a single decision
+came out the way it did.
 
-| grep for | tells you |
+### The operational dashboard
+
+The install publishes a Grafana dashboard, *WVA Operational Dashboard*, covering
+the whole pipeline: GPU discovery, metric collection health and freshness,
+saturation, capacity, scaling decisions and limiter impact.
+
+```bash
+kubectl port-forward -n <monitoring-namespace> svc/kube-prometheus-stack-grafana 3000:80
+# then http://localhost:3000  (default admin password: prom-operator)
+```
+
+It ships as a labelled ConfigMap, so **an existing Grafana picks it up too** — you
+do not need to have let this install deploy Prometheus:
+
+```bash
+# publish into whichever namespace your Grafana's sidecar watches
+DASHBOARD_NS=my-monitoring ./deploy/install.sh   # DEPLOY_PROMETHEUS=false is fine
+```
+
+Skip it entirely with `DEPLOY_OPERATIONAL_DASHBOARD=false`.
+
+Read the panels top-down. The upper row answers "is WVA seeing the cluster at all";
+until those are healthy, the scaling panels below them are meaningless.
+
+### The metrics that answer specific questions
+
+All are exposed by the controller and scraped by the ServiceMonitor the install
+creates. Full list: [Prometheus metrics](../developer-guide/prometheus.md).
+
+**Is WVA working at all?**
+
+| metric | healthy | what it means when it is not |
+| --- | --- | --- |
+| `wva_models_processed` | > 0 | no workload has registered — no ScaledObject names this scaler |
+| `wva_metrics_pods_discovered` | > 0 per model | WVA cannot find the pods behind a model |
+| `wva_metrics_freshness_status{status="fresh"}` | equals the pod count | pods sitting in `status="stale"` or `"missing"` are being decided on with old data, or none at all |
+| `wva_errors_total` | flat | rising means the optimization cycle is failing |
+
+`wva_metrics_freshness_status` is a per-`(variant_name, status)` gauge holding *how
+many pods* are in that state — not a 0/1 flag. Compare the series:
+
+```promql
+wva_metrics_freshness_status{status!="fresh"} > 0
+```
+
+**Why is nothing scaling up?** — the two silent-stall causes, both of which look
+like "WVA is fine" everywhere else:
+
+| metric | meaning |
 | --- | --- |
-| `scaling-decision` | what WVA decided for a model, and the replica counts |
-| `Effective scaling policy` | which policy tier a model resolved to |
-| `Collected replica metrics` | metrics are arriving |
-| `GPU limiter (re)built from config` | a `limiters:` edit took effect, live |
+| `wva_node_access_denied` | `1` = a GPU limiter is configured but nodes are unreadable. Every variant gets no budget and **will not scale up**. |
+| `wva_decisions_limited_total` | rising = a limiter is capping decisions. Pair with `wva_available_gpus` and `wva_spare_capacity`. |
+| `wva_unattributed_gpus` | GPUs in use that could not be charged to a pool — usually a workload whose accelerator did not resolve |
+
+**Is the decision itself sane?** — `wva_desired_replicas` vs `wva_current_replicas`,
+with `wva_saturation_utilization` and `wva_analyzer_demand` / `wva_analyzer_target`
+showing what drove it. A desired that never becomes current is an actuation
+problem (KEDA, the HPA, or the workload), not a decision problem.
+
+```bash
+# read them straight off the controller
+kubectl port-forward -n $NS svc/wva-controller-manager-metrics-service 8443:8443
+curl -sk https://localhost:8443/metrics | grep -E '^wva_'
+```
+
+### The logs
+
+Useful when a metric tells you *which* model is wrong and you want to know *why*.
+
+| grep for | tells you | level |
+| --- | --- | --- |
+| `scaling-decision` | what WVA decided for a model, and the replica counts | Info |
+| `Effective scaling policy` | which policy tier a model resolved to | Info |
+| `GPU limiter (re)built from config` | a `limiters:` edit took effect, live | Info |
+| `Collected replica metrics` | metrics are arriving | **`-v=4`** |
+
+The controller runs at `-v=2` by default, so `Collected replica metrics` prints
+nothing and grepping for it proves nothing either way. Use
+`wva_metrics_pods_discovered` and `wva_metrics_freshness_status` for that question
+instead — they are always on. If you do want the line, raise verbosity on the
+container and put it back afterwards:
+
+```bash
+kubectl patch deployment -n $NS wva-controller-manager --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--v=4"}]'
+```
 
 ```bash
 kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler -f
