@@ -75,7 +75,7 @@ spec:
 `modelID` is the one required field. The accelerator, the role, GPUs per replica
 and the InferencePool are all **derived** from the workload itself, so they cannot
 drift from reality. See
-[deploy/README.md](deploy/README.md#what-the-controller-needs-from-a-workload).
+[docs/deployment/new-cluster.md](docs/deployment/new-cluster.md#what-the-controller-needs-from-a-workload).
 
 More examples in [config/samples/keda/](config/samples/keda/).
 
@@ -115,7 +115,7 @@ Apply with `kubectl apply -f deploy/configmap-scaling-policy.yaml`; the change
 takes effect immediately (the controller watches the ConfigMap).
 
 > V1 is deprecated and scheduled for removal in a future release. See the
-> [saturation scaling configuration guide](docs/developer-guide/scaling-policy-config.md#analyzer-selection-v1-vs-v2)
+> [saturation scaling configuration guide](docs/developer-guide/scaling-policy-config.md#analyzer-selection)
 > for threshold ownership (which fields each analyzer reads) and migration details.
 
 ## Contributing

@@ -101,21 +101,34 @@ EOF
         printf -- '- ./prometheus-alerts\n' >> "$tmp_overlay/kustomization.yaml"
     fi
 
-    # On OpenShift shared clusters, all ClusterRoleBindings share the same fixed
-    # names. Concurrent deployments overwrite each other's subject namespace.
-    # Append name-rename patches so each namespace gets its own uniquely named CRBs.
-    if [ "$ENVIRONMENT" = "openshift" ]; then
-        local ns_hash
-        ns_hash="$(printf '%s' "${WVA_NS}" | sha256sum | cut -c1-8)"
-        printf 'patches:\n' >> "$tmp_overlay/kustomization.yaml"
-        for crb in \
-            wva-epp-metrics-reader-role-binding \
-            wva-manager-cluster-monitoring-view \
-            wva-manager-rolebinding \
-            wva-metrics-auth-rolebinding \
-            wva-metrics-reader-rolebinding \
-            wva-prometheus-cluster-monitoring-view; do
-            cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+    # Give this install its own ClusterRoleBinding names.
+    #
+    # Every overlay applies these under FIXED names, and an apply replaces a
+    # ClusterRoleBinding's subject list — so a second install anywhere on the
+    # cluster repoints them at its own namespace and leaves the first controller's
+    # ServiceAccount with no permissions. Silently: no error, no restart, no event,
+    # just every API call failing afterwards.
+    #
+    # This was already done here, but only for OpenShift, on the theory that shared
+    # clusters were an OpenShift problem. They are not: the same apply does the same
+    # thing on any cluster, and it is reproducible on kind in one command. Suffixing
+    # unconditionally makes concurrent installs merely unwise rather than
+    # destructive — check_single_installation still stops them by default.
+    #
+    # Upgrades of an install that predates this keep working: the old un-suffixed
+    # binding still names the same ServiceAccount, so nothing is lost while it
+    # lingers, and `undeploy` removes both.
+    local ns_hash
+    ns_hash="$(printf '%s' "${WVA_NS}" | sha256sum | cut -c1-8)"
+    printf 'patches:\n' >> "$tmp_overlay/kustomization.yaml"
+    for crb in \
+        wva-epp-metrics-reader-role-binding \
+        wva-manager-cluster-monitoring-view \
+        wva-manager-rolebinding \
+        wva-metrics-auth-rolebinding \
+        wva-metrics-reader-rolebinding \
+        wva-prometheus-cluster-monitoring-view; do
+        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
 - patch: |-
     - op: replace
       path: /metadata/name
@@ -124,9 +137,31 @@ EOF
     kind: ClusterRoleBinding
     name: ${crb}
 EOF
-        done
-    fi
+    done
 
+    # CONTROLLER_INSTANCE partitions one cluster across several controllers: an
+    # instance manages only the workloads whose ScaledObject carries
+    # wva.llmd.ai/controller-instance with its name (see
+    # utils.readyVariantAutoscalings). The controller reads it from this env var,
+    # which nothing set — it was declared in install.sh, logged, and dropped, so
+    # multi-instance was only reachable by hand-writing an overlay.
+    #
+    # An unset instance manages everything unlabelled, which is the single-install
+    # case and stays the default.
+    if [ -n "${CONTROLLER_INSTANCE:-}" ]; then
+        log_info "Controller instance: $CONTROLLER_INSTANCE (manages only workloads labelled wva.llmd.ai/controller-instance=$CONTROLLER_INSTANCE)"
+        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: CONTROLLER_INSTANCE
+        value: "${CONTROLLER_INSTANCE}"
+  target:
+    kind: Deployment
+    name: wva-controller-manager
+EOF
+    fi
 
     log_info "Applying Kustomize overlay: $kustomize_overlay"
     kubectl apply -k "$tmp_overlay"

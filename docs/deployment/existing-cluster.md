@@ -17,40 +17,55 @@ Three things, and the installer cannot guess any of them:
 | **your model servers' namespace** | that is where it looks for workloads and where you will create ScaledObjects | `LLMD_NS=` |
 | **a ScaledObject per workload** | a ScaledObject IS the registration — WVA never sees a workload it is not called about | `make scaledobjects-plan` |
 
-## One WVA per cluster, or one per namespace — never two sharing RBAC
+## One WVA per cluster, or one per namespace — never two managing the same workloads
 
-WVA installs at one of two scopes, and the install **refuses** to put a second one
-next to an existing install:
+WVA installs at one of two scopes, and the install **refuses** to put a second,
+unpartitioned one next to an existing install:
 
 ```
 [ERROR] WVA is already installed in this cluster: workload-variant-autoscaler-system/wva-controller-manager
 ```
 
-This is not fussiness about scope. Every overlay, at either scope, applies the same
-cluster-scoped RoleBindings under fixed names — `wva-manager-rolebinding`,
-`wva-metrics-auth-rolebinding`, `wva-epp-metrics-reader-role-binding`. A
-ClusterRoleBinding's subject list is *replaced* by an apply, so a second install
-repoints all three at its own namespace, and the first controller keeps running
-with its ServiceAccount stripped of permissions: no error at install time, no
-restart, no event — it just starts failing every API call it makes.
-
-Because the bindings are in the shared base, even a namespace-scoped install into
-an unrelated namespace does this to a cluster-scoped one.
-
-So:
+Two unpartitioned controllers both manage every unlabelled workload, and both
+publish a decision for the same ScaledObject. The replica count becomes whichever
+one wrote last, and no decision can be attributed to either. Nothing errors — the
+fleet just scales non-deterministically.
 
 | you want | do |
 | --- | --- |
 | to update the WVA you have | install into the **same** `WVA_NS` — that is an upgrade, and is allowed |
 | to move it to another namespace | `make undeploy-wva-on-k8s WVA_NS=<old>` first |
-| one WVA per team | namespace-scoped installs, each with **its own RBAC names** |
-| to partition one fleet across controllers | give each its own RBAC names and `CONTROLLER_INSTANCE`, then `WVA_ALLOW_COEXIST=true` |
-
-`WVA_ALLOW_COEXIST=true` does not make the collision safe — it says you have
-already handled it. It warns, naming the install whose permissions it is about to
-take.
+| **several controllers, one cluster** | give each a `CONTROLLER_INSTANCE` — see below |
 
 `make check-prereqs` runs this check too, so you can find out before installing.
+
+### Running several controllers: `CONTROLLER_INSTANCE`
+
+Name an instance and its fleet becomes disjoint by construction:
+
+```bash
+make deploy-wva-on-k8s WVA_NS=team-a-wva CONTROLLER_INSTANCE=team-a
+make deploy-wva-on-k8s WVA_NS=team-b-wva CONTROLLER_INSTANCE=team-b
+```
+
+A named instance manages **only** workloads whose ScaledObject carries
+`wva.llmd.ai/controller-instance` with its name. Anything unlabelled stays with an
+instance-less install; anything labelled for another instance is invisible to it.
+`make scaledobjects-apply CONTROLLER_INSTANCE=team-a` stamps that label on the
+ScaledObjects it creates — without it a second instance manages nothing, which
+looks exactly like a broken install.
+
+Each install also gets its own ClusterRoleBindings, suffixed with a hash of its
+namespace, so installs cannot take permissions from one another.
+
+> **Historical note, worth knowing if you have an older install.** These bindings
+> used to be applied under fixed names on every cluster except OpenShift, and an
+> apply *replaces* a ClusterRoleBinding's subject list — so any second install,
+> even a namespace-scoped one into an unrelated namespace, silently repointed them
+> and left the first controller's ServiceAccount with no permissions: no error, no
+> restart, no event, just every API call failing. Suffixing is unconditional now.
+> An install that predates the change keeps its un-suffixed bindings until its next
+> upgrade, which is harmless — they still name the same ServiceAccount.
 
 ## Install
 

@@ -71,11 +71,11 @@ Platform specifics: [Kubernetes](kubernetes/README.md) &middot;
 | Prometheus address | `PROMETHEUS_URL` | the one this install deploys — **required** when it does not |
 
 **One WVA per cluster, or one per namespace.** The install refuses to sit next to
-an existing one, because every overlay applies the same cluster-scoped
-RoleBindings under fixed names: a second install repoints them and leaves the
-first controller running without permissions, silently. Installing into the same
-`WVA_NS` is an upgrade and is allowed. See
-[One WVA per cluster](../docs/deployment/existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-sharing-rbac).
+an existing one: two unpartitioned controllers both manage every unlabelled
+workload and both write a decision for the same ScaledObject, so the replica count
+becomes whichever wrote last. Installing into the same `WVA_NS` is an upgrade and
+is allowed; to run several deliberately, give each a `CONTROLLER_INSTANCE`. See
+[One WVA per cluster](../docs/deployment/existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-managing-the-same-workloads).
 
 Pass the same `WVA_NS` and `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall
 resolves the overlay exactly as the install did, so a mismatch leaves behind

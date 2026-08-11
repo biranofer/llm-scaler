@@ -18,7 +18,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
-| `CONTROLLER_INSTANCE` | Instance name for running several WVAs on one cluster | `""` (single instance) |
+| `CONTROLLER_INSTANCE` | Name this controller instance. It then manages **only** workloads whose ScaledObject carries `wva.llmd.ai/controller-instance` with this name, so several controllers can share a cluster with disjoint fleets. Also gives the install its own ClusterRoleBinding names, and lets it past the single-install check | `""` (manages everything unlabelled) |
 
 ## Image
 
