@@ -75,7 +75,7 @@ an existing one: two unpartitioned controllers both manage every unlabelled
 workload and both write a decision for the same ScaledObject, so the replica count
 becomes whichever wrote last. Installing into the same `WVA_NS` is an upgrade and
 is allowed; to run several deliberately, give each a `CONTROLLER_INSTANCE`. See
-[One WVA per cluster](../docs/deployment/existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-managing-the-same-workloads).
+[One WVA per cluster](../docs/deployment/existing-cluster.md#how-many-wvas-a-cluster-has).
 
 Pass the same `WVA_NS` and `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall
 resolves the overlay exactly as the install did, so a mismatch leaves behind

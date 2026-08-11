@@ -79,11 +79,6 @@ drift from reality. See
 
 More examples in [config/samples/keda/](config/samples/keda/).
 
-> **Note:** WVA used to publish a `wva_desired_replicas` metric for an HPA to read
-> through prometheus-adapter, with an `llm-d.ai/managed: "true"` annotation to opt
-> in. Both are gone: WVA is a KEDA external scaler, and a trigger naming it is what
-> registers a workload.
-
 ## Upgrading
 
 ### Upgrading to v0.9.0 — V2 saturation analyzer is now the default

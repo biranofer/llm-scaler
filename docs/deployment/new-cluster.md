@@ -43,29 +43,50 @@ precisely the resources the other overlay owns.
 | `namespace` | Role | its own namespace | a tenant without cluster-wide RBAC, or one WVA per team |
 
 Both work on both platforms — `config/overlays/` carries all four combinations.
-The default preserves the historical behaviour: `namespace` on OpenShift,
+The default is `namespace` on OpenShift and
 `cluster` elsewhere.
 
-### One WVA per cluster, or one per namespace — never two managing the same workloads
+### How many WVAs a cluster has
 
-WVA installs at one of two scopes, and the install **refuses** to put a second,
-unpartitioned one next to an existing install:
+WVA installs at one of two scopes, and a cluster uses one shape or the other:
 
-```
-[ERROR] WVA is already installed in this cluster: workload-variant-autoscaler-system/wva-controller-manager
-```
-
-Two unpartitioned controllers both manage every unlabelled workload, and both
-publish a decision for the same ScaledObject. The replica count becomes whichever
-one wrote last, and no decision can be attributed to either. Nothing errors — the
-fleet just scales non-deterministically.
-
-| you want | do |
+| shape | what you get |
 | --- | --- |
-| to update the WVA you have | install into the **same** `WVA_NS` — that is an upgrade, and is allowed |
-| to move it to another namespace | `make undeploy-wva-on-k8s WVA_NS=<old>` first |
+| **one cluster-scoped WVA** | a single controller managing model servers in every namespace |
+| **one namespace-scoped WVA per namespace** | a controller per team, each managing only the namespace it is installed in |
 
-`make check-prereqs` runs this check too, so you can find out before installing.
+They do not mix. A cluster-scoped controller already covers every namespace, so a
+namespace-scoped one beside it would be a second controller for the same workloads;
+and a cluster-scoped one added later covers the namespaces the others were handling.
+The install checks for this and stops, naming what it found:
+
+```
+[ERROR] A cluster-scoped WVA is already installed: workload-variant-autoscaler-system/wva-controller-manager.
+```
+
+`make check-prereqs` runs the same check, so you can ask before installing.
+Installing into a namespace that already has one is an upgrade, and is allowed.
+
+#### What keeps two namespace-scoped controllers apart
+
+Three things, none of which you configure:
+
+- **Workloads.** Each install has its own `wva-external-scaler.<namespace>` Service,
+  and a workload registers with the WVA whose address its trigger names. Two
+  controllers never see the same workload.
+- **Permissions.** Each install's ClusterRoleBindings are suffixed with a hash of
+  its namespace, so they cannot take each other's.
+- **Reach.** A namespace-scoped controller restricts its cache to its own namespace
+  and cannot read a workload outside it.
+
+The namespace is the identity; there is nothing else to name.
+
+#### What they do share: GPUs
+
+Each controller computes free GPU capacity from the same nodes and allocates against
+it without seeing the others' claims, so several can oversubscribe one pool — which
+surfaces as pods that will not schedule. If your tenants share GPUs, bound each
+install with a quota limiter; if they do not, give each its own GPU nodes.
 
 ### Bounding scaling with a GPU limiter
 

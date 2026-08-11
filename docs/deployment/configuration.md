@@ -33,7 +33,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | Namespace to create when `DEPLOY_LLMD_NS=true`, and the namespace `deploy/install-epp.sh` installs EPP into. **Not passed to the controller, and no longer the default for ScaledObject discovery** — that follows the install's scope. See [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `LLMD_NS` | Namespace to create when `DEPLOY_LLMD_NS=true`, and where `deploy/install-epp.sh` installs EPP. The controller is not told it, and ScaledObject discovery does not use it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
 
 ## Deployment flags
 
@@ -209,7 +209,7 @@ job; removing what WVA was pointed at is a separate decision, and an explicit on
 **A second WVA is refused.** Their workloads would be separate — a workload
 registers with the scaler address its trigger names — but their GPU budgets would
 not. See
-[One WVA per cluster](existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-managing-the-same-workloads).
+[One WVA per cluster](existing-cluster.md#how-many-wvas-a-cluster-has).
 
 ## Adding a model later
 
