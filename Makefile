@@ -162,14 +162,14 @@ destroy-kind-cluster:
 ## Deploy WVA to OpenShift cluster with specified image.
 ## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_DEFAULT_SO=true.
+deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift (new cluster). Existing llm-d? add DEPLOY_PROMETHEUS=false DEPLOY_LLMD_NS=false PROMETHEUS_URL=<url>. Also: WVA_NS, WVA_SCOPE, WVA_LIMITER, CONTROLLER_INSTANCE.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \n		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \n		ENVIRONMENT=openshift ./deploy/install.sh
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
-undeploy-wva-on-openshift:
+undeploy-wva-on-openshift: ## Remove WVA from OpenShift. Pass the SAME WVA_NS and WVA_SCOPE you installed with.
 	@echo ">>> Undeploying workload-variant-autoscaler from OpenShift"
 	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
 		deploy/install.sh --undeploy
@@ -194,7 +194,7 @@ scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObje
 ## that file, edits included, and needs no terminal. Without one it re-discovers
 ## and applies everything found.
 .PHONY: scaledobjects-apply
-scaledobjects-apply: ## Create default ScaledObjects. WVA_DEFAULT_SO_PLAN=<edited file> to apply a reviewed list.
+scaledobjects-apply: ## Create default ScaledObjects (this is what makes WVA scale anything). WVA_DEFAULT_SO_PLAN=<edited file>, WVA_DEFAULT_SO_ADOPT=true, WVA_DEFAULT_SO_TEMPLATE=<file>.
 	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Review the list in $EDITOR, then apply what you confirm. Needs a terminal;
@@ -205,7 +205,7 @@ scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_DEFAULT_SO=true.
+deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes (new cluster). Existing llm-d? add DEPLOY_PROMETHEUS=false DEPLOY_LLMD_NS=false PROMETHEUS_URL=<url>. Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, CONTROLLER_INSTANCE=<name>.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"
@@ -213,7 +213,7 @@ deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>,
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s
-undeploy-wva-on-k8s:
+undeploy-wva-on-k8s: ## Remove WVA from Kubernetes. Pass the SAME WVA_NS and WVA_SCOPE you installed with.
 	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
 	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
 		deploy/install.sh --undeploy

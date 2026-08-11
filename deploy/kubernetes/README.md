@@ -94,7 +94,7 @@ That's it! The script will:
 
 ## Configuration Options
 
-For a complete list of environment variables and configuration options, see the [Configuration Reference](../README.md#configuration-reference) in the main deployment guide.
+For a complete list of environment variables and configuration options, see the [Configuration Reference](../../docs/deployment/configuration.md) in the main deployment guide.
 
 **Key environment variables for Kubernetes**:
 
@@ -435,7 +435,11 @@ kubectl get hpa -n llm-d-optimized-baseline
 kubectl get hpa -n llm-d-optimized-baseline
 
 # Check external metrics
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d-optimized-baseline/wva_desired_replicas" | jq
+# WVA's decision reaches KEDA over gRPC, not through the external-metrics API.
+# Read it from Prometheus, or from the HPA KEDA drives:
+kubectl port-forward -n <monitoring-namespace> svc/kube-prometheus-stack-prometheus 9090:9090
+#   then query:  wva_desired_replicas
+kubectl describe hpa -n <namespace> keda-hpa-<scaledobject-name>
 ```
 
 ### Monitor WVA Logs (See Metrics Validation!)

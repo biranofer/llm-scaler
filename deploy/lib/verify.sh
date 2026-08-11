@@ -59,51 +59,70 @@ verify_deployment() {
     fi
 }
 
+# print_summary is the most-read text this install produces: it is what someone
+# looks at to find out whether it worked and what to do next. So it says the one
+# thing that is true and easy to miss — an installed WVA scales nothing until a
+# ScaledObject exists — and it reports the settings that will otherwise surprise
+# someone later (no GPU budget, scale-to-zero, a named instance).
 print_summary() {
     echo ""
     echo "=========================================="
-    echo " Deployment Summary"
+    echo " Workload-Variant-Autoscaler installed"
     echo "=========================================="
     echo ""
-    echo "Deployment Environment: $ENVIRONMENT"
-    echo "WVA Namespace:           $WVA_NS"
-    echo "LLMD Namespace:          $LLMD_NS"
-    echo "Monitoring Namespace:    $MONITORING_NAMESPACE"
-    echo "WVA Image:              $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
-    echo ""
-    echo "Deployed Components:"
-    echo "===================="
+    echo "  Controller:   $WVA_NS  ($WVA_IMAGE_REPO:$WVA_IMAGE_TAG)"
+    echo "  Scope:        $(wva_install_scope)-scoped"
+    echo "  Watching:     $LLMD_NS"
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
-        echo "✓ kube-prometheus-stack (Prometheus)"
-    fi
-    if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
-        echo "✓ kube-prometheus-stack-grafana (Grafana)"
-    fi
-    if [ "$DEPLOY_WVA" = "true" ]; then
-        echo "✓ WVA Controller (via Kustomize)"
+        echo "  Prometheus:   deployed in $MONITORING_NAMESPACE"
+    else
+        echo "  Prometheus:   ${PROMETHEUS_URL:-<the shipped default>} (not deployed by this install)"
     fi
     if [ "$SCALER_BACKEND" = "keda" ]; then
-        echo "✓ KEDA (scaler backend, external metrics API)"
-    elif [ "$SCALER_BACKEND" = "none" ]; then
-        echo "- Scaler backend: skipped (SCALER_BACKEND=none, pre-installed on cluster)"
+        echo "  KEDA:         installed or already present"
+    else
+        echo "  KEDA:         skipped (SCALER_BACKEND=$SCALER_BACKEND) — WVA needs KEDA to actuate"
+    fi
+    [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ] && echo "  Grafana:      deployed in $MONITORING_NAMESPACE"
+    [ -n "${CONTROLLER_INSTANCE:-}" ] &&         echo "  Instance:     $CONTROLLER_INSTANCE (manages ONLY workloads labelled wva.llmd.ai/controller-instance=$CONTROLLER_INSTANCE)"
+    echo ""
+
+    # The step everyone misses. WVA has no watch and no listing: it is asked about
+    # a workload by KEDA, or it never hears of it.
+    echo "  NEXT: nothing scales yet."
+    echo ""
+    echo "  A ScaledObject is how a workload registers with WVA. Until one exists,"
+    echo "  the controller is running and idle. To see what it would create:"
+    echo ""
+    echo "      make scaledobjects-plan LLMD_NS=$LLMD_NS"
+    echo ""
+    echo "  then apply it, or an edited copy of it:"
+    echo ""
+    echo "      make scaledobjects-apply LLMD_NS=$LLMD_NS"
+    echo ""
+
+    echo "  Worth knowing:"
+    case "$(effective_limiter_summary)" in
+        none) echo "    - No GPU limiter: scaling is UNBOUNDED. Set WVA_LIMITER=gpu-inventory or quota" ;;
+        *)    echo "    - GPU limiter: $(effective_limiter_summary). A workload whose accelerator does not resolve gets no budget and will not scale up" ;;
+    esac
+    if [ "${ENABLE_SCALE_TO_ZERO:-false}" = "true" ]; then
+        echo "    - Scale-to-zero is ON: an idle model can be parked at 0 and woken on demand"
+    else
+        echo "    - Scale-to-zero is OFF (ENABLE_SCALE_TO_ZERO=false)"
     fi
     echo ""
-    echo "Next Steps:"
-    echo "==========="
+
+    echo "  Checking on it:"
+    echo "    kubectl -n $WVA_NS logs -l app.kubernetes.io/name=workload-variant-autoscaler -f"
+    echo "    kubectl get scaledobject -A          # what WVA has been told about"
+    echo "    kubectl get hpa -A                   # KEDA acts through these"
     echo ""
-    echo "1. Deploy llm-d (EPP, gateway, ModelService) when needed:"
-    echo "     See llm-d project guides at https://github.com/llm-d/llm-d"
-    echo ""
-    echo "2. Create an annotated HPA or KEDA ScaledObject (llm-d.ai/managed=true) so WVA discovers the variant."
-    echo ""
-    echo "3. View WVA logs:"
-    echo "   kubectl logs -n $WVA_NS -l app.kubernetes.io/name=workload-variant-autoscaler -f"
-    echo ""
-    echo "4. Check external metrics API (KEDA):"
-    echo "   kubectl get --raw \"/apis/external.metrics.k8s.io/v1beta1/namespaces/$LLMD_NS/wva_desired_replicas\" | jq"
-    echo ""
-    echo "5. Port-forward Prometheus to view metrics:"
-    echo "   kubectl port-forward -n $MONITORING_NAMESPACE svc/${PROMETHEUS_SVC_NAME} ${PROMETHEUS_PORT}:${PROMETHEUS_PORT}"
-    echo ""
+    echo "  Guide: deploy/README.md"
     echo "=========================================="
+}
+
+# effective_limiter_summary echoes the limiter this install declared.
+effective_limiter_summary() {
+    echo "${WVA_LIMITER:-none}"
 }

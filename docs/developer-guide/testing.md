@@ -521,7 +521,10 @@ kubectl logs -n workload-variant-autoscaler-system deployment/controller-manager
 **Debugging steps**:
 ```bash
 # Check external metrics API
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq
+# KEDA owns external.metrics.k8s.io and serves per-ScaledObject metrics there;
+# wva_desired_replicas is a Prometheus gauge, not an external metric. Read it via
+# Prometheus, or read the HPA KEDA drives from it.
+kubectl describe hpa -n <namespace> keda-hpa-<scaledobject-name>
 
 # Check Prometheus
 kubectl port-forward -n workload-variant-autoscaler-monitoring svc/prometheus-operated 9090:9090

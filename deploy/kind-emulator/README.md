@@ -53,7 +53,7 @@ kubectl apply -k config/samples/simulator/nodeSelector/decode-lws/
 
 ## Configuration Options
 
-For a complete list of environment variables and configuration options, see the [Configuration Reference](../README.md#configuration-reference) in the main deployment guide.
+For a complete list of environment variables and configuration options, see the [Configuration Reference](../../docs/deployment/configuration.md) in the main deployment guide.
 
 **Key environment variables for Kind emulator**:
 
@@ -347,6 +347,6 @@ make destroy-kind-cluster
 
 ## Next Steps
 
-- [Run E2E tests](../../docs/developer-guide/testing.md#e2e-tests)
+- [Run E2E tests](../../docs/developer-guide/testing.md#end-to-end-tests)
 - [Development Guide](../../docs/developer-guide/development.md)
 - [Testing Guide](../../docs/developer-guide/testing.md)

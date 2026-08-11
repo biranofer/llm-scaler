@@ -26,7 +26,7 @@ kubectl port-forward -n <llm-namespace> <vllm-pod> 8000:8000
 curl -s http://localhost:8000/metrics | grep vllm:
 
 # 2. Prometheus scrapes them  (query vllm:num_requests_running)
-kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
+kubectl port-forward -n <monitoring-namespace> svc/kube-prometheus-stack-prometheus 9090:9090
 
 # 3. WVA reads them and decides
 kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler   | grep -E "Collected replica metrics|scaling-decision"
@@ -91,7 +91,7 @@ kubectl describe scaledobject <name> -n <namespace>
 # === Metrics and Monitoring ===
 kubectl get servicemonitor -A
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq
-kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
+kubectl port-forward -n <monitoring-namespace> svc/kube-prometheus-stack-prometheus 9090:9090
 
 # === ScaledObjects / HPA ===
 kubectl get scaledobject -A
