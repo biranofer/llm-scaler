@@ -32,6 +32,13 @@ import (
 // The default entry alone therefore decides 1. If the deployment reaches 2, the
 // tier's numbers reached the optimizer; if removing the tier returns it to 1, the
 // tier's numbers — not some other pressure — were what held it there.
+//
+// The arcs run in order — tier wins, tier removed falls back, override beats tier
+// — and each starts from the state the last one settled at. Note which direction
+// each asserts: the scale-UP arcs are the load-bearing ones, and the override arc
+// asserts suppression rather than a scale-down, because scale-down here depends on
+// spare capacity that the demand model does not always release. See the comment on
+// that arc.
 const tierFakeMetricsJSON = `{"kv-cache-usage":0.3,"running-requests":1,"waiting-requests":0}`
 
 const (
@@ -54,6 +61,14 @@ const (
 	// The override entry's key. Arbitrary by design — what binds it to the model
 	// is the model_id/namespace in its body.
 	tierOverrideKey = "policy-tier-model-override"
+
+	// How long the override must hold the workload down before we accept that the
+	// tier is not winning. The first arc drives this same workload from 1 to 2 in
+	// well under a minute, so a window several times that is enough to distinguish
+	// "suppressed" from "not yet scaled". It is a fixed window rather than
+	// cfg.ScaleUpTimeout because that is 10 minutes — a Consistently of that length
+	// would add ten idle minutes to every full run.
+	tierOverrideHoldSeconds = 150
 )
 
 var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
@@ -185,51 +200,6 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 			Should(Succeed())
 	})
 
-	// The layering is default entry -> tier -> {modelID}#{namespace}, most specific
-	// winning. The per-model override stays innermost so a fleet can adopt tiers
-	// model by model rather than all at once: a model that already has an override
-	// keeps it when its workload joins a tier.
-	It("lets a per-model override win over the tier the workload names", func() {
-		By("Confirming the tier is in force at >= 2 replicas before overriding it")
-		Eventually(func(g Gomega) {
-			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 2),
-				"the override assertion is meaningless unless the tier first drove the count up")
-		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
-
-		By("Adding a per-model override carrying the no-scale threshold pair")
-		// Same numbers as the default entry, so the ONLY question this asks is which
-		// layer wins: the tier still says 0.30, the override says 0.95, and they
-		// disagree about the replica count at this fixed occupancy.
-		//
-		// The entry names the model in its BODY. Its key is arbitrary — and has to
-		// be: the model ID here is "e2ewva/dummy-model", and a ConfigMap data key
-		// admits only [-._a-zA-Z0-9], so neither the slash nor the "#" of the old
-		// {modelID}#{namespace} form could ever be written.
-		overrideYAML := buildSaturationConfigYAMLWithModel(
-			"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
-			tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
-			modelID, cfg.LLMDNamespace,
-		)
-		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName,
-			tierOverrideKey, overrideYAML)).To(Succeed())
-		DeferCleanup(func() {
-			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey)
-		})
-
-		By("Asserting the override's decision of 1 replica beats the tier's 2")
-		Eventually(func(g Gomega) {
-			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1),
-				"a per-model override is the innermost layer; the workload still names the "+
-					"tier, and the tier must not win over settings bound to this model")
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
-	})
-
 	// Removing the tier a workload names must fall back to the default entry rather
 	// than fail: refusing to scale a workload because its policy name no longer
 	// resolves would turn a config edit into an outage. The engine reports the
@@ -259,6 +229,70 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 				"an unresolvable tier must resolve to the default entry, whose scaleUpThreshold=0.95 "+
 					"decides 1 replica at this occupancy")
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+	})
+
+	// The layering is default entry -> tier -> per-model override, most specific
+	// winning. The override stays innermost so a fleet can adopt tiers model by
+	// model rather than all at once: a model that already has an override keeps it
+	// when its workload joins a tier.
+	//
+	// This runs LAST, and asserts that the workload does not scale UP, rather than
+	// that it scales back down. That is deliberate. Written the other way round —
+	// override a workload the tier had already driven to its ceiling, then wait for
+	// it to come down — it failed while the override was working perfectly: the
+	// engine's own analyzer-result showed the override's 0.95/0.85 in force, but
+	// with demand tracking supply, utilization sits at 1.0, spare capacity at 0,
+	// and scale-down is blocked for as long as that holds. The assertion was
+	// timing out on an unrelated capacity-model property, not on the layering.
+	//
+	// Suppression is the stronger claim anyway: the preceding arc establishes that
+	// this tier at this occupancy drives the count to 2, so a workload that still
+	// names the tier and nonetheless stays at 1 can only be reading the override.
+	It("lets a per-model override win over the tier the workload names", func() {
+		By("Starting from the settled 1-replica state the previous arc left behind")
+		Eventually(func(g Gomega) {
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1))
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
+		By("Adding a per-model override carrying the no-scale threshold pair")
+		// Same numbers as the default entry, so the ONLY question this asks is which
+		// layer wins: the tier says 0.30, the override says 0.95, and they disagree
+		// about the replica count at this fixed occupancy.
+		//
+		// The entry names the model in its BODY. Its key is arbitrary — and has to
+		// be: the model ID here is "e2ewva/dummy-model", and a ConfigMap data key
+		// admits only [-._a-zA-Z0-9], so neither the slash nor the "#" of the old
+		// {modelID}#{namespace} form could ever be written.
+		overrideYAML := buildSaturationConfigYAMLWithModel(
+			"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+			tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
+			modelID, cfg.LLMDNamespace,
+		)
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName,
+			tierOverrideKey, overrideYAML)).To(Succeed())
+		DeferCleanup(func() {
+			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey)
+		})
+
+		By("Restoring the " + tierPolicyName + " tier, so the workload again names a tier that would scale it to 2")
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, tierPolicyName,
+			buildSaturationConfigYAMLWithThresholds(
+				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+				tierPolicyScaleUpThreshold, tierPolicyScaleDownBoundary,
+			))).To(Succeed())
+
+		By("Asserting the override holds the workload at 1 while the tier alone would take it to 2")
+		Consistently(func(g Gomega) {
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1),
+				"a per-model override is the innermost layer; the workload still names the "+
+					"tier, and the tier must not win over settings bound to this model")
+		}, tierOverrideHoldSeconds*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})
 })
