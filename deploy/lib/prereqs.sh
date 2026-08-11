@@ -98,3 +98,71 @@ check_prerequisites() {
 
     log_success "All prerequisites met (tools: ${tools[*]})"
 }
+
+# check_permissions verifies the caller can create what the install produces, and
+# that the controller will be able to read what its configuration requires.
+#
+# `make check-prereqs` used to answer only "are the binaries here", and passed for a
+# user who could not create a single object the install makes. A preflight that
+# cannot fail on the most likely failure is not a preflight.
+#
+# The node rule is the interesting one, and it is conditional by design:
+#
+#   physical limiter ON   nodes are REQUIRED. A variant whose accelerator cannot be
+#                         resolved is charged to no pool, receives no GPU budget and
+#                         NEVER SCALES UP — silently, because nothing errors. An
+#                         install that cannot read nodes is therefore broken, and
+#                         this is an error.
+#   physical limiter OFF  nodes are not read at all (see variantmeta.DeclaredOnly).
+#                         The install is fine; the operator only loses accelerator
+#                         attribution on metrics. A warning, not a refusal — and it
+#                         says what changes if the limiter is turned on later.
+check_permissions() {
+    log_info "Checking permissions..."
+
+    local ns="${WVA_NS}" denied=() sa="system:serviceaccount:${WVA_NS}:wva-controller-manager"
+
+    # What the INSTALLER must be able to create. Cluster-scoped objects are in the
+    # base at both scopes, so both scopes need them.
+    local -a cluster_checks=(
+        "create clusterroles"
+        "create clusterrolebindings"
+    )
+    local check verb res
+    for check in "${cluster_checks[@]}"; do
+        verb="${check%% *}"; res="${check#* }"
+        kubectl auth can-i "$verb" "$res" >/dev/null 2>&1 || denied+=("$verb $res (cluster-scoped)")
+    done
+    kubectl auth can-i create deployments -n "$ns" >/dev/null 2>&1 || denied+=("create deployments in $ns")
+    kubectl auth can-i create configmaps -n "$ns" >/dev/null 2>&1 || denied+=("create configmaps in $ns")
+
+    if [ ${#denied[@]} -ne 0 ]; then
+        log_error "You cannot create everything this install produces. Denied:
+$(printf '  - %s\n' "${denied[@]}")
+
+Both install scopes create cluster-scoped RBAC — WVA_SCOPE=namespace narrows what
+the CONTROLLER reads, not what it is granted — so both need a cluster admin.
+Ask for the objects above, or have an admin run the install."
+    fi
+
+    # What the CONTROLLER will need once it is running.
+    if [ "${WVA_LIMITER:-none}" = "gpu-inventory" ]; then
+        if ! kubectl auth can-i list nodes --as "$sa" >/dev/null 2>&1; then
+            log_error "WVA_LIMITER=gpu-inventory needs the controller to list nodes, and $sa cannot.
+
+A GPU-aware limiter allocates out of per-accelerator pools. Without nodes, a
+variant's accelerator never resolves, it is charged to no pool, it receives no
+budget, and it NEVER SCALES UP — with nothing in the logs to say why.
+
+Either grant the node read, or install without the limiter (WVA_LIMITER=none)."
+        fi
+        log_success "The controller can list nodes, which the gpu-inventory limiter requires"
+    else
+        if ! kubectl auth can-i list nodes --as "$sa" >/dev/null 2>&1; then
+            log_warning "$sa cannot list nodes. That is FINE with no physical limiter — WVA does not read them (accelerators stay unresolved, which is permissive), and you lose only the accelerator label on metrics."
+            log_warning "  It stops being fine the moment someone sets a gpu-inventory limiter: every variant would then get no GPU budget and stop scaling up. Watch wva_node_access_denied."
+        fi
+    fi
+
+    log_success "Permissions look sufficient"
+}

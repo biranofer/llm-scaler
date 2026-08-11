@@ -181,8 +181,17 @@ name of one.
 
 | scope | `--watch-namespace` | consequence |
 | --- | --- | --- |
-| `cluster` | unset | reads Deployments, pods, InferencePools and nodes in **any** namespace. `LLMD_NS` can be anywhere |
+| `cluster` | unset | reads Deployments, pods, InferencePools and nodes in **any** namespace |
 | `namespace` | its own (`POD_NAMESPACE`) | reads only **its own namespace** |
+
+It controls the controller's cache — **not its RBAC**. Both scopes create the same
+4 ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift), so **both need
+cluster-admin to install**.
+
+The role is read-only: WVA never writes to the cluster, because KEDA performs the
+actuation. The one genuinely cluster-scoped read is **nodes**, and even that
+happens only when a physical GPU limiter is configured — see
+[GPU limiter](gpu-limiter.md#permission-nodes).
 
 > **The constraint that follows, and it is easy to get wrong:** a namespace-scoped
 > WVA can only manage model servers **in its own namespace**. Installing one into

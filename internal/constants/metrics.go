@@ -210,6 +210,17 @@ const (
 	// WVAGpuDiscoveryUp is a gauge that indicates whether GPU discovery is on or off.
 	WVAGpuDiscoveryUp = "wva_gpu_discovery_up"
 
+	// WVANodeAccessDenied is 1 while a configured physical limiter cannot read
+	// nodes, and 0 when it can.
+	//
+	// This is the one combination that fails silently. A GPU-aware limiter
+	// allocates out of per-accelerator pools, so a variant whose accelerator it
+	// cannot resolve is charged to no pool, receives no budget, and never scales
+	// up — with no error anywhere, because an unresolved accelerator is a normal
+	// state when no limiter is configured. Node permission is optional right up
+	// until someone turns the limiter on, and then it is load-bearing.
+	WVANodeAccessDenied = "wva_node_access_denied"
+
 	// WVAScaleFromZeroQueueFallbackActive is 1 while the scale-from-zero engine is
 	// reading the EPP flow-control queue from Prometheus because the direct EPP
 	// scrape is failing, and 0 while the direct scrape works. A sustained 1 means

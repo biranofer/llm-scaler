@@ -312,9 +312,15 @@ create_namespaces_shared_loop() {
 delete_namespaces_kube_like() {
     log_info "Deleting namespaces..."
 
+    # Only namespaces THIS install created. The guards mirror the ones in
+    # create_namespaces: a namespace the install declined to create is one it must
+    # decline to delete. LLMD_NS had no guard, so the documented existing-cluster
+    # install (DEPLOY_LLMD_NS=false, models already there) paired with the
+    # symmetric uninstall deleted the namespace holding the production model
+    # servers.
     for ns in $LLMD_NS $WVA_NS $MONITORING_NAMESPACE; do
         if kubectl get namespace $ns &> /dev/null; then
-            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] || [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]]; then
+            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$LLMD_NS" && "${DEPLOY_LLMD_NS:-true}" == "false" ]]; then
                 log_info "Skipping deletion of namespace $ns as it was not deployed"
             else
                 log_info "Deleting namespace $ns..."

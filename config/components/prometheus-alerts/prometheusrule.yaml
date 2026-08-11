@@ -37,6 +37,15 @@ spec:
         summary: "WVA metrics collection failing for {{ $labels.query_type }}"
         description: "Metrics collection query_type '{{ $labels.query_type }}' failing with reason '{{ $labels.reason }}' at {{ $value | printf \"%.2f\" }}/sec (>5/min threshold) sustained for 5+ minutes. Scaling decisions may be based on stale data. Verify Prometheus/metrics endpoint connectivity."
 
+    - alert: WVANodeAccessDenied
+      expr: wva_node_access_denied == 1
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "WVA has a GPU limiter configured but cannot read nodes"
+        description: "A gpu-inventory limiter is declared in the scaling-policy ConfigMap, and this controller's ServiceAccount is denied list on nodes. Every variant is therefore charged to no accelerator pool, receives no GPU budget, and HAS STOPPED SCALING UP — with no other error, because an unresolved accelerator is a normal state when no limiter is configured. This usually follows an admin adding a limiters: entry to a controller that was installed without node permission. Either grant the node read to the controller's ServiceAccount, or remove the limiters: entry."
+
     - alert: WVAGPUResourceExhausted
       expr: wva_available_gpus == 0
       for: 5m

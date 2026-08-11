@@ -37,14 +37,24 @@ precisely the resources the other overlay owns.
 
 ### Scope: what the controller may manage
 
-| scope | RBAC | manages | use when |
-| --- | --- | --- | --- |
-| `cluster` | ClusterRole | every namespace | one WVA for the whole cluster |
-| `namespace` | Role | its own namespace | a tenant without cluster-wide RBAC, or one WVA per team |
+| scope | the controller reads | use when |
+| --- | --- | --- |
+| `cluster` | every namespace | one WVA for the whole cluster |
+| `namespace` | only the namespace it is installed in | one WVA per team, each installed *in* the namespace with its models |
 
 Both work on both platforms — `config/overlays/` carries all four combinations.
-The default is `namespace` on OpenShift and
-`cluster` elsewhere.
+The default is `namespace` on OpenShift and `cluster` elsewhere.
+
+> **Both scopes need cluster-admin to install.** `namespace` narrows what the
+> controller *reads*, not what it is *granted*: either overlay creates 4
+> ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift), and the manager
+> ClusterRole carries cluster-wide `deployments/scale` update plus read on nodes,
+> pods, services and namespaces. It has to — WVA lists GPU nodes, which are
+> cluster-scoped objects, so its GPU accounting cannot be confined to a namespace.
+>
+> So `WVA_SCOPE=namespace` is **blast-radius reduction, not delegation**. A team
+> lead without cluster rights cannot install it themselves; a cluster admin does the
+> install, and the tenant gets a controller that only touches their namespace.
 
 ### How many WVAs a cluster has
 

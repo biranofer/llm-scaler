@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"sync"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/gpunodes"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 )
 
 // TypeInventory tracks GPU capacity, usage, and availability per accelerator type (H100, A100, etc.).
@@ -119,8 +124,26 @@ func (i *TypeInventory) Refresh(ctx context.Context) error {
 	// Discover node -> accelerator type -> count
 	nodeInventory, err := i.discovery.Discover(ctx)
 	if err != nil {
+		// A physical limiter that cannot read nodes is the one misconfiguration
+		// that costs nothing at install time and everything afterwards: every
+		// variant is charged to no accelerator pool, gets no budget, and stops
+		// scaling up. Nothing else reports it, because an unresolved accelerator is
+		// a perfectly normal state when no limiter is configured.
+		//
+		// Node permission is optional until someone turns this limiter on — which
+		// a cluster admin can do long after the install, by editing the ConfigMap.
+		// So say it loudly and publish it, rather than returning an error that the
+		// caller logs at DEBUG once a cycle.
+		if apierrors.IsForbidden(err) {
+			metrics.SetNodeAccessDenied(true)
+			log.FromContext(ctx).Error(err, "A GPU limiter is configured but this controller cannot read nodes. "+
+				"Every variant will be charged to no accelerator pool, receive no GPU budget, and STOP SCALING UP. "+
+				"Grant the node read, or remove the limiters: entry from the scaling-policy ConfigMap.",
+				"limiter", i.name, "metric", constants.WVANodeAccessDenied)
+		}
 		return fmt.Errorf("failed to discover accelerator capacity: %w", err)
 	}
+	metrics.SetNodeAccessDenied(false)
 
 	// Aggregate by accelerator type across all nodes
 	// Normalize full model names to short names for matching with VA labels

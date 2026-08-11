@@ -44,9 +44,31 @@ EOF
     # uninstalling side by side on kind.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
-    kubectl delete -k "$tmp_overlay" --ignore-not-found 2>/dev/null || \
+    # Render and FILTER, rather than `kubectl delete -k`. Two kinds in the rendered
+    # set do not belong to this install and must survive it:
+    #
+    #   Namespace    the overlay carries one, renamed to $WVA_NS. Deleting it
+    #                cascades to everything inside — and a namespace-scoped install
+    #                is deliberately placed IN the namespace holding the model
+    #                servers, so `delete -k` took the tenant's workloads with it
+    #                while the summary said "Namespaces preserved".
+    #   ClusterRole  the four are shared under fixed names (only the BINDINGS are
+    #                suffixed per install). Deleting them leaves every other WVA's
+    #                binding pointing at nothing: no error, no restart, no event,
+    #                just every API call denied.
+    #
+    # The suffixed ClusterRoleBindings, ServiceAccounts, ConfigMaps, Services,
+    # Deployment and ServiceMonitor are this install's own and do go.
+    if kubectl kustomize "$tmp_overlay" 2>/dev/null \
+        | yq 'select(.kind != "Namespace" and .kind != "ClusterRole")' \
+        | kubectl delete -f - --ignore-not-found 2>/dev/null; then
+        :
+    else
         log_warning "Workload-Variant-Autoscaler resources not found or already removed"
+    fi
     rm -rf "$tmp_overlay"
+
+    log_info "Left in place: namespace $WVA_NS, and the shared WVA ClusterRoles (other installs may bind them). Delete the namespace yourself if you want it gone."
 
     rm -f "$PROM_CA_CERT_PATH"
 
@@ -106,10 +128,23 @@ cleanup() {
     echo " Undeployment Summary for $ENVIRONMENT"
     echo "=========================================="
     echo ""
+    # Report what was actually removed. These lines used to key off
+    # SCALER_BACKEND / DEPLOY_PROMETHEUS, which describe what an INSTALL would
+    # deploy — so on the default path, twenty lines after saying "Leaving
+    # Prometheus, the scaler backend and EPP in place", the summary claimed it had
+    # removed them.
     echo "Removed components:"
-    [ "$SCALER_BACKEND" = "keda" ] && echo "✓ KEDA"
-    [ "$DEPLOY_WVA" = "true" ] && echo "✓ WVA Controller"
-    [ "$DEPLOY_PROMETHEUS" = "true" ] && echo "✓ Prometheus Stack"
+    [ "$DEPLOY_WVA" = "true" ] && echo "✓ WVA Controller (its namespaced objects and its own ClusterRoleBindings)"
+    if [ "${UNDEPLOY_SHARED:-false}" = "true" ]; then
+        [ "$SCALER_BACKEND" = "keda" ] && echo "✓ KEDA"
+        [ "$DEPLOY_PROMETHEUS" = "true" ] && echo "✓ Prometheus Stack"
+        echo "✓ EPP"
+    else
+        echo ""
+        echo "Left in place (shared; pass UNDEPLOY_SHARED=true to remove):"
+        echo "  - Prometheus, the scaler backend (KEDA), EPP"
+        echo "  - the WVA ClusterRoles, which other installs may bind"
+    fi
 
     if [ "$DELETE_NAMESPACES" = "true" ]; then
         echo "✓ Namespaces"

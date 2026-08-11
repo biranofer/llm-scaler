@@ -56,6 +56,7 @@ var (
 	availableGpus                       *prometheus.GaugeVec
 	gpuDiscoveryUp                      *prometheus.GaugeVec
 	sfzQueueFallbackActive              *prometheus.GaugeVec
+	nodeAccessDenied                    *prometheus.GaugeVec
 	enforcerModificationsTotal          *prometheus.CounterVec
 	optimizerActive                     *prometheus.GaugeVec
 	configInfoGauge                     *prometheus.GaugeVec
@@ -304,6 +305,18 @@ func InitMetrics(registry prometheus.Registerer) error {
 		gpuDiscoveryUpLabels,
 	)
 
+	nodeAccessDeniedLabels := []string{}
+	if controllerInstance != "" {
+		nodeAccessDeniedLabels = append(nodeAccessDeniedLabels, constants.LabelControllerInstance)
+	}
+	nodeAccessDenied = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVANodeAccessDenied,
+			Help: "1 while a configured physical GPU limiter cannot read nodes; every variant then gets no GPU budget and stops scaling up",
+		},
+		nodeAccessDeniedLabels,
+	)
+
 	sfzQueueFallbackLabels := []string{"pool"}
 	if controllerInstance != "" {
 		sfzQueueFallbackLabels = append(sfzQueueFallbackLabels, constants.LabelControllerInstance)
@@ -460,6 +473,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	}
 	if err := registry.Register(gpuDiscoveryUp); err != nil {
 		return fmt.Errorf("failed to register gpuDiscoveryUp metric: %w", err)
+	}
+	if err := registry.Register(nodeAccessDenied); err != nil {
+		return fmt.Errorf("failed to register nodeAccessDenied metric: %w", err)
 	}
 	if err := registry.Register(sfzQueueFallbackActive); err != nil {
 		return fmt.Errorf("failed to register sfzQueueFallbackActive metric: %w", err)
@@ -724,6 +740,24 @@ func (m *MetricsEmitter) RecordEnforcerMetric(policyType string) {
 	}
 
 	enforcerModificationsTotal.With(labels).Inc()
+}
+
+// SetNodeAccessDenied records whether a configured physical limiter is unable to
+// read nodes. Published on every refresh, so the series exists while a physical
+// limiter is configured and absence means no limiter is asking.
+func SetNodeAccessDenied(denied bool) {
+	if nodeAccessDenied == nil {
+		return
+	}
+	labels := prometheus.Labels{}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	value := 0.0
+	if denied {
+		value = 1.0
+	}
+	nodeAccessDenied.With(labels).Set(value)
 }
 
 // SetScaleFromZeroQueueFallbackActive records whether scale-from-zero is reading

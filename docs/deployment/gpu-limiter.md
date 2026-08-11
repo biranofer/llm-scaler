@@ -52,6 +52,35 @@ kubectl get nodes -L nvidia.com/gpu.product          # what your nodes advertise
 kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep -i "Accelerator not resolved"
 ```
 
+## Permission: nodes
+
+The limiter reads **nodes** to learn what GPUs exist, and nodes are cluster-scoped.
+This is the only thing WVA reads outside its own namespace in the normal path, and
+it is read **only when a physical limiter is configured** — without one the
+accelerator simply stays unresolved, which is permissive.
+
+That makes node permission conditional, and the install treats it that way:
+
+| limiter | controller can list nodes | outcome |
+| --- | --- | --- |
+| `none` | no | **fine.** Nodes are never read. You lose the accelerator label on metrics, nothing else |
+| `gpu-inventory` | no | **install refused.** Every variant would be charged to no pool, receive no budget and stop scaling up, silently |
+| `gpu-inventory` | yes | as intended |
+
+`make check-prereqs WVA_LIMITER=gpu-inventory` checks this before you install.
+
+### If the limiter is turned on later
+
+An admin can add a `limiters:` entry to the scaling-policy ConfigMap at any time,
+and it is applied live — including to a controller that was installed without node
+permission. That combination is the one failure with no natural symptom, so it is
+reported three ways:
+
+- an **error log**, naming what has stopped working;
+- `wva_node_access_denied` set to **1**;
+- the **`WVANodeAccessDenied`** alert (critical, fires after 2m) if you installed
+  with `DEPLOY_ALERTING_RULES=true`.
+
 ## Checking
 
 The install warns too: enabling `WVA_LIMITER=gpu-inventory` counts the distinct GPU
