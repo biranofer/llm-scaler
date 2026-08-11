@@ -106,6 +106,10 @@ main() {
 
     deploy_scaler_backend
 
+    # After the scaler backend: a ScaledObject is meaningless until KEDA is there
+    # to reconcile it.
+    install_default_scaledobjects
+
     verify_deployment
 
     print_summary

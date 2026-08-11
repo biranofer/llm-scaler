@@ -20,6 +20,11 @@ WVA_SCOPE           ?=
 # Declare a GPU limiter at install: none | gpu-inventory | quota. Default none,
 # matching the shipped config — see deploy/README.md "Bounding scaling".
 WVA_LIMITER         ?= none
+# A ScaledObject is how a workload registers with WVA. WVA_DEFAULT_SO=true has the
+# installer create one per llm-d model server; WVA_DEFAULT_SO_NS picks the
+# namespace, or "all" for every namespace holding one (cluster-scoped installs).
+WVA_DEFAULT_SO      ?= false
+WVA_DEFAULT_SO_NS   ?=
 CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
 LLMD_NAMESPACE       ?= llm-d-optimized-baseline
@@ -154,10 +159,10 @@ destroy-kind-cluster:
 ## Deploy WVA to OpenShift cluster with specified image.
 ## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
+deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_DEFAULT_SO=true.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=openshift ./deploy/install.sh
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \n		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \n		ENVIRONMENT=openshift ./deploy/install.sh
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
@@ -177,11 +182,11 @@ check-prereqs: ## Verify deploy prerequisites (tools, versions, cluster reachabi
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
+deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_DEFAULT_SO=true.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=kubernetes ./deploy/install.sh
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \n		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \n		ENVIRONMENT=kubernetes ./deploy/install.sh
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s

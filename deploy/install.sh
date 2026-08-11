@@ -102,6 +102,8 @@ source "$DEPLOY_LIB_DIR/infra_wva.sh"
 source "$DEPLOY_LIB_DIR/infra_epp.sh"
 # shellcheck source=lib/infra_monitoring.sh
 source "$DEPLOY_LIB_DIR/infra_monitoring.sh"
+# shellcheck source=lib/scaledobject.sh
+source "$DEPLOY_LIB_DIR/scaledobject.sh"
 # shellcheck source=lib/cleanup.sh
 source "$DEPLOY_LIB_DIR/cleanup.sh"
 # shellcheck source=lib/install_core.sh
@@ -112,6 +114,16 @@ UNDEPLOY=${UNDEPLOY:-false}
 # takes, so "make check-prereqs" passing and the install then failing on a
 # prerequisite is not a state these two can reach.
 CHECK_ONLY=${CHECK_ONLY:-false}
+
+# Default ScaledObjects. A ScaledObject is the REGISTRATION — WVA is only asked
+# about workloads KEDA calls it about — so an install with none anywhere is a
+# controller that never scales anything and looks healthy doing it.
+# WVA_DEFAULT_SO_NS: a namespace, or "all" for every namespace holding llm-d model
+# servers (cluster-scoped installs only). Defaults to LLMD_NS.
+WVA_DEFAULT_SO=${WVA_DEFAULT_SO:-false}
+WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-$LLMD_NS}
+WVA_DEFAULT_SO_MIN=${WVA_DEFAULT_SO_MIN:-1}
+WVA_DEFAULT_SO_MAX=${WVA_DEFAULT_SO_MAX:-10}
 DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}
 
 # Orchestration lives in deploy/lib/install_core.sh (keeps this entrypoint to variable defaults + sourcing only).
