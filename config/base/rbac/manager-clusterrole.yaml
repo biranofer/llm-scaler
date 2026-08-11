@@ -34,11 +34,11 @@ rules:
   - apps
   resources:
   - deployments
+  - replicasets
+  - statefulsets
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - apps
@@ -46,16 +46,6 @@ rules:
   - deployments/scale
   verbs:
   - get
-  - update
-- apiGroups:
-  - apps
-  resources:
-  - replicasets
-  - statefulsets
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - inference.networking.k8s.io
   - inference.networking.x-k8s.io
@@ -78,8 +68,6 @@ rules:
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - leaderworkerset.x-k8s.io
@@ -87,7 +75,6 @@ rules:
   - leaderworkersets/scale
   verbs:
   - get
-  - update
 - apiGroups:
   - monitoring.coreos.com
   resources:

@@ -7,12 +7,23 @@ package controller
 // `make manifests` aggregates these into config/base/rbac/manager-clusterrole.yaml.
 
 // Scale targets and their pods.
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments/scale,verbs=get;update
+//
+// READ ONLY, and that is the whole architecture rather than an oversight: KEDA
+// owns the HPA and performs every write. WVA computes a replica count and hands
+// it over gRPC (internal/actuator publishes to an in-process decision.Set); it
+// never calls Update, Patch or the scale subresource on anything.
+//
+// The update/patch verbs on deployments, deployments/scale and the LeaderWorkerSet
+// equivalents were granted and never exercised — a cluster-wide licence to resize
+// any workload, which is the single permission a cluster admin is most right to
+// refuse. Do not re-add them without a caller: if one ever appears, the design
+// question ("why is WVA writing when KEDA actuates?") comes first.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments/scale,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="apps",resources=replicasets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets/scale,verbs=get;update
+// +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=leaderworkerset.x-k8s.io,resources=leaderworkersets/scale,verbs=get
 
 // Node inventory for accelerator/capacity discovery.
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch

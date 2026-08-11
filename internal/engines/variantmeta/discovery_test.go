@@ -12,8 +12,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
@@ -70,7 +72,7 @@ var _ = Describe("Discover", func() {
 		va := buildVA("v1", "dep1", "2.5", ptr.To(int32(1)), 8)
 		d := buildDeployment(3, 3, 2, "prefill")
 
-		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil)
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil, variantmeta.FromNodes)
 
 		Expect(metas).To(HaveLen(1))
 		m := metas[0]
@@ -93,8 +95,8 @@ var _ = Describe("Discover", func() {
 		bad := buildVA("v2", "dep2", "not-a-number", nil, 0)
 		d := buildDeployment(1, 1, 1, "")
 
-		emptyMetas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{empty}, targets("dep1", d), nil)
-		badMetas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{bad}, targets("dep2", d), nil)
+		emptyMetas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{empty}, targets("dep1", d), nil, variantmeta.FromNodes)
+		badMetas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{bad}, targets("dep2", d), nil, variantmeta.FromNodes)
 
 		Expect(emptyMetas).To(HaveLen(1))
 		Expect(emptyMetas[0].Cost).To(Equal(domain.DefaultVariantCost))
@@ -106,7 +108,7 @@ var _ = Describe("Discover", func() {
 		va := buildVA("v1", "dep1", "1", nil, 0)
 		d := buildDeployment(2, 0, 0, "")
 
-		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil)
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil, variantmeta.FromNodes)
 
 		Expect(metas).To(HaveLen(1))
 		Expect(metas[0].CurrentReplicas).To(Equal(2))
@@ -117,7 +119,7 @@ var _ = Describe("Discover", func() {
 		va := buildVA("v1", "dep1", "1", nil, 0)
 		d := buildDeployment(1, 1, 5, "") // readyReplicas > statusReplicas
 
-		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil)
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil, variantmeta.FromNodes)
 
 		Expect(metas).To(HaveLen(1))
 		Expect(metas[0].PendingReplicas).To(Equal(0))
@@ -127,7 +129,7 @@ var _ = Describe("Discover", func() {
 		va := buildVA("v1", "dep1", "1", nil, 0)
 		d := buildDeployment(1, 1, 1, "")
 
-		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil)
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, targets("dep1", d), nil, variantmeta.FromNodes)
 
 		Expect(metas).To(HaveLen(1))
 		Expect(metas[0].MinReplicas).To(BeNil())
@@ -142,7 +144,7 @@ var _ = Describe("Discover", func() {
 		Expect(appsv1.AddToScheme(scheme)).To(Succeed())
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, nil, c)
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va}, nil, c, variantmeta.FromNodes)
 
 		Expect(metas).To(BeEmpty())
 	})
@@ -231,5 +233,50 @@ var _ = Describe("RoleFromScaleTarget", func() {
 
 	It("treats a nil scale target as non-disaggregated", func() {
 		Expect(variantmeta.RoleFromScaleTarget(nil)).To(Equal(domain.RoleBoth))
+	})
+})
+
+// Nodes are cluster-scoped, and reading them is the only thing in the normal path
+// that needs cluster-scoped RBAC. It is worth doing exactly when a physical
+// limiter charges the variant to an accelerator pool; with no such limiter the
+// answer changes nothing (FitsGPUBudget asks whether ANY pool has room), so the
+// read must not happen. That is what lets a namespace-scoped install run with no
+// cluster-scoped permissions at all.
+var _ = Describe("accelerator observation is conditional", func() {
+	ctx := context.Background()
+
+	// A client that fails every Node read, standing in for an install with no
+	// permission on nodes. DeclaredOnly must never reach it; FromNodes must
+	// tolerate the denial rather than fail the variant.
+	newNodelessClient := func() client.Client {
+		scheme := runtime.NewScheme()
+		Expect(appsv1.AddToScheme(scheme)).To(Succeed())
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		return fake.NewClientBuilder().WithScheme(scheme).Build()
+	}
+
+	It("leaves the accelerator unresolved instead of reading nodes", func() {
+		va := buildVA("v1", "dep1", "1", nil, 0)
+		d := buildDeployment(1, 1, 1, "") // declares no accelerator
+
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va},
+			targets("dep1", d), newNodelessClient(), variantmeta.DeclaredOnly)
+
+		Expect(metas).To(HaveLen(1))
+		Expect(constants.IsAcceleratorResolved(metas[0].AcceleratorName)).To(BeFalse(),
+			"with no physical limiter the accelerator stays unresolved, which is permissive; "+
+				"resolving it would cost a cluster-scoped node read nothing consumes")
+	})
+
+	It("still produces a usable record when the node read is denied", func() {
+		va := buildVA("v1", "dep1", "1", nil, 0)
+		d := buildDeployment(1, 1, 1, "")
+
+		metas := variantmeta.Discover(ctx, []llmdvariant.VariantAutoscaling{va},
+			targets("dep1", d), newNodelessClient(), variantmeta.FromNodes)
+
+		Expect(metas).To(HaveLen(1),
+			"a denied or empty node read must degrade to an unresolved accelerator, "+
+				"not drop the variant out of the fleet")
 	})
 })

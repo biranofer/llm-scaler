@@ -1076,6 +1076,24 @@ func (e *Engine) optimizeV2(
 	return allDecisions
 }
 
+// observeAccelerators reports whether this deployment should resolve an
+// unconstrained variant's accelerator by reading the nodes its pods run on.
+//
+// Only a PHYSICAL limiter charges a variant to an accelerator pool, so only a
+// physical limiter makes the answer matter. Without one, an unresolved accelerator
+// is permissive — FitsGPUBudget asks whether any pool has room — and the node read
+// would buy an attribution nothing consumes, at the cost of the only cluster-scoped
+// permission WVA needs in the normal path.
+//
+// This is what lets a namespace-scoped install run with no cluster-scoped RBAC at
+// all when no physical limiter is configured.
+func observeAccelerators(cfg *config.Config) variantmeta.ObserveAccelerators {
+	if cfg != nil && allocation.PhysicalUsageConfigured(cfg) {
+		return variantmeta.FromNodes
+	}
+	return variantmeta.DeclaredOnly
+}
+
 // BuildVariantStates extracts current and desired replica counts from VAs for capacity analysis.
 func (e *Engine) BuildVariantStates(
 	ctx context.Context,
@@ -1089,7 +1107,7 @@ func (e *Engine) BuildVariantStates(
 	// identity fields discovery additionally resolves (Cost, AcceleratorName,
 	// ModelID, ...) are read directly from VariantMetadata by the consumers that
 	// need them.
-	metas := variantmeta.Discover(ctx, vas, scaleTargets, k8sClient)
+	metas := variantmeta.Discover(ctx, vas, scaleTargets, k8sClient, observeAccelerators(e.Config))
 	states := make([]domain.VariantReplicaState, 0, len(metas))
 	for _, m := range metas {
 		states = append(states, m.ToReplicaState())
@@ -1378,7 +1396,7 @@ func (e *Engine) prepareModelData(
 	// the VariantReplicaState the analyzers consume. The full metadata is also
 	// threaded to the optimizer (via ModelScalingRequest.Variants) as the source
 	// of truth for variant identity/cost/accelerator.
-	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient)
+	variantMetadata := variantmeta.Discover(ctx, modelVAs, scaleTargets, k8sClient, observeAccelerators(e.Config))
 	variantStates := make([]domain.VariantReplicaState, 0, len(variantMetadata))
 	for _, m := range variantMetadata {
 		variantStates = append(variantStates, m.ToReplicaState())

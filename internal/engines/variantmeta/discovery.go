@@ -37,11 +37,34 @@ const RoleLabel = "llm-d.ai/role"
 // scale target from the provided map (populated earlier in the cycle) and falls
 // back to a live fetch; a VA whose scale target cannot be resolved is skipped
 // (logged at DEBUG), matching the previous BuildVariantStates behavior.
+// ObserveAccelerators controls whether an unconstrained variant's accelerator is
+// resolved by reading the NODES its pods run on.
+//
+// Nodes are cluster-scoped, so that read is the only thing in the normal path that
+// needs cluster-scoped RBAC. It is worth having exactly when something CHARGES a
+// variant to an accelerator pool — a physical (gpu-inventory) limiter. With no such
+// limiter, an unresolved accelerator is permissive: FitsGPUBudget asks whether ANY
+// pool has room, so the answer does not change, and the only cost is that
+// accelerator-keyed metrics are withheld for that variant.
+//
+// So a deployment with no physical limiter should not ask for node permission it
+// cannot use, and an install that lacks it is not broken — it is unattributed.
+type ObserveAccelerators bool
+
+const (
+	// FromNodes reads the pods' nodes to resolve an unconstrained accelerator.
+	FromNodes ObserveAccelerators = true
+	// DeclaredOnly uses only what the workload declares, and leaves the rest
+	// unresolved rather than touching a cluster-scoped object.
+	DeclaredOnly ObserveAccelerators = false
+)
+
 func Discover(
 	ctx context.Context,
 	vas []llmdvariant.VariantAutoscaling,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
+	observe ObserveAccelerators,
 ) []domain.VariantMetadata {
 	logger := ctrl.LoggerFrom(ctx)
 	metas := make([]domain.VariantMetadata, 0, len(vas))
@@ -91,7 +114,7 @@ func Discover(
 			Namespace:       va.Namespace,
 			Role:            RoleFromScaleTarget(scaleTarget),
 			Cost:            costFromVA(ctx, va),
-			AcceleratorName: resolveAccelerator(ctx, va, scaleTarget, k8sClient, readyReplicas),
+			AcceleratorName: resolveAccelerator(ctx, va, scaleTarget, k8sClient, readyReplicas, observe),
 			Engine:          inferenceengine.Detect(scaleTarget).String(),
 			GPUsPerReplica:  scaleTarget.GetTotalGPUsPerReplica(),
 			CurrentReplicas: currentReplicas,
@@ -134,9 +157,15 @@ func resolveAccelerator(
 	scaleTarget scaletarget.ScaleTargetAccessor,
 	k8sClient client.Client,
 	readyReplicas int,
+	observe ObserveAccelerators,
 ) string {
 	declared := accelerator.GetAcceleratorNameFromScaleTarget(va, scaleTarget)
 	if constants.IsAcceleratorResolved(declared) || readyReplicas <= 0 || k8sClient == nil {
+		return declared
+	}
+	if !observe {
+		// No physical limiter is charging this variant to a pool, so the node read
+		// would buy an attribution nobody consumes.
 		return declared
 	}
 
