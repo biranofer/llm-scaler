@@ -115,15 +115,15 @@ func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThresho
 	)
 }
 
-// saturationConfigMapName resolves the active saturation ConfigMap name from controller runtime env.
-func saturationConfigMapName() string {
+// scalingPolicyConfigMapName resolves the active saturation ConfigMap name from controller runtime env.
+func scalingPolicyConfigMapName() string {
 	// Match the controller's runtime config map name; discover by label first
 	// since the deployment name can vary across overlays.
 	deps, err := k8sClient.AppsV1().Deployments(cfg.WVANamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "control-plane=controller-manager",
 	})
 	if err != nil || len(deps.Items) == 0 {
-		return config.SaturationConfigMapName()
+		return config.ScalingPolicyConfigMapName()
 	}
 	return saturationConfigMapNameFromDeployment(&deps.Items[0])
 }
@@ -140,7 +140,7 @@ func saturationConfigMapNameFromDeployment(dep *appsv1.Deployment) string {
 			}
 		}
 	}
-	return config.SaturationConfigMapName()
+	return config.ScalingPolicyConfigMapName()
 }
 
 // expectAnalyzerPathLog is a Ginkgo helper: it Eventually-waits until WVA
@@ -210,7 +210,7 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 		scalerAddress = "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
 
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		// Use global saturation config for deterministic engine-path selection.
 		// Namespace-local ConfigMap watch is opt-in/tracked and can race in e2e.
 		cmNamespace = cfg.WVANamespace

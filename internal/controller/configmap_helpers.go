@@ -31,13 +31,13 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 )
 
-// parseSaturationConfig parses saturation scaling configuration from ConfigMap data.
+// parseScalingPolicyConfig parses saturation scaling configuration from ConfigMap data.
 // Returns the parsed configs and count of successfully parsed entries.
-func parseSaturationConfig(cmData map[string]string, logger logr.Logger) (config.SaturationScalingConfigPerModel, int) {
-	configs := make(config.SaturationScalingConfigPerModel)
+func parseScalingPolicyConfig(cmData map[string]string, logger logr.Logger) (config.ScalingPolicySet, int) {
+	configs := make(config.ScalingPolicySet)
 	count := 0
 	for key, yamlStr := range cmData {
-		var satConfig config.SaturationScalingConfig
+		var satConfig config.ScalingPolicy
 		if err := yaml.Unmarshal([]byte(yamlStr), &satConfig); err != nil {
 			errorType := "Failed to parse saturation scaling config entry"
 			logger.Error(err, errorType, "key", key)

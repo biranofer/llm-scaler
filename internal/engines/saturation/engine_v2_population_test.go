@@ -28,7 +28,7 @@ var _ = Describe("Engine config-population helpers", func() {
 
 	Describe("scoreForAnalyzer", func() {
 		It("returns the configured score when the analyzer is present with a positive score", func() {
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "saturation", Score: 2.5},
 					{Name: "throughput", Score: 0.5},
@@ -39,11 +39,11 @@ var _ = Describe("Engine config-population helpers", func() {
 		})
 
 		It("returns 1.0 when the analyzer is absent from config", func() {
-			Expect(scoreForAnalyzer("unknown", config.SaturationScalingConfig{})).To(Equal(1.0))
+			Expect(scoreForAnalyzer("unknown", config.ScalingPolicy{})).To(Equal(1.0))
 		})
 
 		It("returns 1.0 when the analyzer's Score is zero (field not set in config)", func() {
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "saturation", Score: 0},
 				},
@@ -52,7 +52,7 @@ var _ = Describe("Engine config-population helpers", func() {
 		})
 
 		It("returns the first matching score when multiple entries share a name", func() {
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "sat", Score: 3.0},
 					{Name: "sat", Score: 7.0}, // duplicate — first wins
@@ -64,11 +64,11 @@ var _ = Describe("Engine config-population helpers", func() {
 
 	Describe("effectiveEnabled", func() {
 		It("returns false when the analyzer is absent from config (opt-in)", func() {
-			Expect(effectiveEnabled("throughput", config.SaturationScalingConfig{})).To(BeFalse())
+			Expect(effectiveEnabled("throughput", config.ScalingPolicy{})).To(BeFalse())
 		})
 
 		It("returns false when other analyzers are configured but the target is absent", func() {
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "other"},
 				},
@@ -77,7 +77,7 @@ var _ = Describe("Engine config-population helpers", func() {
 		})
 
 		It("returns true when Enabled is nil for the matching entry", func() {
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "throughput"}, // Enabled nil → default true
 				},
@@ -87,7 +87,7 @@ var _ = Describe("Engine config-population helpers", func() {
 
 		It("returns false when Enabled is explicitly false", func() {
 			f := false
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "throughput", Enabled: &f},
 				},
@@ -97,7 +97,7 @@ var _ = Describe("Engine config-population helpers", func() {
 
 		It("returns true when Enabled is explicitly true", func() {
 			t := true
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				Analyzers: []config.AnalyzerScoreConfig{
 					{Name: "throughput", Enabled: &t},
 				},
@@ -133,7 +133,7 @@ var _ = Describe("Engine config-population helpers", func() {
 				result:       &domain.AnalyzerResult{},
 			}
 			e := minEngine(zeroSat, analyzerEntry{name: "spy", analyzer: spy})
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []config.AnalyzerScoreConfig{
@@ -157,7 +157,7 @@ var _ = Describe("Engine config-population helpers", func() {
 				result:       &domain.AnalyzerResult{},
 			}
 			e := minEngine(zeroSat, analyzerEntry{name: "spy", analyzer: spy})
-			cfg := config.SaturationScalingConfig{
+			cfg := config.ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				// spy has an entry (so it participates, opt-in) but no Score — defaults to 1.0.
@@ -184,7 +184,7 @@ var _ = Describe("Engine config-population helpers", func() {
 			e := minEngine(zeroSat, analyzerEntry{name: "spy", analyzer: spy})
 
 			// Global ScaleUpThreshold=0.85 → RC = 100/0.85 ≈ 117.6
-			cfgGlobal := config.SaturationScalingConfig{
+			cfgGlobal := config.ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []config.AnalyzerScoreConfig{
@@ -196,7 +196,7 @@ var _ = Describe("Engine config-population helpers", func() {
 
 			// Per-analyzer ScaleUpThreshold=1.10 → RC = 100/1.10 ≈ 90.9
 			overrideThreshold := 1.10
-			cfgOverride := config.SaturationScalingConfig{
+			cfgOverride := config.ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []config.AnalyzerScoreConfig{

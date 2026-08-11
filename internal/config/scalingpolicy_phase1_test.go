@@ -11,10 +11,10 @@ import (
 
 func p1BoolPtr(v bool) *bool { return &v }
 
-// validBaseConfig returns a defaulted, valid SaturationScalingConfig to isolate
+// validBaseConfig returns a defaulted, valid ScalingPolicy to isolate
 // the field under test in Validate cases.
-func validBaseConfig() SaturationScalingConfig {
-	c := SaturationScalingConfig{}
+func validBaseConfig() ScalingPolicy {
+	c := ScalingPolicy{}
 	c.ApplyDefaults()
 	return c
 }
@@ -82,17 +82,17 @@ var _ = Describe("ScalingPolicy Phase 1 schema", func() {
 
 	Describe("Validate — analyzers", func() {
 		It("accepts a known analyzer type", func() {
-			c := SaturationScalingConfig{Analyzers: []AnalyzerScoreConfig{{Type: "saturation"}}}
+			c := ScalingPolicy{Analyzers: []AnalyzerScoreConfig{{Type: "saturation"}}}
 			c.ApplyDefaults()
 			Expect(c.Validate()).To(Succeed())
 		})
 		It("accepts the legacy name-only form", func() {
-			c := SaturationScalingConfig{Analyzers: []AnalyzerScoreConfig{{Name: "saturation"}}}
+			c := ScalingPolicy{Analyzers: []AnalyzerScoreConfig{{Name: "saturation"}}}
 			c.ApplyDefaults()
 			Expect(c.Validate()).To(Succeed())
 		})
 		It("accepts an unrecognized analyzer type (extensible via RegisterAnalyzer; ignored at runtime)", func() {
-			c := SaturationScalingConfig{Analyzers: []AnalyzerScoreConfig{{Type: "epp-saturation"}}}
+			c := ScalingPolicy{Analyzers: []AnalyzerScoreConfig{{Type: "epp-saturation"}}}
 			c.ApplyDefaults()
 			Expect(c.Validate()).To(Succeed())
 		})
@@ -139,8 +139,8 @@ var _ = Describe("ScalingPolicy Phase 1 schema", func() {
 
 	Describe("Merge", func() {
 		It("carries ScaleToZero from the override but not Limiters (cluster-default-scope)", func() {
-			base := SaturationScalingConfig{}
-			override := SaturationScalingConfig{
+			base := ScalingPolicy{}
+			override := ScalingPolicy{
 				ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)},
 				Limiters:    []QuotaLimiterConfig{{Type: "gpu-inventory"}},
 			}
@@ -150,8 +150,8 @@ var _ = Describe("ScalingPolicy Phase 1 schema", func() {
 			Expect(base.Limiters).To(BeEmpty(), "per-model limiters are not merged; only the global default is read")
 		})
 		It("keeps base ScaleToZero when the override omits it", func() {
-			base := SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
-			base.Merge(SaturationScalingConfig{Priority: 2.0})
+			base := ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
+			base.Merge(ScalingPolicy{Priority: 2.0})
 			Expect(base.ScaleToZero).NotTo(BeNil())
 			Expect(*base.ScaleToZero.Enabled).To(BeTrue())
 		})
@@ -159,11 +159,11 @@ var _ = Describe("ScalingPolicy Phase 1 schema", func() {
 
 	Describe("v1 opt-out contract", func() {
 		It("is V2 when an analyzers list is present", func() {
-			c := SaturationScalingConfig{Analyzers: []AnalyzerScoreConfig{{Type: "saturation"}}}
+			c := ScalingPolicy{Analyzers: []AnalyzerScoreConfig{{Type: "saturation"}}}
 			Expect(c.IsV2()).To(BeTrue())
 		})
 		It("is V1 when the analyzers section is deleted", func() {
-			c := SaturationScalingConfig{}
+			c := ScalingPolicy{}
 			Expect(c.IsV2()).To(BeFalse())
 		})
 	})
@@ -186,7 +186,7 @@ limiters:
     scope: cluster
     quotas: { H100: 32 }
 `
-		var c SaturationScalingConfig
+		var c ScalingPolicy
 		Expect(yaml.Unmarshal([]byte(y), &c)).To(Succeed())
 		// Same order the reconciler applies: Normalize -> ApplyDefaults -> Validate.
 		Expect(c.Normalize()).To(Succeed())
@@ -211,7 +211,7 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 	AfterEach(func() { _ = os.Unsetenv("WVA_SCALE_TO_ZERO") })
 
 	It("uses the inline setting when present", func() {
-		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
+		sat := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
 		Expect(ResolveScaleToZeroEnabled(sat)).To(BeTrue())
 
 		sat.ScaleToZero.Enabled = p1BoolPtr(false)
@@ -220,7 +220,7 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 
 	It("falls back to the deployment flag when the entry says nothing", func() {
 		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
-		Expect(ResolveScaleToZeroEnabled(&SaturationScalingConfig{})).To(BeTrue())
+		Expect(ResolveScaleToZeroEnabled(&ScalingPolicy{})).To(BeTrue())
 		Expect(ResolveScaleToZeroEnabled(nil)).To(BeTrue())
 	})
 
@@ -228,18 +228,18 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 		// The pointer exists for exactly this: "not set" and "set to false" must
 		// not collapse, or a model could never opt out of a cluster-wide default.
 		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
-		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)}}
+		sat := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)}}
 		Expect(ResolveScaleToZeroEnabled(sat)).To(BeFalse())
 	})
 
 	It("resolves the retention period, defaulting when absent or unparseable", func() {
-		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "45s"}}
+		sat := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "45s"}}
 		Expect(ResolveScaleToZeroRetention(sat)).To(Equal(45 * time.Second))
 
-		Expect(ResolveScaleToZeroRetention(&SaturationScalingConfig{})).To(Equal(DefaultScaleToZeroRetentionPeriod))
+		Expect(ResolveScaleToZeroRetention(&ScalingPolicy{})).To(Equal(DefaultScaleToZeroRetentionPeriod))
 
 		// A typo must not scale a model down the instant it goes idle.
-		bad := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "10 minutes"}}
+		bad := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "10 minutes"}}
 		Expect(ResolveScaleToZeroRetention(bad)).To(Equal(DefaultScaleToZeroRetentionPeriod))
 	})
 })
@@ -248,10 +248,10 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 // of them must not silently discard the other.
 var _ = Describe("ScaleToZero merge", func() {
 	It("merges the envelope field by field", func() {
-		base := SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{
+		base := ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{
 			Enabled: p1BoolPtr(true), RetentionPeriod: "10m",
 		}}
-		base.Merge(SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "30s"}})
+		base.Merge(ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "30s"}})
 
 		Expect(base.ScaleToZero.RetentionPeriod).To(Equal("30s"))
 		Expect(base.ScaleToZero.Enabled).NotTo(BeNil(), "enabled must survive a retention-only override")
@@ -262,7 +262,7 @@ var _ = Describe("ScaleToZero merge", func() {
 var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 	It("selects quota when the default entry declares an inline quota limiter", func() {
 		c := &Config{}
-		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 			"default": {Limiters: []QuotaLimiterConfig{{
 				Type: "quota", Name: "cluster-h100", Scope: QuotaScopeCluster,
 				ClusterQuotas: map[string]int{"H100": 32},
@@ -276,7 +276,7 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 
 	It("selects inventory when the default entry declares a gpu-inventory limiter", func() {
 		c := &Config{}
-		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 			"default": {Limiters: []QuotaLimiterConfig{{Type: "gpu-inventory"}}},
 		})
 		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeInventory))
@@ -289,14 +289,14 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 	// optimizer honoured it. One list, one answer.
 	It("selects no limiter at all when none is declared", func() {
 		c := &Config{}
-		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{"default": {}})
+		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{"default": {}})
 		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeNone))
 		Expect(c.EffectiveQuotaEntries()).To(BeEmpty())
 	})
 
 	It("selects no limiter for an explicitly empty list", func() {
 		c := &Config{}
-		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 			"default": {Limiters: []QuotaLimiterConfig{}},
 		})
 		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeNone))
@@ -304,7 +304,7 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 
 	It("ignores limiters declared on a non-default (per-model) entry", func() {
 		c := &Config{}
-		c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 			"default": {Limiters: []QuotaLimiterConfig{{Type: "gpu-inventory"}}},
 			"some/model#ns": {Limiters: []QuotaLimiterConfig{{
 				Type: "quota", Name: "sneaky", Scope: QuotaScopeCluster,
@@ -323,7 +323,7 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 		inv := QuotaLimiterConfig{Type: "gpu-inventory"}
 		for _, limiters := range [][]QuotaLimiterConfig{{inv, quota}, {quota, inv}} {
 			c := &Config{}
-			c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+			c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 				"default": {Limiters: limiters},
 			})
 			Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeQuota))

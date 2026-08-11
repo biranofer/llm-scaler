@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
@@ -35,8 +36,17 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 		name      string
 		namespace string
 		isGlobal  bool
-	}{
-		{name: config.SaturationConfigMapName(), namespace: systemNamespace, isGlobal: true},
+	}{}
+	// Both names: the current one and the pre-rename one, so an upgrade does not
+	// silently drop a deployment's whole scaling configuration. The current name
+	// is bootstrapped last so it wins when both exist.
+	policyNames := config.ScalingPolicyConfigMapNames()
+	for i := len(policyNames) - 1; i >= 0; i-- {
+		targets = append(targets, struct {
+			name      string
+			namespace string
+			isGlobal  bool
+		}{name: policyNames[i], namespace: systemNamespace, isGlobal: true})
 	}
 
 	// Determine which namespaces to scan for namespace-local ConfigMaps
@@ -89,7 +99,7 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 				name      string
 				namespace string
 				isGlobal  bool
-			}{name: config.SaturationConfigMapName(), namespace: ns, isGlobal: false},
+			}{name: config.ScalingPolicyConfigMapName(), namespace: ns, isGlobal: false},
 		)
 	}
 
@@ -117,10 +127,9 @@ func (r *ConfigMapReconciler) bootstrapConfigMap(ctx context.Context, name, name
 		return fmt.Errorf("failed to bootstrap ConfigMap %s/%s: %w", namespace, name, err)
 	}
 
-	switch name {
-	case config.SaturationConfigMapName():
-		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	default:
+	if slices.Contains(config.ScalingPolicyConfigMapNames(), name) {
+		r.handleScalingPolicyConfigMap(ctx, cm, namespace, isGlobal)
+	} else {
 		logger.V(1).Info("Ignoring unrecognized bootstrap ConfigMap", "name", name, "namespace", namespace)
 	}
 

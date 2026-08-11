@@ -66,7 +66,7 @@ var _ = Describe("KEDA external scaler", Label("smoke", "full"), Ordered, func()
 		}
 
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		variantName = scalerBaseName + "-so"

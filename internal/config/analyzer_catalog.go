@@ -37,7 +37,7 @@ type ExternalAnalyzerCatalog map[string]ExternalAnalyzerDef
 //
 // Cluster-scoped, like limiters: read from the SYSTEM namespace's ConfigMap only.
 // A workload namespace declaring analyzers is reported and ignored — see
-// parseSaturationConfig. Note this still lets a per-namespace WVA install define
+// parseScalingPolicyConfig. Note this still lets a per-namespace WVA install define
 // its own, since that install's own namespace IS its system namespace.
 func (c *Config) ExternalAnalyzerCatalog() ExternalAnalyzerCatalog {
 	c.mu.RLock()

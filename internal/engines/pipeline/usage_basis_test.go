@@ -43,7 +43,7 @@ func TestUsageBasisOfLimiters(t *testing.T) {
 func TestPhysicalUsageConfiguredMatchesTheBuiltLimiter(t *testing.T) {
 	withLimiters := func(limiters ...config.QuotaLimiterConfig) *config.Config {
 		cfg := config.NewTestConfig()
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			"default": {Limiters: limiters},
 		})
 		return cfg

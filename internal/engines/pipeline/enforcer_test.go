@@ -44,7 +44,7 @@ var _ = Describe("Enforcer", func() {
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2, Action: domain.ActionNoChange},
 						{VariantName: "variant-b", ModelID: "test-model", Namespace: "test-ns", Cost: 2.0, CurrentReplicas: 1, TargetReplicas: 3, Action: domain.ActionScaleUp},
 					}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
@@ -68,7 +68,7 @@ var _ = Describe("Enforcer", func() {
 					}
 					decision.SetDecisionReason(domain.ActionScaleUp, domain.DecisionReasonTest, string(domain.DecisionReasonTest))
 					decisions := []domain.VariantDecision{decision}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
@@ -93,7 +93,7 @@ var _ = Describe("Enforcer", func() {
 					decisions := []domain.VariantDecision{
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 					}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
@@ -120,7 +120,7 @@ var _ = Describe("Enforcer", func() {
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 2.0, CurrentReplicas: 0, TargetReplicas: 0},
 						{VariantName: "variant-b", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 					}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(false),
 					}}
 
@@ -145,7 +145,7 @@ var _ = Describe("Enforcer", func() {
 						decision1,
 						{VariantName: "variant-b", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 					}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(false),
 					}}
 
@@ -166,7 +166,7 @@ var _ = Describe("Enforcer", func() {
 						{VariantName: "variant-z", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 					}
-					satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+					satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 						Enabled: boolPtr(false),
 					}}
 
@@ -197,7 +197,7 @@ var _ = Describe("Enforcer", func() {
 				}
 				d3.SetDecisionReason(domain.ActionNoChange, domain.DecisionReasonTest, string(domain.DecisionReasonTest))
 				decisions := []domain.VariantDecision{d1, d2, d3}
-				satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+				satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
@@ -227,7 +227,7 @@ var _ = Describe("Enforcer", func() {
 				decisions := []domain.VariantDecision{
 					{VariantName: "v1", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 				}
-				satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+				satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
@@ -257,7 +257,7 @@ var _ = Describe("Enforcer", func() {
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 				}
-				satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+				satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
@@ -295,7 +295,7 @@ var _ = Describe("Enforcer", func() {
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 				}
-				satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+				satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 					Enabled: boolPtr(false),
 				}}
 
@@ -331,7 +331,7 @@ var _ = Describe("Enforcer", func() {
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 3},
 				}
-				satConfig := &config.SaturationScalingConfig{ScaleToZero: &config.ScaleToZeroEnvelope{
+				satConfig := &config.ScalingPolicy{ScaleToZero: &config.ScaleToZeroEnvelope{
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 

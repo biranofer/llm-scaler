@@ -18,7 +18,7 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 	cfg := config.NewTestConfig()
 
 	withLimiters := func(limiters ...config.QuotaLimiterConfig) {
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			"default": {Limiters: limiters},
 		})
 	}
@@ -69,7 +69,7 @@ func TestLimiterIsRebuiltWhenTheConfigChanges(t *testing.T) {
 func TestAFailedRebuildKeepsThePreviousLimiter(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.NewTestConfig()
-	cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+	cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 		"default": {Limiters: []config.QuotaLimiterConfig{{
 			Name: "q", Type: "quota", Scope: config.QuotaScopeCluster,
 			ClusterQuotas: map[string]int{"A100": 4},
@@ -92,7 +92,7 @@ func TestAFailedRebuildKeepsThePreviousLimiter(t *testing.T) {
 
 	// Change the config so a rebuild is attempted, and make it fail.
 	fail = true
-	cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+	cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 		"default": {Limiters: []config.QuotaLimiterConfig{{
 			Name: "q2", Type: "quota", Scope: config.QuotaScopeCluster,
 			ClusterQuotas: map[string]int{"H100": 8},

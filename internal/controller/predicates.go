@@ -28,10 +28,12 @@ func ConfigMapPredicate(ds datastore.Datastore, cfg *config.Config) predicate.Pr
 		namespace := obj.GetNamespace()
 		systemNamespace := config.SystemNamespace()
 
-		// Well-known ConfigMap names
-		wellKnownNames := map[string]bool{
-			config.ConfigMapName():           true,
-			config.SaturationConfigMapName(): true,
+		// Well-known ConfigMap names. Both scaling-policy names are watched: the
+		// ConfigMap was renamed when it outgrew "saturation", and an operator who
+		// has not renamed theirs must keep getting live updates.
+		wellKnownNames := map[string]bool{config.ConfigMapName(): true}
+		for _, n := range config.ScalingPolicyConfigMapNames() {
+			wellKnownNames[n] = true
 		}
 
 		// Check if this is a well-known ConfigMap name

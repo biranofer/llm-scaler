@@ -11,7 +11,7 @@ var _ = Describe("analyzer matching by EffectiveType", func() {
 	It("matches a type-only analyzer entry (no name) for score/threshold/enabled", func() {
 		up := 0.95
 		disabled := false
-		cfg := config.SaturationScalingConfig{
+		cfg := config.ScalingPolicy{
 			ScaleUpThreshold:  0.90,
 			ScaleDownBoundary: 0.60,
 			Analyzers: []config.AnalyzerScoreConfig{

@@ -10,7 +10,7 @@ Two consumers read these budgets:
   see the caveat below; and
 - the **scale-from-zero placement check**, which refuses to wake a variant onto
   an accelerator with no room (see
-  [`scaleFromZero`](saturation-scaling-config.md#scalefromzero)).
+  [`scaleFromZero`](scaling-policy-config.md#scalefromzero)).
 
 Both over-allocate when the budget over-states availability: pods land in
 `Pending`, and for scale-from-zero the queued request that triggered the wake

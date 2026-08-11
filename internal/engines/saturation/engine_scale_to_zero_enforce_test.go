@@ -50,7 +50,7 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		cfg := config.NewTestConfig()
 		// Scale-to-zero policy lives on the scaling entry now, keyed the same way
 		// every other per-model setting is.
-		cfg.UpdateSaturationConfigForNamespace(namespace, map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
 			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
 				Enabled: ptrTo(true), RetentionPeriod: "10m",
 			}},
@@ -146,7 +146,7 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 	It("does NOT zero an idle vLLM model when a per-model override disables it", func() {
 		// The entry's "default" enables scale-to-zero; the model's own
 		// "{modelID}#{namespace}" override disables it and must win. That is the
-		// whole resolveSaturationConfig → EnforcePolicyOnDecisions →
+		// whole resolveScalingPolicy → EnforcePolicyOnDecisions →
 		// ResolveScaleToZeroEnabled wiring, end to end.
 		//
 		// This used to prove something weaker — that an inline setting beat a
@@ -154,7 +154,7 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		// source to beat, so the meaningful precedence is override over default,
 		// and an explicit false must survive an inherited true.
 		e := engineWithIdleEnforcer()
-		e.Config.UpdateSaturationConfigForNamespace(namespace, map[string]config.SaturationScalingConfig{
+		e.Config.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
 			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
 				Enabled: ptrTo(true), RetentionPeriod: "10m",
 			}},

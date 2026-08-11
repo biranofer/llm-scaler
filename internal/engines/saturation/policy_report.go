@@ -99,7 +99,7 @@ func (p *policyReporter) reportPolicyConflict(ctx context.Context, namespace, mo
 // per change. This is the "which value won" readout: with a default entry, a tier
 // and a per-model override all contributing, the resolved thresholds are not
 // derivable from any single one of them.
-func (p *policyReporter) reportEffectivePolicy(ctx context.Context, namespace, modelID, policy string, cfg config.SaturationScalingConfig) {
+func (p *policyReporter) reportEffectivePolicy(ctx context.Context, namespace, modelID, policy string, cfg config.ScalingPolicy) {
 	name := policy
 	if name == "" {
 		name = "(default entry)"
@@ -116,7 +116,7 @@ func (p *policyReporter) reportEffectivePolicy(ctx context.Context, namespace, m
 
 // formatBand renders the fields that make two resolutions meaningfully different,
 // so the readout fires on a real change rather than on a re-parse.
-func formatBand(cfg config.SaturationScalingConfig) string {
+func formatBand(cfg config.ScalingPolicy) string {
 	return fmt.Sprintf("%.3f|%.3f|%.3f|%.3f",
 		cfg.ScaleUpThreshold, cfg.ScaleDownBoundary, cfg.KvCacheThreshold, cfg.Priority)
 }

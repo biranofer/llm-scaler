@@ -13,7 +13,7 @@ kind: ConfigMap
 # - queueLengthThreshold: Replica saturated if queue length >= threshold (integer)
 #
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: workload-variant-autoscaler-system
   labels:
     app.kubernetes.io/name: workload-variant-autoscaler
@@ -24,7 +24,7 @@ data:
   # The `analyzers` section selects the V2 (token/capacity-based) saturation
   # analyzer — the default since v0.9.0. Remove the `analyzers` section (and the
   # V2-only thresholds) to opt out to the legacy V1 (percentage-based) analyzer.
-  # See docs/developer-guide/saturation-scaling-config.md.
+  # See docs/developer-guide/scaling-policy-config.md.
   #
   # Each analyzer accepts the ScalingPolicy plugin envelope (proposal #1245):
   #   analyzers:

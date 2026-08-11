@@ -293,7 +293,7 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 
 	BeforeAll(func() {
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		variantName = modelSvcName + "-so"
@@ -409,7 +409,7 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 
 	BeforeAll(func() {
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		variantName = modelSvcName + "-so"
@@ -523,7 +523,7 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 
 	BeforeAll(func() {
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		variantName = modelSvcName + "-so"

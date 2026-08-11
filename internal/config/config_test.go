@@ -56,7 +56,7 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 					continue
 				}
 
-				satConfig := cfg.SaturationConfig()
+				satConfig := cfg.ScalingPolicyConfig()
 				if satConfig == nil {
 					atomic.AddInt64(&readErrors, 1)
 					t.Logf("Reader %d: Nil saturation config at iteration %d", readerID, j)
@@ -77,12 +77,12 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 			for j := 0; j < iterations; j++ {
 
 				// Update saturation config
-				newSatConfig := make(map[string]SaturationScalingConfig)
-				newSatConfig["test-accelerator"] = SaturationScalingConfig{
+				newSatConfig := make(map[string]ScalingPolicy)
+				newSatConfig["test-accelerator"] = ScalingPolicy{
 					KvCacheThreshold:     0.8,
 					QueueLengthThreshold: 5,
 				}
-				cfg.UpdateSaturationConfig(newSatConfig)
+				cfg.UpdateScalingPolicyConfig(newSatConfig)
 
 				// Small sleep to increase chance of concurrent access
 				time.Sleep(time.Microsecond)
@@ -101,7 +101,7 @@ func TestConfig_ThreadSafeUpdates(t *testing.T) {
 	finalInterval := cfg.OptimizationInterval()
 	assert.Greater(t, finalInterval, time.Duration(0), "Final interval should be positive")
 
-	finalSatConfig := cfg.SaturationConfig()
+	finalSatConfig := cfg.ScalingPolicyConfig()
 	assert.NotNil(t, finalSatConfig, "Final saturation config should not be nil")
 }
 
@@ -121,7 +121,7 @@ func TestConfig_ThreadSafeConcurrentReads(t *testing.T) {
 			<-start // Wait for signal to start
 			// All readers should be able to read concurrently (RWMutex allows multiple readers)
 			interval := cfg.OptimizationInterval()
-			satConfig := cfg.SaturationConfig()
+			satConfig := cfg.ScalingPolicyConfig()
 			_ = interval
 			_ = satConfig
 		}()
@@ -292,19 +292,19 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 	cfg := NewTestConfig()
 
 	// Set up global saturation config
-	globalSatConfig := map[string]SaturationScalingConfig{
+	globalSatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.80,
 			QueueLengthThreshold: 5,
 		},
 	}
-	cfg.UpdateSaturationConfig(globalSatConfig)
+	cfg.UpdateScalingPolicyConfig(globalSatConfig)
 
 	namespace := "test-namespace"
 
 	// Test 1: No namespace-local config, should return global
 	t.Run("No namespace-local config returns global", func(t *testing.T) {
-		satConfig := cfg.SaturationConfigForNamespace(namespace)
+		satConfig := cfg.ScalingPolicyConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(satConfig), "Should return global config")
 		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should use global value")
 	})
@@ -312,28 +312,28 @@ func TestConfig_NamespaceAwareResolutionPrecedence(t *testing.T) {
 	// Test 2: Namespace-local config takes precedence
 	t.Run("Namespace-local config takes precedence", func(t *testing.T) {
 		// Set namespace-local saturation config
-		nsSatConfig := map[string]SaturationScalingConfig{
+		nsSatConfig := map[string]ScalingPolicy{
 			"default": {
 				KvCacheThreshold:     0.70, // Different from global (0.80)
 				QueueLengthThreshold: 3,    // Different from global (5)
 			},
 		}
-		cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)
+		cfg.UpdateScalingPolicyConfigForNamespace(namespace, nsSatConfig)
 
 		// Verify namespace-local config is returned
-		satConfig := cfg.SaturationConfigForNamespace(namespace)
+		satConfig := cfg.ScalingPolicyConfigForNamespace(namespace)
 		assert.Equal(t, 1, len(satConfig), "Should return namespace-local config")
 		assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
 		assert.Equal(t, float64(3), satConfig["default"].QueueLengthThreshold, "Should use namespace-local value")
 
 		// Verify global config is unchanged
-		globalSatConfig := cfg.SaturationConfigForNamespace("")
+		globalSatConfig := cfg.ScalingPolicyConfigForNamespace("")
 		assert.Equal(t, 0.80, globalSatConfig["default"].KvCacheThreshold, "Global config should be unchanged")
 	})
 
 	// Test 3: Empty namespace returns global
 	t.Run("Empty namespace returns global", func(t *testing.T) {
-		satConfig := cfg.SaturationConfigForNamespace("")
+		satConfig := cfg.ScalingPolicyConfigForNamespace("")
 		assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Empty namespace should return global")
 	})
 }
@@ -344,34 +344,34 @@ func TestConfig_NamespaceConfigDeletion(t *testing.T) {
 	cfg := NewTestConfig()
 
 	// Set up global saturation config
-	globalSatConfig := map[string]SaturationScalingConfig{
+	globalSatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.80,
 			QueueLengthThreshold: 5,
 		},
 	}
-	cfg.UpdateSaturationConfig(globalSatConfig)
+	cfg.UpdateScalingPolicyConfig(globalSatConfig)
 
 	namespace := "test-namespace"
 
 	// Set namespace-local config
-	nsSatConfig := map[string]SaturationScalingConfig{
+	nsSatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.70,
 			QueueLengthThreshold: 3,
 		},
 	}
-	cfg.UpdateSaturationConfigForNamespace(namespace, nsSatConfig)
+	cfg.UpdateScalingPolicyConfigForNamespace(namespace, nsSatConfig)
 
 	// Verify namespace-local config is active
-	satConfig := cfg.SaturationConfigForNamespace(namespace)
+	satConfig := cfg.ScalingPolicyConfigForNamespace(namespace)
 	assert.Equal(t, 0.70, satConfig["default"].KvCacheThreshold, "Should use namespace-local value")
 
 	// Remove namespace-local config (simulating ConfigMap deletion)
 	cfg.RemoveNamespaceConfig(namespace)
 
 	// Verify fallback to global config
-	satConfig = cfg.SaturationConfigForNamespace(namespace)
+	satConfig = cfg.ScalingPolicyConfigForNamespace(namespace)
 	assert.Equal(t, 0.80, satConfig["default"].KvCacheThreshold, "Should fall back to global value after deletion")
 }
 
@@ -380,44 +380,44 @@ func TestConfig_MultipleNamespaces(t *testing.T) {
 	cfg := NewTestConfig()
 
 	// Set up global config
-	globalSatConfig := map[string]SaturationScalingConfig{
+	globalSatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.80,
 			QueueLengthThreshold: 5,
 		},
 	}
-	cfg.UpdateSaturationConfig(globalSatConfig)
+	cfg.UpdateScalingPolicyConfig(globalSatConfig)
 
 	namespace1 := "namespace1"
 	namespace2 := "namespace2"
 
 	// Set namespace1 config
-	ns1SatConfig := map[string]SaturationScalingConfig{
+	ns1SatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.70,
 			QueueLengthThreshold: 3,
 		},
 	}
-	cfg.UpdateSaturationConfigForNamespace(namespace1, ns1SatConfig)
+	cfg.UpdateScalingPolicyConfigForNamespace(namespace1, ns1SatConfig)
 
 	// Set namespace2 config
-	ns2SatConfig := map[string]SaturationScalingConfig{
+	ns2SatConfig := map[string]ScalingPolicy{
 		"default": {
 			KvCacheThreshold:     0.90,
 			QueueLengthThreshold: 7,
 		},
 	}
-	cfg.UpdateSaturationConfigForNamespace(namespace2, ns2SatConfig)
+	cfg.UpdateScalingPolicyConfigForNamespace(namespace2, ns2SatConfig)
 
 	// Verify each namespace has its own config
-	satConfig1 := cfg.SaturationConfigForNamespace(namespace1)
+	satConfig1 := cfg.ScalingPolicyConfigForNamespace(namespace1)
 	assert.Equal(t, 0.70, satConfig1["default"].KvCacheThreshold, "Namespace1 should have its own config")
 
-	satConfig2 := cfg.SaturationConfigForNamespace(namespace2)
+	satConfig2 := cfg.ScalingPolicyConfigForNamespace(namespace2)
 	assert.Equal(t, 0.90, satConfig2["default"].KvCacheThreshold, "Namespace2 should have its own config")
 
 	// Verify global config is unchanged
-	globalSatConfig2 := cfg.SaturationConfigForNamespace("")
+	globalSatConfig2 := cfg.ScalingPolicyConfigForNamespace("")
 	assert.Equal(t, 0.80, globalSatConfig2["default"].KvCacheThreshold, "Global config should be unchanged")
 }
 
@@ -488,7 +488,7 @@ func TestConfig_ThroughputAnalyzerEnabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := NewTestConfig()
-			cfg.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+			cfg.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 				"default": {Analyzers: tt.analyzer},
 			})
 

@@ -14,7 +14,7 @@ import (
 // reference them.
 func TestExternalAnalyzerCatalogComesFromTheDefaultEntry(t *testing.T) {
 	c := &Config{}
-	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+	c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 		GlobalDefaultsKey: {
 			AnalyzerDefinitions: ExternalAnalyzerCatalog{
 				"ttft-slo": {Engines: map[string]ExternalAnalyzerBody{
@@ -44,7 +44,7 @@ func TestExternalAnalyzerCatalogComesFromTheDefaultEntry(t *testing.T) {
 // it was handed would rewrite the queries WVA runs.
 func TestExternalAnalyzerCatalogIsIsolated(t *testing.T) {
 	c := &Config{}
-	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+	c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 		GlobalDefaultsKey: {
 			AnalyzerDefinitions: ExternalAnalyzerCatalog{
 				"a": {Engines: map[string]ExternalAnalyzerBody{"vllm": {Query: "original"}}},
@@ -66,7 +66,7 @@ func TestExternalAnalyzerCatalogIsIsolated(t *testing.T) {
 // define, which the design forbids. Nothing outside the default entry contributes.
 func TestOnlyTheDefaultEntryContributesDefinitions(t *testing.T) {
 	c := &Config{}
-	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{
+	c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
 		GlobalDefaultsKey: {
 			AnalyzerDefinitions: ExternalAnalyzerCatalog{"cluster-wide": {Query: "q"}},
 		},
@@ -86,6 +86,6 @@ func TestOnlyTheDefaultEntryContributesDefinitions(t *testing.T) {
 
 func TestExternalAnalyzerCatalogEmptyWhenUndeclared(t *testing.T) {
 	c := &Config{}
-	c.UpdateSaturationConfig(map[string]SaturationScalingConfig{GlobalDefaultsKey: {}})
+	c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{GlobalDefaultsKey: {}})
 	assert.Empty(t, c.ExternalAnalyzerCatalog())
 }

@@ -25,7 +25,7 @@ var _ = Describe("analyzer liveness gate (engine level)", func() {
 		}
 	}
 
-	cfg := config.SaturationScalingConfig{ScaleUpThreshold: 0.85, ScaleDownBoundary: 0.70}
+	cfg := config.ScalingPolicy{ScaleUpThreshold: 0.85, ScaleDownBoundary: 0.70}
 
 	It("recovers: a non-live analyzer becomes live again once it produces a fresh informative result", func() {
 		noData := &fakeAnalyzerWithResult{

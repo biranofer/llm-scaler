@@ -66,21 +66,21 @@ type analyzerEntry struct {
 	analyzer domain.Analyzer
 }
 
-// resolveSaturationConfig resolves config for a model.
+// resolveScalingPolicy resolves config for a model.
 // Starts from the "default" entry (or zero-value), then merges the model-specific
 // override "{modelID}#{namespace}" on top (if present). This allows per-model
 // overrides to specify only the fields they want to change.
 // After merging, ApplyDefaults fills remaining zero-valued fields, then
 // ApplyV2ThresholdDefaults calibrates the V2 thresholds on the final config and an
 // inconsistent (inverted) threshold pair is reset to the defaults.
-func resolveSaturationConfig(
-	configMap map[string]config.SaturationScalingConfig,
+func resolveScalingPolicy(
+	configMap map[string]config.ScalingPolicy,
 	modelID, namespace string,
-) config.SaturationScalingConfig {
-	return resolveSaturationConfigForPolicy(configMap, modelID, namespace, "")
+) config.ScalingPolicy {
+	return resolveScalingPolicyForTier(configMap, modelID, namespace, "")
 }
 
-// resolveSaturationConfigForPolicy resolves the effective entry, layering the
+// resolveScalingPolicyForTier resolves the effective entry, layering the
 // named policy tier the variant selected between the cluster default and any
 // per-model override:
 //
@@ -98,12 +98,12 @@ func resolveSaturationConfig(
 // An unknown policy name resolves to the default entry — the same outcome as
 // naming none, which is the right behaviour but a bad silence, so the caller
 // reports it (see policyResolution).
-func resolveSaturationConfigForPolicy(
-	configMap map[string]config.SaturationScalingConfig,
+func resolveScalingPolicyForTier(
+	configMap map[string]config.ScalingPolicy,
 	modelID, namespace, policy string,
-) config.SaturationScalingConfig {
+) config.ScalingPolicy {
 	// Start with default config as base
-	base := config.SaturationScalingConfig{}
+	base := config.ScalingPolicy{}
 	if defaultCfg, ok := configMap[config.GlobalDefaultsKey]; ok {
 		base = defaultCfg
 	}
@@ -529,7 +529,7 @@ func (e *Engine) recordActiveOptimizer() {
 func (e *Engine) recordDefaultConfigMetrics() {
 	metrics.SetConfigOptimizationInterval(float64(e.Config.OptimizationInterval().Seconds()))
 
-	globalSatCfgMap := e.Config.SaturationConfig()
+	globalSatCfgMap := e.Config.ScalingPolicyConfig()
 	// record global default config
 	//
 	// The limiter_enabled label keeps its name and its meaning — "is scaling being
@@ -712,7 +712,7 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 	currentAllocations := make(map[string]*domain.Allocation)
 
 	// Read saturation config for analyzer selection.
-	globalSatCfgMap := e.Config.SaturationConfig()
+	globalSatCfgMap := e.Config.ScalingPolicyConfig()
 	analyzerName := ""
 	if cfg, ok := globalSatCfgMap["default"]; ok {
 		cfg.ApplyDefaults()
@@ -846,10 +846,10 @@ func (e *Engine) recordScalingEvent(
 // reported and resolved deterministically rather than silently half-applied.
 func (e *Engine) resolveModelPolicy(
 	ctx context.Context,
-	configMap map[string]config.SaturationScalingConfig,
+	configMap map[string]config.ScalingPolicy,
 	modelID, namespace string,
 	vas []llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
-) config.SaturationScalingConfig {
+) config.ScalingPolicy {
 	policy, conflicting := modelPolicy(vas)
 	if len(conflicting) > 1 {
 		e.policies.reportPolicyConflict(ctx, namespace, modelID, conflicting, policy)
@@ -859,7 +859,7 @@ func (e *Engine) resolveModelPolicy(
 	// outcome and the wrong silence — report it against the variants that asked.
 	if policy != "" {
 		if _, ok := configMap[policy]; !ok || !config.PolicyEntryKey(policy) {
-			known := slices.Sorted(maps.Keys(config.ScalingPolicies(configMap)))
+			known := slices.Sorted(maps.Keys(config.NamedPolicies(configMap)))
 			for i := range vas {
 				if vas[i].Spec.ScalingPolicy == policy {
 					e.policies.reportUnknownPolicy(ctx, namespace, vas[i].Name, policy, known)
@@ -868,7 +868,7 @@ func (e *Engine) resolveModelPolicy(
 		}
 	}
 
-	resolved := resolveSaturationConfigForPolicy(configMap, modelID, namespace, policy)
+	resolved := resolveScalingPolicyForTier(configMap, modelID, namespace, policy)
 	e.policies.reportEffectivePolicy(ctx, namespace, modelID, policy, resolved)
 	return resolved
 }
@@ -1041,14 +1041,14 @@ func (e *Engine) optimizeV2(
 			"groupKey", groupKey)
 
 		// Get namespace-aware saturation config
-		saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
+		saturationConfigMap := e.Config.ScalingPolicyConfigForNamespace(namespace)
 		if len(saturationConfigMap) == 0 {
 			logger.Info("Saturation scaling config not loaded yet for namespace, skipping model",
 				"namespace", namespace, "modelID", modelID)
 			continue
 		}
 
-		saturationConfig := e.resolveModelPolicy(ctx, saturationConfigMap, modelID, namespace, modelVAs)
+		scalingPolicyConfig := e.resolveModelPolicy(ctx, saturationConfigMap, modelID, namespace, modelVAs)
 		data, err := e.prepareModelData(ctx, modelID, modelVAs, e.client)
 		if err != nil {
 			msg := "Model data preparation failed"
@@ -1063,7 +1063,7 @@ func (e *Engine) optimizeV2(
 		}
 
 		req, err := e.collectV2ModelRequest(ctx, modelID, namespace,
-			data.replicaMetrics, saturationConfig, data.variantStates, data.variantMetadata,
+			data.replicaMetrics, scalingPolicyConfig, data.variantStates, data.variantMetadata,
 			data.scaleTargets, data.variantAutoscalings, data.schedulerQueue, data.arrivalRate)
 		if err != nil {
 			msg := "V2 analysis failed"
@@ -1284,7 +1284,7 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// The resolved scaling entry carries the whole scale-to-zero policy: enabled
 	// and retention, tiered namespace-local → global and merged with this model's
 	// override. Resolved once here and used for both.
-	satConfig := resolveSaturationConfig(e.Config.SaturationConfigForNamespace(namespace), modelID, namespace)
+	satConfig := resolveScalingPolicy(e.Config.ScalingPolicyConfigForNamespace(namespace), modelID, namespace)
 
 	// A model just woken from zero has served nothing yet: the request that woke
 	// it is still queued in the EPP while the pod pulls and loads. The enforcer's

@@ -232,7 +232,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 	@NS=$${WVA_NS:-workload-variant-autoscaler-system}; \
 	if [ -n "$(SCALE_UP_THRESHOLD)" ] || [ -n "$(SCALE_DOWN_BOUNDARY)" ]; then \
 		echo "Applying optional WVA scaling-band overrides (SCALE_UP_THRESHOLD / SCALE_DOWN_BOUNDARY)..."; \
-		$(KUBECTL) patch configmap wva-saturation-scaling-config \
+		$(KUBECTL) patch configmap wva-scaling-policy-config \
 			-n "$$NS" --type=merge \
 			-p "{\"data\":{\"default\":\"analyzerName: saturation\\nscaleUpThreshold: $(SCALE_UP_THRESHOLD)\\nscaleDownBoundary: $(SCALE_DOWN_BOUNDARY)\\n\"}}"; \
 	fi

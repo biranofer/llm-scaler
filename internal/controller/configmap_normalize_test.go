@@ -6,7 +6,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("parseSaturationConfig Normalize error handling", func() {
+var _ = Describe("parseScalingPolicyConfig Normalize error handling", func() {
 	It("skips an entry whose analyzer parameter is wrongly typed but keeps valid siblings", func() {
 		data := map[string]string{
 			"default": "analyzers:\n  - type: saturation\n",
@@ -14,7 +14,7 @@ var _ = Describe("parseSaturationConfig Normalize error handling", func() {
 			"bad#ns": "model_id: m\nnamespace: ns\nanalyzers:\n  - type: saturation\n    parameters: { enabled: \"yes\" }\n",
 		}
 
-		configs, count := parseSaturationConfig(data, logr.Discard())
+		configs, count := parseScalingPolicyConfig(data, logr.Discard())
 
 		Expect(count).To(Equal(1))
 		Expect(configs).To(HaveKey("default"))
@@ -26,7 +26,7 @@ var _ = Describe("parseSaturationConfig Normalize error handling", func() {
 			"default": "analyzers:\n  - type: saturation\n    parameters: { scaleUpThreshold: 0.93 }\n",
 		}
 
-		configs, count := parseSaturationConfig(data, logr.Discard())
+		configs, count := parseScalingPolicyConfig(data, logr.Discard())
 
 		Expect(count).To(Equal(1))
 		entry := configs["default"]

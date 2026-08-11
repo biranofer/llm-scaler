@@ -14,10 +14,10 @@ var _ = Describe("Engine.resolveRescaleFlags", func() {
 	// namespace flag from its OWN default only (no global fallback).
 	newEngine := func(clusterOn bool) *Engine {
 		c := config.NewTestConfig()
-		c.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{"default": {EnableRescale: clusterOn}})
+		c.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{"default": {EnableRescale: clusterOn}})
 		// team: its own flag on. plain: has a local config but flag off. absent: no config.
-		c.UpdateSaturationConfigForNamespace("team", map[string]config.SaturationScalingConfig{"default": {EnableRescale: true}})
-		c.UpdateSaturationConfigForNamespace("plain", map[string]config.SaturationScalingConfig{"default": {KvCacheThreshold: 0.8}})
+		c.UpdateScalingPolicyConfigForNamespace("team", map[string]config.ScalingPolicy{"default": {EnableRescale: true}})
+		c.UpdateScalingPolicyConfigForNamespace("plain", map[string]config.ScalingPolicy{"default": {KvCacheThreshold: 0.8}})
 		return &Engine{Config: c}
 	}
 

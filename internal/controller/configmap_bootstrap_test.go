@@ -56,7 +56,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		// second ConfigMap with its own keys and precedence.
 		saturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: systemNamespace,
 			},
 			Data: map[string]string{
@@ -76,7 +76,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(cfg.ConfigMapsBootstrapComplete()).To(BeTrue())
 
 		By("Verifying saturation config was loaded")
-		satConfigMap := cfg.SaturationConfig()
+		satConfigMap := cfg.ScalingPolicyConfig()
 		satConfig, exists := satConfigMap["default"]
 		Expect(exists).To(BeTrue())
 		Expect(satConfig.KvCacheThreshold).To(BeNumerically("~", 0.70, 0.01))
@@ -124,7 +124,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		By("Creating global ConfigMap in system namespace")
 		globalSaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: systemNamespace,
 			},
 			Data: map[string]string{
@@ -140,7 +140,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		By("Creating namespace-local saturation ConfigMap in namespace1")
 		ns1SaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: namespace1,
 			},
 			Data: map[string]string{
@@ -152,7 +152,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		By("Creating a namespace-local saturation ConfigMap in namespace2")
 		ns2SaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: namespace2,
 			},
 			Data: map[string]string{
@@ -168,20 +168,20 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(cfg.ConfigMapsBootstrapComplete()).To(BeTrue())
 
 		By("Verifying global saturation config was loaded")
-		globalSatConfig := cfg.SaturationConfigForNamespace("")
+		globalSatConfig := cfg.ScalingPolicyConfigForNamespace("")
 		satConfig, exists := globalSatConfig["default"]
 		Expect(exists).To(BeTrue())
 		Expect(satConfig.KvCacheThreshold).To(BeNumerically("~", 0.60, 0.01))
 
 		By("Verifying namespace1 saturation config was loaded")
-		ns1SatConfig := cfg.SaturationConfigForNamespace(namespace1)
+		ns1SatConfig := cfg.ScalingPolicyConfigForNamespace(namespace1)
 		ns1ModelConfig, exists := ns1SatConfig["model-a"]
 		Expect(exists).To(BeTrue())
 		Expect(ns1ModelConfig.KvCacheThreshold).To(BeNumerically("~", 0.75, 0.01))
 		Expect(ns1ModelConfig.QueueLengthThreshold).To(BeNumerically("==", 5))
 
 		By("Verifying namespace2 scale-to-zero policy was loaded")
-		ns2SatConfig := cfg.SaturationConfigForNamespace(namespace2)
+		ns2SatConfig := cfg.ScalingPolicyConfigForNamespace(namespace2)
 		ns2ModelConfig, exists := ns2SatConfig["model-b"]
 		Expect(exists).To(BeTrue())
 		Expect(ns2ModelConfig.ScaleToZero).NotTo(BeNil())
@@ -223,7 +223,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		// ConfigMap in included namespace
 		includedSaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: includedNamespace,
 			},
 			Data: map[string]string{
@@ -235,7 +235,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		// ConfigMap in excluded namespace (should NOT be loaded)
 		excludedSaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: excludedNamespace,
 			},
 			Data: map[string]string{
@@ -251,14 +251,14 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(cfg.ConfigMapsBootstrapComplete()).To(BeTrue())
 
 		By("Verifying ConfigMap from included namespace was loaded")
-		includedConfig := cfg.SaturationConfigForNamespace(includedNamespace)
+		includedConfig := cfg.ScalingPolicyConfigForNamespace(includedNamespace)
 		includedSatConfig, exists := includedConfig["default"]
 		Expect(exists).To(BeTrue())
 		Expect(includedSatConfig.KvCacheThreshold).To(BeNumerically("~", 0.85, 0.01))
 		Expect(includedSatConfig.QueueLengthThreshold).To(BeNumerically("==", 7))
 
 		By("Verifying ConfigMap from excluded namespace was NOT loaded")
-		excludedConfig := cfg.SaturationConfigForNamespace(excludedNamespace)
+		excludedConfig := cfg.ScalingPolicyConfigForNamespace(excludedNamespace)
 		// Should either be empty or contain only global defaults, not the excluded namespace's config
 		if len(excludedConfig) > 0 {
 			// If fallback to global is implemented, should not have the excluded namespace's values
@@ -289,7 +289,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		By("Creating namespace-local ConfigMap")
 		saturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: namespace,
 			},
 			Data: map[string]string{
@@ -305,7 +305,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(cfg.ConfigMapsBootstrapComplete()).To(BeTrue())
 
 		By("Verifying ConfigMap was loaded (exclude=false should not exclude)")
-		nsConfig := cfg.SaturationConfigForNamespace(namespace)
+		nsConfig := cfg.ScalingPolicyConfigForNamespace(namespace)
 		satConfig, exists := nsConfig["default"]
 		Expect(exists).To(BeTrue())
 		Expect(satConfig.KvCacheThreshold).To(BeNumerically("~", 0.78, 0.01))
@@ -329,7 +329,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		By("Creating namespace-local ConfigMap")
 		saturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.SaturationConfigMapName(),
+				Name:      config.ScalingPolicyConfigMapName(),
 				Namespace: namespace,
 			},
 			Data: map[string]string{
@@ -345,7 +345,7 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(cfg.ConfigMapsBootstrapComplete()).To(BeTrue())
 
 		By("Verifying ConfigMap from namespace with config-enabled=false was NOT loaded")
-		nsConfig := cfg.SaturationConfigForNamespace(namespace)
+		nsConfig := cfg.ScalingPolicyConfigForNamespace(namespace)
 		// Should either be empty or contain only global defaults, not the disabled namespace's config
 		if len(nsConfig) > 0 {
 			// If fallback to global is implemented, should not have the disabled namespace's values

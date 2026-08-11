@@ -88,7 +88,7 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		// no limiter there is no ConstraintProvider, every wake is published
 		// unchecked, and the refusal this spec waits for can never be logged.
 		By("Declaring the physical limiter this suite exists to exercise")
-		cmName := saturationConfigMapName()
+		cmName := scalingPolicyConfigMapName()
 		cm, getErr := k8sClient.CoreV1().ConfigMaps(cfg.WVANamespace).Get(ctx, cmName, metav1.GetOptions{})
 		if getErr == nil {
 			cmExistedBefore = true

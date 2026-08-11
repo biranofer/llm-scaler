@@ -61,9 +61,9 @@ func (a *SaturationAnalyzer) EvictStaleHistory(timeout time.Duration) int {
 
 // Analyze computes capacity signals for a model across all its variants.
 func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerInput) (*domain.AnalyzerResult, error) {
-	satConfig, ok := input.Config.(*config.SaturationScalingConfig)
+	satConfig, ok := input.Config.(*config.ScalingPolicy)
 	if !ok {
-		return nil, fmt.Errorf("expected *SaturationScalingConfig, got %T", input.Config)
+		return nil, fmt.Errorf("expected *ScalingPolicy, got %T", input.Config)
 	}
 
 	// Build GPU count and P/D role lookups from variant states. The role decides
@@ -138,7 +138,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 // Returns nil if the replica has no V2 capacity data (TotalKvCapacityTokens == 0).
 func (a *SaturationAnalyzer) computeReplicaCapacity(
 	rm domain.ReplicaMetrics,
-	config *config.SaturationScalingConfig,
+	config *config.ScalingPolicy,
 	modelID, namespace string,
 	gpuCount int,
 	role string,
@@ -218,7 +218,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 // (e.g., the llm-d-inference-sim).
 func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	rm domain.ReplicaMetrics,
-	cfg *config.SaturationScalingConfig,
+	cfg *config.ScalingPolicy,
 	modelID, namespace string,
 	role string,
 	accelerator string,

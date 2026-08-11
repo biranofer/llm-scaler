@@ -281,6 +281,6 @@ Keep the type as the in-memory representation for the pipeline, but stop publish
 
 **Regression surface to watch**
 
-- Namespace tracking in `datastore` — both paths must register their namespaces for namespace-local `wva-saturation-scaling-config` lookups to keep working.
+- Namespace tracking in `datastore` — both paths must register their namespaces for namespace-local `wva-scaling-policy-config` lookups to keep working.
 - Metric label cardinality — `variant_name` / `exported_namespace` values must be identical across modes so existing Prometheus queries and KEDA triggers don't break.
 - LeaderWorkerSet scale targets — annotation discovery must treat `scaleTargetRef.kind == LeaderWorkerSet` the same as VA did (uses `lwsEnabled` flag).

@@ -15,8 +15,8 @@ import (
 //	default entry → named policy tier → {modelID}#{namespace} override
 //
 // most specific winning at each step.
-func policyConfig() map[string]config.SaturationScalingConfig {
-	return map[string]config.SaturationScalingConfig{
+func policyConfig() map[string]config.ScalingPolicy {
+	return map[string]config.ScalingPolicy{
 		"default": {
 			ScaleUpThreshold:  0.85,
 			ScaleDownBoundary: 0.70,
@@ -26,7 +26,7 @@ func policyConfig() map[string]config.SaturationScalingConfig {
 		// Identity-free tiers. Note neither names a model or a namespace.
 		// A tier states a consistent BAND, not a lone threshold: lowering
 		// scaleUpThreshold below the inherited scaleDownBoundary is an inverted
-		// pair, and resolveSaturationConfig resets both to defaults rather than
+		// pair, and resolveScalingPolicy resets both to defaults rather than
 		// feed the optimizer one.
 		"interactive": {
 			ScaleUpThreshold:  0.60, // scale out sooner: latency matters more than cost
@@ -41,7 +41,7 @@ func policyConfig() map[string]config.SaturationScalingConfig {
 }
 
 func TestPolicyTierOverridesTheDefaultEntry(t *testing.T) {
-	cfg := resolveSaturationConfigForPolicy(policyConfig(), "m", "ns", "interactive")
+	cfg := resolveScalingPolicyForTier(policyConfig(), "m", "ns", "interactive")
 
 	if cfg.ScaleUpThreshold != 0.60 {
 		t.Errorf("scaleUpThreshold = %v, want the tier's 0.60", cfg.ScaleUpThreshold)
@@ -60,8 +60,8 @@ func TestPolicyTierOverridesTheDefaultEntry(t *testing.T) {
 // models, which is the property per-(model, namespace) keying cannot provide.
 func TestOneTierServesManyModels(t *testing.T) {
 	cfgMap := policyConfig()
-	a := resolveSaturationConfigForPolicy(cfgMap, "model-a", "ns-1", "batch")
-	b := resolveSaturationConfigForPolicy(cfgMap, "model-b", "ns-2", "batch")
+	a := resolveScalingPolicyForTier(cfgMap, "model-a", "ns-1", "batch")
+	b := resolveScalingPolicyForTier(cfgMap, "model-b", "ns-2", "batch")
 
 	if a.ScaleUpThreshold != b.ScaleUpThreshold || a.Priority != b.Priority {
 		t.Errorf("the same tier resolved differently for two models: %v vs %v", a, b)
@@ -75,11 +75,11 @@ func TestOneTierServesManyModels(t *testing.T) {
 // model by model instead of all at once.
 func TestPerModelOverrideBeatsTheTier(t *testing.T) {
 	cfgMap := policyConfig()
-	cfgMap[config.ModelOverrideKey("m", "ns")] = config.SaturationScalingConfig{
+	cfgMap[config.ModelOverrideKey("m", "ns")] = config.ScalingPolicy{
 		ScaleUpThreshold: 0.50, ScaleDownBoundary: 0.35,
 	}
 
-	cfg := resolveSaturationConfigForPolicy(cfgMap, "m", "ns", "interactive")
+	cfg := resolveScalingPolicyForTier(cfgMap, "m", "ns", "interactive")
 	if cfg.ScaleUpThreshold != 0.50 {
 		t.Errorf("scaleUpThreshold = %v, want the per-model override's 0.50", cfg.ScaleUpThreshold)
 	}
@@ -94,13 +94,13 @@ func TestDefaultPolicyAppliesWhenTheVariantNamesNone(t *testing.T) {
 	base.DefaultPolicy = "batch"
 	cfgMap["default"] = base
 
-	cfg := resolveSaturationConfigForPolicy(cfgMap, "m", "ns", "")
+	cfg := resolveScalingPolicyForTier(cfgMap, "m", "ns", "")
 	if cfg.ScaleUpThreshold != 0.95 {
 		t.Errorf("scaleUpThreshold = %v, want the defaultPolicy tier's 0.95", cfg.ScaleUpThreshold)
 	}
 
 	// An explicitly named tier still wins over the fleet-wide fallback.
-	cfg = resolveSaturationConfigForPolicy(cfgMap, "m", "ns", "interactive")
+	cfg = resolveScalingPolicyForTier(cfgMap, "m", "ns", "interactive")
 	if cfg.ScaleUpThreshold != 0.60 {
 		t.Errorf("scaleUpThreshold = %v, want the named tier's 0.60", cfg.ScaleUpThreshold)
 	}
@@ -110,7 +110,7 @@ func TestDefaultPolicyAppliesWhenTheVariantNamesNone(t *testing.T) {
 // because its policy name has a typo would turn a config error into an outage.
 // The engine reports it separately (reportUnknownPolicy) so it is not silent.
 func TestUnknownPolicyFallsBackToTheDefaultEntry(t *testing.T) {
-	cfg := resolveSaturationConfigForPolicy(policyConfig(), "m", "ns", "interctive")
+	cfg := resolveScalingPolicyForTier(policyConfig(), "m", "ns", "interctive")
 	if cfg.ScaleUpThreshold != 0.85 {
 		t.Errorf("scaleUpThreshold = %v, want the default entry's 0.85", cfg.ScaleUpThreshold)
 	}
@@ -121,9 +121,9 @@ func TestUnknownPolicyFallsBackToTheDefaultEntry(t *testing.T) {
 func TestAnOverrideKeyIsNotAPolicyTier(t *testing.T) {
 	cfgMap := policyConfig()
 	overrideKey := config.ModelOverrideKey("secret-model", "secret-ns")
-	cfgMap[overrideKey] = config.SaturationScalingConfig{ScaleUpThreshold: 0.10}
+	cfgMap[overrideKey] = config.ScalingPolicy{ScaleUpThreshold: 0.10}
 
-	cfg := resolveSaturationConfigForPolicy(cfgMap, "other", "other-ns", overrideKey)
+	cfg := resolveScalingPolicyForTier(cfgMap, "other", "other-ns", overrideKey)
 	if cfg.ScaleUpThreshold != 0.85 {
 		t.Errorf("scaleUpThreshold = %v; a %q key must not resolve as a tier", cfg.ScaleUpThreshold, "modelID#namespace")
 	}

@@ -35,7 +35,7 @@ const (
 // An absent inline value falls back to WVA_SCALE_TO_ZERO, which stays as the
 // DEPLOYMENT-level switch: it answers "may this cluster scale anything to zero at
 // all", not "should this model".
-func ResolveScaleToZeroEnabled(sat *SaturationScalingConfig) bool {
+func ResolveScaleToZeroEnabled(sat *ScalingPolicy) bool {
 	if sat != nil && sat.ScaleToZero != nil && sat.ScaleToZero.Enabled != nil {
 		return *sat.ScaleToZero.Enabled
 	}
@@ -49,7 +49,7 @@ func ResolveScaleToZeroEnabled(sat *SaturationScalingConfig) bool {
 // than failing the cycle: a typo in a duration must not stop scaling decisions,
 // and silently treating it as zero would scale a model down the instant it went
 // idle.
-func ResolveScaleToZeroRetention(sat *SaturationScalingConfig) time.Duration {
+func ResolveScaleToZeroRetention(sat *ScalingPolicy) time.Duration {
 	if sat == nil || sat.ScaleToZero == nil || sat.ScaleToZero.RetentionPeriod == "" {
 		return DefaultScaleToZeroRetentionPeriod
 	}

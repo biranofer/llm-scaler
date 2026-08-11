@@ -38,7 +38,7 @@ kind: ConfigMap
 # by the controller before substitution, and a failed/empty query yields zero
 # demand (no scaling action), so a bad definition cannot drive runaway scaling.
 metadata:
-  name: saturation-scaling-config
+  name: scaling-policy-config
   # Definitions are cluster-scope: they must live in the controller's namespace.
   # (A per-namespace WVA install reads its OWN namespace as the system one, so it
   # declares analyzers here too.)

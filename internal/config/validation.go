@@ -30,7 +30,7 @@ func Validate(cfg *Config) error {
 	}
 
 	// Note: the GPU limiter selection is not validated here. It is driven entirely
-	// by the saturation ConfigMap's limiters: list (see SaturationScalingConfig.
+	// by the saturation ConfigMap's limiters: list (see ScalingPolicy.
 	// validateLimiters, run at ConfigMap parse time) and is applied live, so there
 	// is no startup flag to validate.
 

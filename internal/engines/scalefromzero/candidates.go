@@ -422,7 +422,7 @@ func (e *Engine) placementBasisChanged(namespace, summary string) bool {
 
 // requirePrefill reports whether the model refuses a decode-only wake.
 //
-// Resolution goes through SaturationScalingConfig.Merge — the same overlay every
+// Resolution goes through ScalingPolicy.Merge — the same overlay every
 // other per-entry setting uses — rather than a hand-rolled precedence check, so
 // there is one implementation of "model-specific entry wins over default" and it
 // cannot drift from the rest of the config. Only the merge is run, not
@@ -432,7 +432,7 @@ func (e *Engine) requirePrefill(modelID, namespace string) bool {
 	if e.config == nil {
 		return false
 	}
-	entries := e.config.SaturationConfigForNamespace(namespace)
+	entries := e.config.ScalingPolicyConfigForNamespace(namespace)
 	resolved := entries["default"] // zero value when absent, which reads as false
 	if override, ok := entries[modelID+"#"+namespace]; ok {
 		resolved.Merge(override)

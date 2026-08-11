@@ -83,7 +83,7 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 		// ceiling is ignored — applying it leaves the 25% margin above. The config it
 		// wrote already ran on V2 regardless, since V1 no longer exists.)
 		cmNamespace = cfg.WVANamespace
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cm, err := k8sClient.CoreV1().ConfigMaps(cmNamespace).Get(ctx, cmName, metav1.GetOptions{})
 		if err == nil {
 			cmExistedBefore = true

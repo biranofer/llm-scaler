@@ -3,7 +3,7 @@ kind: ConfigMap
 # This ConfigMap configures the queueing model analyzer for the WVA controller.
 # Its presence (with a "default" key) activates the queueing model analyzer.
 # Delete this ConfigMap to fall back to the analyzer selected in
-# wva-saturation-scaling-config (V1 or V2 saturation analyzer).
+# wva-scaling-policy-config (V1 or V2 saturation analyzer).
 #
 # Configuration structure:
 # - 'default' key: Global default parameters applied to all models.

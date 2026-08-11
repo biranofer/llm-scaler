@@ -8,7 +8,7 @@ kind: ConfigMap
 # - 'default' entry: Global default thresholds applied to all variants
 # - Override entries: Per-model/namespace custom thresholds (must include model_id and namespace)
 metadata:
-  name: saturation-scaling-config
+  name: scaling-policy-config
   labels:
     # Required: the controller cache filters ConfigMaps by this label in cluster-scoped mode
     # (cmd/main.go). Without it, watch events are silently dropped and config changes
@@ -20,7 +20,7 @@ data:
   # The `analyzers` section selects the V2 (token/capacity-based) saturation
   # analyzer — the default since v0.9.0. Remove the `analyzers` section (and the
   # V2-only thresholds) to opt out to the legacy V1 (percentage-based) analyzer.
-  # See docs/developer-guide/saturation-scaling-config.md.
+  # See docs/developer-guide/scaling-policy-config.md.
   #
   # Each analyzer accepts the ScalingPolicy plugin envelope (proposal #1245):
   #   analyzers:

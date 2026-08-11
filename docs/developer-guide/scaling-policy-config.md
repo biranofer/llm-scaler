@@ -213,7 +213,7 @@ default: |
 
 ### ConfigMap Structure
 
-The saturation scaling configuration is stored in a ConfigMap named `wva-saturation-scaling-config` in the Workload Variant Autoscaler controller's namespace.
+The saturation scaling configuration is stored in a ConfigMap named `wva-scaling-policy-config` in the Workload Variant Autoscaler controller's namespace.
 
 **Location:** `deploy/configmap-saturation-scaling.yaml`
 
@@ -523,11 +523,11 @@ Using aligned thresholds ensures consistent capacity management across the clust
 #### WVA Saturation Scaling Configuration
 
 ```yaml
-# WVA Configuration (wva-saturation-scaling-config ConfigMap)
+# WVA Configuration (wva-scaling-policy-config ConfigMap)
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: <workload-variant-autoscaler-namespace>
 data:
   default: |
@@ -580,10 +580,10 @@ Choose thresholds based on your workload characteristics and SLO requirements:
 
 #### Step 2: Apply to WVA
 
-Update `wva-saturation-scaling-config` ConfigMap:
+Update `wva-scaling-policy-config` ConfigMap:
 
 ```bash
-kubectl edit cm wva-saturation-scaling-config -n <workload-variant-autoscaler-namespace>
+kubectl edit cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespace>
 ```
 
 Changes take effect **immediately** (WVA watches ConfigMap and auto-reloads).
@@ -621,7 +621,7 @@ kubectl rollout restart deployment/gaie-llama-70b-epp -n lab
 
 **WVA verification:**
 ```bash
-kubectl get cm wva-saturation-scaling-config -n <workload-variant-autoscaler-namespace> -o yaml
+kubectl get cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespace> -o yaml
 ```
 
 **EPP verification (per-model instance):**
@@ -677,7 +677,7 @@ entry V2-shaped so the scaling band is defaulted on the entry itself (see
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: <workload-variant-autoscaler-namespace>
 data:
   default: |
@@ -713,7 +713,7 @@ Lookup order: `modelID#namespace` → `default` → zero-value with defaults app
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: <workload-variant-autoscaler-namespace>
 data:
   default: |
@@ -805,7 +805,7 @@ The controller uses an **efficient caching mechanism** with ConfigMap watch for 
 
 **Initialization (on controller startup):**
 
-The ConfigMap reconciler watches the `wva-saturation-scaling-config` ConfigMap and loads
+The ConfigMap reconciler watches the `wva-scaling-policy-config` ConfigMap and loads
 configuration into the shared `Config` object. On startup, the controller bootstraps the
 config cache (see `internal/controller/configmap_bootstrap.go`).
 
@@ -825,7 +825,7 @@ saturationConfig := resolveSaturationConfig(saturationConfigMap, modelID, namesp
 
 ### Automatic Cache Updates
 
-The `ConfigMapReconciler` watches the `wva-saturation-scaling-config` ConfigMap for changes
+The `ConfigMapReconciler` watches the `wva-scaling-policy-config` ConfigMap for changes
 (see `internal/controller/configmap_reconciler.go`):
 
 1. **ConfigMap change detected** → Watch event triggered
@@ -855,7 +855,7 @@ The `ConfigMapReconciler` watches the `wva-saturation-scaling-config` ConfigMap 
 
 **Symptom:** Warning log message
 ```
-WARN Saturation scaling ConfigMap not found, using hardcoded defaults configmap=wva-saturation-scaling-config namespace=<workload-variant-autoscaler-namespace>
+WARN Saturation scaling ConfigMap not found, using hardcoded defaults configmap=wva-scaling-policy-config namespace=<workload-variant-autoscaler-namespace>
 ```
 
 **Solution:** Deploy the ConfigMap:
@@ -912,7 +912,7 @@ data:
 
 1. **Verify ConfigMap was updated:**
    ```bash
-   kubectl get cm wva-saturation-scaling-config -n <workload-variant-autoscaler-namespace> -o yaml
+   kubectl get cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespace> -o yaml
    ```
 
 2. **Check controller logs for reload confirmation:**
@@ -964,7 +964,7 @@ WARN Failed to load initial saturation scaling config, will use defaults
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: <workload-variant-autoscaler-namespace>
 data:
   # Conservative defaults for most workloads (V2 analyzer — the default since v0.9.0)
@@ -997,8 +997,8 @@ kubectl apply -f deploy/configmap-saturation-scaling.yaml
 
 Verify deployment:
 ```bash
-kubectl get cm wva-saturation-scaling-config -n <workload-variant-autoscaler-namespace>
-kubectl describe cm wva-saturation-scaling-config -n <workload-variant-autoscaler-namespace>
+kubectl get cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespace>
+kubectl describe cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespace>
 ```
 
 ## API Reference
@@ -1075,7 +1075,7 @@ The caching mechanism uses the following components:
 - Each caller gets an independent copy
 
 **Watch Mechanism:**
-- Kubernetes watch on `wva-saturation-scaling-config` ConfigMap
+- Kubernetes watch on `wva-scaling-policy-config` ConfigMap
 - Predicate filters to only relevant ConfigMap events
 - Event handler reloads cache and triggers reconciliation
 

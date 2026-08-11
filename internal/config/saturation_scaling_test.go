@@ -7,12 +7,12 @@ import (
 
 func float64Ptr(v float64) *float64 { return &v }
 
-var _ = Describe("SaturationScalingConfig", func() {
+var _ = Describe("ScalingPolicy", func() {
 
 	Context("Validate", func() {
 
 		DescribeTable("validation cases",
-			func(config SaturationScalingConfig, expectErr bool) {
+			func(config ScalingPolicy, expectErr bool) {
 				err := config.Validate()
 				if expectErr {
 					Expect(err).To(HaveOccurred())
@@ -20,42 +20,42 @@ var _ = Describe("SaturationScalingConfig", func() {
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},
-			Entry("valid default config", SaturationScalingConfig{
+			Entry("valid default config", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 			}, false),
-			Entry("valid custom config", SaturationScalingConfig{
+			Entry("valid custom config", ScalingPolicy{
 				KvCacheThreshold:     0.75,
 				QueueLengthThreshold: 10,
 			}, false),
-			Entry("invalid KvCacheThreshold too high", SaturationScalingConfig{
+			Entry("invalid KvCacheThreshold too high", ScalingPolicy{
 				KvCacheThreshold:     1.5,
 				QueueLengthThreshold: 5,
 			}, true),
-			Entry("invalid KvCacheThreshold negative", SaturationScalingConfig{
+			Entry("invalid KvCacheThreshold negative", ScalingPolicy{
 				KvCacheThreshold:     -0.1,
 				QueueLengthThreshold: 5,
 			}, true),
-			Entry("invalid QueueLengthThreshold negative", SaturationScalingConfig{
+			Entry("invalid QueueLengthThreshold negative", ScalingPolicy{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: -1,
 			}, true),
-			Entry("edge case: zero values are valid", SaturationScalingConfig{
+			Entry("edge case: zero values are valid", ScalingPolicy{
 				KvCacheThreshold:     0.0,
 				QueueLengthThreshold: 0,
 			}, false),
-			Entry("edge case: max values are valid", SaturationScalingConfig{
+			Entry("edge case: max values are valid", ScalingPolicy{
 				KvCacheThreshold:     1.0,
 				QueueLengthThreshold: 1000,
 			}, false),
-			Entry("V2 valid config with explicit thresholds (old-style analyzerName)", SaturationScalingConfig{
+			Entry("V2 valid config with explicit thresholds (old-style analyzerName)", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.90,
 				ScaleDownBoundary:    0.60,
 			}, false),
-			Entry("V2 valid config with analyzers list (new-style)", SaturationScalingConfig{
+			Entry("V2 valid config with analyzers list (new-style)", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				ScaleUpThreshold:     0.90,
@@ -64,21 +64,21 @@ var _ = Describe("SaturationScalingConfig", func() {
 					{Name: "saturation", Score: 1.0},
 				},
 			}, false),
-			Entry("V2 invalid: scaleUpThreshold > 1", SaturationScalingConfig{
+			Entry("V2 invalid: scaleUpThreshold > 1", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     1.5,
 				ScaleDownBoundary:    0.70,
 			}, true),
-			Entry("V2 invalid: scaleUpThreshold <= scaleDownBoundary", SaturationScalingConfig{
+			Entry("V2 invalid: scaleUpThreshold <= scaleDownBoundary", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
 				ScaleUpThreshold:     0.60,
 				ScaleDownBoundary:    0.70,
 			}, true),
-			Entry("V2 thresholds ignored when not V2", SaturationScalingConfig{
+			Entry("V2 thresholds ignored when not V2", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "",
@@ -88,58 +88,58 @@ var _ = Describe("SaturationScalingConfig", func() {
 			// A V1-style entry's explicit V2 thresholds can still reach the V2 path via
 			// Merge (selection is global), so out-of-range/inverted values are rejected
 			// even though the entry itself is not V2.
-			Entry("V1-style entry with out-of-range explicit scaleUpThreshold is rejected", SaturationScalingConfig{
+			Entry("V1-style entry with out-of-range explicit scaleUpThreshold is rejected", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     1.5,
 			}, true),
-			Entry("V1-style entry with inverted explicit V2 thresholds is rejected", SaturationScalingConfig{
+			Entry("V1-style entry with inverted explicit V2 thresholds is rejected", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     0.60,
 				ScaleDownBoundary:    0.70,
 			}, true),
-			Entry("V1-style entry with valid explicit V2 thresholds is accepted", SaturationScalingConfig{
+			Entry("V1-style entry with valid explicit V2 thresholds is accepted", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "",
 				ScaleUpThreshold:     0.90,
 				ScaleDownBoundary:    0.60,
 			}, false),
-			Entry("valid priority", SaturationScalingConfig{
+			Entry("valid priority", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				Priority:             5.0,
 			}, false),
-			Entry("invalid negative priority", SaturationScalingConfig{
+			Entry("invalid negative priority", ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				Priority:             -1.0,
 			}, true),
-			Entry("V2 valid per-analyzer threshold override", SaturationScalingConfig{
+			Entry("V2 valid per-analyzer threshold override", ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation", ScaleUpThreshold: float64Ptr(0.90)},
 				},
 			}, false),
-			Entry("V2 invalid per-analyzer scaleUpThreshold > 1", SaturationScalingConfig{
+			Entry("V2 invalid per-analyzer scaleUpThreshold > 1", ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation", ScaleUpThreshold: float64Ptr(1.5)},
 				},
 			}, true),
-			Entry("V2 invalid per-analyzer scaleDownBoundary > 1", SaturationScalingConfig{
+			Entry("V2 invalid per-analyzer scaleDownBoundary > 1", ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation", ScaleDownBoundary: float64Ptr(1.5)},
 				},
 			}, true),
-			Entry("V2 invalid per-analyzer effective up <= down", SaturationScalingConfig{
+			Entry("V2 invalid per-analyzer effective up <= down", ScalingPolicy{
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 				Analyzers: []AnalyzerScoreConfig{
@@ -152,7 +152,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 	Context("ApplyDefaults", func() {
 
 		It("should apply defaults for V2 via analyzerName (backward compat)", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				AnalyzerName: "saturation",
 			}
 			config.ApplyDefaults()
@@ -162,7 +162,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should apply defaults for V2 via analyzers list (new-style)", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
 				},
@@ -176,7 +176,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should not overwrite explicit values", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				AnalyzerName:      "saturation",
 				ScaleUpThreshold:  0.90,
 				ScaleDownBoundary: 0.60,
@@ -187,7 +187,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should keep V2 thresholds zero on ApplyDefaults when not V2, then calibrate via ApplyV2ThresholdDefaults", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				AnalyzerName: "",
 			}
 			config.ApplyDefaults()
@@ -209,7 +209,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		It("ApplyV2ThresholdDefaults should not overwrite already-set (tuned) V2 thresholds", func() {
 			// The whole point of applying this post-merge instead of in ApplyDefaults:
 			// an inherited/tuned value must survive, so it must be a no-op when non-zero.
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				ScaleUpThreshold:  0.95,
 				ScaleDownBoundary: 0.55,
 			}
@@ -219,7 +219,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should not overwrite explicit V1 values", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				KvCacheThreshold:     0.75,
 				QueueLengthThreshold: 10,
 			}
@@ -229,13 +229,13 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should apply default priority when zero", func() {
-			config := SaturationScalingConfig{}
+			config := ScalingPolicy{}
 			config.ApplyDefaults()
 			Expect(config.Priority).To(Equal(DefaultPriority))
 		})
 
 		It("should not overwrite explicit priority", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Priority: 5.0,
 			}
 			config.ApplyDefaults()
@@ -244,7 +244,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 
 		It("should not overwrite explicit analyzers", func() {
 			disabled := false
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation", Score: 0.5, Enabled: &disabled},
 				},
@@ -255,7 +255,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should apply per-entry defaults for zero score", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
 				},
@@ -267,7 +267,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should pass validation after ApplyDefaults with zero-valued omitempty fields", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				Analyzers: []AnalyzerScoreConfig{
@@ -282,11 +282,11 @@ var _ = Describe("SaturationScalingConfig", func() {
 	Context("Merge", func() {
 
 		It("should overlay non-zero fields from override", func() {
-			base := SaturationScalingConfig{
+			base := ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 			}
-			override := SaturationScalingConfig{
+			override := ScalingPolicy{
 				KvCacheThreshold: 0.85,
 			}
 			base.Merge(override)
@@ -296,12 +296,12 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should overlay all fields when all are set", func() {
-			base := SaturationScalingConfig{
+			base := ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 				Priority:             1.0,
 			}
-			override := SaturationScalingConfig{
+			override := ScalingPolicy{
 				KvCacheThreshold:     0.90,
 				QueueLengthThreshold: 15,
 				Priority:             5.0,
@@ -313,23 +313,23 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should not change base when override is empty", func() {
-			base := SaturationScalingConfig{
+			base := ScalingPolicy{
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 			}
-			override := SaturationScalingConfig{}
+			override := ScalingPolicy{}
 			base.Merge(override)
 			Expect(base.KvCacheThreshold).To(Equal(0.80))
 			Expect(base.QueueLengthThreshold).To(Equal(5.0))
 		})
 
 		It("should overlay V2 fields", func() {
-			base := SaturationScalingConfig{
+			base := ScalingPolicy{
 				AnalyzerName:      "saturation",
 				ScaleUpThreshold:  0.85,
 				ScaleDownBoundary: 0.70,
 			}
-			override := SaturationScalingConfig{
+			override := ScalingPolicy{
 				ScaleUpThreshold: 0.90,
 			}
 			base.Merge(override)
@@ -340,12 +340,12 @@ var _ = Describe("SaturationScalingConfig", func() {
 
 		It("should overlay analyzers list", func() {
 			enabled := true
-			base := SaturationScalingConfig{
+			base := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation", Score: 1.0, Enabled: &enabled},
 				},
 			}
-			override := SaturationScalingConfig{
+			override := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "custom", Score: 0.5},
 				},
@@ -356,8 +356,8 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should overlay ModelID and Namespace", func() {
-			base := SaturationScalingConfig{}
-			override := SaturationScalingConfig{
+			base := ScalingPolicy{}
+			override := ScalingPolicy{
 				ModelID:   "llama-70b",
 				Namespace: "production",
 			}
@@ -370,17 +370,17 @@ var _ = Describe("SaturationScalingConfig", func() {
 	Context("IsV2", func() {
 
 		It("should return false when no analyzers and no analyzerName", func() {
-			config := SaturationScalingConfig{}
+			config := ScalingPolicy{}
 			Expect(config.IsV2()).To(BeFalse())
 		})
 
 		It("should return true when analyzerName is saturation (backward compat)", func() {
-			config := SaturationScalingConfig{AnalyzerName: "saturation"}
+			config := ScalingPolicy{AnalyzerName: "saturation"}
 			Expect(config.IsV2()).To(BeTrue())
 		})
 
 		It("should return true when analyzers list is populated", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
 				},
@@ -389,7 +389,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should return true when both analyzerName and analyzers set", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				AnalyzerName: "saturation",
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
@@ -402,7 +402,7 @@ var _ = Describe("SaturationScalingConfig", func() {
 	Context("GetAnalyzerName", func() {
 
 		It("should return saturation when analyzers list populated", func() {
-			config := SaturationScalingConfig{
+			config := ScalingPolicy{
 				Analyzers: []AnalyzerScoreConfig{
 					{Name: "saturation"},
 				},
@@ -411,12 +411,12 @@ var _ = Describe("SaturationScalingConfig", func() {
 		})
 
 		It("should return raw analyzerName when no analyzers list", func() {
-			config := SaturationScalingConfig{AnalyzerName: "saturation"}
+			config := ScalingPolicy{AnalyzerName: "saturation"}
 			Expect(config.GetAnalyzerName()).To(Equal("saturation"))
 		})
 
 		It("should return empty when no analyzers and no analyzerName", func() {
-			config := SaturationScalingConfig{}
+			config := ScalingPolicy{}
 			Expect(config.GetAnalyzerName()).To(BeEmpty())
 		})
 	})

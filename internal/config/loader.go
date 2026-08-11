@@ -173,9 +173,9 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string) error
 		scaleFromZeroMaxConcurrency: v.GetInt("SCALE_FROM_ZERO_ENGINE_MAX_CONCURRENCY"),
 	}
 
-	cfg.saturation = saturationConfig{
-		global:           make(SaturationScalingConfigPerModel),
-		namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
+	cfg.saturation = scalingPolicyConfig{
+		global:           make(ScalingPolicySet),
+		namespaceConfigs: make(map[string]ScalingPolicySet),
 	}
 
 	// Prometheus cache config from config file / env / defaults

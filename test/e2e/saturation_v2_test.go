@@ -101,7 +101,7 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 		}
 
 		modelID = cfg.ModelID
-		cmName = saturationConfigMapName()
+		cmName = scalingPolicyConfigMapName()
 		cmNamespace = cfg.WVANamespace
 		cmKey = defaultConfigKey
 		variantName = scalerBaseName + "-so"

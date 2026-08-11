@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -88,11 +89,13 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	// Route to appropriate handler based on ConfigMap name
-	switch name {
-	case config.SaturationConfigMapName():
-		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	default:
+	// Route to appropriate handler based on ConfigMap name. Both scaling-policy
+	// names are accepted — the current one and the pre-rename one — so an operator
+	// who has not renamed theirs keeps getting live updates. Using the old name is
+	// reported once per change by handleScalingPolicyConfigMap.
+	if slices.Contains(config.ScalingPolicyConfigMapNames(), name) {
+		r.handleScalingPolicyConfigMap(ctx, cm, namespace, isGlobal)
+	} else {
 		logger.V(1).Info("Ignoring unrecognized ConfigMap", "name", name, "namespace", namespace)
 	}
 
@@ -124,7 +127,7 @@ func (r *ConfigMapReconciler) handleConfigMapDeletion(ctx context.Context, name,
 
 	// Remove namespace-local config on deletion. One kind now — the separate
 	// scale-to-zero ConfigMap folded into this one.
-	if name == config.SaturationConfigMapName() {
+	if name == config.ScalingPolicyConfigMapName() {
 		r.Config.RemoveNamespaceConfig(namespace)
 		logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
 	}
@@ -157,17 +160,26 @@ func (r *ConfigMapReconciler) shouldWatchNamespaceLocalConfigMap(ctx context.Con
 	return isNamespaceConfigEnabled(ctx, r.Reader, namespace)
 }
 
-// handleSaturationConfigMap handles updates to the saturation scaling ConfigMap.
+// handleScalingPolicyConfigMap handles updates to the saturation scaling ConfigMap.
 // Supports both global and namespace-local ConfigMaps.
-func (r *ConfigMapReconciler) handleSaturationConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
+func (r *ConfigMapReconciler) handleScalingPolicyConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
 	logger := log.FromContext(ctx)
 
-	// Parse saturation scaling config entries
-	configs, count := parseSaturationConfig(cm.Data, logger)
+	if cm.GetName() == config.LegacyScalingPolicyConfigMapName &&
+		config.ScalingPolicyConfigMapName() != config.LegacyScalingPolicyConfigMapName {
+		logger.Info("Reading scaling policy from the pre-rename ConfigMap name. It outgrew "+
+			"\"saturation\" — it now carries policy tiers, analyzer definitions, limiters and "+
+			"scale-to-zero — so rename it; the old name is still read but will not be forever.",
+			"using", config.LegacyScalingPolicyConfigMapName,
+			"rename to", config.ScalingPolicyConfigMapName())
+	}
+
+	// Parse scaling policy entries
+	configs, count := parseScalingPolicyConfig(cm.Data, logger)
 
 	// Update global or namespace-local config
 	if isGlobal {
-		r.Config.UpdateSaturationConfig(configs)
+		r.Config.UpdateScalingPolicyConfig(configs)
 		logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 		r.warnIfThroughputRegistrationDiverged(logger, cm)
 	} else {
@@ -197,7 +209,7 @@ func (r *ConfigMapReconciler) handleSaturationConfigMap(ctx context.Context, cm 
 					"namespace", namespace, "entry", key, "systemNamespace", config.SystemNamespace())
 			}
 		}
-		r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
+		r.Config.UpdateScalingPolicyConfigForNamespace(namespace, configs)
 		logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
 	}
 }

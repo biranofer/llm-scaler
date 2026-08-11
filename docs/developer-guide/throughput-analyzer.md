@@ -16,7 +16,7 @@ operating point, and scales before demand exceeds that supply.
 - **ITL(k)** — inter-token latency as a function of KV utilization k: fitted as `A·k + B` via OLS
 
 > **Status:** Implementation complete and wired into the engine's multi-analyzer pipeline.
-> Enable via the `analyzers:` field in `wva-saturation-scaling-config` — see [Configuration](#configuration).
+> Enable via the `analyzers:` field in `wva-scaling-policy-config` — see [Configuration](#configuration).
 >
 > **Enablement:** The ThroughputAnalyzer is **opt-in**. At startup, the controller checks whether
 > any saturation config entry lists `throughput` with `enabled != false`. If none does, the
@@ -31,11 +31,11 @@ operating point, and scales before demand exceeds that supply.
 > independent of this startup-time registration gate.
 >
 > **Editing the ConfigMap without restarting is surfaced, not silent.** When the
-> `ConfigMapReconciler` processes an edit to the **global** `wva-saturation-scaling-config`
+> `ConfigMapReconciler` processes an edit to the **global** `wva-scaling-policy-config`
 > ConfigMap and the live throughput-analyzer enablement now differs from the registration
 > decision frozen at startup, it emits a Kubernetes Warning event on the ConfigMap (reason
 > `ThroughputAnalyzerRestartRequired`, visible via `kubectl describe configmap
-> wva-saturation-scaling-config -n <system-namespace>`) and logs a message telling the operator
+> wva-scaling-policy-config -n <system-namespace>`) and logs a message telling the operator
 > to restart `wva-controller-manager` to apply the change. This fires in both directions —
 > enabling or disabling `throughput` at runtime. **Namespace-local saturation ConfigMaps are not
 > covered**: startup registration reads only the global config, so a namespace-local edit can
@@ -69,13 +69,13 @@ operating point, and scales before demand exceeds that supply.
 ## Configuration
 
 The Throughput Analyzer is enabled by adding it to the `analyzers:` list in the
-`wva-saturation-scaling-config` ConfigMap alongside the saturation analyzer:
+`wva-scaling-policy-config` ConfigMap alongside the saturation analyzer:
 
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: <workload-variant-autoscaler-namespace>
 data:
   default: |
@@ -103,7 +103,7 @@ analyzers:
     score: 1.0
 ```
 
-See [saturation-scaling-config.md — Multi-Analyzer Pipeline](../saturation-scaling-config.md#multi-analyzer-pipeline)
+See [scaling-policy-config.md — Multi-Analyzer Pipeline](../scaling-policy-config.md#multi-analyzer-pipeline)
 for the full `analyzers:` field reference and combine algorithm.
 
 ## Metrics
@@ -611,7 +611,7 @@ RC = max(0, TotalDemand / scaleUpThreshold  − TotalAnticipatedSupply)
 SC = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)
 ```
 
-See [`saturation-scaling-config.md`](../saturation-scaling-config.md) § Universal Threshold Post-Step
+See [`scaling-policy-config.md`](../scaling-policy-config.md) § Universal Threshold Post-Step
 for the authoritative formula and per-analyzer threshold override configuration.
 
 ### Known Regression

@@ -14,7 +14,7 @@ import (
 func configWithLimiters(limiters ...config.QuotaLimiterConfig) *config.Config {
 	GinkgoHelper()
 	cfg := config.NewTestConfig()
-	cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+	cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 		"default": {Limiters: limiters},
 	})
 	return cfg

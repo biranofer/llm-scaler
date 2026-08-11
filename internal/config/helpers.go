@@ -11,8 +11,16 @@ import (
 const (
 	// DefaultConfigMapName is the default name of the ConfigMap containing autoscaler configuration
 	DefaultConfigMapName = "wva-manager-config"
-	// DefaultSaturationConfigMapName is the default name of the ConfigMap for saturation scaling
-	DefaultSaturationConfigMapName = "wva-saturation-scaling-config"
+	// DefaultScalingPolicyConfigMapName is the default name of the ConfigMap
+	// carrying the scaling policy: the cluster default entry, named policy tiers,
+	// analyzer definitions, limiters and scale-to-zero.
+	DefaultScalingPolicyConfigMapName = "wva-scaling-policy-config"
+
+	// LegacyScalingPolicyConfigMapName is the name this ConfigMap had while it held
+	// only saturation thresholds. Still read, so an existing deployment does not
+	// silently lose its whole scaling configuration on upgrade — see
+	// ScalingPolicyConfigMapName.
+	LegacyScalingPolicyConfigMapName = "wva-saturation-scaling-config"
 	// DefaultNamespace is the default namespace for the controller
 	DefaultNamespace = "workload-variant-autoscaler-system"
 )
@@ -80,10 +88,34 @@ func ConfigMapName() string {
 	return DefaultConfigMapName
 }
 
-// SaturationConfigMapName returns the saturation scaling ConfigMap name from environment variable or default.
-func SaturationConfigMapName() string {
+// ScalingPolicyConfigMapName returns the scaling-policy ConfigMap name, from the
+// environment or the default.
+//
+// SCALING_POLICY_CONFIG_MAP_NAME overrides it; SATURATION_CONFIG_MAP_NAME is the
+// name that override had while the ConfigMap held only saturation thresholds, and
+// is still honored so an existing deployment keeps working.
+func ScalingPolicyConfigMapName() string {
+	if name := os.Getenv("SCALING_POLICY_CONFIG_MAP_NAME"); name != "" {
+		return name
+	}
 	if name := os.Getenv("SATURATION_CONFIG_MAP_NAME"); name != "" {
 		return name
 	}
-	return DefaultSaturationConfigMapName
+	return DefaultScalingPolicyConfigMapName
+}
+
+// ScalingPolicyConfigMapNames returns the ConfigMap names to read scaling policy
+// from, current name first.
+//
+// The rename is not a clean cutover: the ConfigMap outgrew "saturation" — it now
+// carries policy tiers, analyzer definitions, limiters and scale-to-zero, none of
+// which are saturation — but an operator who has not yet renamed theirs must not
+// lose every scaling setting they have on upgrade. So both are read, the current
+// name wins, and using the old one is reported once at startup.
+func ScalingPolicyConfigMapNames() []string {
+	current := ScalingPolicyConfigMapName()
+	if current == LegacyScalingPolicyConfigMapName {
+		return []string{current}
+	}
+	return []string{current, LegacyScalingPolicyConfigMapName}
 }

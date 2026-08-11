@@ -28,7 +28,7 @@ optimizer budget nor the scale-from-zero capacity check.
 
 The quota entries use the same schema described below; place them inline under the
 saturation `default` entry's `limiters:` list (see
-[saturation-scaling-config.md](saturation-scaling-config.md#limiters-cluster-default-only-live)).
+[scaling-policy-config.md](scaling-policy-config.md#limiters-cluster-default-only-live)).
 
 ## Scope
 

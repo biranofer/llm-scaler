@@ -31,7 +31,7 @@ func (e *Engine) runV2AnalysisOnly(
 	ctx context.Context,
 	modelID, namespace string,
 	replicaMetrics []domain.ReplicaMetrics,
-	config config.SaturationScalingConfig,
+	config config.ScalingPolicy,
 	variantStates []domain.VariantReplicaState,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantAutoscalings map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
@@ -102,7 +102,7 @@ func (e *Engine) runAnalyzersAndScore(
 	ctx context.Context,
 	modelID, namespace string,
 	replicaMetrics []domain.ReplicaMetrics,
-	config config.SaturationScalingConfig,
+	config config.ScalingPolicy,
 	variantStates []domain.VariantReplicaState,
 	variantMetadata []domain.VariantMetadata,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
@@ -477,7 +477,7 @@ func (e *Engine) pruneLastGoodAnalysis(activeKeys map[string]bool) {
 // defaulting to 1.0 when the analyzer has no explicit entry in cfg.Analyzers.
 // This value is the per-analyzer weight used by GreedyByScoreOptimizer for
 // fair-share priority ordering across models.
-func scoreForAnalyzer(analyzerName string, cfg config.SaturationScalingConfig) float64 {
+func scoreForAnalyzer(analyzerName string, cfg config.ScalingPolicy) float64 {
 	for _, aw := range cfg.Analyzers {
 		if aw.EffectiveType() == analyzerName {
 			if aw.Score > 0 {
@@ -489,7 +489,7 @@ func scoreForAnalyzer(analyzerName string, cfg config.SaturationScalingConfig) f
 	return 1.0
 }
 
-func resolveThresholds(analyzerName string, cfg config.SaturationScalingConfig) (scaleUp, scaleDown float64) {
+func resolveThresholds(analyzerName string, cfg config.ScalingPolicy) (scaleUp, scaleDown float64) {
 	for _, aw := range cfg.Analyzers {
 		if aw.EffectiveType() == analyzerName {
 			return aw.EffectiveScaleUpThreshold(cfg.ScaleUpThreshold),
@@ -507,7 +507,7 @@ func resolveThresholds(analyzerName string, cfg config.SaturationScalingConfig) 
 // throughput) from returning SpareCapacity=0 and silently vetoing scale-down.
 // Saturation is exempt: it is guarded by the SaturationAnalyzerName check upstream
 // (engine_v2.go ~L136) before effectiveEnabled is ever called.
-func effectiveEnabled(analyzerName string, cfg config.SaturationScalingConfig) bool {
+func effectiveEnabled(analyzerName string, cfg config.ScalingPolicy) bool {
 	for _, aw := range cfg.Analyzers {
 		if aw.EffectiveType() == analyzerName {
 			if aw.Enabled != nil {
@@ -803,7 +803,7 @@ func (e *Engine) collectV2ModelRequest(
 	ctx context.Context,
 	modelID, namespace string,
 	replicaMetrics []domain.ReplicaMetrics,
-	config config.SaturationScalingConfig,
+	config config.ScalingPolicy,
 	variantStates []domain.VariantReplicaState,
 	variantMetadata []domain.VariantMetadata,
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
@@ -857,7 +857,7 @@ func buildNamedResult(
 	ctx context.Context,
 	name string,
 	result *domain.AnalyzerResult,
-	config config.SaturationScalingConfig,
+	config config.ScalingPolicy,
 	metaByVariant map[string]domain.VariantMetadata,
 	scaleUp, scaleDown float64,
 ) pipeline.NamedAnalyzerResult {

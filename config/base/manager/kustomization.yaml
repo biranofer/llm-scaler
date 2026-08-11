@@ -5,7 +5,7 @@ resources:
 - namespace.yaml
 - deployment.yaml
 - manager-configmap.yaml
-- saturation-scaling-configmap.yaml
+- scaling-policy-configmap.yaml
 - service.yaml
 - external-scaler-service.yaml
 - serviceaccount.yaml

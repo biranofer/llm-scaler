@@ -66,7 +66,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Creating a global saturation ConfigMap")
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{
@@ -91,7 +91,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying the config was updated")
-			satConfigMap := cfg.SaturationConfig()
+			satConfigMap := cfg.ScalingPolicyConfig()
 			Expect(satConfigMap).NotTo(BeNil())
 			satConfig, exists := satConfigMap["default"]
 			Expect(exists).To(BeTrue())
@@ -106,7 +106,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			// separate scale-to-zero ConfigMap into this one.
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{
@@ -132,7 +132,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying the config was updated")
-			satConfigMap := cfg.SaturationConfig()
+			satConfigMap := cfg.ScalingPolicyConfig()
 			Expect(satConfigMap).NotTo(BeNil())
 			model1Config, exists := satConfigMap["model1"]
 			Expect(exists).To(BeTrue())
@@ -152,7 +152,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 		reconcileGlobalSaturationConfigMap := func(data string) {
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{"default": data},
@@ -234,7 +234,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 
 				cm := &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      config.SaturationConfigMapName(),
+						Name:      config.ScalingPolicyConfigMapName(),
 						Namespace: testNamespace,
 					},
 					Data: map[string]string{"default": satConfigTAEnabled},
@@ -299,7 +299,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Creating a namespace-local saturation ConfigMap")
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: testNamespace,
 				},
 				Data: map[string]string{
@@ -320,7 +320,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying the namespace-local config was updated")
-			satConfigMap := cfg.SaturationConfigForNamespace(testNamespace)
+			satConfigMap := cfg.ScalingPolicyConfigForNamespace(testNamespace)
 			Expect(satConfigMap).NotTo(BeNil())
 			satConfig, exists := satConfigMap["default"]
 			Expect(exists).To(BeTrue())
@@ -339,7 +339,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: "untracked-namespace",
 				},
 				Data: map[string]string{
@@ -361,7 +361,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 
 			By("Verifying the config was NOT updated with untracked namespace values")
 			// Should fallback to global config, not use the untracked namespace values
-			satConfigMap := cfg.SaturationConfigForNamespace("untracked-namespace")
+			satConfigMap := cfg.ScalingPolicyConfigForNamespace("untracked-namespace")
 			Expect(satConfigMap).NotTo(BeNil())
 			if satConfig, exists := satConfigMap["default"]; exists {
 				Expect(satConfig.KvCacheThreshold).NotTo(BeNumerically("~", 0.99, 0.01))
@@ -379,7 +379,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Creating and reconciling a namespace-local ConfigMap")
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: testNamespace,
 				},
 				Data: map[string]string{
@@ -409,7 +409,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 
 			By("Verifying namespace-local config was cleaned up")
 			// Should now fallback to global config
-			satConfigMap := cfg.SaturationConfigForNamespace(testNamespace)
+			satConfigMap := cfg.ScalingPolicyConfigForNamespace(testNamespace)
 			Expect(satConfigMap).NotTo(BeNil())
 			if satConfig, exists := satConfigMap["default"]; exists {
 				Expect(satConfig.KvCacheThreshold).NotTo(BeNumerically("~", 0.60, 0.01))
@@ -579,7 +579,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Creating namespace-local saturation ConfigMap in watched namespace")
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: watchedNamespace,
 				},
 				Data: map[string]string{
@@ -600,7 +600,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying the config was updated despite exclusion annotation")
-			satConfigMap := cfg.SaturationConfigForNamespace(watchedNamespace)
+			satConfigMap := cfg.ScalingPolicyConfigForNamespace(watchedNamespace)
 			Expect(satConfigMap).NotTo(BeNil())
 			satConfig, exists := satConfigMap["default"]
 			Expect(exists).To(BeTrue())
@@ -613,7 +613,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Creating a ConfigMap with invalid YAML")
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{
@@ -662,7 +662,7 @@ var _ = Describe("ConfigMapReconciler", func() {
 			By("Attempting to reconcile a ConfigMap")
 			req := ctrl.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      config.SaturationConfigMapName(),
+					Name:      config.ScalingPolicyConfigMapName(),
 					Namespace: systemNamespace,
 				},
 			}

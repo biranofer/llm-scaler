@@ -30,7 +30,7 @@ import (
 //
 // The kubeClient is only used by the inventory path (for GPU operator
 // discovery); the quota and none paths ignore it. Inline limiter entries are
-// validated at ConfigMap parse time (SaturationScalingConfig.validateLimiters),
+// validated at ConfigMap parse time (ScalingPolicy.validateLimiters),
 // so unknown limiter types reaching the default branch represent a programming
 // error.
 func NewLimiterFromConfig(cfg *config.Config, kubeClient client.Client) (Limiter, error) {

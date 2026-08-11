@@ -772,7 +772,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 					{VariantName: "prefill-v", CurrentReplicas: 1, GPUsPerReplica: 1, Role: "prefill"},
 					{VariantName: "decode-v", CurrentReplicas: 1, GPUsPerReplica: 1, Role: "decode"},
 				},
-				Config: &config.SaturationScalingConfig{
+				Config: &config.ScalingPolicy{
 					KvCacheThreshold:     0.8,
 					QueueLengthThreshold: 5,
 					AnalyzerName:         "saturation",
@@ -832,7 +832,7 @@ func makeAnalyzerInput(
 	metrics []domain.ReplicaMetrics,
 	states []domain.VariantReplicaState,
 ) domain.AnalyzerInput {
-	config := &config.SaturationScalingConfig{
+	config := &config.ScalingPolicy{
 		KvCacheThreshold:     0.8,
 		QueueLengthThreshold: 5,
 		AnalyzerName:         "saturation",
@@ -1001,13 +1001,13 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 	var (
 		analyzer *SaturationAnalyzer
 		store    *CapacityKnowledgeStore
-		cfg      *config.SaturationScalingConfig
+		cfg      *config.ScalingPolicy
 	)
 
 	BeforeEach(func() {
 		store = NewCapacityKnowledgeStore()
 		analyzer = NewSaturationAnalyzer(store)
-		cfg = &config.SaturationScalingConfig{
+		cfg = &config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1404,14 +1404,14 @@ var _ = Describe("Analyze per-replica waiting-queue demand by role", func() {
 		analyzer *SaturationAnalyzer
 		store    *CapacityKnowledgeStore
 		ctx      context.Context
-		satCfg   *config.SaturationScalingConfig
+		satCfg   *config.ScalingPolicy
 	)
 
 	BeforeEach(func() {
 		store = NewCapacityKnowledgeStore()
 		analyzer = NewSaturationAnalyzer(store)
 		ctx = context.Background()
-		satCfg = &config.SaturationScalingConfig{
+		satCfg = &config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1588,7 +1588,7 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 			},
-			Config: &config.SaturationScalingConfig{
+			Config: &config.ScalingPolicy{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
@@ -1629,7 +1629,7 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
 			},
-			Config: &config.SaturationScalingConfig{
+			Config: &config.ScalingPolicy{
 				KvCacheThreshold:     0.8,
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
@@ -1644,9 +1644,9 @@ var _ = Describe("Analyze with fallback (no cache_config_info)", func() {
 	})
 })
 
-var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func() {
+var _ = Describe("ScalingPolicy ApplyDefaults before Validate", func() {
 	It("should pass validation after ApplyDefaults for V2 config with omitted thresholds", func() {
-		cfg := config.SaturationScalingConfig{
+		cfg := config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1660,7 +1660,7 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 	})
 
 	It("should fail validation without ApplyDefaults for V2 config with omitted thresholds", func() {
-		cfg := config.SaturationScalingConfig{
+		cfg := config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1671,7 +1671,7 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 	})
 
 	It("should preserve explicitly set values after ApplyDefaults", func() {
-		cfg := config.SaturationScalingConfig{
+		cfg := config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1689,7 +1689,7 @@ var _ = Describe("SaturationScalingConfig ApplyDefaults before Validate", func()
 	})
 
 	It("should apply default priority when omitted", func() {
-		cfg := config.SaturationScalingConfig{
+		cfg := config.ScalingPolicy{
 			KvCacheThreshold:     0.8,
 			QueueLengthThreshold: 5,
 			AnalyzerName:         "saturation",
@@ -1717,7 +1717,7 @@ var _ = Describe("aggregateByVariant capacity Reason", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "v1", CurrentReplicas: 0, PendingReplicas: 0},
 			},
-			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9},
+			Config: &config.ScalingPolicy{KvCacheThreshold: 0.9},
 		}
 		result, err := a.Analyze(context.Background(), input)
 		Expect(err).NotTo(HaveOccurred())
@@ -1736,7 +1736,7 @@ var _ = Describe("aggregateByVariant capacity Reason", func() {
 			VariantStates: []domain.VariantReplicaState{
 				{VariantName: "v1", CurrentReplicas: 0, PendingReplicas: 0},
 			},
-			Config: &config.SaturationScalingConfig{KvCacheThreshold: 0.9},
+			Config: &config.ScalingPolicy{KvCacheThreshold: 0.9},
 		}
 		result, err := a.Analyze(context.Background(), input)
 		Expect(err).NotTo(HaveOccurred())

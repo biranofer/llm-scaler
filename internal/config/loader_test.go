@@ -256,7 +256,7 @@ func TestConfig_ThreadSafety(t *testing.T) {
 		go func() {
 			defer func() { done <- true }()
 			_ = cfg.OptimizationInterval()
-			_ = cfg.SaturationConfig()
+			_ = cfg.ScalingPolicyConfig()
 			_ = cfg.PrometheusCacheConfig()
 		}()
 	}
@@ -277,15 +277,15 @@ func TestConfig_UpdateDynamicConfig(t *testing.T) {
 	}
 
 	// Update saturation config
-	satConfig := map[string]SaturationScalingConfig{
+	satConfig := map[string]ScalingPolicy{
 		"test": {
 			KvCacheThreshold:     0.9,
 			QueueLengthThreshold: 10,
 		},
 	}
-	cfg.UpdateSaturationConfig(satConfig)
+	cfg.UpdateScalingPolicyConfig(satConfig)
 
-	updatedSatConfig := cfg.SaturationConfig()
+	updatedSatConfig := cfg.ScalingPolicyConfig()
 	if len(updatedSatConfig) != 1 {
 		t.Fatalf("Expected 1 saturation config entry after update, got %d", len(updatedSatConfig))
 	}

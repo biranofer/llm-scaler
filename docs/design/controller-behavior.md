@@ -123,7 +123,7 @@ func DeploymentPredicate() predicate.Predicate {
 **Watched ConfigMaps:**
 - `wva-manager-config` (default name)
   - Contains global optimization configuration (e.g., `GLOBAL_OPT_INTERVAL`)
-- `wva-saturation-scaling-config` (default name)
+- `wva-scaling-policy-config` (default name)
   - Contains per-accelerator saturation scaling thresholds
 
 **Rationale:**
@@ -238,7 +238,7 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 ### Example 4: ConfigMap Updated
 
 ```
-1. Admin updates wva-saturation-scaling-config ConfigMap
+1. Admin updates wva-scaling-policy-config ConfigMap
    → Update event processed by ConfigMap handler
    → Global configuration cache updated
    → Engine loop reads new config on next cycle

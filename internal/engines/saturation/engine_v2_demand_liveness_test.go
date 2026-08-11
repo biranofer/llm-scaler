@@ -60,7 +60,7 @@ func throughputAnalyzer(totalDemand float64) domain.Analyzer {
 
 // enabledThroughputCfg opts the throughput analyzer into the scaling decision so
 // runAnalyzersAndScore includes it (Enabled nil ⇒ present, participates).
-var enabledThroughputCfg = config.SaturationScalingConfig{
+var enabledThroughputCfg = config.ScalingPolicy{
 	ScaleUpThreshold:  0.85,
 	ScaleDownBoundary: 0.70,
 	Analyzers:         []config.AnalyzerScoreConfig{{Name: throughput.AnalyzerName}},

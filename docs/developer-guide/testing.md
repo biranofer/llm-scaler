@@ -235,7 +235,7 @@ Key environment variables (see [E2E Test Suite README](../../test/e2e/README.md)
 | `POD_READY_TIMEOUT` / `SCALE_UP_TIMEOUT` | `300` / `600` | Model ready vs longest scale/job waits (seconds) |
 | `E2E_EVENTUALLY_STANDARD`, etc. | see README | Optional `Eventually` timeouts and poll intervals (`E2E_EVENTUALLY_*`, `E2E_EVENTUALLY_POLL*`) |
 
-Deploy-time knobs: `SKIP_HELM_REPO_UPDATE`, optional `SCALE_UP_THRESHOLD` / `SCALE_DOWN_BOUNDARY` (Makefile patches the `wva-saturation-scaling-config` ConfigMap when set) — see **Install script tuning** above.
+Deploy-time knobs: `SKIP_HELM_REPO_UPDATE`, optional `SCALE_UP_THRESHOLD` / `SCALE_DOWN_BOUNDARY` (Makefile patches the `wva-scaling-policy-config` ConfigMap when set) — see **Install script tuning** above.
 
 For running multiple test runs in parallel, use [multi-controller isolation](../user-guide/multi-controller-isolation.md) (`CONTROLLER_INSTANCE`).
 

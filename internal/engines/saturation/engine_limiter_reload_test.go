@@ -30,7 +30,7 @@ var _ = Describe("live GPU limiter rebuild", func() {
 		Expect(e.GPULimiter.Name()).To(Equal("initial"))
 
 		// Switch to quota mode via inline limiters: the signature changes -> rebuild.
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			"default": {Limiters: []config.QuotaLimiterConfig{{
 				Type: "quota", Name: "cluster", Scope: config.QuotaScopeCluster,
 				ClusterQuotas: map[string]int{"H100": 8},
@@ -47,15 +47,15 @@ var _ = Describe("live GPU limiter rebuild", func() {
 
 	It("rebuilds when a quota value changes within the same mode", func() {
 		cfg := config.NewTestConfig()
-		quotaCfg := func(cap int) map[string]config.SaturationScalingConfig {
-			return map[string]config.SaturationScalingConfig{
+		quotaCfg := func(cap int) map[string]config.ScalingPolicy {
+			return map[string]config.ScalingPolicy{
 				"default": {Limiters: []config.QuotaLimiterConfig{{
 					Type: "quota", Name: "cluster", Scope: config.QuotaScopeCluster,
 					ClusterQuotas: map[string]int{"H100": cap},
 				}}},
 			}
 		}
-		cfg.UpdateSaturationConfig(quotaCfg(8))
+		cfg.UpdateScalingPolicyConfig(quotaCfg(8))
 		e := &Engine{Config: cfg, GPULimiter: pipeline.NewNoOpLimiter("initial")}
 
 		builds := 0
@@ -70,7 +70,7 @@ var _ = Describe("live GPU limiter rebuild", func() {
 		Expect(builds).To(Equal(0))
 
 		// Same mode, changed quota value: signature changes -> rebuild.
-		cfg.UpdateSaturationConfig(quotaCfg(9))
+		cfg.UpdateScalingPolicyConfig(quotaCfg(9))
 		e.refreshLimiter(ctx)
 		Expect(builds).To(Equal(1))
 		Expect(e.GPULimiter.Name()).To(Equal("9"))
@@ -83,7 +83,7 @@ var _ = Describe("live GPU limiter rebuild", func() {
 			return nil, context.DeadlineExceeded
 		})
 		// Force a signature change so refresh attempts a rebuild.
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			"default": {Limiters: []config.QuotaLimiterConfig{{
 				Type: "quota", Name: "cluster", Scope: config.QuotaScopeCluster,
 				ClusterQuotas: map[string]int{"H100": 8},

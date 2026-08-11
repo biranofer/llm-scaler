@@ -24,7 +24,7 @@ var _ = Describe("external analyzer runtime registry", func() {
 		}
 	}
 
-	cfgWithExt := config.SaturationScalingConfig{
+	cfgWithExt := config.ScalingPolicy{
 		ScaleUpThreshold:  0.85,
 		ScaleDownBoundary: 0.70,
 		Analyzers: []config.AnalyzerScoreConfig{
@@ -45,7 +45,7 @@ var _ = Describe("external analyzer runtime registry", func() {
 		return out
 	}
 
-	run := func(e *Engine, cfg config.SaturationScalingConfig) []pipeline.NamedAnalyzerResult {
+	run := func(e *Engine, cfg config.ScalingPolicy) []pipeline.NamedAnalyzerResult {
 		results, err := e.runAnalyzersAndScore(context.Background(), "m", "ns", nil, cfg, nil, nil, nil, nil, nil, 0)
 		Expect(err).NotTo(HaveOccurred())
 		return results
@@ -67,7 +67,7 @@ var _ = Describe("external analyzer runtime registry", func() {
 	It("does not run an upserted analyzer that is absent from config (opt-in)", func() {
 		e := makeEngine()
 		e.UpsertExternalAnalyzer("ext-demand", extAnalyzer())
-		cfgNoExt := config.SaturationScalingConfig{
+		cfgNoExt := config.ScalingPolicy{
 			ScaleUpThreshold:  0.85,
 			ScaleDownBoundary: 0.70,
 			Analyzers:         []config.AnalyzerScoreConfig{{Name: domain.SaturationAnalyzerName}},
@@ -136,7 +136,7 @@ var _ = Describe("reconcileExternalAnalyzers", func() {
 	})
 
 	It("registers a catalog analyzer and retires it when it leaves the catalog", func() {
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
 				"ttft-slo": {Query: "q", Threshold: "0.5"},
 			}},
@@ -144,7 +144,7 @@ var _ = Describe("reconcileExternalAnalyzers", func() {
 		e.reconcileExternalAnalyzers(context.Background())
 		Expect(e.externalAnalyzerNames()).To(ContainElement("ttft-slo"))
 
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{}},
 		})
 		e.reconcileExternalAnalyzers(context.Background())
@@ -152,7 +152,7 @@ var _ = Describe("reconcileExternalAnalyzers", func() {
 	})
 
 	It("skips a catalog label that collides with a built-in", func() {
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
 				domain.SaturationAnalyzerName: {Query: "q", Threshold: "0.5"},
 			}},
@@ -162,7 +162,7 @@ var _ = Describe("reconcileExternalAnalyzers", func() {
 	})
 
 	It("skips a malformed definition (unparseable threshold)", func() {
-		cfg.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+		cfg.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 			config.GlobalDefaultsKey: {AnalyzerDefinitions: config.ExternalAnalyzerCatalog{
 				"bad": {Query: "q", Threshold: "nope"},
 			}},

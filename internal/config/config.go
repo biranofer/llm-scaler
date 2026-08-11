@@ -19,7 +19,7 @@ type Config struct {
 	prometheus     prometheusConfig
 	// epp            eppConfig
 	features   featureFlagsConfig
-	saturation saturationConfig // namespace-aware
+	saturation scalingPolicyConfig // namespace-aware
 }
 
 // LimiterType selects which pipeline.Limiter implementation
@@ -95,17 +95,17 @@ type featureFlagsConfig struct {
 	scaleFromZeroMaxConcurrency int
 }
 
-// SaturationScalingConfigPerModel represents saturation scaling configuration
+// ScalingPolicySet represents saturation scaling configuration
 // for all models. Maps model ID (or "default" key) to its configuration.
-type SaturationScalingConfigPerModel map[string]SaturationScalingConfig
+type ScalingPolicySet map[string]ScalingPolicy
 
-// saturationConfig holds saturation scaling configuration (namespace-aware)
-type saturationConfig struct {
+// scalingPolicyConfig holds saturation scaling configuration (namespace-aware)
+type scalingPolicyConfig struct {
 	// Global default configuration
-	global SaturationScalingConfigPerModel
+	global ScalingPolicySet
 
 	// Namespace-local configuration overrides (keyed by namespace name)
-	namespaceConfigs map[string]SaturationScalingConfigPerModel
+	namespaceConfigs map[string]ScalingPolicySet
 }
 
 // // StaticConfig holds configuration that is immutable after startup.
@@ -308,9 +308,9 @@ const throughputAnalyzerName = "throughput"
 // requires a restart because RegisterAnalyzer is frozen after
 // StartOptimizeLoop (cmd/main.go); the ConfigMapReconciler uses this method
 // to detect that kind of live-config divergence from the frozen decision.
-// Thread-safe (SaturationConfig acquires its own lock).
+// Thread-safe (ScalingPolicyConfig acquires its own lock).
 func (c *Config) ThroughputAnalyzerEnabled() bool {
-	for _, sc := range c.SaturationConfig() {
+	for _, sc := range c.ScalingPolicyConfig() {
 		for _, aw := range sc.Analyzers {
 			if aw.EffectiveType() == throughputAnalyzerName && (aw.Enabled == nil || *aw.Enabled) {
 				return true
@@ -328,16 +328,16 @@ func (c *Config) ScaleFromZeroMaxConcurrency() int {
 	return c.features.scaleFromZeroMaxConcurrency
 }
 
-// SaturationConfig returns the current global saturation scaling configuration.
+// ScalingPolicyConfig returns the current global saturation scaling configuration.
 // Thread-safe. Returns a copy to prevent external modifications.
-// For namespace-aware lookups, use SaturationConfigForNamespace instead.
-func (c *Config) SaturationConfig() map[string]SaturationScalingConfig {
-	return c.SaturationConfigForNamespace("")
+// For namespace-aware lookups, use ScalingPolicyConfigForNamespace instead.
+func (c *Config) ScalingPolicyConfig() map[string]ScalingPolicy {
+	return c.ScalingPolicyConfigForNamespace("")
 }
 
-// resolveSaturationConfig resolves saturation config for a namespace (namespace-local > global).
+// resolveScalingPolicy resolves saturation config for a namespace (namespace-local > global).
 // Must be called while holding at least a read lock.
-func (c *Config) resolveSaturationConfig(namespace string) map[string]SaturationScalingConfig {
+func (c *Config) resolveScalingPolicy(namespace string) map[string]ScalingPolicy {
 	// Check namespace-local first (if namespace is provided)
 	if namespace != "" {
 		if nsConfig, exists := c.saturation.namespaceConfigs[namespace]; exists {
@@ -355,15 +355,15 @@ func (c *Config) resolveSaturationConfig(namespace string) map[string]Saturation
 	return nil
 }
 
-// SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
+// ScalingPolicyConfigForNamespace returns the saturation scaling configuration for the given namespace.
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
 // If namespace is empty, returns global config.
-func (c *Config) SaturationConfigForNamespace(namespace string) map[string]SaturationScalingConfig {
+func (c *Config) ScalingPolicyConfigForNamespace(namespace string) map[string]ScalingPolicy {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	sourceConfig := c.resolveSaturationConfig(namespace)
-	return copySaturationConfig(sourceConfig)
+	sourceConfig := c.resolveScalingPolicy(namespace)
+	return copyScalingPolicyConfig(sourceConfig)
 }
 
 // RescaleEnabledForNamespaceLocal reports the EnableRescale flag from a namespace's
@@ -392,34 +392,34 @@ func (c *Config) RescaleEnabledCluster() bool {
 	return c.saturation.global["default"].EnableRescale
 }
 
-// copySaturationConfig creates a deep copy of the saturation config map.
-func copySaturationConfig(src map[string]SaturationScalingConfig) map[string]SaturationScalingConfig {
+// copyScalingPolicyConfig creates a deep copy of the saturation config map.
+func copyScalingPolicyConfig(src map[string]ScalingPolicy) map[string]ScalingPolicy {
 	if src == nil {
-		return make(map[string]SaturationScalingConfig)
+		return make(map[string]ScalingPolicy)
 	}
-	result := make(map[string]SaturationScalingConfig, len(src))
+	result := make(map[string]ScalingPolicy, len(src))
 	for k, v := range src {
 		result[k] = v
 	}
 	return result
 }
 
-// UpdateSaturationConfig updates the global saturation scaling configuration.
+// UpdateScalingPolicyConfig updates the global saturation scaling configuration.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
-// For namespace-local updates, use UpdateSaturationConfigForNamespace instead.
-func (c *Config) UpdateSaturationConfig(config map[string]SaturationScalingConfig) {
-	c.UpdateSaturationConfigForNamespace("", config)
+// For namespace-local updates, use UpdateScalingPolicyConfigForNamespace instead.
+func (c *Config) UpdateScalingPolicyConfig(config map[string]ScalingPolicy) {
+	c.UpdateScalingPolicyConfigForNamespace("", config)
 }
 
-// UpdateSaturationConfigForNamespace updates the saturation scaling configuration for the given namespace.
+// UpdateScalingPolicyConfigForNamespace updates the saturation scaling configuration for the given namespace.
 // If namespace is empty, updates global config.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
-func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map[string]SaturationScalingConfig) {
+func (c *Config) UpdateScalingPolicyConfigForNamespace(namespace string, config map[string]ScalingPolicy) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Make a copy to prevent external modifications
-	newConfig := make(map[string]SaturationScalingConfig, len(config))
+	newConfig := make(map[string]ScalingPolicy, len(config))
 	maps.Copy(newConfig, config)
 
 	var oldCount int
@@ -434,7 +434,7 @@ func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map
 	} else {
 		// Update namespace-local
 		if c.saturation.namespaceConfigs == nil {
-			c.saturation.namespaceConfigs = make(map[string]SaturationScalingConfigPerModel)
+			c.saturation.namespaceConfigs = make(map[string]ScalingPolicySet)
 		}
 		oldCount = len(c.saturation.namespaceConfigs[namespace])
 		c.saturation.namespaceConfigs[namespace] = newConfig
@@ -513,9 +513,9 @@ func NewTestConfig() *Config {
 			limitedModeEnabled:          false,
 			scaleFromZeroMaxConcurrency: 10,
 		},
-		saturation: saturationConfig{
-			global:           make(SaturationScalingConfigPerModel),
-			namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
+		saturation: scalingPolicyConfig{
+			global:           make(ScalingPolicySet),
+			namespaceConfigs: make(map[string]ScalingPolicySet),
 		},
 	}
 	return cfg

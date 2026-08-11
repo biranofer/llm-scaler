@@ -41,8 +41,8 @@ const modelOverrideKeySeparator = "#"
 
 // ScalingPolicies returns the named policy tiers declared in a resolved config
 // map, keyed by tier name.
-func ScalingPolicies(configMap map[string]SaturationScalingConfig) map[string]SaturationScalingConfig {
-	policies := make(map[string]SaturationScalingConfig)
+func NamedPolicies(configMap map[string]ScalingPolicy) map[string]ScalingPolicy {
+	policies := make(map[string]ScalingPolicy)
 	for key, entry := range configMap {
 		if PolicyEntryKey(key) {
 			policies[key] = entry

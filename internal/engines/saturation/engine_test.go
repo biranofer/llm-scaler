@@ -255,7 +255,7 @@ var _ = Describe("Saturation Engine", func() {
 			sourceRegistry.Register("prometheus", promSource) // nolint:errcheck
 			// Create minimal test config with saturation config
 			testConfig := config.NewTestConfig()
-			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			testConfig.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 				"default": {},
 			})
 			fakeRecorder := record.NewFakeRecorder(100)
@@ -408,7 +408,7 @@ var _ = Describe("Saturation Engine", func() {
 			// Initialize legacy MetricsCollector for non-saturation metrics
 			// Create minimal test config with saturation config
 			testConfig := config.NewTestConfig()
-			testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+			testConfig.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 				"default": {},
 			})
 			fakeRecorder := record.NewFakeRecorder(100)
@@ -513,7 +513,7 @@ var _ = Describe("Saturation Engine", func() {
 			// silently not enforced.
 			testConfig := config.NewTestConfig()
 			withLimiters := func(limiters ...config.QuotaLimiterConfig) {
-				testConfig.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
+				testConfig.UpdateScalingPolicyConfig(map[string]config.ScalingPolicy{
 					"default": {
 						AnalyzerName: domain.SaturationAnalyzerName, // V2 path
 						Limiters:     limiters,

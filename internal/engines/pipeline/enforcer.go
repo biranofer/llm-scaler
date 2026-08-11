@@ -44,7 +44,7 @@ func (e *Enforcer) EnforcePolicyOnDecisions(
 	modelID string,
 	namespace string,
 	decisions []domain.VariantDecision,
-	satConfig *config.SaturationScalingConfig,
+	satConfig *config.ScalingPolicy,
 	optimizerName string,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)
@@ -81,7 +81,7 @@ func (e *Enforcer) applyScaleToZeroOnDecisions(
 	modelID string,
 	namespace string,
 	decisions []domain.VariantDecision,
-	satConfig *config.SaturationScalingConfig,
+	satConfig *config.ScalingPolicy,
 	optimizerName string,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)

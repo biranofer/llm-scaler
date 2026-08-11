@@ -6,10 +6,10 @@ import "fmt"
 // Higher priority → preferential GPU allocation in fair-share.
 const DefaultPriority = 1.0
 
-// SaturationScalingConfig holds saturation-based scaling thresholds for a model variant.
+// ScalingPolicy holds saturation-based scaling thresholds for a model variant.
 // Saturation scaling is enabled by default and uses these thresholds to determine when
 // replicas are saturated and when to scale up.
-type SaturationScalingConfig struct {
+type ScalingPolicy struct {
 	// ModelID is the model identifier (only used in override entries)
 	ModelID string `yaml:"model_id,omitempty"`
 
@@ -181,7 +181,7 @@ type ScaleFromZeroEnvelope struct {
 
 // RequirePrefillOnScaleFromZero reports whether the entry refuses to wake from
 // zero without prefill. Absent config means false — see ScaleFromZeroEnvelope.
-func (c SaturationScalingConfig) RequirePrefillOnScaleFromZero() bool {
+func (c ScalingPolicy) RequirePrefillOnScaleFromZero() bool {
 	if c.ScaleFromZero == nil || c.ScaleFromZero.RequirePrefill == nil {
 		return false
 	}
@@ -306,7 +306,7 @@ func (a *AnalyzerScoreConfig) EffectiveScaleDownBoundary(global float64) float64
 // GetAnalyzerName implements the AnalyzerConfig interface.
 // Returns "saturation" if Analyzers list is populated (new-style config),
 // otherwise returns the raw AnalyzerName field (backward compat).
-func (c *SaturationScalingConfig) GetAnalyzerName() string {
+func (c *ScalingPolicy) GetAnalyzerName() string {
 	if len(c.Analyzers) > 0 {
 		return "saturation"
 	}
@@ -319,7 +319,7 @@ func (c *SaturationScalingConfig) GetAnalyzerName() string {
 // analyzer runs either way. It survives only as the gate on defaulting the
 // scaling band in ApplyDefaults, so a partial entry does not clobber a tuned
 // global value during Merge.
-func (c *SaturationScalingConfig) IsV2() bool {
+func (c *ScalingPolicy) IsV2() bool {
 	return len(c.Analyzers) > 0 || c.AnalyzerName == "saturation"
 }
 
@@ -338,7 +338,7 @@ const (
 // Normalize folds each analyzer's Parameters into its typed fields. Call it at
 // parse time, before ApplyDefaults() and Validate(), so defaulting and validation
 // see the folded values.
-func (c *SaturationScalingConfig) Normalize() error {
+func (c *ScalingPolicy) Normalize() error {
 	for i := range c.Analyzers {
 		if err := c.Analyzers[i].Normalize(); err != nil {
 			return err
@@ -357,7 +357,7 @@ func (c *SaturationScalingConfig) Normalize() error {
 // would clobber a tuned global value during Merge(). The final resolved config
 // is instead calibrated post-merge via ApplyV2ThresholdDefaults(). Must be
 // called before Validate() to handle omitempty zero-values correctly.
-func (c *SaturationScalingConfig) ApplyDefaults() {
+func (c *ScalingPolicy) ApplyDefaults() {
 	if c.Priority == 0 {
 		c.Priority = DefaultPriority
 	}
@@ -401,7 +401,7 @@ func (c *SaturationScalingConfig) ApplyDefaults() {
 // entry: a partial per-model/namespace entry that omits the band must still be
 // calibrated once merged — but defaulting these fields on the stored entry would
 // clobber a tuned global threshold during Merge().
-func (c *SaturationScalingConfig) ApplyV2ThresholdDefaults() {
+func (c *ScalingPolicy) ApplyV2ThresholdDefaults() {
 	if c.ScaleUpThreshold == 0 {
 		c.ScaleUpThreshold = DefaultScaleUpThreshold
 	}
@@ -413,7 +413,7 @@ func (c *SaturationScalingConfig) ApplyV2ThresholdDefaults() {
 // Merge overlays non-zero fields from override onto c.
 // This allows per-model overrides to specify only the fields they want to change,
 // inheriting all other values from the base (typically the "default" config).
-func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
+func (c *ScalingPolicy) Merge(override ScalingPolicy) {
 	if override.KvCacheThreshold != 0 {
 		c.KvCacheThreshold = override.KvCacheThreshold
 	}
@@ -469,7 +469,7 @@ func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
 // Validate checks for invalid threshold values.
 // Returns error with descriptive message if validation fails.
 // Call ApplyDefaults() before Validate() to handle zero-valued omitempty fields.
-func (c *SaturationScalingConfig) Validate() error {
+func (c *ScalingPolicy) Validate() error {
 	if c.KvCacheThreshold < 0 || c.KvCacheThreshold > 1 {
 		return fmt.Errorf("kvCacheThreshold must be between 0 and 1, got %.2f", c.KvCacheThreshold)
 	}
@@ -543,7 +543,7 @@ func (c *SaturationScalingConfig) Validate() error {
 // entries must carry no quota fields; quota entries are validated end-to-end by
 // the existing QuotaLimiterEntries.Validate() (name uniqueness, scope, per-type
 // ranges), so the inline and file-based quota schemas stay identical.
-func (c *SaturationScalingConfig) validateLimiters() error {
+func (c *ScalingPolicy) validateLimiters() error {
 	if len(c.Limiters) == 0 {
 		return nil
 	}

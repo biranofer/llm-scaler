@@ -38,7 +38,7 @@ func TestScaleFromZeroEnvelopeYAML(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var cfg SaturationScalingConfig
+			var cfg ScalingPolicy
 			if err := yaml.Unmarshal([]byte(tt.yaml), &cfg); err != nil {
 				t.Fatalf("unmarshal: %v", err)
 			}
@@ -55,20 +55,20 @@ func TestScaleFromZeroEnvelopeYAML(t *testing.T) {
 func TestMergeCarriesScaleFromZero(t *testing.T) {
 	tests := []struct {
 		name     string
-		base     SaturationScalingConfig
-		override SaturationScalingConfig
+		base     ScalingPolicy
+		override ScalingPolicy
 		want     bool
 	}{
 		{
 			name:     "override turns it on over a default that leaves it off",
-			base:     SaturationScalingConfig{},
-			override: SaturationScalingConfig{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
+			base:     ScalingPolicy{},
+			override: ScalingPolicy{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
 			want:     true,
 		},
 		{
 			name:     "override turns it off over a default that has it on",
-			base:     SaturationScalingConfig{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
-			override: SaturationScalingConfig{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(false)}},
+			base:     ScalingPolicy{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
+			override: ScalingPolicy{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(false)}},
 			want:     false,
 		},
 		{
@@ -76,8 +76,8 @@ func TestMergeCarriesScaleFromZero(t *testing.T) {
 			// an override that says nothing about scale-from-zero must not wipe
 			// the default's setting.
 			name:     "an override without the envelope inherits the default",
-			base:     SaturationScalingConfig{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
-			override: SaturationScalingConfig{},
+			base:     ScalingPolicy{ScaleFromZero: &ScaleFromZeroEnvelope{RequirePrefill: boolPtr(true)}},
+			override: ScalingPolicy{},
 			want:     true,
 		},
 	}

@@ -9,7 +9,7 @@ targets.
 
 It is aimed at operators tuning and observing WVA. For the full configuration field reference and
 the EPP coordination workflow, see
-[Saturation Scaling Configuration](../developer-guide/saturation-scaling-config.md); for the
+[Saturation Scaling Configuration](../developer-guide/scaling-policy-config.md); for the
 complete metrics catalog see
 [Metrics & Health Monitoring](../developer-guide/metrics-health-monitoring.md).
 
@@ -77,7 +77,7 @@ usable capacity is the **smaller** of two ceilings, both in KV-cache tokens:
   scheduling throughput — not memory — becomes the bottleneck (common for long-generation
   workloads). V2 estimates it from live queue behavior when a replica is queue-saturated,
   otherwise from recent history, otherwise from the deployment's batch/sequence limits. *(The
-  detailed estimation chain is in the [developer guide](../developer-guide/saturation-scaling-config.md).)*
+  detailed estimation chain is in the [developer guide](../developer-guide/scaling-policy-config.md).)*
 
 A variant's per-replica capacity is the **median** of its ready replicas' capacities (median so
 one outlier pod doesn't skew it). A variant with no ready replicas borrows capacity derived from
@@ -149,7 +149,7 @@ scale-up is unconstrained and the optimizer simply minimizes cost. Priority weig
 ## Thresholds
 
 Set these in the saturation-scaling ConfigMap (see the
-[configuration reference](../developer-guide/saturation-scaling-config.md) for structure and
+[configuration reference](../developer-guide/scaling-policy-config.md) for structure and
 per-model/per-namespace overrides).
 
 | Key | Default | Range | Effect on V2 |
@@ -193,7 +193,7 @@ If the two disagree, routing and scaling fight each other:
 = EPP's `queueDepthThreshold`, and mirror any change on both sides. This repo configures EPP's
 scorers (`queue-scorer`, `kv-cache-utilization-scorer`) in `deploy/lib/epp-flow-control.values.yaml`.
 See the developer guide's
-[Coordinating with InferenceScheduler (EPP)](../developer-guide/saturation-scaling-config.md#best-practices-coordinating-with-inferencescheduler-end-point-picker)
+[Coordinating with InferenceScheduler (EPP)](../developer-guide/scaling-policy-config.md#best-practices-coordinating-with-inferencescheduler-end-point-picker)
 for the full apply/verify workflow.
 
 **References**
@@ -268,7 +268,7 @@ Work down this list:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wva-saturation-scaling-config
+  name: wva-scaling-policy-config
   namespace: workload-variant-autoscaler-system   # WVA controller namespace
 data:
   default: |
@@ -287,7 +287,7 @@ data:
 
 ## See also
 
-- [Saturation Scaling Configuration](../developer-guide/saturation-scaling-config.md) — full field reference, per-model/namespace resolution, and the EPP coordination workflow.
+- [Saturation Scaling Configuration](../developer-guide/scaling-policy-config.md) — full field reference, per-model/namespace resolution, and the EPP coordination workflow.
 - [Metrics & Health Monitoring](../developer-guide/metrics-health-monitoring.md) — complete metrics catalog and health endpoints.
 - [Monitoring](monitoring.md) — dashboards and observing WVA.
 - [Quota Limiter](../developer-guide/quota-limiter.md) — per-accelerator GPU caps used by the fair-share step.
