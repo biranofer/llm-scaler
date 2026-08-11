@@ -10,6 +10,28 @@
 main() {
     parse_args "$@"
 
+    # Preflight-only mode: the same check the install runs, run on its own so it
+    # can be answered before committing to an install that creates namespaces and
+    # RBAC before it discovers a missing tool.
+    if [ "${CHECK_ONLY:-false}" = "true" ]; then
+        check_prerequisites
+        # Environment-specific "checks" are only run when they actually check.
+        # kind-emulator's creates and tears down the cluster and loads images —
+        # it is setup wearing a check's name, and a preflight that provisions
+        # infrastructure is not one you can safely run to ask a question.
+        if [ "$ENVIRONMENT" = "kind-emulator" ]; then
+            log_info "Skipping kind-emulator environment checks: they provision the cluster rather than inspect it. Run 'make create-kind-cluster' for that."
+        elif [ -f "$SCRIPT_DIR/$ENVIRONMENT/install.sh" ]; then
+            # shellcheck source=/dev/null
+            source "$SCRIPT_DIR/$ENVIRONMENT/install.sh"
+            if declare -f check_specific_prerequisites > /dev/null; then
+                check_specific_prerequisites
+            fi
+        fi
+        log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
+        exit 0
+    fi
+
     # Undeploy mode
     if [ "$UNDEPLOY" = "true" ]; then
         log_info "Starting Workload-Variant-Autoscaler Undeployment on $ENVIRONMENT"

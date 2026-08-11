@@ -14,6 +14,7 @@ For llm-d (gateway, EPP, ModelService), see the llm-d project's installation gui
 
 Options:
   -i, --wva-image IMAGE        Container image for WVA (default: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG)
+  -c, --check                  Run the prerequisite check and exit without deploying
   -u, --undeploy               Undeploy WVA, monitoring, and scaler backend
   -e, --environment            kubernetes | openshift | kind-emulator (default: kubernetes)
   -h, --help                   Show this help and exit
@@ -64,6 +65,7 @@ parse_args() {
         fi
         shift 2
         ;;
+      -c|--check)             CHECK_ONLY=true; shift ;;
       -u|--undeploy)          UNDEPLOY=true; shift ;;
       -e|--environment)
         ENVIRONMENT="$2" ; shift 2

@@ -9,7 +9,7 @@ Complete guide for deploying the Workload-Variant-Autoscaler (WVA) on Kubernetes
 ## Table of Contents
 
 - [Overview](#overview)
-- [Prerequisites](#prerequisites)
+- [Prerequisites](#prerequisites) — start with `make check-prereqs`
 - [Choosing your install](#choosing-your-install)
 - [Deployment Methods](#deployment-methods)
   - [Method 1: Automated Deployment Script](#method-1-automated-deployment-script-recommended)
@@ -30,21 +30,34 @@ This guide covers two deployment procedures:
 
 ### Required Tools
 
-All deployment methods require:
+Don't check by hand — ask:
 
-- **kubectl** (v1.24+) - Kubernetes CLI
-- **kustomize** (v5+) - for direct controller installs
-- **helm** (v3.8+) - for upstream dependencies (LWS, KEDA, Prometheus stack)
-- **git** - Git CLI
+```bash
+make check-prereqs                          # kubernetes (default)
+make check-prereqs ENVIRONMENT=openshift
+make check-prereqs WVA_LIMITER=gpu-inventory
+```
 
-Optional but recommended:
+It runs the **same** check the install runs, so a pass here and a prerequisite
+failure mid-install is not a reachable state. It is read-only, and it fails with
+the specific tool, the version found, and the version needed.
 
-- **yq** (v4+) - YAML processor for configuration
+What it looks for depends on what you are installing:
 
-Platform-specific requirements:
+| tool | when | minimum |
+| --- | --- | --- |
+| `kubectl` | always | 1.24 |
+| `helm` | always (LWS, KEDA, Prometheus stack) | 3.8 |
+| `git` | always | — |
+| `yq` | `WVA_LIMITER` set, or `ENABLE_SCALE_TO_ZERO=true` (the default) — both patch the shipped ConfigMaps | — |
+| `oc` | `ENVIRONMENT=openshift` | — |
 
-- **OpenShift**: `oc` CLI (v4.12+)
-- **Kind**: `kind` CLI for local testing
+It also confirms your current context reaches a cluster, because discovering that
+after the first namespace and ClusterRoleBinding exist is worse than discovering
+it now.
+
+`kustomize` and `controller-gen` are **not** prerequisites: the Makefile installs
+them into `./bin` on demand. Add `kind` only for the local kind-emulator flow.
 
 ### Cluster Requirements
 
@@ -93,12 +106,6 @@ spec:
 
 Without those metrics WVA has no demand signal and will not scale the workload.
 
-> **Removed:** earlier versions required an `llm-d.ai/variant` label on the pod
-> template plus a `relabelings` rule propagating it as `llm_d_ai_variant`, and an
-> `llm-d.ai/managed: "true"` annotation to opt in. Both are gone — variant identity
-> now comes from the pod locator, and being called by KEDA *is* being managed.
-> Existing labels are harmless; they are simply not read.
-
 ### Required Tokens
 
 - **HuggingFace Token** (for llm-d deployment): after getting access to a model, set a token on [HuggingFace](https://huggingface.co/settings/tokens)
@@ -140,6 +147,46 @@ precisely the resources the other overlay owns.
 Both work on both platforms — `config/overlays/` carries all four combinations.
 The default preserves the historical behaviour: `namespace` on OpenShift,
 `cluster` elsewhere.
+
+### Before you turn on the GPU limiter
+
+The shipped configuration declares **no limiter**: a fresh install scales
+unconstrained, and a scale-from-zero wake is published without a capacity check.
+That default is deliberate. A GPU-aware optimizer allocates out of per-accelerator
+pools, so a variant whose accelerator it cannot resolve is charged to no pool, gets
+no budget, and **never scales up** — silently, because nothing errors. Enabling it
+by default would freeze exactly the workloads that are least carefully configured.
+
+WVA resolves a variant's accelerator from, in order:
+
+1. a **GPU product key in the workload's `nodeSelector` or `nodeAffinity`** — the
+   only source that works before any pod exists, and therefore the only one that
+   works for a workload parked at zero;
+2. the **node its pods are running on**, once it has ready pods.
+
+On a **single-accelerator** cluster neither is needed: there is one pool, so an
+unconstrained workload is deduced onto it. On a **heterogeneous** cluster it
+matters, and not as bookkeeping — a pod with no GPU nodeSelector can be scheduled
+onto *any* GPU node, so a workload that does not state its accelerator genuinely
+has not chosen one. Pin it:
+
+```yaml
+# in the model server's pod template
+spec:
+  nodeSelector:
+    nvidia.com/gpu.product: NVIDIA-A100-PCIE-80GB
+```
+
+```bash
+kubectl get nodes -L nvidia.com/gpu.product          # what your nodes advertise
+kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep -i "Accelerator not resolved"
+```
+
+The install warns too: enabling `WVA_LIMITER=gpu-inventory` counts the distinct GPU
+products the cluster advertises and tells you whether pinning is needed. An
+unresolved variant is logged once per change and counted in
+`wva_unattributed_gpus`. See
+[GPU Capacity Accounting](../docs/developer-guide/gpu-capacity-accounting.md).
 
 ### What the controller needs from a workload
 
@@ -230,23 +277,8 @@ Options:
 
 **llm-d stack** (gateway, EPP, ModelService): deploy using the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) directly. For EPP-only setup (llm-d-router-standalone chart + tokenreview RBAC), use `deploy/install-epp.sh` after `install.sh`.
 
-**Environment variables** (see [Configuration Reference](#configuration-reference)):
-
-```bash
-# Always set for install.sh
-export ENVIRONMENT="kubernetes"   # or openshift, kind-emulator
-export LLMD_NS="llm-d-optimized-baseline"  # namespace WVA watches
-
-# When DEPLOY_WVA=true (default)
-export WVA_IMAGE_REPO="ghcr.io/llm-d/llm-d-workload-variant-autoscaler"
-export WVA_IMAGE_TAG="latest"
-
-# Optional
-export DEPLOY_WVA=false                     # Monitoring + scaler only
-export DEPLOY_PROMETHEUS=false
-export DEPLOY_OPERATIONAL_DASHBOARD=true    # Deploy Grafana and operational dashboard
-# export DEPLOY_LWS=true           # Install LeaderWorkerSet (needed for full e2e suite; default false)
-```
+**Environment variables**: every option the script reads is tabulated in
+[Configuration Reference](#configuration-reference).
 
 #### Script deployment examples
 
@@ -289,103 +321,9 @@ export DEPLOY_LWS=true
 
 Install the WVA controller directly into an existing cluster using Kustomize. This is the recommended method when you already have Prometheus and want to manage the controller install without the full automated script.
 
-#### Install scope: cluster or namespace
-
-WVA installs at either scope, on either platform — `config/overlays/` carries all
-four combinations:
-
-| scope | what the controller may do | use when |
-| --- | --- | --- |
-| `cluster` | watches and scales workloads in every namespace; needs ClusterRole | one WVA for the whole cluster |
-| `namespace` | watches and scales only its own namespace; Role only | a tenant with no cluster-wide RBAC, or one WVA per team |
-
-The single-command install picks the scope with `WVA_SCOPE`:
-
-```bash
-make deploy-wva-on-k8s                          # cluster-scoped (default on Kubernetes)
-make deploy-wva-on-k8s WVA_SCOPE=namespace      # namespace-scoped
-make deploy-wva-on-openshift                    # namespace-scoped (default on OpenShift)
-make deploy-wva-on-openshift WVA_SCOPE=cluster  # cluster-scoped
-```
-
-The defaults are the historical ones, so existing invocations are unchanged. Pass
-the same `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall resolves the overlay the
-same way an install does, so a mismatched scope would leave behind exactly the
-resources the other overlay owns.
-
-#### Install namespace
-
-Any namespace works, at either scope:
-
-```bash
-make deploy-wva-on-k8s WVA_NS=my-team-wva
-```
-
-The install applies a Kustomize namespace transform, and the controller reads its
-own namespace from `POD_NAMESPACE` (downward API), so ClusterRoleBinding subjects
-and every system-namespace lookup — including which ConfigMap counts as the
-cluster tier — follow automatically. Pass the same `WVA_NS` to `undeploy-wva-on-*`.
-
-#### Bounding scaling: the GPU limiter
-
-The shipped configuration declares **no limiter**, so a fresh install scales
-unconstrained: the optimizer allocates without a GPU budget, and a scale-from-zero
-wake is published without a capacity check. The controller says so at startup.
-
-Turn it on at install time:
-
-```bash
-make deploy-wva-on-k8s WVA_LIMITER=gpu-inventory   # bound by GPUs actually free
-make deploy-wva-on-k8s WVA_LIMITER=quota           # bound by declared caps
-```
-
-or later, by adding a `limiters:` entry to the `default` entry of the
-scaling-policy ConfigMap — it is applied live, no restart.
-
-> **Before you enable it, make every workload's accelerator resolvable.** A
-> GPU-aware optimizer allocates out of per-accelerator pools, so a variant whose
-> accelerator it cannot resolve is charged to no pool, receives no budget, and
-> **never scales up** — silently, because nothing errors. That is why the default
-> ships unbounded: enabling it by default would freeze exactly the workloads that
-> are least carefully configured.
-
-##### What "resolvable" means, especially on a heterogeneous cluster
-
-WVA resolves a variant's accelerator from, in order:
-
-1. a **GPU product key in the workload's `nodeSelector` or `nodeAffinity`** — the
-   only source that works before any pod exists, and therefore the only one that
-   works for a workload parked at zero;
-2. the **node its pods are actually running on**, once it has ready pods.
-
-On a **single-accelerator** cluster neither is needed: there is one pool, so an
-unconstrained workload is deduced onto it and "any accelerator can serve this" is
-trivially true.
-
-On a **heterogeneous** cluster it matters, and the reason is not bookkeeping: a pod
-with no GPU nodeSelector can be scheduled onto *any* GPU node, so a workload that
-does not state its accelerator genuinely has not chosen one. Add the product key
-the GPU operator sets on your nodes:
-
-```yaml
-# in the model server's pod template
-spec:
-  nodeSelector:
-    nvidia.com/gpu.product: NVIDIA-A100-PCIE-80GB
-```
-
-Check what your nodes advertise, and confirm nothing is unresolved after enabling
-the limiter:
-
-```bash
-kubectl get nodes -L nvidia.com/gpu.product
-kubectl get events -A --field-selector reason=AcceleratorNotResolved
-```
-
-A variant that stays unresolved is reported by that event and counted in
-`wva_unattributed_gpus`. See
-[GPU Capacity Accounting](../docs/developer-guide/gpu-capacity-accounting.md) for
-how the budget is computed and where it can still over-state free capacity.
+Scope, namespace and limiter are the same four decisions as above — see
+[Choosing your install](#choosing-your-install). This method just applies the
+overlays by hand instead of through `make`.
 
 #### Applying the overlays directly
 
@@ -501,270 +439,75 @@ If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment,
 
 ### Verification
 
-**Check all components**:
-
 ```bash
-# WVA controller
-kubectl get pods -n workload-variant-autoscaler-system
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler
-
-# ScaledObjects and the HPAs KEDA manages for them
-kubectl get scaledobject -A
-kubectl get hpa -A
-
-# External metrics (served by KEDA)
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq
+NS=workload-variant-autoscaler-system
+kubectl get pods -n $NS                       # the controller is Running
+kubectl get scaledobject -A                   # your managed workloads
+kubectl get hpa -A                            # KEDA created one per ScaledObject
 ```
 
-**Check metrics flow**:
+A ScaledObject with a KEDA HPA whose `CurrentMetrics` is populated means the whole
+chain works: WVA was called, decided, and KEDA received the answer. An empty
+`CurrentMetrics` means KEDA never got one — check the trigger's `scalerAddress`
+and that `modelID` is set.
+
+If metrics are the problem, follow them forward:
 
 ```bash
-# 1. Verify vLLM is exposing metrics
+# 1. the model server exposes them
 kubectl port-forward -n <llm-namespace> <vllm-pod> 8000:8000
-curl http://localhost:8000/metrics | grep vllm:
+curl -s http://localhost:8000/metrics | grep vllm:
 
-# 2. Verify Prometheus is scraping
+# 2. Prometheus scrapes them  (query vllm:num_requests_running)
 kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
-# Visit http://localhost:9090 and query: vllm:num_requests_running
 
-# 3. Verify WVA is collecting metrics
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Collected metrics"
-
-# 4. Verify external metrics API (served by KEDA)
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq
+# 3. WVA reads them and decides
+kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler   | grep -E "Collected replica metrics|scaling-decision"
 ```
 
 ### Monitoring WVA
 
-**View logs with filtering**:
+The log lines worth knowing, all at Info:
+
+| grep for | tells you |
+| --- | --- |
+| `scaling-decision` | what WVA decided for a model, and the replica counts |
+| `Effective scaling policy` | which policy tier a model resolved to |
+| `Collected replica metrics` | metrics are arriving |
+| `GPU limiter (re)built from config` | a `limiters:` edit took effect, live |
 
 ```bash
-# All logs
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler -f
-
-# Filter for optimization decisions
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
-  grep "OptimizationComplete"
-
-# Filter for metrics issues
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
-  grep "MetricsMissing\|MetricsStale"
-
-# JSON parsing (if using JSON logging)
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
-  jq 'select(.level=="ERROR")'
+kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler -f
 ```
 
-**Check what WVA decided, and whether KEDA acted on it**:
+WVA writes no custom resource, so its decisions are visible only in these logs, in
+the metrics it publishes ([Prometheus metrics](../docs/developer-guide/prometheus.md)),
+and in the HPA state KEDA derives from them.
 
-WVA writes no custom resource — its decision reaches KEDA over gRPC and surfaces
-as HPA state. Read it from both ends:
+### Testing autoscaling
 
-```bash
-# What KEDA is doing with WVA's answer. CurrentMetrics is populated only once a
-# scaler has returned a value, so an empty one means KEDA never got an answer.
-kubectl get scaledobject -A
-kubectl describe hpa -n <namespace> keda-hpa-<scaledobject-name>
-
-# What WVA decided, and why
-kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep scaling-decision
-```
-
-### Testing Autoscaling
-
-#### Quick Testing with Low Batch Size
-
-For rapid testing of autoscaling behavior, configure vLLM with a low `max-num-seqs` value to make the server easy to saturate:
-
-```bash
-# Deploy WVA infra, then tune vLLM max-num-seqs in the llm-d ModelService manifest
-make deploy-wva-on-k8s   # runs install.sh (WVA + monitoring + scaler + LWS)
-# Apply llm-d model serving manifests separately via kubectl apply or the llm-d guides
-```
-
-This configuration helps you:
-- Quickly verify autoscaling behavior without heavy load
-- Test WVA's saturation detection
-- Validate HPA integration
-- Debug scaling issues faster
-
-**Generate load**:
-
-```bash
-# Using guidellm (if available)
-guidellm bench \
-  --url http://<vllm-service>:<port>/v1 \
-  --model <model-id> \
-  --rate 50 \
-  --duration 300
-
-# Using simple loop
-for i in {1..100}; do
-  curl -X POST http://<vllm-service>:<port>/v1/completions \
-    -H "Content-Type: application/json" \
-    -d '{"model":"<model-id>","prompt":"Hello","max_tokens":100}' &
-done
-```
-
-**Watch autoscaling**:
-
-```bash
-# Watch the ScaledObject
-watch kubectl get scaledobject -n <namespace>
-
-# Watch HPA
-watch kubectl get hpa -n <namespace>
-
-# Watch pods
-watch kubectl get pods -n <namespace>
-
-# Watch external metrics
-watch 'kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq'
-```
+Drive load at the model and watch the ScaledObject and its HPA react. Full
+procedures, including the simulator and the e2e suites, are in
+[Testing](../docs/developer-guide/testing.md).
 
 ## Troubleshooting
 
-### Common Issues
+| symptom | most likely cause | check |
+| --- | --- | --- |
+| WVA pod not `Running` | image pull, resources, or Prometheus unreachable | `kubectl describe pod -n $WVA_NS -l app.kubernetes.io/name=workload-variant-autoscaler` |
+| "Metrics unavailable" in the logs | the ServiceMonitor does not select your model pods, so the series never reach Prometheus | `kubectl get servicemonitor -A`, then Prometheus `/targets` |
+| HPA exists but `CurrentMetrics` is empty | KEDA never got an answer — usually the trigger's `scalerAddress` or a missing `modelID` | `kubectl describe hpa -n <ns> keda-hpa-<so-name>` |
+| nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $WVA_NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
+| a model never wakes from zero | the EPP flow-control queue is not reaching WVA | see [Troubleshooting](../docs/developer-guide/troubleshooting.md) |
 
-#### 1. WVA Pod Not Starting
-
-**Symptoms**:
-
-```bash
-kubectl get pods -n workload-variant-autoscaler-system
-NAME                                           READY   STATUS    RESTARTS
-workload-variant-autoscaler-controller-xxx     0/1     Pending   0
-```
-
-**Diagnosis**:
+First stop for any of these:
 
 ```bash
-kubectl describe pod <pod-name> -n workload-variant-autoscaler-system
-kubectl logs <pod-name> -n workload-variant-autoscaler-system
+kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler --tail=200
 ```
 
-**Common causes**:
-
-- Insufficient resources: Check resource requests in values
-- Image pull errors: validate image repository and tag
-- TLS configuration: Verify TLS configuration is correct
-- Prometheus configuration: Verify that the WVA can reach Prometheus
-
-**Solutions**:
-
-```bash
-# Check image in the pod description
-kubectl describe pods -n workload-variant-autoscaler-system pod-name
-
-# Look for TLS- or Prometheus-related error logs
-kubectl logs <pod-name> -n workload-variant-autoscaler-system
-```
-
-#### 2. Metrics Not Available
-
-**Symptoms**:
-
-- WVA logs show "Metrics unavailable" warnings
-- the KEDA HPA reports no `CurrentMetrics`, or `ScalingActive: False`
-
-**Diagnosis**:
-
-```bash
-# Check WVA logs for metrics errors
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
-  grep -i "metrics"
-
-# Check if vLLM is exposing metrics
-kubectl port-forward -n <namespace> <vllm-pod> 8000:8000
-curl -s http://localhost:8000/metrics
-
-# Check ServiceMonitor
-kubectl get servicemonitor -A
-kubectl describe servicemonitor <name> -n <namespace>
-
-# Check Prometheus targets
-kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
-# Visit http://localhost:9090/targets
-```
-
-**Common causes**:
-
-- ServiceMonitor not created or in wrong namespace
-- Service selector doesn't match vLLM pods
-- Prometheus not scraping the namespace
-- vLLM not exposing metrics on expected port
-
-**Solutions**:
-
-```bash
-# Verify ServiceMonitor selector matches Service
-kubectl get svc -n <namespace> --show-labels
-kubectl get servicemonitor -n <monitoring-namespace> -o yaml | grep -A 5 selector
-
-# Check Prometheus configuration
-kubectl get prometheus -A -o yaml | grep serviceMonitorNamespaceSelector
-
-# Manually test metrics endpoint
-kubectl exec -it <vllm-pod> -n <namespace> -- curl localhost:8000/metrics
-```
-
-#### 3. HPA Not Scaling
-
-**Symptoms**:
-
-```bash
-kubectl get hpa -n <namespace>
-NAME       REFERENCE          TARGETS           MINPODS   MAXPODS   REPLICAS
-my-hpa     Deployment/vllm    <unknown>/1(avg)   1         10        1
-```
-
-**Diagnosis**:
-
-```bash
-# Check HPA status
-kubectl describe hpa <name> -n <namespace>
-
-# Check external metrics API on the specified namespace
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<your-namespace>/wva_desired_replicas" | jq
-
-# Check KEDA operator logs
-kubectl logs -n keda-system -l app=keda-operator
-
-# Check if WVA is emitting the metric
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler | \
-  grep "wva_desired_replicas"
-```
-
-**Common causes**:
-
-- KEDA not deployed
-- External metrics API not registered
-- ScaledObject trigger query doesn't match emitted labels
-- WVA not emitting metrics (due to metrics unavailability)
-
-**Solutions**:
-
-```bash
-# Verify external metrics API
-kubectl api-resources | grep external.metrics
-
-# Check ScaledObject status (Active / Ready conditions)
-kubectl describe scaledobject <name> -n <namespace>
-
-# Verify metric exists in Prometheus
-kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
-# Query: wva_desired_replicas{variant_name="<name>"}
-```
-
-### Getting Help
-
-If you encounter issues not covered here:
-
-1. **Check logs**: WVA, Prometheus, KEDA operator, vLLM
-2. **Verify configuration**: ScaledObject trigger metadata, ServiceMonitor, scaling-policy ConfigMap
-3. **Test components individually**: Metrics exposure, Prometheus scraping, external metrics API
-4. **Review documentation**: Platform-specific READMEs
-5. **Open an issue**: Include logs, configuration, and environment details
+Deeper diagnosis — EPP metrics, scale-from-zero, slow scale-up — is in
+[Troubleshooting](../docs/developer-guide/troubleshooting.md).
 
 ### Useful Commands Cheatsheet
 

@@ -166,6 +166,15 @@ undeploy-wva-on-openshift:
 	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
 		deploy/install.sh --undeploy
 
+## Check that everything a deploy needs is present, without deploying anything.
+## Runs the SAME check the install runs (deploy/lib/prereqs.sh), so a pass here
+## and a prerequisite failure mid-install is not a reachable state. Honours the
+## options that change what is required: WVA_LIMITER and ENABLE_SCALE_TO_ZERO
+## pull in yq, ENVIRONMENT=openshift pulls in oc.
+.PHONY: check-prereqs
+check-prereqs: ## Verify deploy prerequisites (tools, versions, cluster reachability) without installing. ENVIRONMENT=kubernetes|openshift|kind-emulator.
+	WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) 		ENVIRONMENT=$(if $(ENVIRONMENT),$(ENVIRONMENT),kubernetes) ./deploy/install.sh --check
+
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
 deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.

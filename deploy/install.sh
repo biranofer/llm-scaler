@@ -108,6 +108,10 @@ source "$DEPLOY_LIB_DIR/cleanup.sh"
 source "$DEPLOY_LIB_DIR/install_core.sh"
 
 UNDEPLOY=${UNDEPLOY:-false}
+# CHECK_ONLY runs the prerequisite check and exits. Same code path the install
+# takes, so "make check-prereqs" passing and the install then failing on a
+# prerequisite is not a state these two can reach.
+CHECK_ONLY=${CHECK_ONLY:-false}
 DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}
 
 # Orchestration lives in deploy/lib/install_core.sh (keeps this entrypoint to variable defaults + sourcing only).
