@@ -72,7 +72,11 @@ print_summary() {
     echo ""
     echo "  Controller:   $WVA_NS  ($WVA_IMAGE_REPO:$WVA_IMAGE_TAG)"
     echo "  Scope:        $(wva_install_scope)-scoped"
-    echo "  Watching:     $LLMD_NS"
+    if [ "$(wva_install_scope)" = "cluster" ]; then
+        echo "  Manages:      every namespace"
+    else
+        echo "  Manages:      $WVA_NS only (its cache is restricted to it)"
+    fi
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
         echo "  Prometheus:   deployed in $MONITORING_NAMESPACE"
     else
@@ -94,11 +98,11 @@ print_summary() {
     echo "  A ScaledObject is how a workload registers with WVA. Until one exists,"
     echo "  the controller is running and idle. To see what it would create:"
     echo ""
-    echo "      make scaledobjects-plan LLMD_NS=$LLMD_NS"
+    echo "      make scaledobjects-plan"
     echo ""
     echo "  then apply it, or an edited copy of it:"
     echo ""
-    echo "      make scaledobjects-apply LLMD_NS=$LLMD_NS"
+    echo "      make scaledobjects-apply"
     echo ""
 
     echo "  Worth knowing:"

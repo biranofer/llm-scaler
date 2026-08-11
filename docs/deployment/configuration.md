@@ -33,7 +33,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | Where your model servers run. **Used by the installer only** — it is not passed to the controller. It decides which namespace `scaledobjects-*` scans, and (with `DEPLOY_LLMD_NS=true`) which namespace is created. See [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `LLMD_NS` | Namespace to create when `DEPLOY_LLMD_NS=true`, and the namespace `deploy/install-epp.sh` installs EPP into. **Not passed to the controller, and no longer the default for ScaledObject discovery** — that follows the install's scope. See [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
 
 ## Deployment flags
 
@@ -116,7 +116,7 @@ do is also reachable through plan-then-apply, which does not.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `WVA_DEFAULT_SO` | `false` (do nothing), `plan` (list and stop), `edit` (list, `$EDITOR`, confirm), `true` (apply everything found) | `false` |
-| `WVA_DEFAULT_SO_NS` | Namespace to scan. `wva` for WVA's own namespace, `all` for every namespace holding model servers — `all` needs a cluster-scoped install, and a namespace-scoped one warns and falls back | `$LLMD_NS` |
+| `WVA_DEFAULT_SO_NS` | Namespace to scan. `wva` for WVA's own, `all` for every namespace holding model servers. The default follows what this install can reach — `all` when cluster-scoped, its own namespace when namespace-scoped — so you rarely need to set it | scope-derived |
 | `WVA_DEFAULT_SO_PLAN` | An existing file is applied as-is, edits included. Otherwise, where the generated plan is written | a temp file |
 | `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on generated objects. Not `0` even with scale-to-zero on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
 | `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
@@ -164,6 +164,11 @@ Three namespaces appear in these options and they do different jobs:
 | `WVA_NS` | the controller, its ConfigMaps and its external-scaler Service | the installer, and the controller (as `POD_NAMESPACE`) |
 | `LLMD_NS` | your model servers | **the installer only** — never passed to the controller |
 | `MONITORING_NAMESPACE` | Prometheus and Grafana, if this install deploys them | the installer |
+
+**Which namespaces get ScaledObjects follows the scope, not `LLMD_NS`.** A
+cluster-scoped install scans every namespace holding model servers, because it can
+manage them all; a namespace-scoped install scans its own, because that is the only
+namespace it can read. `WVA_DEFAULT_SO_NS` narrows it if you want less.
 
 `LLMD_NS` not reaching the controller is not an oversight. WVA has no watch and no
 listing: it learns about a workload when KEDA calls its external scaler about it,

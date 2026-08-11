@@ -3,7 +3,7 @@
 # Optional install step: create a default KEDA ScaledObject for each llm-d model
 # server, so a fresh install actually autoscales something.
 #
-# Requires vars: WVA_NS, LLMD_NS, WVA_DEFAULT_SO, WVA_DEFAULT_SO_NS,
+# Requires vars: WVA_NS, WVA_DEFAULT_SO, WVA_DEFAULT_SO_NS,
 #                WVA_DEFAULT_SO_PLAN, WVA_DEFAULT_SO_MIN, WVA_DEFAULT_SO_MAX.
 # Requires funcs: log_info/log_success/log_warning/log_error, wva_install_scope.
 #
@@ -29,7 +29,8 @@
 #   With an existing file: skip discovery and apply exactly that, edits included.
 #   Otherwise: where the generated plan is written (default: a temp file).
 # WVA_DEFAULT_SO_NS: a namespace, "wva" for WVA's own, or "all" for every namespace
-#   holding model servers (cluster-scoped installs only). Default: LLMD_NS.
+#   holding model servers. Defaults to what this install can reach: "all" when
+#   cluster-scoped, its own namespace when namespace-scoped.
 #
 
 readonly SO_PLAN_HEADER=$'#apply\tnamespace\tkind\tname\tmodelID\tinferencePool\tmin\tmax'
@@ -88,8 +89,23 @@ so_pool() {
 }
 
 # so_target_namespaces echoes the namespaces to scan.
+#
+# The DEFAULT follows the install's scope, because the scope already decides what
+# this controller can reach:
+#
+#   cluster-scoped    every namespace holding model servers — it can manage them all
+#   namespace-scoped  its own namespace — it restricts its cache to it and can
+#                     manage nothing else, so scanning anywhere else would only
+#                     produce ScaledObjects it will be called about and cannot read
+#
+# It used to default to LLMD_NS, which was wrong in both directions: it scanned one
+# namespace on a cluster-scoped install that could have managed them all, and it
+# scanned a namespace a namespace-scoped install cannot see.
 so_target_namespaces() {
-    local scope="${WVA_DEFAULT_SO_NS:-$LLMD_NS}"
+    local scope="${WVA_DEFAULT_SO_NS:-}"
+    if [ -z "$scope" ]; then
+        if [ "$(wva_install_scope)" = "cluster" ]; then scope=all; else scope=wva; fi
+    fi
     case "$scope" in
         wva) echo "$WVA_NS"; return ;;
         all) : ;;
@@ -99,8 +115,8 @@ so_target_namespaces() {
     # install holds a Role, so it could only decline a workload anywhere else and a
     # ScaledObject there would call a scaler that refuses it.
     if [ "$(wva_install_scope)" != "cluster" ]; then
-        log_warning "WVA_DEFAULT_SO_NS=all requested, but this is a namespace-scoped install — it can only manage $WVA_NS. Scanning $LLMD_NS only."
-        echo "$LLMD_NS"
+        log_warning "WVA_DEFAULT_SO_NS=all requested, but this is a namespace-scoped install — it restricts its cache to $WVA_NS and cannot read a workload anywhere else. Scanning $WVA_NS only."
+        echo "$WVA_NS"
         return
     fi
     { kubectl get deployments -A -l llm-d.ai/inferenceServing=true \

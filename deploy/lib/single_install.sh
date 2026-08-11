@@ -5,71 +5,106 @@
 # Requires vars: WVA_NS, WVA_ALLOW_COEXIST (optional).
 # Requires funcs: log_info/log_success/log_warning/log_error, wva_install_scope.
 #
-# WVA is one per cluster (cluster-scoped) or one per namespace (namespace-scoped).
+# The contract:
 #
-# Note what the danger is NOT. A workload registers with the WVA whose
-# scalerAddress its trigger names, and each install has its own
-# wva-external-scaler.<ns> service, so two controllers never see each other's
-# workloads. Discovery is already partitioned.
+#   ONE cluster-scoped WVA, and nothing else.
+#   OR any number of namespace-scoped WVAs, at most one per namespace.
 #
-# The danger is the GPU budget, which is not. Both controllers observe the same
-# cluster, compute free capacity from the same nodes, and allocate against it
-# without seeing the other's claim — so the same free GPUs are handed out twice.
-# Each install is individually correct and the cluster is oversubscribed, which
-# surfaces as pods that will not schedule rather than as an error from either.
+# Never a mix. A cluster-scoped controller already covers every namespace, so a
+# namespace-scoped one beside it is a second controller for the same workloads;
+# and a cluster-scoped one installed beside existing namespace-scoped ones
+# swallows them the moment it starts.
 #
-# That is also why partitioning WORKLOADS does not help: disjoint fleets still draw
-# on one pool of GPUs. Only one controller can hold a coherent budget.
+# Note what does NOT partition, and what does. Discovery is call-driven: a workload
+# registers with the WVA whose scalerAddress its trigger names, and every install
+# has its own wva-external-scaler.<ns> service — so no two controllers ever see the
+# same workload, whatever their scope. Each install also gets its own
+# ClusterRoleBindings, suffixed with a hash of its namespace, so they cannot take
+# permissions from one another. The namespace IS the instance identity; there is
+# nothing else to name.
 #
-# One collision is already fixed rather than merely refused: the cluster-scoped
-# RoleBindings are applied under fixed names, and an apply REPLACES a
-# ClusterRoleBinding's subject list, so a second install used to silently strip the
-# first controller's permissions — no error, no restart, no event.
-# deploy_wva_controller suffixes those names per namespace now (it did this for
-# OpenShift only, on the theory that shared clusters were an OpenShift problem;
-# they are not, and it reproduces on kind).
+# What is NOT partitioned is the physical GPU pool. Namespace-scoped controllers
+# each compute free capacity from the same nodes and allocate against it without
+# seeing the other's claim, so several of them can oversubscribe a shared pool.
+# That is a real caveat of this topology rather than a reason to forbid it: bound
+# each install with a quota limiter, or give each tenant its own GPU nodes.
 #
 
-# wva_installations echoes "namespace name" for every WVA controller Deployment in
-# the cluster.
+# wva_installations echoes "namespace name scope" for every WVA controller
+# Deployment in the cluster. Scope is read from the container args rather than any
+# label: --watch-namespace is what actually restricts the controller's cache, so it
+# is the truth about what an install can reach.
+WVA_INSTALLS_TEMPLATE='{{range .items}}{{.metadata.namespace}} {{.metadata.name}}{{"\n"}}{{end}}'
+WVA_ARGS_TEMPLATE='{{range (index .spec.template.spec.containers 0).args}}{{.}} {{end}}'
+
 wva_installations() {
-    kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler \
-        -o go-template='{{range .items}}{{.metadata.namespace}} {{.metadata.name}}{{"\n"}}{{end}}' 2>/dev/null
+    local ns name args scope
+    while read -r ns name; do
+        [ -n "$ns" ] || continue
+        args=$(kubectl -n "$ns" get deploy "$name" -o go-template="$WVA_ARGS_TEMPLATE" 2>/dev/null || true)
+        case "$args" in
+            *--watch-namespace*) scope=namespace ;;
+            *)                   scope=cluster ;;
+        esac
+        echo "$ns $name $scope"
+    done < <(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler \
+        -o go-template="$WVA_INSTALLS_TEMPLATE" 2>/dev/null || true)
 }
 
 check_single_installation() {
-    local found=0 other_ns="" ns name
-    while read -r ns name; do
+    local peers="" cluster_wide="" ns name scope
+    while read -r ns name scope; do
         [ -n "$ns" ] || continue
         # Our own namespace is an upgrade, not a collision.
         if [ "$ns" = "$WVA_NS" ]; then
             log_info "Existing WVA in $WVA_NS — this install upgrades it in place."
             continue
         fi
-        found=$((found + 1))
-        other_ns="${other_ns:+$other_ns, }$ns/$name"
+        peers="${peers:+$peers, }$ns/$name ($scope-scoped)"
+        [ "$scope" = "cluster" ] && cluster_wide="${cluster_wide:+$cluster_wide, }$ns/$name"
     done < <(wva_installations)
 
-    [ "$found" -gt 0 ] || return 0
+    [ -n "$peers" ] || return 0
+
+    local want
+    want="$(wva_install_scope)"
 
     if [ "${WVA_ALLOW_COEXIST:-false}" = "true" ]; then
-        log_warning "WVA already installed in: $other_ns. Continuing because WVA_ALLOW_COEXIST=true."
-        log_warning "  Both controllers will allocate from the same pool of free GPUs without seeing each other's claims, so the cluster can be oversubscribed — which shows up as pods that will not schedule, not as an error from either controller."
+        log_warning "WVA already installed in: $peers. Continuing because WVA_ALLOW_COEXIST=true."
         return 0
     fi
 
-    log_error "WVA is already installed in this cluster: $other_ns (installing into $WVA_NS).
+    # A cluster-wide controller already manages every namespace. Nothing joins it.
+    if [ -n "$cluster_wide" ]; then
+        log_error "A cluster-scoped WVA is already installed: $cluster_wide.
 
-WVA is one per cluster, or one per namespace. Their WORKLOADS would be separate —
-a workload registers with the scaler address its trigger names — but their GPU
-BUDGETS would not: both observe the same nodes and allocate the same free GPUs
-without seeing the other's claim. The cluster ends up oversubscribed, and it
-surfaces as pods that will not schedule rather than as an error from either.
+It manages every namespace, including $WVA_NS, so a second controller here would be
+a second controller for the same workloads.
 
 Pick one:
-  - upgrade the existing install:   WVA_NS=${other_ns%%/*} ...
-  - remove it first:                make undeploy-wva-on-k8s WVA_NS=${other_ns%%/*}
-  - or, if you are deliberately running two (a WVA upgrade side by side, say) and
-    accept that both will decide for every workload that calls either of them:
-    WVA_ALLOW_COEXIST=true"
+  - use it as it is — it already covers $WVA_NS
+  - upgrade it:                     WVA_NS=${cluster_wide%%/*} ...
+  - replace it with per-namespace controllers:
+        make undeploy-wva-on-k8s WVA_NS=${cluster_wide%%/*} WVA_SCOPE=cluster
+    then install one WVA_SCOPE=namespace per namespace that needs one
+  - or override, knowing both will manage these workloads: WVA_ALLOW_COEXIST=true"
+    fi
+
+    # Installing cluster-scoped on top of existing namespace-scoped installs would
+    # swallow their namespaces the moment it starts.
+    if [ "$want" = "cluster" ]; then
+        log_error "Installing a cluster-scoped WVA, but namespace-scoped ones already exist: $peers.
+
+A cluster-scoped controller manages every namespace, including theirs — both would
+then decide for the same workloads.
+
+Pick one:
+  - install this one namespace-scoped too:   WVA_SCOPE=namespace
+  - or remove the existing ones first, then install cluster-scoped
+  - or override: WVA_ALLOW_COEXIST=true"
+    fi
+
+    # Namespace-scoped beside namespace-scoped: the supported multi-controller shape.
+    log_info "WVA already installed in: $peers. Continuing: this install is namespace-scoped, so it manages only $WVA_NS and they manage only theirs."
+    log_info "  Each install has its own external-scaler Service and its own ClusterRoleBindings (suffixed per namespace), so they do not overlap. They DO draw on the same physical GPUs — bound them with quota limiters, or give each its own GPU nodes."
 }

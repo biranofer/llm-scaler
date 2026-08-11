@@ -14,7 +14,7 @@ Three things, and the installer cannot guess any of them:
 | it needs | because | how to say so |
 | --- | --- | --- |
 | **a Prometheus URL** | WVA reads vLLM/SGLang metrics from Prometheus, and **exits at startup if it cannot reach one** | `PROMETHEUS_URL=` |
-| **your model servers' namespace** | so `scaledobjects-plan` knows where to look. The controller is never told it — it learns workloads from KEDA calls | `LLMD_NS=` |
+| **the right scope** | cluster-scoped manages models in any namespace; namespace-scoped manages only its own, so it must be installed *in* the namespace with the models | `WVA_SCOPE=` |
 | **a ScaledObject per workload** | a ScaledObject IS the registration — WVA never sees a workload it is not called about | `make scaledobjects-plan` |
 
 ## One WVA per cluster, or one per namespace — never two managing the same workloads
@@ -83,7 +83,7 @@ make check-prereqs
 Nothing scales until a ScaledObject points at WVA. Look before you leap:
 
 ```bash
-make scaledobjects-plan LLMD_NS=<your namespace>
+make scaledobjects-plan
 ```
 
 That lists every Deployment and LeaderWorkerSet labelled
@@ -92,8 +92,8 @@ it sits behind, and writes an editable table. Nothing is applied.
 
 | you want | do this |
 | --- | --- |
-| all of them, in one namespace | `make scaledobjects-apply LLMD_NS=<ns>` |
-| all of them, cluster-wide | `make scaledobjects-apply WVA_DEFAULT_SO_NS=all` |
+| everything this install can manage | `make scaledobjects-apply` — cluster-scoped scans every namespace, namespace-scoped scans its own |
+| one namespace only | `make scaledobjects-apply WVA_DEFAULT_SO_NS=<ns>` |
 | only some | edit the plan, then `make scaledobjects-apply WVA_DEFAULT_SO_PLAN=<file>` |
 | review each one interactively | `make scaledobjects-edit` |
 | **take over ScaledObjects that already exist** | add `WVA_DEFAULT_SO_ADOPT=true` |
