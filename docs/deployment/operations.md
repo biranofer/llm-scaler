@@ -4,9 +4,7 @@ Verifying WVA works, watching what it decides, and the first things to check whe
 
 > Part of the [WVA deployment guide](../../deploy/README.md).
 
-## Post-Deployment
-
-### Verification
+## Verifying the install
 
 ```bash
 NS=workload-variant-autoscaler-system
@@ -34,7 +32,7 @@ kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
 kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler   | grep -E "Collected replica metrics|scaling-decision"
 ```
 
-### Monitoring WVA
+## Watching what WVA decides
 
 The log lines worth knowing, all at Info:
 
@@ -53,13 +51,13 @@ WVA writes no custom resource, so its decisions are visible only in these logs, 
 the metrics it publishes ([Prometheus metrics](../developer-guide/prometheus.md)),
 and in the HPA state KEDA derives from them.
 
-### Testing autoscaling
+## Testing autoscaling
 
 Drive load at the model and watch the ScaledObject and its HPA react. Full
 procedures, including the simulator and the e2e suites, are in
 [Testing](../developer-guide/testing.md).
 
-## Troubleshooting
+## First-line troubleshooting
 
 | symptom | most likely cause | check |
 | --- | --- | --- |
@@ -78,7 +76,7 @@ kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=w
 Deeper diagnosis — EPP metrics, scale-from-zero, slow scale-up — is in
 [Troubleshooting](../developer-guide/troubleshooting.md).
 
-### Useful Commands Cheatsheet
+## Command cheatsheet
 
 ```bash
 # === WVA Controller ===

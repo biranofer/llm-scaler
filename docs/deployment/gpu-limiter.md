@@ -5,12 +5,27 @@ to be true first.
 
 > Part of the [WVA deployment guide](../../deploy/README.md).
 
+## Turning it on
+
+```bash
+make deploy-wva-on-k8s WVA_LIMITER=gpu-inventory   # bound by GPUs actually free
+make deploy-wva-on-k8s WVA_LIMITER=quota           # bound by declared caps
+```
+
+or later, by adding a `limiters:` entry to the `default` entry of the
+scaling-policy ConfigMap — applied live, no restart. **Read the next section
+first.**
+
+## Why it ships off
+
 The shipped configuration declares **no limiter**: a fresh install scales
 unconstrained, and a scale-from-zero wake is published without a capacity check.
 That default is deliberate. A GPU-aware optimizer allocates out of per-accelerator
 pools, so a variant whose accelerator it cannot resolve is charged to no pool, gets
 no budget, and **never scales up** — silently, because nothing errors. Enabling it
 by default would freeze exactly the workloads that are least carefully configured.
+
+## What has to be true first: every accelerator must resolve
 
 WVA resolves a variant's accelerator from, in order:
 
@@ -36,6 +51,8 @@ spec:
 kubectl get nodes -L nvidia.com/gpu.product          # what your nodes advertise
 kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep -i "Accelerator not resolved"
 ```
+
+## Checking
 
 The install warns too: enabling `WVA_LIMITER=gpu-inventory` counts the distinct GPU
 products the cluster advertises and tells you whether pinning is needed. An

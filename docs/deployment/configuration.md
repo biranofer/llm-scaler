@@ -4,15 +4,13 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 
 > Part of the [WVA deployment guide](../../deploy/README.md).
 
-### Environment Variables (Script)
-
-#### Required
+## Required
 
 | Variable | Description | Required For |
 |----------|-------------|--------------|
 | `HF_TOKEN` | HuggingFace token | llm-d deployment |
 
-#### Core Configuration
+## Core configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -22,7 +20,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 | `CONTROLLER_INSTANCE` | Instance name for running several WVAs on one cluster | `""` (single instance) |
 
-#### Image Configuration
+## Image
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -30,7 +28,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_IMAGE_TAG` | WVA image tag | `latest` |
 | `WVA_IMAGE_PULL_POLICY` | Image pull policy | `Always` |
 
-#### Namespace Configuration
+## Namespaces
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -38,7 +36,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
 | `LLMD_NS` | llm-d namespace | `llm-d-optimized-baseline` |
 
-#### Deployment Flags (`install.sh`)
+## Deployment flags
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -64,33 +62,82 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 
 ScaledObjects, HPA stabilization (`spec.advanced.horizontalPodAutoscalerConfig.behavior`) and vLLM ModelService tuning are not controlled by `install.sh`; manage them via `kubectl apply` directly (see the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) for reference manifests).
 
-#### Default ScaledObjects
+## Default ScaledObjects
 
-A ScaledObject is how a workload REGISTERS with WVA — the controller has no watch
-and no listing, so an install with none anywhere never scales anything and looks
-healthy doing it. These create one per llm-d model server (Deployments labelled
-`llm-d.ai/inferenceServing=true`), reading each one's model from its
-`--served-model-name`, or `--model` where it sets no other.
+**Read this if WVA is installed and nothing is scaling.** A ScaledObject is how a
+workload *registers* with WVA: the controller has no watch and no listing, so it
+only ever learns about workloads KEDA calls it about. An install with no
+ScaledObject anywhere is a controller that is never asked anything — idle, and
+reporting itself healthy.
+
+These options create one per llm-d model server, so you do not have to hand-write
+them. A model server is any Deployment or LeaderWorkerSet labelled
+`llm-d.ai/inferenceServing=true`; its model is read from `--served-model-name`, or
+`--model` where it sets no other.
+
+It works as **plan then apply**, because creating autoscaling objects across a
+cluster is not something to discover the shape of afterwards.
+
+```bash
+# 1. See what would be created. Nothing is applied.
+make scaledobjects-plan
+
+# 2. Edit the plan it wrote: set the first column to yes or no, correct a modelID,
+#    change min/max, delete rows you do not want.
+$EDITOR /tmp/wva-scaledobject-plan.XXXX
+
+# 3. Apply exactly that file.
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
+```
+
+The plan is a tab-separated table you can read and edit in place:
+
+```
+#apply  namespace  kind        name      modelID             inferencePool       min  max
+yes     llm-d-sim  Deployment  sotest-a  e2ewva/dummy-model  optimized-baseline  1    10
+no      llm-d-sim  Deployment  sotest-b  UNKNOWN             -                   1    10
+# ^ llm-d-sim/sotest-b: no --served-model-name or --model; set modelID by hand to include it
+```
+
+`inferencePool` is shown for orientation: it is the EPP queue that workload sits
+behind, resolved by matching pod labels against each pool's selector — the same way
+WVA resolves it. A `-` means no pool has adopted the workload.
+
+Rows that cannot be applied are marked `no` **and kept**, with the reason, rather
+than dropped: the list you are shown is then the whole truth about what was found,
+and turning a `no` into a `yes` is a deliberate act.
+
+If you would rather review interactively, `make scaledobjects-edit` opens the same
+plan in `$EDITOR` and asks before applying. It needs a terminal; everything it can
+do is also reachable through plan-then-apply, which does not.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WVA_DEFAULT_SO` | Create a default ScaledObject per llm-d model server | `false` |
-| `WVA_DEFAULT_SO_NS` | Namespace to do it in, or `all` for every namespace holding model servers. `all` requires a cluster-scoped install; a namespace-scoped one warns and falls back to `LLMD_NS` | `$LLMD_NS` |
-| `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on the generated objects. Not 0 even where scale-to-zero is on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
-| `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on the generated objects | `10` |
+| `WVA_DEFAULT_SO` | `false` (do nothing), `plan` (list and stop), `edit` (list, `$EDITOR`, confirm), `true` (apply everything found) | `false` |
+| `WVA_DEFAULT_SO_NS` | Namespace to scan. `wva` for WVA's own namespace, `all` for every namespace holding model servers — `all` needs a cluster-scoped install, and a namespace-scoped one warns and falls back | `$LLMD_NS` |
+| `WVA_DEFAULT_SO_PLAN` | An existing file is applied as-is, edits included. Otherwise, where the generated plan is written | a temp file |
+| `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on generated objects. Not `0` even with scale-to-zero on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
+| `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
 
-Two things it will not do. It **never touches a Deployment that already has a
+Set them on a deploy to do this during install:
+
+```bash
+make deploy-wva-on-k8s WVA_DEFAULT_SO=plan   # install, then show what it would create
+make deploy-wva-on-k8s WVA_DEFAULT_SO=true WVA_DEFAULT_SO_NS=all
+```
+
+Two things it will never do. It **does not touch a workload that already has a
 ScaledObject** — that one may be hand-tuned or GitOps-managed, and two
-ScaledObjects on one target is two HPAs fighting. And it **skips any workload whose
-model it cannot determine** rather than guessing, because a wrong `modelID` groups
-a workload with a model it does not serve and mis-scales both. Both outcomes are
-reported per workload, with a count at the end.
+ScaledObjects on one target is two HPAs fighting over a replica count. And it
+**skips any workload whose model it cannot determine** rather than guessing,
+because a wrong `modelID` groups a workload with a model it does not serve and
+mis-scales both.
 
-The generated objects use an `external-push` trigger, so KEDA holds a stream open
-and WVA pushes activation the moment it decides — which is what lets a workload
-parked at zero wake in about the detection interval rather than a poll period.
+Generated objects use an `external-push` trigger, so KEDA holds a stream open and
+WVA pushes activation the moment it decides — the difference between waking a
+parked workload in about the detection interval and waiting out a poll.
 
-#### Advanced (`install.sh`)
+## Advanced
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -104,7 +151,7 @@ parked at zero wake in about the detection interval rather than a poll period.
 | `LWS_NAMESPACE` | Namespace for LeaderWorkerSet installation | `lws-system` |
 | `LWS_CHART_VERSION` | LeaderWorkerSet Helm chart version | `0.8.0` |
 
-#### Optional: scaling band after `make deploy-e2e-infra`
+## Optional: scaling band after `make deploy-e2e-infra`
 
 If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment, the Makefile patches the `wva-scaling-policy-config` ConfigMap after install. Note the patch replaces the whole `default` entry, so it writes `analyzerName: saturation` alongside the band.
 

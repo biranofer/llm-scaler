@@ -115,7 +115,7 @@ Apply with `kubectl apply -f deploy/configmap-scaling-policy.yaml`; the change
 takes effect immediately (the controller watches the ConfigMap).
 
 > V1 is deprecated and scheduled for removal in a future release. See the
-> [saturation scaling configuration guide](docs/developer-guide/saturation-scaling-config.md#analyzer-selection-v1-vs-v2)
+> [saturation scaling configuration guide](docs/developer-guide/scaling-policy-config.md#analyzer-selection-v1-vs-v2)
 > for threshold ownership (which fields each analyzer reads) and migration details.
 
 ## Contributing

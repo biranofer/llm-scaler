@@ -14,6 +14,9 @@ K8S_VERSION ?= v1.32.0
 # POD_NAMESPACE, so ClusterRoleBinding subjects and the system-namespace lookups
 # follow.
 WVA_NS              ?= workload-variant-autoscaler-system
+# Namespace the llm-d model servers live in. Matches install.sh's default, so
+# the scaledobjects-* targets scan the same place a deploy would.
+LLMD_NS             ?= llm-d-optimized-baseline
 # Install scope: cluster | namespace. Empty means the historical default —
 # namespace on OpenShift, cluster elsewhere. See deploy/lib/common.sh.
 WVA_SCOPE           ?=
@@ -179,6 +182,26 @@ undeploy-wva-on-openshift:
 .PHONY: check-prereqs
 check-prereqs: ## Verify deploy prerequisites (tools, versions, cluster reachability) without installing. ENVIRONMENT=kubernetes|openshift|kind-emulator.
 	WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) 		ENVIRONMENT=$(if $(ENVIRONMENT),$(ENVIRONMENT),kubernetes) ./deploy/install.sh --check
+
+## List the llm-d model servers WVA would create ScaledObjects for, and stop.
+## Writes an editable plan; nothing is applied. A ScaledObject is how a workload
+## REGISTERS with WVA, so this is the step between "installed" and "scaling".
+.PHONY: scaledobjects-plan
+scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObject plan. WVA_DEFAULT_SO_NS=<ns>|wva|all, WVA_DEFAULT_SO_PLAN=<file>.
+	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+
+## Apply a ScaledObject plan. With WVA_DEFAULT_SO_PLAN=<file> it applies exactly
+## that file, edits included, and needs no terminal. Without one it re-discovers
+## and applies everything found.
+.PHONY: scaledobjects-apply
+scaledobjects-apply: ## Create default ScaledObjects. WVA_DEFAULT_SO_PLAN=<edited file> to apply a reviewed list.
+	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+
+## Review the list in $EDITOR, then apply what you confirm. Needs a terminal;
+## use scaledobjects-plan + scaledobjects-apply where there is none.
+.PHONY: scaledobjects-edit
+scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply what you confirm.
+	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s

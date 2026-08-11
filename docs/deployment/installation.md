@@ -14,7 +14,7 @@ are in **bold**.
 | namespace | `WVA_NS` | any (**`workload-variant-autoscaler-system`**) | where the controller runs |
 | scope | `WVA_SCOPE` | `cluster` / `namespace` (**platform default**) | which namespaces it may manage |
 | GPU limiter | `WVA_LIMITER` | **`none`** / `gpu-inventory` / `quota` | whether scaling is bounded |
-| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`true`** / `false` | whether a model may idle to zero (but `make deploy-e2e-infra` defaults it OFF — see [Deployment Flags](configuration.md#deployment-flags-installsh)) |
+| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`true`** / `false` | whether a model may idle to zero (but `make deploy-e2e-infra` defaults it OFF — see [Deployment Flags](configuration.md#deployment-flags)) |
 
 ```bash
 export HF_TOKEN="hf_xxxxxxxxxxxxx"
@@ -206,7 +206,7 @@ kubectl delete -k config/overlays/cluster-scoped/kubernetes    # match the overl
 ```
 
 
-## Platform-Specific Guides
+## Platform-specific guides
 
 For platform-specific instructions and considerations:
 

@@ -12,16 +12,26 @@ make check-prereqs        # tools, versions, cluster reachability - read-only
 make deploy-wva-on-k8s    # cluster-scoped, default namespace, no GPU limiter
 ```
 
-Then give WVA something to manage. **A ScaledObject is the registration** - WVA has
-no watch and no listing, so a workload it is never called about does not exist to
-it. Either let the installer create one per llm-d model server:
+### Then give WVA something to manage
+
+**A ScaledObject is the registration.** WVA has no watch and no listing - it only
+learns about workloads KEDA calls it about, so until one exists it will scale
+nothing, quietly. Installing WVA is not the last step.
+
+Let it find your model servers and show you what it would create:
 
 ```bash
-make deploy-wva-on-k8s WVA_DEFAULT_SO=true                       # in $LLMD_NS
-make deploy-wva-on-k8s WVA_DEFAULT_SO=true WVA_DEFAULT_SO_NS=all # every namespace
+make scaledobjects-plan          # lists them; applies nothing
+make scaledobjects-apply         # creates one per model server
 ```
 
-or write your own:
+`scaledobjects-plan` writes an editable table - set the first column to `yes`/`no`,
+correct a model, change the replica bounds - and `make scaledobjects-apply
+WVA_DEFAULT_SO_PLAN=<file>` applies exactly what you left in it. Add
+`WVA_DEFAULT_SO_NS=all` to cover every namespace instead of just `$LLMD_NS`. See
+[Default ScaledObjects](../docs/deployment/configuration.md#default-scaledobjects).
+
+Or write your own:
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
@@ -68,7 +78,7 @@ Platform specifics: [Kubernetes](kubernetes/README.md) &middot;
 | scope | `WVA_SCOPE` | `namespace` on OpenShift, `cluster` elsewhere |
 | GPU limiter | `WVA_LIMITER` | `none` |
 | scale-to-zero | `ENABLE_SCALE_TO_ZERO` | `true` |
-| default ScaledObjects | `WVA_DEFAULT_SO` | `false` |
+| default ScaledObjects | `WVA_DEFAULT_SO` | `false` (`plan` / `edit` / `true`) |
 
 Pass the same `WVA_NS` and `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall
 resolves the overlay exactly as the install did, so a mismatch leaves behind

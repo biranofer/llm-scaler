@@ -120,8 +120,11 @@ CHECK_ONLY=${CHECK_ONLY:-false}
 # controller that never scales anything and looks healthy doing it.
 # WVA_DEFAULT_SO_NS: a namespace, or "all" for every namespace holding llm-d model
 # servers (cluster-scoped installs only). Defaults to LLMD_NS.
+# false | plan (list and stop) | edit (list, $EDITOR, confirm) | true (apply all)
 WVA_DEFAULT_SO=${WVA_DEFAULT_SO:-false}
 WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-$LLMD_NS}
+# An existing file is applied as-is, edits included, with no terminal needed.
+WVA_DEFAULT_SO_PLAN=${WVA_DEFAULT_SO_PLAN:-}
 WVA_DEFAULT_SO_MIN=${WVA_DEFAULT_SO_MIN:-1}
 WVA_DEFAULT_SO_MAX=${WVA_DEFAULT_SO_MAX:-10}
 DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}

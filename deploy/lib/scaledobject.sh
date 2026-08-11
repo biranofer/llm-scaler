@@ -4,36 +4,49 @@
 # server, so a fresh install actually autoscales something.
 #
 # Requires vars: WVA_NS, LLMD_NS, WVA_DEFAULT_SO, WVA_DEFAULT_SO_NS,
-#                WVA_DEFAULT_SO_MIN, WVA_DEFAULT_SO_MAX, WVA_SCOPE (optional).
+#                WVA_DEFAULT_SO_PLAN, WVA_DEFAULT_SO_MIN, WVA_DEFAULT_SO_MAX.
 # Requires funcs: log_info/log_success/log_warning/log_error, wva_install_scope.
 #
 # Why this exists: a ScaledObject is not decoration, it is the REGISTRATION. WVA
 # has no watch and no listing — it learns which workloads it manages from the KEDA
 # calls it receives. So an install with no ScaledObject anywhere is a controller
-# that will never be asked about anything, sitting idle and looking healthy. This
-# closes that gap for the common case without asking the operator to hand-write
-# one per model.
+# that will never be asked about anything, sitting idle and looking healthy.
+#
+# It is built as plan-then-apply rather than one shot, because creating autoscaling
+# objects across a cluster is not something to discover the shape of afterwards.
+# The plan is a plain TSV file: look at it, delete the rows you do not want, change
+# a model or a replica bound, then apply it. The same file is the interchange for
+# the interactive path and the scripted one, so there is no capability that needs a
+# terminal — which matters, because these install scripts are otherwise
+# non-interactive and CI depends on that.
+#
+# WVA_DEFAULT_SO:
+#   false (default)  do nothing
+#   plan             discover, print the table, write the plan, STOP
+#   edit             plan, open $EDITOR, confirm, apply     (needs a terminal)
+#   true             discover and apply it all, no questions
+# WVA_DEFAULT_SO_PLAN=<file>
+#   With an existing file: skip discovery and apply exactly that, edits included.
+#   Otherwise: where the generated plan is written (default: a temp file).
+# WVA_DEFAULT_SO_NS: a namespace, "wva" for WVA's own, or "all" for every namespace
+#   holding model servers (cluster-scoped installs only). Default: LLMD_NS.
 #
 
+readonly SO_PLAN_HEADER=$'#apply\tnamespace\tkind\tname\tmodelID\tinferencePool\tmin\tmax'
+
 # so_model_id echoes the model a serving container runs: --served-model-name where
-# the deployment sets one (it is the name clients and the EPP use), else --model.
-# Both the "--flag value" and "--flag=value" forms are accepted, because both
-# appear in the wild.
+# the workload sets one (it is the name clients and the EPP use), else --model.
+# Both "--flag value" and "--flag=value" are accepted; both appear in the wild.
 #
-# Empty output means the model could not be determined, and the caller must skip
-# rather than guess: a ScaledObject with the wrong modelID groups a workload with
-# a model it does not serve, and mis-scales both.
-#
-# Parsed in shell rather than with yq: the input is a space-separated arg list, and
-# a JSON-path expression over it was both harder to read and wrong.
+# Empty output means the model could not be determined. The caller must record that
+# and skip rather than guess: a ScaledObject with the wrong modelID groups a
+# workload with a model it does not serve, and mis-scales both.
 so_model_id() {
     local args="$1" flag tok next take
     for flag in --served-model-name --model; do
         take=""
         for tok in $args; do
             if [ -n "$take" ]; then
-                # The token after the flag, unless the flag was last or is
-                # followed by another flag — then it carried no value.
                 case "$tok" in
                     --*) : ;;
                     *) echo "$tok"; return ;;
@@ -41,36 +54,65 @@ so_model_id() {
                 take=""
             fi
             case "$tok" in
-                "$flag"=*)  next="${tok#*=}"
-                            [ -n "$next" ] && { echo "$next"; return; } ;;
-                "$flag")    take=1 ;;
+                "$flag"=*) next="${tok#*=}"; [ -n "$next" ] && { echo "$next"; return; } ;;
+                "$flag")   take=1 ;;
             esac
         done
     done
 }
 
-# so_target_namespaces echoes the namespaces to create ScaledObjects in.
+# so_pool echoes the InferencePool whose selector matches a workload's pod labels,
+# which is how WVA itself resolves it — the pool is derived, never declared. Shown
+# in the plan for orientation only: it tells you which EPP queue a workload sits
+# behind, and an empty column is a workload no pool has adopted.
+so_pool() {
+    local ns="$1" labels="$2" pool selector matched kv key value
+    # Two selector shapes: inference.networking.k8s.io/v1 nests it under
+    # matchLabels, the older x-k8s.io group had a bare map. Read both, as the
+    # controller does — a plan that showed no pool because of an API version would
+    # look exactly like a workload no pool has adopted.
+    local tmpl='{{range .items}}{{.metadata.name}} {{if .spec.selector.matchLabels}}{{range $k,$v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}{{else}}{{range $k,$v := .spec.selector}}{{$k}}={{$v}},{{end}}{{end}}{{"\n"}}{{end}}'
+    while read -r pool selector; do
+        [ -n "$pool" ] || continue
+        matched=yes
+        for kv in $(echo "$selector" | tr ',' ' '); do
+            [ -n "$kv" ] || continue
+            key="${kv%%=*}"; value="${kv#*=}"
+            case " $labels " in
+                *" $key=$value "*) : ;;
+                *) matched=""; break ;;
+            esac
+        done
+        [ -n "$matched" ] && { echo "$pool"; return; }
+    done < <(kubectl get inferencepools -n "$ns" -o go-template="$tmpl" 2>/dev/null)
+}
+
+# so_target_namespaces echoes the namespaces to scan.
 so_target_namespaces() {
     local scope="${WVA_DEFAULT_SO_NS:-$LLMD_NS}"
-    if [ "$scope" != "all" ]; then
-        echo "$scope"
-        return
-    fi
+    case "$scope" in
+        wva) echo "$WVA_NS"; return ;;
+        all) : ;;
+        *)   echo "$scope"; return ;;
+    esac
     # Cluster-wide. Only meaningful for a cluster-scoped WVA: a namespace-scoped
-    # install has a Role, not a ClusterRole, so it cannot manage a workload
-    # anywhere else and a ScaledObject there would call a scaler that declines it.
+    # install holds a Role, so it could only decline a workload anywhere else and a
+    # ScaledObject there would call a scaler that refuses it.
     if [ "$(wva_install_scope)" != "cluster" ]; then
-        log_warning "WVA_DEFAULT_SO_NS=all requested, but this is a namespace-scoped install — it can only manage $WVA_NS. Creating ScaledObjects in $LLMD_NS only."
+        log_warning "WVA_DEFAULT_SO_NS=all requested, but this is a namespace-scoped install — it can only manage $WVA_NS. Scanning $LLMD_NS only."
         echo "$LLMD_NS"
         return
     fi
-    kubectl get deployments -A -l llm-d.ai/inferenceServing=true \
-        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null | sort -u
+    { kubectl get deployments -A -l llm-d.ai/inferenceServing=true \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null
+      kubectl get leaderworkersets -A -l llm-d.ai/inferenceServing=true \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null
+    } | sort -u
 }
 
-# scaledobject_exists reports whether some ScaledObject in the namespace already
-# targets this Deployment. Never adopt or overwrite one: it may be hand-tuned, or
-# GitOps-managed, and two ScaledObjects on one target is a fight between two HPAs.
+# scaledobject_exists reports whether some ScaledObject already targets this
+# workload. Never adopt or overwrite one: it may be hand-tuned or GitOps-managed,
+# and two ScaledObjects on one target is two HPAs fighting over a replica count.
 scaledobject_exists() {
     local ns="$1" target="$2"
     kubectl get scaledobject -n "$ns" \
@@ -78,68 +120,150 @@ scaledobject_exists() {
         | grep -qx "$target"
 }
 
-install_default_scaledobjects() {
-    [ "${WVA_DEFAULT_SO:-false}" = "true" ] || return 0
-
-    log_info "Creating default ScaledObjects for llm-d model servers..."
-    local scaler_addr="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
-    local created=0 skipped=0 unknown=0
-    local namespaces
-    namespaces=$(so_target_namespaces)
-
-    if [ -z "$namespaces" ]; then
-        log_warning "No namespaces to scan for llm-d model servers; skipping default ScaledObjects."
-        return 0
-    fi
-
-    local ns name args model
-    for ns in $namespaces; do
-        while IFS='|' read -r name args; do
-            [ -n "$name" ] || continue
-
-            if scaledobject_exists "$ns" "$name"; then
-                log_info "  $ns/$name: a ScaledObject already targets it, leaving it alone"
-                skipped=$((skipped + 1))
-                continue
+# so_discover writes plan rows to stdout, one per candidate workload. A row is
+# marked "no" when it should not be applied, with the reason in the note, rather
+# than dropped — the list you were shown is then the whole truth about what was
+# found, and flipping a "no" to "yes" is a deliberate act.
+so_discover() {
+    local ns name args labels model pool kind apply note
+    for ns in $(so_target_namespaces); do
+        for kind in Deployment LeaderWorkerSet; do
+            # go-template, not jsonpath: kubectl's jsonpath has no two-variable
+            # range, so iterating a label map there is a parse error — and one that
+            # produces an EMPTY result rather than a loud failure, which reads as
+            # "no model servers found".
+            local resource='deployments' pod='.spec.template'
+            if [ "$kind" = "LeaderWorkerSet" ]; then
+                resource='leaderworkersets'
+                pod='.spec.leaderWorkerTemplate.leaderTemplate'
             fi
-
-            model=$(so_model_id "$args")
-            if [ -z "$model" ] || [ "$model" = "null" ]; then
-                log_warning "  $ns/$name: cannot determine the model from its container args (no --served-model-name or --model). Skipping: a ScaledObject with the wrong modelID would group this workload with a model it does not serve."
-                unknown=$((unknown + 1))
-                continue
-            fi
-
-            if render_default_scaledobject "$ns" "$name" "$model" "$scaler_addr" | kubectl apply -f - > /dev/null; then
-                log_success "  $ns/$name -> ScaledObject ${name}-wva (modelID: $model)"
-                created=$((created + 1))
-            else
-                log_warning "  $ns/$name: failed to create its ScaledObject"
-            fi
-            # Args emitted space-separated rather than as the JSON array, so the
-            # shell can read them as words.
-        done < <(kubectl get deployments -n "$ns" -l llm-d.ai/inferenceServing=true \
-            -o jsonpath='{range .items[*]}{.metadata.name}|{range .spec.template.spec.containers[0].args[*]}{@}{" "}{end}{"\n"}{end}' 2>/dev/null)
+            local tmpl='{{range .items}}{{.metadata.name}}|{{range (index '"$pod"'.spec.containers 0).args}}{{.}} {{end}}|{{range $k,$v := '"$pod"'.metadata.labels}}{{$k}}={{$v}} {{end}}{{"\n"}}{{end}}'
+            while IFS='|' read -r name args labels; do
+                [ -n "$name" ] || continue
+                apply=yes; note=""
+                model=$(so_model_id "$args")
+                if [ -z "$model" ]; then
+                    apply=no; note="no --served-model-name or --model; set modelID by hand to include it"
+                    model="UNKNOWN"
+                fi
+                if scaledobject_exists "$ns" "$name"; then
+                    apply=no; note="already has a ScaledObject"
+                fi
+                pool=$(so_pool "$ns" "$labels")
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                    "$apply" "$ns" "$kind" "$name" "$model" "${pool:--}" \
+                    "${WVA_DEFAULT_SO_MIN:-1}" "${WVA_DEFAULT_SO_MAX:-10}"
+                [ -n "$note" ] && printf '# ^ %s/%s: %s\n' "$ns" "$name" "$note"
+            done < <(kubectl get "$resource" -n "$ns" -l llm-d.ai/inferenceServing=true \
+                -o go-template="$tmpl" 2>/dev/null)
+        done
     done
+}
 
-    if [ "$created" -eq 0 ] && [ "$skipped" -eq 0 ] && [ "$unknown" -eq 0 ]; then
-        log_warning "No llm-d model servers found (label llm-d.ai/inferenceServing=true). Deploy your model servers first, then re-run with WVA_DEFAULT_SO=true — or write ScaledObjects yourself. Until one exists, WVA is never called and will not scale anything."
+so_show_plan() {
+    local file="$1" rows
+    rows=$(grep -cv '^#' "$file" 2>/dev/null || echo 0)
+    echo ""
+    echo "  Discovered llm-d model servers ($rows):"
+    echo ""
+    (echo "$SO_PLAN_HEADER"; cat "$file") | grep -v '^# \^' | column -t -s $'\t' | sed 's/^/    /'
+    echo ""
+    grep '^# \^' "$file" | sed 's/^# \^/    note:/' || true
+    echo ""
+}
+
+# so_apply_plan creates a ScaledObject for every row marked yes.
+so_apply_plan() {
+    local file="$1" scaler_addr="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
+    local apply ns kind name model pool min max created=0 skipped=0
+    while IFS=$'\t' read -r apply ns kind name model pool min max; do
+        case "$apply" in ''|'#'*) continue ;; esac
+        if [ "$apply" != "yes" ]; then
+            skipped=$((skipped + 1)); continue
+        fi
+        if [ -z "$model" ] || [ "$model" = "UNKNOWN" ]; then
+            log_warning "  $ns/$name: marked yes but modelID is UNKNOWN — skipping rather than guessing"
+            skipped=$((skipped + 1)); continue
+        fi
+        if render_default_scaledobject "$ns" "$kind" "$name" "$model" "$scaler_addr" \
+            "${min:-1}" "${max:-10}" | kubectl apply -f - > /dev/null; then
+            log_success "  $ns/$name ($kind) -> ScaledObject ${name}-wva (modelID: $model)"
+            created=$((created + 1))
+        else
+            log_warning "  $ns/$name: failed to create its ScaledObject"
+        fi
+    done < "$file"
+    log_success "Default ScaledObjects: $created created, $skipped not applied"
+}
+
+install_default_scaledobjects() {
+    local mode="${WVA_DEFAULT_SO:-false}"
+    [ "$mode" != "false" ] || return 0
+
+    local plan="${WVA_DEFAULT_SO_PLAN:-}"
+
+    # An existing plan file is authoritative: this is the "edit the list and
+    # continue" path, and it works with no terminal, which is what makes the
+    # interactive capability available to scripts and CI as well.
+    if [ -n "$plan" ] && [ -f "$plan" ]; then
+        log_info "Applying the ScaledObject plan from $plan"
+        so_show_plan "$plan"
+        so_apply_plan "$plan"
         return 0
     fi
-    log_success "Default ScaledObjects: $created created, $skipped left alone, $unknown skipped for an undeterminable model"
+
+    [ -n "$plan" ] || plan=$(mktemp -t wva-scaledobject-plan.XXXXXX)
+    log_info "Scanning for llm-d model servers..."
+    so_discover > "$plan"
+
+    if ! grep -qv '^#' "$plan"; then
+        log_warning "No llm-d model servers found (label llm-d.ai/inferenceServing=true) in: $(so_target_namespaces | tr '\n' ' '). Deploy them first, then run 'make scaledobjects-apply'. Until a ScaledObject exists, WVA is never called and scales nothing."
+        return 0
+    fi
+
+    so_show_plan "$plan"
+
+    case "$mode" in
+        plan)
+            log_success "Plan written to $plan — nothing applied."
+            log_info "Edit it (set the first column to yes/no, fix a modelID, change min/max), then:"
+            log_info "    make scaledobjects-apply WVA_DEFAULT_SO_PLAN=$plan"
+            return 0
+            ;;
+        edit)
+            if [ ! -t 0 ]; then
+                log_error "WVA_DEFAULT_SO=edit needs a terminal. Use WVA_DEFAULT_SO=plan, edit the file it writes, then apply it with WVA_DEFAULT_SO_PLAN=<file>."
+            fi
+            log_info "Opening the plan in ${EDITOR:-vi}. Set the first column to yes or no; delete rows to drop them."
+            read -r -p "  Press Enter to edit, or Ctrl-C to stop with the plan at $plan " _
+            ${EDITOR:-vi} "$plan"
+            so_show_plan "$plan"
+            read -r -p "  Apply this plan? [y/N] " reply
+            case "$reply" in
+                [yY]*) ;;
+                *) log_info "Nothing applied. The plan is at $plan"; return 0 ;;
+            esac
+            ;;
+        true) : ;;
+        *) log_error "WVA_DEFAULT_SO must be one of: false, plan, edit, true (got '$mode')" ;;
+    esac
+
+    so_apply_plan "$plan"
 }
 
 # render_default_scaledobject prints one ScaledObject.
 #
-# external-push, not external: KEDA then holds a StreamIsActive stream open and
-# WVA pushes activation the moment it decides, which is what lets a workload
-# parked at zero wake in about the detection interval instead of a poll period.
+# external-push, not external: KEDA then holds a StreamIsActive stream open and WVA
+# pushes activation the moment it decides, which is what lets a workload parked at
+# zero wake in about the detection interval instead of a poll period.
 #
-# minReplicaCount is 1 by default. Zero is not the default even where scale-to-zero
-# is enabled: parking a model costs the next request a cold start, and that is a
-# decision about a workload's users, not one an installer should make for them.
+# min defaults to 1 even where scale-to-zero is enabled: parking a model costs its
+# next request a cold start, and that is a decision about that workload's users,
+# not one an installer should make for them.
 render_default_scaledobject() {
-    local ns="$1" target="$2" model="$3" scaler_addr="$4"
+    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7"
+    local api="apps/v1"
+    [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
     cat <<EOF
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -153,13 +277,13 @@ metadata:
     llm-d.ai/created-by: "deploy/lib/scaledobject.sh"
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
+    apiVersion: ${api}
+    kind: ${kind}
     name: ${target}
   pollingInterval: 5
   cooldownPeriod: 30
-  minReplicaCount: ${WVA_DEFAULT_SO_MIN:-1}
-  maxReplicaCount: ${WVA_DEFAULT_SO_MAX:-10}
+  minReplicaCount: ${min}
+  maxReplicaCount: ${max}
   advanced:
     restoreToOriginalReplicaCount: true
   triggers:
