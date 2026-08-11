@@ -348,14 +348,6 @@ render_default_scaledobject() {
     local api="apps/v1"
     [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
 
-    # A partitioned install manages ONLY workloads carrying its instance label, so
-    # an unlabelled ScaledObject would be invisible to the controller that just
-    # created it — which looks exactly like a broken install.
-    local instance_label=""
-    if [ -n "${CONTROLLER_INSTANCE:-}" ]; then
-        instance_label="
-    wva.llmd.ai/controller-instance: ${CONTROLLER_INSTANCE}"
-    fi
     cat <<EOF
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -364,7 +356,7 @@ metadata:
   namespace: ${ns}
   labels:
     app.kubernetes.io/managed-by: workload-variant-autoscaler
-    app.kubernetes.io/component: default-scaledobject${instance_label}
+    app.kubernetes.io/component: default-scaledobject
   annotations:
     llm-d.ai/created-by: "deploy/lib/scaledobject.sh"
 spec:

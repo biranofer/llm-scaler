@@ -237,7 +237,14 @@ Key environment variables (see [E2E Test Suite README](../../test/e2e/README.md)
 
 Deploy-time knobs: `SKIP_HELM_REPO_UPDATE`, optional `SCALE_UP_THRESHOLD` / `SCALE_DOWN_BOUNDARY` (Makefile patches the `wva-scaling-policy-config` ConfigMap when set) — see **Install script tuning** above.
 
-For running multiple test runs in parallel, use [multi-controller isolation](../user-guide/multi-controller-isolation.md) (`CONTROLLER_INSTANCE`).
+For running multiple test runs in parallel, a controller can be given a
+`CONTROLLER_INSTANCE` name: it then manages only workloads whose ScaledObject
+carries `wva.llmd.ai/controller-instance` with that name. It is set by an env var on
+the manager container, so it needs its own overlay — see the secondary overlay the
+multi-controller suite uses (`WVA_E2E_SECONDARY_OVERLAY_PATH`). It is a **test
+isolation** mechanism, not an install option: `install.sh` does not offer it, because
+two controllers on one cluster still allocate from one pool of GPUs (see
+`deploy/lib/single_install.sh`).
 
 ## Test Comparison Matrix
 

@@ -37,7 +37,6 @@ WVA_IMAGE_PULL_POLICY=${WVA_IMAGE_PULL_POLICY:-"Always"}
 SKIP_TLS_VERIFY=${SKIP_TLS_VERIFY:-"false"}
 WVA_LOG_LEVEL=${WVA_LOG_LEVEL:-"info"}
 # Optional: multi-controller isolation (sets controller_instance on metrics / selectors when non-empty).
-CONTROLLER_INSTANCE=${CONTROLLER_INSTANCE:-""}
 
 ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-true}
 
@@ -119,9 +118,9 @@ UNDEPLOY=${UNDEPLOY:-false}
 # takes, so "make check-prereqs" passing and the install then failing on a
 # prerequisite is not a state these two can reach.
 CHECK_ONLY=${CHECK_ONLY:-false}
-# Allow a second WVA alongside an existing one. Only sensible when each has its own
-# RBAC names and CONTROLLER_INSTANCE; otherwise the newer install silently strips
-# the older one's permissions. See deploy/lib/single_install.sh.
+# Allow a second WVA alongside an existing one. Refused by default because both
+# would allocate from the same pool of free GPUs without seeing each other's
+# claims. See deploy/lib/single_install.sh.
 WVA_ALLOW_COEXIST=${WVA_ALLOW_COEXIST:-false}
 
 # Default ScaledObjects. A ScaledObject is the REGISTRATION — WVA is only asked

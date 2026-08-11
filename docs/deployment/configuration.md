@@ -18,7 +18,6 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
-| `CONTROLLER_INSTANCE` | Name this controller instance. It then manages **only** workloads whose ScaledObject carries `wva.llmd.ai/controller-instance` with this name, so several controllers can share a cluster with disjoint fleets. Also gives the install its own ClusterRoleBinding names, and lets it past the single-install check | `""` (manages everything unlabelled) |
 
 ## Image
 
@@ -34,7 +33,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | llm-d namespace | `llm-d-optimized-baseline` |
+| `LLMD_NS` | Where your model servers run. **Used by the installer only** — it is not passed to the controller. It decides which namespace `scaledobjects-*` scans, and (with `DEPLOY_LLMD_NS=true`) which namespace is created. See [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
 
 ## Deployment flags
 
@@ -47,7 +46,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `DEPLOY_ALERTING_RULES` | Install the PrometheusRule alerts | `false` |
 | `ENABLE_SCALE_TO_ZERO` | Allow a model to be parked at zero replicas, and enable the EPP `flowControl` gate that makes waking it possible | `true` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
-| `WVA_ALLOW_COEXIST` | Install alongside an existing WVA. Refused by default: the shared ClusterRoleBindings would be repointed and the existing controller left without permissions, silently. Only set it when each install has its own RBAC names and `CONTROLLER_INSTANCE` | `false` |
+| `WVA_ALLOW_COEXIST` | Install alongside an existing WVA. Refused by default: both controllers would allocate from the same pool of free GPUs without seeing each other's claims, oversubscribing the cluster | `false` |
 | `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
 | `KEDA_NAMESPACE` | Namespace KEDA is installed in | `keda-system` |
 | `KEDA_HELM_INSTALL` | Install KEDA with Helm rather than assuming it is present | `false` |
@@ -156,6 +155,39 @@ shipped default and **exits at startup** if nothing answers there
 | `DEPLOY_PROMETHEUS` | Deploy a Prometheus stack. `false` to use yours | `true` |
 | `DEPLOY_LLMD_NS` | Create the llm-d namespace. `false` when llm-d runs elsewhere — an empty one looks like the place to deploy models, and WVA would not be watching it | `true` |
 
+## Which namespace is which
+
+Three namespaces appear in these options and they do different jobs:
+
+| variable | what lives there | who reads it |
+| --- | --- | --- |
+| `WVA_NS` | the controller, its ConfigMaps and its external-scaler Service | the installer, and the controller (as `POD_NAMESPACE`) |
+| `LLMD_NS` | your model servers | **the installer only** — never passed to the controller |
+| `MONITORING_NAMESPACE` | Prometheus and Grafana, if this install deploys them | the installer |
+
+`LLMD_NS` not reaching the controller is not an oversight. WVA has no watch and no
+listing: it learns about a workload when KEDA calls its external scaler about it,
+from any namespace. It never goes looking in a namespace, so it has no use for the
+name of one.
+
+### What the scope actually changes
+
+`WVA_SCOPE` controls the controller's **cache**, via `--watch-namespace`:
+
+| scope | `--watch-namespace` | consequence |
+| --- | --- | --- |
+| `cluster` | unset | reads Deployments, pods, InferencePools and nodes in **any** namespace. `LLMD_NS` can be anywhere |
+| `namespace` | its own (`POD_NAMESPACE`) | reads only **its own namespace** |
+
+> **The constraint that follows, and it is easy to get wrong:** a namespace-scoped
+> WVA can only manage model servers **in its own namespace**. Installing one into
+> `wva-system` while your models run in `llm-d-prod` gives you a controller that
+> KEDA will call and that cannot read the workload it is being asked about. For a
+> namespace-scoped install, put the controller in the namespace with the models —
+> `WVA_NS` and `LLMD_NS` are the same namespace.
+>
+> Cluster-scoped has no such constraint: models can be anywhere.
+
 ## Living beside what the cluster already has
 
 **KEDA is never overwritten.** On `kubernetes` and `openshift` the install does not
@@ -169,7 +201,9 @@ already there. `SCALER_BACKEND=none` skips the check entirely.
 job; removing what WVA was pointed at is a separate decision, and an explicit one —
 `UNDEPLOY_SHARED=true`.
 
-**A second WVA is refused** unless you give it a `CONTROLLER_INSTANCE` — see
+**A second WVA is refused.** Their workloads would be separate — a workload
+registers with the scaler address its trigger names — but their GPU budgets would
+not. See
 [One WVA per cluster](existing-cluster.md#one-wva-per-cluster-or-one-per-namespace--never-two-managing-the-same-workloads).
 
 ## Adding a model later
@@ -207,8 +241,8 @@ make deploy-wva-on-k8s WVA_REPLICAS=2
 What that buys is failover: a node drain or a crash costs you a lease timeout rather
 than the time to reschedule a pod. What it does not buy is throughput — WVA's cycle
 is one process reasoning about the whole fleet at once, deliberately, because a GPU
-budget cannot be split across controllers that cannot see each other's decisions. To
-divide the work, partition the fleet with `CONTROLLER_INSTANCE` instead.
+budget cannot be split across controllers that cannot see each other's decisions —
+which is also why there is no supported way to run two.
 
 ## Advanced
 

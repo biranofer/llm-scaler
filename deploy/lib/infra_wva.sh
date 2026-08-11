@@ -143,30 +143,6 @@ EOF
 EOF
     fi
 
-    # CONTROLLER_INSTANCE partitions one cluster across several controllers: an
-    # instance manages only the workloads whose ScaledObject carries
-    # wva.llmd.ai/controller-instance with its name (see
-    # utils.readyVariantAutoscalings). The controller reads it from this env var,
-    # which nothing set — it was declared in install.sh, logged, and dropped, so
-    # multi-instance was only reachable by hand-writing an overlay.
-    #
-    # An unset instance manages everything unlabelled, which is the single-install
-    # case and stays the default.
-    if [ -n "${CONTROLLER_INSTANCE:-}" ]; then
-        log_info "Controller instance: $CONTROLLER_INSTANCE (manages only workloads labelled wva.llmd.ai/controller-instance=$CONTROLLER_INSTANCE)"
-        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
-- patch: |-
-    - op: add
-      path: /spec/template/spec/containers/0/env/-
-      value:
-        name: CONTROLLER_INSTANCE
-        value: "${CONTROLLER_INSTANCE}"
-  target:
-    kind: Deployment
-    name: wva-controller-manager
-EOF
-    fi
-
     log_info "Applying Kustomize overlay: $kustomize_overlay"
     kubectl apply -k "$tmp_overlay"
 
