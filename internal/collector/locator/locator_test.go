@@ -47,7 +47,11 @@ func newClients(t *testing.T, objs ...runtime.Object) (apiReader client.Client) 
 // workload, with its scale target already resolved. That registration is the ONLY
 // thing that makes a pod attributable now: the locator reads the registry, not a
 // field index, so there is no cluster-wide ScaledObject watch behind it.
-func registered(scalerName, ns, targetKind, targetName string) *registry.Registry {
+func registered(ns, targetKind, targetName string) *registry.Registry {
+	// The scaler name is fixed: every caller resolves BY TARGET, so varying it
+	// proved nothing. The tests that passed a different one looked it up by name,
+	// and went when the by-variant entry point did.
+	const scalerName = "h"
 	reg := registry.New(0)
 	reg.Observe(ns, scalerName, map[string]string{registry.ModelIDKey: "m"})
 	reg.SetTarget(ns, scalerName, registry.Target{
@@ -105,7 +109,7 @@ func TestLocate_CacheHitOnSecondCall(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}}}
 	apiReader := newClients(t, deploy, rs, pod)
-	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "d")))
+	loc, _ := locator.New(apiReader, variantsOf(registered(ns, "Deployment", "d")))
 
 	// Warm the cache.
 	if _, err := loc.Locate(context.Background(), ns, "p"); err != nil {
@@ -138,7 +142,7 @@ func TestLocate_LWSChain(t *testing.T) {
 			}}},
 	}
 	apiReader := newClients(t, lws, pod)
-	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "LeaderWorkerSet", "lws")))
+	loc, _ := locator.New(apiReader, variantsOf(registered(ns, "LeaderWorkerSet", "lws")))
 	got, err := loc.Locate(context.Background(), ns, "p")
 	if err != nil || got == nil || got.Name != "h" {
 		t.Fatalf("got=%v err=%v", got, err)
@@ -189,7 +193,7 @@ func TestLocate_RegisteredForADifferentTargetFindsNothing(t *testing.T) {
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "rs", UID: "uid-rs", Controller: ptr.To(true)}}},
 	}
 	apiReader := newClients(t, deploy, rs, pod)
-	loc, _ := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "some-other-deployment")))
+	loc, _ := locator.New(apiReader, variantsOf(registered(ns, "Deployment", "some-other-deployment")))
 
 	got, err := loc.Locate(context.Background(), ns, "p")
 	if err != nil {
@@ -556,7 +560,7 @@ func TestGetPodLabels_WalkErrorDoesNotPoisonLocate(t *testing.T) {
 		}).
 		Build()
 
-	loc, err := locator.New(apiReader, variantsOf(registered("h", ns, "Deployment", "d")))
+	loc, err := locator.New(apiReader, variantsOf(registered(ns, "Deployment", "d")))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
