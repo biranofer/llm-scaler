@@ -272,11 +272,13 @@ Then point the controller at your Prometheus — without this it will not collec
 anything:
 
 ```bash
-kubectl -n workload-variant-autoscaler-system edit configmap wva-manager-config
+# NOTE: the overlays hardcode `namespace: wva-system`. Only deploy/install.sh
+# rewrites that to $WVA_NS, so a raw `apply -k` lands in wva-system.
+kubectl -n wva-system edit configmap wva-manager-config
 # under config.yaml, set:
 #   prometheus:
 #     baseURL: https://<your-prometheus>.<ns>.svc.cluster.local:9090
-kubectl -n workload-variant-autoscaler-system rollout restart deployment wva-controller-manager
+kubectl -n wva-system rollout restart deployment wva-controller-manager
 ```
 
 If you will run **more than one** WVA on this cluster, rename the shared

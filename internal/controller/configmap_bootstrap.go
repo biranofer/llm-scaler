@@ -160,9 +160,16 @@ func (r *ConfigMapReconciler) bootstrapClusterPolicy(ctx context.Context) error 
 		return fmt.Errorf("cannot read cluster policy from %s/%s, refusing to start unbounded: %w", policyNS, name, err)
 	}
 
+	// An EMPTY policy, not nil. Nil means "policy is not separated", which sends
+	// the limiter accessors back to the ConfigMap in the controller's own namespace
+	// — for a self-managed install, the one its own tenant writes. So mistyping the
+	// ConfigMap name in the policy namespace would have handed limit-setting back to
+	// the party the policy namespace exists to take it from, while logging that no
+	// limiters were in force. An admin who published no policy means no bound, and
+	// that is what an empty policy says.
 	logger.Info("No cluster policy ConfigMap in the policy namespace: no limiters or quotas are in force",
-		"policyNamespace", policyNS)
-	r.Config.UpdateClusterPolicy(nil)
+		"policyNamespace", policyNS, "expectedNames", config.ScalingPolicyConfigMapNames())
+	r.Config.UpdateClusterPolicy(&config.ScalingPolicy{})
 	return nil
 }
 

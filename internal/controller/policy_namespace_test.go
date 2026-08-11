@@ -52,19 +52,18 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 	})
 
 	Context("when the controller manages the namespace it runs in", func() {
-		It("refuses to start when no policy applies and no waiver was granted", func() {
+		// The default namespace-scoped install — which is what OpenShift gets
+		// without asking for it — must come up on a cluster that has never heard
+		// of a policy namespace.
+		It("starts normally when no policy has been published anywhere", func() {
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
 				WithObjects(namespace(tenantNS, nil)).Build()
 
-			err := ResolvePolicyNamespace(context.Background(), c, selfManaged())
+			cfg := selfManaged()
+			Expect(ResolvePolicyNamespace(context.Background(), c, cfg)).To(Succeed())
 
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("refusing to start"))
-			// The message has to be actionable by the person who can fix it, so it
-			// names every route out.
-			Expect(err.Error()).To(ContainSubstring(config.WellKnownPolicyNamespace))
-			Expect(err.Error()).To(ContainSubstring(constants.PolicyNamespaceAnnotationKey))
-			Expect(err.Error()).To(ContainSubstring(constants.UnboundedAllowedAnnotationKey))
+			Expect(cfg.PolicySource()).To(Equal(config.PolicySourceLocal))
+			Expect(cfg.PolicyNamespaceIsSeparate()).To(BeFalse())
 		})
 
 		It("takes the policy namespace an admin annotated onto the namespace", func() {
@@ -94,53 +93,30 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 			Expect(cfg.PolicySource()).To(Equal(config.PolicySourceWellKnown))
 		})
 
-		It("starts unbounded only when an admin annotated the namespace to allow it", func() {
+		// The annotation outranks the well-known namespace, so an admin can move one
+		// namespace's policy without disturbing the cluster-wide default.
+		It("prefers the namespace annotation over the well-known namespace", func() {
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
-				WithObjects(namespace(tenantNS, map[string]string{
-					constants.UnboundedAllowedAnnotationKey: constants.PolicyUnboundedAllowed,
-				})).Build()
-
-			cfg := selfManaged()
-			Expect(ResolvePolicyNamespace(context.Background(), c, cfg)).To(Succeed())
-
-			Expect(cfg.PolicyNamespaceIsSeparate()).To(BeFalse())
-		})
-
-		// The waiver is a specific word, not a truthy value. Accepting "true" here
-		// would let it be set by anything that writes booleans generically, and
-		// would read like a routine flag to whoever reviewed the namespace.
-		It("does not accept an arbitrary truthy value as the waiver", func() {
-			c := fake.NewClientBuilder().WithScheme(newScheme()).
-				WithObjects(namespace(tenantNS, map[string]string{
-					constants.UnboundedAllowedAnnotationKey: "true",
-				})).Build()
-
-			Expect(ResolvePolicyNamespace(context.Background(), c, selfManaged())).NotTo(Succeed())
-		})
-
-		// The pointer outranks the waiver: an admin who named a policy namespace
-		// AND left a stale waiver behind meant the policy.
-		It("prefers an explicit policy namespace over a waiver", func() {
-			c := fake.NewClientBuilder().WithScheme(newScheme()).
-				WithObjects(namespace(tenantNS, map[string]string{
-					constants.PolicyNamespaceAnnotationKey:  "platform-policy",
-					constants.UnboundedAllowedAnnotationKey: constants.PolicyUnboundedAllowed,
-				})).Build()
+				WithObjects(
+					namespace(tenantNS, map[string]string{
+						constants.PolicyNamespaceAnnotationKey: "platform-policy",
+					}),
+					namespace(config.WellKnownPolicyNamespace, nil),
+				).Build()
 
 			cfg := selfManaged()
 			Expect(ResolvePolicyNamespace(context.Background(), c, cfg)).To(Succeed())
 			Expect(cfg.PolicyNamespace()).To(Equal("platform-policy"))
 		})
 
-		// Not being able to READ the namespace is not permission to ignore what it
-		// says. This is the case that used to proceed with a log line.
-		It("refuses to start when it cannot read the namespace it manages", func() {
+		// A controller with no namespace read is an ordinary namespace-scoped
+		// deployment, not a suspicious one. It must still start.
+		It("starts when it cannot read the namespace it manages", func() {
 			c := fake.NewClientBuilder().WithScheme(newScheme()).Build() // namespace absent
 
-			err := ResolvePolicyNamespace(context.Background(), c, selfManaged())
-
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("must read that Namespace object"))
+			cfg := selfManaged()
+			Expect(ResolvePolicyNamespace(context.Background(), c, cfg)).To(Succeed())
+			Expect(cfg.PolicySource()).To(Equal(config.PolicySourceLocal))
 		})
 	})
 
@@ -160,14 +136,21 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 			Expect(cfg.PolicySource()).To(Equal(config.PolicySourceLocal))
 		})
 
-		It("still prefers the well-known namespace when it exists", func() {
+		// Regression guard. Letting the well-known namespace win here took a
+		// working, correctly-bounded cluster-scoped install and silently switched
+		// its policy source the moment someone created wva-policy for an unrelated
+		// tenant — and if that ConfigMap declared no limiters, the cluster went
+		// from bounded to UNBOUNDED with no edit to the install that changed.
+		It("does NOT let the well-known namespace hijack an admin-owned controller", func() {
 			GinkgoT().Setenv("POD_NAMESPACE", "wva-system")
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
 				WithObjects(namespace(config.WellKnownPolicyNamespace, nil)).Build()
 
 			cfg := &config.Config{}
 			Expect(ResolvePolicyNamespace(context.Background(), c, cfg)).To(Succeed())
-			Expect(cfg.PolicyNamespace()).To(Equal(config.WellKnownPolicyNamespace))
+
+			Expect(cfg.PolicySource()).To(Equal(config.PolicySourceLocal))
+			Expect(cfg.PolicyNamespaceIsSeparate()).To(BeFalse())
 		})
 	})
 })

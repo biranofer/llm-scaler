@@ -63,54 +63,68 @@ kubectl annotate namespace team-b wva.llmd.ai/unbounded=allowed
 
 ### What the controller does with that
 
-A controller that manages the namespace it runs in resolves, in order:
+Policy is resolved once at startup, in order:
 
-1. `wva.llmd.ai/policy-namespace` on that Namespace
-2. the `wva-policy` namespace, if it exists
-3. `wva.llmd.ai/unbounded=allowed` on that Namespace
-4. **otherwise it refuses to start**
+1. `wva.llmd.ai/policy-namespace` on the managed Namespace
+2. `WVA_POLICY_NS` given at install time
+3. the `wva-policy` namespace, if it exists *and* the controller manages its own
+   namespace
+4. the controller's own namespace
 
-Step 4 is the point. "No policy found" never quietly becomes "no limits" — running
-unbounded is always something an admin decided, never something that happened
-because configuration was missing. The startup error names all four routes out, so
-whoever can fix it is told exactly what to do.
+Limiters written in the controller's own ConfigMap are then ignored *and logged* —
+a limiter that reads as enforcing and enforces nothing is worse than either
+enforcing or erroring. Thresholds, tiers and per-model settings stay with the team
+running the workload: those are tuning, not entitlement.
 
-Note that the fixed name in step 2 outranks any `WVA_POLICY_NS` given at install
-time. That inversion is deliberate: install-time settings live on the controller's
-Deployment, which the tenant owns, so a name they cannot configure is a name they
-cannot redirect.
+If the policy ConfigMap **exists but cannot be read** — usually a missing
+RoleBinding — the controller refuses to start rather than run unbounded while an
+admin believes a quota applies.
 
-It also refuses to start if it cannot **read** the policy that applies to it —
-usually a missing RoleBinding. Starting would run the tenant unbounded while an
-admin had every reason to believe a quota was in force.
+### Read this before relying on it
 
-### What stays with the tenant
+**This is a guardrail, not an enforcement boundary.**
 
-- **limiters and quotas** — admin only. A `limiters:` block in the tenant's own
-  ConfigMap is ignored *and logged*: a limiter that reads as enforcing and enforces
-  nothing is the worst of the three outcomes.
-- **thresholds, tiers and per-model settings** — the tenant's. Those are tuning,
-  not entitlement, and the team running the workload should own them.
+If the tenant owns the controller's Deployment — which they do whenever the
+controller runs *inside* the namespace it manages — then they own its args, its
+env, its ServiceAccount and its image. No rule evaluated inside that process can
+bind them. An earlier design here tried to refuse to start in that situation; it
+was withdrawn because it did not work (the condition it keyed on came from a flag
+on the Deployment the tenant controls) and because it broke every namespace-scoped
+install, which is the default on OpenShift.
 
-### The honest limit
+What this mechanism honestly buys you:
 
-None of this contains a hostile tenant. Anyone who can change the controller's
-**image** runs code that consults none of it. What this gives you is that the GPU
-budget is authoritative for every WVA that is actually running WVA — which covers
-misconfiguration, drift, and copied manifests, the things that actually happen.
+- the GPU budget is authoritative for every controller *actually running WVA* —
+  covering misconfiguration, drift, and copied manifests, which is most real
+  incidents;
+- an admin can direct a controller they did not deploy, via an annotation on a
+  cluster-scoped object.
 
-For enforcement against a tenant you do not trust, use Kubernetes' own admission
-path — a `ResourceQuota` on the GPU resource in their namespace — and let WVA's
-limiter be what keeps it from ever getting there.
+**For a tenant you do not trust, enforce at admission instead.** A `ResourceQuota`
+on the GPU resource cannot be argued with by anything inside the namespace, and it
+bounds every path — not just WVA:
 
-The stronger arrangement, if you want both: run the controller **outside** the
-namespace it manages, so the tenant never owns it at all.
+```bash
+kubectl -n team-a create quota gpus --hard=requests.nvidia.com/gpu=8
+```
+
+Note also that WVA's limiter bounds what *WVA* asks for. The ScaledObject is the
+tenant's: they can raise `maxReplicaCount` or add a second KEDA trigger, and the
+HPA takes the maximum across triggers. The quota is what stops that.
+
+### The arrangement where the bound does hold
+
+Run the controller **outside** the namespace it manages, so the tenant never owns
+it:
 
 ```bash
 make deploy-wva-on-k8s WVA_SCOPE=namespace \
   WVA_NS=wva-team-a \        # admin-owned: where the controller runs
   WVA_WATCH_NS=team-a        # tenant-owned: what it manages
 ```
+
+This is the recommended multi-tenant shape. Everything above then applies with the
+Deployment out of the tenant's reach.
 
 ## Why it ships off
 

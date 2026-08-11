@@ -17,26 +17,47 @@ import (
 // from, and records the decision on cfg. It runs once, before the manager starts,
 // because the manager's cache is built from the answer.
 //
-// It is FAIL-CLOSED for the one shape where the subject of a policy could
-// otherwise choose their own: a controller that runs in the namespace it manages.
-// There, the tenant owns this Deployment — its args, its env, its ServiceAccount —
-// so nothing carried on it can constrain them. Such a controller must find policy
-// it did not choose, or be told by a cluster admin that none is required, or it
-// refuses to start. "Could not find any policy" never silently becomes "no limits".
-//
-// Everything authoritative here is a cluster-scoped object, which is what makes it
-// out of reach: a namespace admin holds RBAC inside their namespace and cannot
-// create a Namespace or edit one's annotations.
+// Order:
 //
 //  1. the wva.llmd.ai/policy-namespace annotation on the managed Namespace
-//  2. the well-known namespace, config.WellKnownPolicyNamespace, if it exists
-//  3. the wva.llmd.ai/unbounded=allowed annotation on the managed Namespace
-//  4. otherwise: refuse to start
+//  2. WVA_POLICY_NS / WVA_POLICY_NAMESPACE
+//  3. the well-known namespace, config.WellKnownPolicyNamespace — self-managed only
+//  4. the controller's own namespace
 //
-// A controller whose namespace is NOT the one it manages — a cluster-scoped
-// install, or an admin-run controller pointed at a tenant — is already outside
-// the tenant's reach, so it keeps the ordinary behaviour: policy from the
-// well-known namespace if present, else from its own configuration.
+// Rule 1 is an annotation on a NAMESPACE because that object is cluster-scoped: a
+// namespace admin holds RBAC inside their namespace and cannot edit it. So an
+// admin can direct a controller they did not deploy.
+//
+// # What this is and is not
+//
+// This is a GUARDRAIL, not an enforcement boundary, and the distinction is worth
+// being blunt about because an earlier version of this function got it wrong.
+//
+// That version refused to start when a controller managed its own namespace and
+// found no policy — reasoning that such a controller is owned by the tenant it is
+// supposed to bound, so it must not set its own limits. Both halves of that were
+// wrong in practice:
+//
+//   - it did not work. `selfManaged` is derived from --watch-namespace, an
+//     argument on the Deployment the tenant owns. Deleting one flag made the
+//     controller look admin-owned and skipped the check entirely. A gate whose
+//     trigger is self-reported by its subject is not a gate.
+//   - it broke everyone else. Namespace scope is the DEFAULT on OpenShift, so
+//     every such install — with no limiter configured and nothing to enforce —
+//     would have refused to start until someone created a namespace they had
+//     never heard of.
+//
+// Maximum breakage, zero containment. A tenant who owns the controller's
+// Deployment owns its image, so no in-process rule can bind them; a check that
+// pretends otherwise mainly misleads the admin relying on it.
+//
+// Enforcement against a tenant you do not trust belongs at admission, where it
+// cannot be argued with: a ResourceQuota on the GPU resource in their namespace.
+// What WVA can honestly offer is that the budget is authoritative for every
+// controller actually running WVA — which is misconfiguration, drift and copied
+// manifests, the things that occur far more often than malice — and, for the
+// arrangement where the tenant does NOT own the controller (it runs in an admin
+// namespace with WVA_WATCH_NS pointed at theirs), a bound that genuinely holds.
 func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Config) error {
 	logger := log.FromContext(ctx)
 	systemNS := config.SystemNamespace()
@@ -57,31 +78,49 @@ func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Co
 	}
 
 	if !selfManaged {
+		// An admin-owned controller keeps reading its OWN ConfigMap unless it was
+		// explicitly told otherwise. The well-known namespace deliberately does NOT
+		// win here.
+		//
+		// Letting it win looked tidier and silently broke working installs: a
+		// cluster-scoped controller, correctly bounded by limiters in its own
+		// admin-owned ConfigMap, would switch sources the moment anyone created
+		// wva-policy for an unrelated tenant. If that namespace's ConfigMap carried
+		// a default entry with no limiters — the normal way to say "I have not
+		// configured this yet" — the switch would take the cluster from bounded to
+		// UNBOUNDED, with no edit to the install that changed.
+		//
+		// The override only earns its keep where the reader might otherwise choose
+		// its own limits, which is the branch below.
 		switch {
-		case wellKnownExists:
-			cfg.SetPolicyNamespace(config.WellKnownPolicyNamespace, config.PolicySourceWellKnown)
-			logger.Info("Cluster policy comes from the well-known namespace", "policyNamespace", config.WellKnownPolicyNamespace)
 		case configured != systemNS:
 			cfg.SetPolicyNamespace(configured, config.PolicySourceConfigured)
 			logger.Info("Cluster policy comes from the configured namespace", "policyNamespace", configured)
 		default:
 			cfg.SetPolicyNamespace(systemNS, config.PolicySourceLocal)
 			logger.V(1).Info("Cluster policy comes from this controller's own namespace", "namespace", systemNS)
+			if wellKnownExists {
+				logger.Info("A "+config.WellKnownPolicyNamespace+" namespace exists but is NOT being used: this controller "+
+					"does not manage its own namespace, so its own configuration is authoritative. "+
+					"Set WVA_POLICY_NS to read policy from elsewhere.",
+					"policyNamespace", config.WellKnownPolicyNamespace)
+			}
 		}
 		return nil
 	}
 
-	// From here on: the tenant could be choosing their own limits, so only
-	// admin-owned objects count.
+	// Self-managed: the namespace this controller runs in is the one it manages, so
+	// an admin may have annotated that Namespace to direct it. Reading it is
+	// best-effort — a controller with no namespace read is an ordinary
+	// namespace-scoped deployment, and refusing to start over it would break the
+	// default shape on OpenShift for no gain.
 	ns := &corev1.Namespace{}
 	if err := c.Get(ctx, client.ObjectKey{Name: managedNS}, ns); err != nil {
-		// Including Forbidden. A controller that cannot read the Namespace object
-		// cannot see the constraints placed on it, and continuing would mean
-		// ignoring an admin's policy annotation purely because we failed to look.
-		return fmt.Errorf("this controller manages the namespace it runs in (%s), so it must read that "+
-			"Namespace object to learn which policy applies, and cannot: %w\n"+
-			"Grant its ServiceAccount get on namespaces, or run the controller outside the namespace it manages",
-			managedNS, err)
+		if !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err) {
+			return fmt.Errorf("failed reading namespace %s to resolve cluster policy: %w", managedNS, err)
+		}
+		logger.V(1).Info("Could not read the managed Namespace to check for a policy annotation; continuing",
+			"namespace", managedNS, "reason", err.Error())
 	}
 
 	if pointed := ns.Annotations[constants.PolicyNamespaceAnnotationKey]; pointed != "" {
@@ -91,30 +130,21 @@ func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Co
 		return nil
 	}
 
+	if configured != systemNS {
+		cfg.SetPolicyNamespace(configured, config.PolicySourceConfigured)
+		logger.Info("Cluster policy comes from the configured namespace", "policyNamespace", configured)
+		return nil
+	}
+
 	if wellKnownExists {
 		cfg.SetPolicyNamespace(config.WellKnownPolicyNamespace, config.PolicySourceWellKnown)
 		logger.Info("Cluster policy comes from the well-known namespace", "policyNamespace", config.WellKnownPolicyNamespace)
 		return nil
 	}
 
-	if ns.Annotations[constants.UnboundedAllowedAnnotationKey] == constants.PolicyUnboundedAllowed {
-		cfg.SetPolicyNamespace(systemNS, config.PolicySourceLocal)
-		logger.Info("Running WITHOUT a cluster GPU bound: a cluster admin has allowed it for this namespace. "+
-			"Scaling here is limited only by each workload's maxReplicas.",
-			"namespace", managedNS, "annotation", constants.UnboundedAllowedAnnotationKey)
-		return nil
-	}
-
-	return fmt.Errorf("refusing to start: this controller manages the namespace it runs in (%s), so it cannot be "+
-		"trusted to set its own GPU limits, and no cluster policy applies to it.\n\n"+
-		"A cluster admin must do ONE of:\n"+
-		"  - create the %s namespace with a scaling-policy ConfigMap, and grant this ServiceAccount read on it\n"+
-		"  - annotate this namespace with %s=<namespace holding the policy>\n"+
-		"  - annotate this namespace with %s=%s to allow unbounded scaling here\n"+
-		"  - or run the controller in a namespace the workloads' owner does not administer",
-		managedNS, config.WellKnownPolicyNamespace,
-		constants.PolicyNamespaceAnnotationKey,
-		constants.UnboundedAllowedAnnotationKey, constants.PolicyUnboundedAllowed)
+	cfg.SetPolicyNamespace(systemNS, config.PolicySourceLocal)
+	logger.V(1).Info("Cluster policy comes from this controller's own namespace", "namespace", systemNS)
+	return nil
 }
 
 // namespaceExists reports whether a namespace is present.
