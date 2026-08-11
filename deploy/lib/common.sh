@@ -38,3 +38,45 @@ containsElement() {
     for e; do [[ "$e" == "$match" ]] && return 0; done
     return 1
 }
+
+# wva_install_scope echoes the install scope: "cluster" or "namespace".
+#
+# Both scopes are supported on both platforms — config/overlays carries all four
+# combinations — so the scope is a CHOICE, not a property of the platform. It used
+# to be inferred (openshift => namespace, everything else => cluster), which left
+# two of the four overlays unreachable from any deploy path: there was no way to
+# run namespace-scoped on Kubernetes, which is exactly what a tenant without
+# cluster-wide RBAC needs.
+#
+# WVA_SCOPE selects it. The default preserves the historical inference so existing
+# invocations keep deploying what they always did.
+wva_install_scope() {
+    local scope="${WVA_SCOPE:-}"
+    if [ -z "$scope" ]; then
+        if [ "${ENVIRONMENT:-}" = "openshift" ]; then
+            scope="namespace"
+        else
+            scope="cluster"
+        fi
+    fi
+    case "$scope" in
+        cluster|namespace) echo "$scope" ;;
+        *) log_error "WVA_SCOPE must be 'cluster' or 'namespace', got '$scope'" ;;
+    esac
+}
+
+# wva_overlay_dir echoes the absolute Kustomize overlay directory for the selected
+# scope and platform. Deploy and cleanup MUST resolve it the same way, or an
+# uninstall leaves behind exactly the resources the other overlay owns.
+wva_overlay_dir() {
+    local scope platform
+    scope="$(wva_install_scope)"
+    if [ "${ENVIRONMENT:-}" = "openshift" ]; then
+        platform="openshift"
+    else
+        platform="kubernetes"
+    fi
+    local dir="$WVA_PROJECT/config/overlays/${scope}-scoped/${platform}"
+    [ -d "$dir" ] || log_error "No overlay for scope '${scope}' on '${platform}' (looked in $dir)"
+    (cd "$dir" && pwd)
+}

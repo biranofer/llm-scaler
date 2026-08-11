@@ -9,7 +9,17 @@ CLUSTER_GPUS ?= 4
 KUBECONFIG ?= $(HOME)/.kube/config
 K8S_VERSION ?= v1.32.0
 
+# Install namespace. Any namespace works, at either scope: the install applies a
+# Kustomize namespace transform and the controller reads its own namespace from
+# POD_NAMESPACE, so ClusterRoleBinding subjects and the system-namespace lookups
+# follow.
 WVA_NS              ?= workload-variant-autoscaler-system
+# Install scope: cluster | namespace. Empty means the historical default —
+# namespace on OpenShift, cluster elsewhere. See deploy/lib/common.sh.
+WVA_SCOPE           ?=
+# Declare a GPU limiter at install: none | gpu-inventory | quota. Default none,
+# matching the shipped config — see deploy/README.md "Bounding scaling".
+WVA_LIMITER         ?= none
 CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
 LLMD_NAMESPACE       ?= llm-d-optimized-baseline
@@ -142,31 +152,33 @@ destroy-kind-cluster:
 
 
 ## Deploy WVA to OpenShift cluster with specified image.
+## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift cluster with specified image.
+deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=openshift ./deploy/install.sh
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=openshift ./deploy/install.sh
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
 undeploy-wva-on-openshift:
 	@echo ">>> Undeploying workload-variant-autoscaler from OpenShift"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) && \
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
 		deploy/install.sh --undeploy
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes with the specified image.
+deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. WVA_NS=<ns>, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) ENVIRONMENT=kubernetes ./deploy/install.sh
+	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=kubernetes ./deploy/install.sh
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s
 undeploy-wva-on-k8s:
 	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) && \
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
 		deploy/install.sh --undeploy
 
 # E2E tests on Kind cluster for saturation-based autoscaling

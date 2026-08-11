@@ -26,11 +26,7 @@ undeploy_wva_controller() {
     log_info "Uninstalling Workload-Variant-Autoscaler..."
 
     local kustomize_overlay
-    if [ "$ENVIRONMENT" = "openshift" ]; then
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/namespace-scoped/openshift" && pwd)"
-    else
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/cluster-scoped/kubernetes" && pwd)"
-    fi
+    kustomize_overlay="$(wva_overlay_dir)"
 
     local tmp_overlay
     tmp_overlay=$(mktemp -d)

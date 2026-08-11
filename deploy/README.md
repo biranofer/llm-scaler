@@ -245,30 +245,122 @@ export DEPLOY_LWS=true
 
 Install the WVA controller directly into an existing cluster using Kustomize. This is the recommended method when you already have Prometheus and want to manage the controller install without the full automated script.
 
-#### Kubernetes
+#### Install scope: cluster or namespace
+
+WVA installs at either scope, on either platform — `config/overlays/` carries all
+four combinations:
+
+| scope | what the controller may do | use when |
+| --- | --- | --- |
+| `cluster` | watches and scales workloads in every namespace; needs ClusterRole | one WVA for the whole cluster |
+| `namespace` | watches and scales only its own namespace; Role only | a tenant with no cluster-wide RBAC, or one WVA per team |
+
+The single-command install picks the scope with `WVA_SCOPE`:
+
+```bash
+make deploy-wva-on-k8s                          # cluster-scoped (default on Kubernetes)
+make deploy-wva-on-k8s WVA_SCOPE=namespace      # namespace-scoped
+make deploy-wva-on-openshift                    # namespace-scoped (default on OpenShift)
+make deploy-wva-on-openshift WVA_SCOPE=cluster  # cluster-scoped
+```
+
+The defaults are the historical ones, so existing invocations are unchanged. Pass
+the same `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall resolves the overlay the
+same way an install does, so a mismatched scope would leave behind exactly the
+resources the other overlay owns.
+
+#### Install namespace
+
+Any namespace works, at either scope:
+
+```bash
+make deploy-wva-on-k8s WVA_NS=my-team-wva
+```
+
+The install applies a Kustomize namespace transform, and the controller reads its
+own namespace from `POD_NAMESPACE` (downward API), so ClusterRoleBinding subjects
+and every system-namespace lookup — including which ConfigMap counts as the
+cluster tier — follow automatically. Pass the same `WVA_NS` to `undeploy-wva-on-*`.
+
+#### Bounding scaling: the GPU limiter
+
+The shipped configuration declares **no limiter**, so a fresh install scales
+unconstrained: the optimizer allocates without a GPU budget, and a scale-from-zero
+wake is published without a capacity check. The controller says so at startup.
+
+Turn it on at install time:
+
+```bash
+make deploy-wva-on-k8s WVA_LIMITER=gpu-inventory   # bound by GPUs actually free
+make deploy-wva-on-k8s WVA_LIMITER=quota           # bound by declared caps
+```
+
+or later, by adding a `limiters:` entry to the `default` entry of the
+scaling-policy ConfigMap — it is applied live, no restart.
+
+> **Before you enable it, make every workload's accelerator resolvable.** A
+> GPU-aware optimizer allocates out of per-accelerator pools, so a variant whose
+> accelerator it cannot resolve is charged to no pool, receives no budget, and
+> **never scales up** — silently, because nothing errors. That is why the default
+> ships unbounded: enabling it by default would freeze exactly the workloads that
+> are least carefully configured.
+
+##### What "resolvable" means, especially on a heterogeneous cluster
+
+WVA resolves a variant's accelerator from, in order:
+
+1. a **GPU product key in the workload's `nodeSelector` or `nodeAffinity`** — the
+   only source that works before any pod exists, and therefore the only one that
+   works for a workload parked at zero;
+2. the **node its pods are actually running on**, once it has ready pods.
+
+On a **single-accelerator** cluster neither is needed: there is one pool, so an
+unconstrained workload is deduced onto it and "any accelerator can serve this" is
+trivially true.
+
+On a **heterogeneous** cluster it matters, and the reason is not bookkeeping: a pod
+with no GPU nodeSelector can be scheduled onto *any* GPU node, so a workload that
+does not state its accelerator genuinely has not chosen one. Add the product key
+the GPU operator sets on your nodes:
+
+```yaml
+# in the model server's pod template
+spec:
+  nodeSelector:
+    nvidia.com/gpu.product: NVIDIA-A100-PCIE-80GB
+```
+
+Check what your nodes advertise, and confirm nothing is unresolved after enabling
+the limiter:
+
+```bash
+kubectl get nodes -L nvidia.com/gpu.product
+kubectl get events -A --field-selector reason=AcceleratorNotResolved
+```
+
+A variant that stays unresolved is reported by that event and counted in
+`wva_unattributed_gpus`. See
+[GPU Capacity Accounting](../docs/developer-guide/gpu-capacity-accounting.md) for
+how the budget is computed and where it can still over-state free capacity.
+
+#### Applying the overlays directly
 
 ```bash
 # Set the controller image
 cd config/base/manager
 kustomize edit set image controller=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.7.0
 
-# Apply
+# Apply the overlay for your scope and platform
 kubectl apply -k ../../overlays/cluster-scoped/kubernetes
-```
-
-#### OpenShift
-
-```bash
-cd config/base/manager
-kustomize edit set image controller=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.7.0
-
-kubectl apply -k ../../overlays/namespace-scoped/openshift
+#             ../../overlays/namespace-scoped/kubernetes
+#             ../../overlays/cluster-scoped/openshift
+#             ../../overlays/namespace-scoped/openshift
 ```
 
 #### Undeploy
 
 ```bash
-kubectl delete -k config/overlays/cluster-scoped/kubernetes    # or config/overlays/namespace-scoped/openshift
+kubectl delete -k config/overlays/cluster-scoped/kubernetes    # match the overlay you installed
 ```
 
 ## Platform-Specific Guides
@@ -338,7 +430,7 @@ VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not cont
 
 #### Optional: scaling band after `make deploy-e2e-infra`
 
-If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment, the Makefile patches the `wva-saturation-scaling-config` ConfigMap after install. Note the patch replaces the whole `default` entry, so it writes `analyzerName: saturation` alongside the band.
+If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment, the Makefile patches the `wva-scaling-policy-config` ConfigMap after install. Note the patch replaces the whole `default` entry, so it writes `analyzerName: saturation` alongside the band.
 
 ## Post-Deployment
 

@@ -60,14 +60,11 @@ deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
 
-    # Select the Kustomize overlay by install scope. OpenShift installs use the
-    # namespace-scoped overlay; Kubernetes installs use the cluster-scoped overlay.
+    # Select the Kustomize overlay by install SCOPE (WVA_SCOPE=cluster|namespace)
+    # and platform. Both scopes work on both platforms; the default preserves the
+    # historical inference. See wva_overlay_dir.
     local kustomize_overlay
-    if [ "$ENVIRONMENT" = "openshift" ]; then
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/namespace-scoped/openshift" && pwd)"
-    else
-        kustomize_overlay="$(cd "$WVA_PROJECT/config/overlays/cluster-scoped/kubernetes" && pwd)"
-    fi
+    kustomize_overlay="$(wva_overlay_dir)"
 
     # Build a throw-away overlay that pins the image without modifying tracked files.
     # Symlink the base overlay so kustomization.yaml can reference it with a relative
@@ -165,6 +162,41 @@ EOF
         kubectl patch configmap wva-manager-config -n "$WVA_NS" --type=merge \
             -p "$(jq -n --arg cfg "$updated_config" '{data:{"config.yaml":$cfg}}')"
     fi
+
+    # Declare a GPU limiter, if asked.
+    #
+    # The shipped config declares NONE, deliberately: a GPU-aware optimizer can
+    # only allocate to a variant whose accelerator it resolves, so turning it on
+    # by default would silently freeze every workload that sets no GPU
+    # nodeSelector. It is an install-time CHOICE for a fleet that is ready for it —
+    # see docs/developer-guide/gpu-capacity-accounting.md.
+    #
+    # Patches the "default" entry rather than shipping a second copy of it: the
+    # entry carries every other default too, and a duplicate would drift.
+    case "${WVA_LIMITER:-none}" in
+        none) ;;
+        gpu-inventory|quota)
+            log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap..."
+            local policy_cm current_default updated_default
+            policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null                 | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
+            if [ -z "$policy_cm" ]; then
+                log_error "No scaling-policy ConfigMap found in $WVA_NS"
+            fi
+            current_default=$(kubectl get configmap "$policy_cm" -n "$WVA_NS" -o jsonpath='{.data.default}')
+            if [ -z "$current_default" ]; then
+                log_error "ConfigMap $policy_cm has no data['default'] entry"
+            fi
+            # Idempotent, and it REPLACES rather than appends: re-running with a
+            # different WVA_LIMITER must not leave both declared, since a quota
+            # entry would then win over the gpu-inventory one by mode precedence.
+            updated_default=$(echo "$current_default"                 | yq ".limiters = [{\"type\": \"${WVA_LIMITER}\"}]")
+            kubectl patch configmap "$policy_cm" -n "$WVA_NS" --type=merge                 -p "$(jq -n --arg d "$updated_default" '{data:{"default":$d}}')"
+            log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter. Every managed workload needs a resolvable accelerator (a GPU product nodeSelector) or it will not be allocated any budget — watch for AcceleratorNotResolved events."
+            ;;
+        *)
+            log_error "WVA_LIMITER must be 'none', 'gpu-inventory' or 'quota', got '${WVA_LIMITER}'"
+            ;;
+    esac
 
     # Wait for WVA to be ready
     log_info "Waiting for WVA controller to be ready..."
