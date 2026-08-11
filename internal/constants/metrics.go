@@ -210,6 +210,14 @@ const (
 	// WVAGpuDiscoveryUp is a gauge that indicates whether GPU discovery is on or off.
 	WVAGpuDiscoveryUp = "wva_gpu_discovery_up"
 
+	// WVAScaleFromZeroQueueFallbackActive is 1 while the scale-from-zero engine is
+	// reading the EPP flow-control queue from Prometheus because the direct EPP
+	// scrape is failing, and 0 while the direct scrape works. A sustained 1 means
+	// wakes still happen but are slower and bounded by the Prometheus scrape
+	// interval, and that the EPP metrics path (token, RBAC, NetworkPolicy) is
+	// broken and should be fixed.
+	WVAScaleFromZeroQueueFallbackActive = "wva_scale_from_zero_queue_fallback_active"
+
 	// WVAAvailableGpus is a gauge that tracks the number of currently available GPUs. If wva_gpu_discovery_up is 1, it shows
 	// the number of currently available GPUs. If wva_gpu_discovery_up is 0, it shows the number
 	// of GPUs that were available at the last successful discovery.

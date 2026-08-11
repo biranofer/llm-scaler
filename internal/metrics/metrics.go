@@ -55,6 +55,7 @@ var (
 	decisionsLimitedTotal               *prometheus.CounterVec
 	availableGpus                       *prometheus.GaugeVec
 	gpuDiscoveryUp                      *prometheus.GaugeVec
+	sfzQueueFallbackActive              *prometheus.GaugeVec
 	enforcerModificationsTotal          *prometheus.CounterVec
 	optimizerActive                     *prometheus.GaugeVec
 	configInfoGauge                     *prometheus.GaugeVec
@@ -303,6 +304,18 @@ func InitMetrics(registry prometheus.Registerer) error {
 		gpuDiscoveryUpLabels,
 	)
 
+	sfzQueueFallbackLabels := []string{"pool"}
+	if controllerInstance != "" {
+		sfzQueueFallbackLabels = append(sfzQueueFallbackLabels, constants.LabelControllerInstance)
+	}
+	sfzQueueFallbackActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAScaleFromZeroQueueFallbackActive,
+			Help: "1 while scale-from-zero reads the EPP flow-control queue from Prometheus because the direct EPP scrape is failing",
+		},
+		sfzQueueFallbackLabels,
+	)
+
 	enforcerModificationsLabels := []string{constants.LabelPolicyType}
 	if controllerInstance != "" {
 		enforcerModificationsLabels = append(enforcerModificationsLabels, constants.LabelControllerInstance)
@@ -447,6 +460,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	}
 	if err := registry.Register(gpuDiscoveryUp); err != nil {
 		return fmt.Errorf("failed to register gpuDiscoveryUp metric: %w", err)
+	}
+	if err := registry.Register(sfzQueueFallbackActive); err != nil {
+		return fmt.Errorf("failed to register sfzQueueFallbackActive metric: %w", err)
 	}
 	if err := registry.Register(enforcerModificationsTotal); err != nil {
 		return fmt.Errorf("failed to register enforcerModificationsTotal metric: %w", err)
@@ -708,6 +724,27 @@ func (m *MetricsEmitter) RecordEnforcerMetric(policyType string) {
 	}
 
 	enforcerModificationsTotal.With(labels).Inc()
+}
+
+// SetScaleFromZeroQueueFallbackActive records whether scale-from-zero is reading
+// the EPP flow-control queue from Prometheus (true) or scraping the EPP directly
+// (false), per pool. It is a gauge rather than a counter because what matters is
+// whether the condition is CURRENT: a fallback that engaged for ten seconds last
+// week is history, one that has been up for an hour is an unfixed EPP metrics
+// path silently slowing every wake.
+func SetScaleFromZeroQueueFallbackActive(pool string, active bool) {
+	if sfzQueueFallbackActive == nil {
+		return
+	}
+	labels := prometheus.Labels{"pool": pool}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	value := 0.0
+	if active {
+		value = 1.0
+	}
+	sfzQueueFallbackActive.With(labels).Set(value)
 }
 
 // SetGpuDiscoveryUp sets the GPU discovery status metric.

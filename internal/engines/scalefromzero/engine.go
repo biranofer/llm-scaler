@@ -143,6 +143,11 @@ type Engine struct {
 	// the same loop, and a second mutex would only invite them to be taken in
 	// different orders.
 	lastBudgets map[string]string
+	// QueueFallback reads the flow-control queue from Prometheus when the direct
+	// EPP scrape fails. Nil disables it — every method guards its receiver — and
+	// the engine then behaves exactly as it did before the fallback existed. See
+	// queue_fallback.go for why one metric needs two transports.
+	QueueFallback *QueueFallback
 }
 
 // SetGPULimiter injects the limiter whose constraints bound a wake, so the
@@ -408,10 +413,23 @@ func (e *Engine) processInactiveModel(
 	duration := time.Since(startTime).Seconds()
 	metrics.ObserveMetricsCollectionDuration(duration, constants.QueryTypeQueueLength)
 
+	// A failed scrape is still recorded as a collection error even when the
+	// fallback answers: the direct path IS broken, and a fallback that silenced
+	// the error would hide the outage it exists to survive.
+	var fallbackPending source.MetricValue
+	var fallbackHasPending, onFallback bool
 	if err != nil {
 		reason := prometheus.CategorizePrometheusError(err)
 		metrics.IncMetricsCollectionErrors(constants.QueryTypeQueueLength, reason)
-		return err
+		fallbackPending, fallbackHasPending, onFallback = e.QueueFallback.PendingAfterScrapeFailure(
+			ctx, namespacedPoolName, group.modelID, err)
+		if !onFallback {
+			// No second transport, not yet past the failure threshold, or
+			// Prometheus is down too. Surface the scrape error, as before.
+			return err
+		}
+	} else {
+		e.QueueFallback.ScrapeSucceeded(ctx, namespacedPoolName)
 	}
 
 	// A P/D model whose decode is up but whose prefill is still parked has to be
@@ -422,8 +440,11 @@ func (e *Engine) processInactiveModel(
 	catchUpWanted := covered.decode && !covered.prefill && hasPrefillCandidate(candidates)
 
 	// Check for pending requests using EPP flowcontrol queue size metrics
-	result := results["all_metrics"]
-	pending, pendingRequestExist := pendingRequestsForModel(result.Values, group.modelID)
+	pending, pendingRequestExist := fallbackPending, fallbackHasPending
+	if !onFallback {
+		result := results["all_metrics"]
+		pending, pendingRequestExist = pendingRequestsForModel(result.Values, group.modelID)
+	}
 	if !pendingRequestExist && !catchUpWanted {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",

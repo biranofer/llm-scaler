@@ -645,6 +645,16 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   }
   ```
 
+### `wva_scale_from_zero_queue_fallback_active`
+- **Type**: Gauge
+- **Description**: `1` while the scale-from-zero engine is reading the EPP flow-control queue from Prometheus because the **direct EPP scrape is failing**, `0` while the direct scrape works. WVA reads the wake signal by scraping the EPP pod directly (pod IP, EPP metrics port, projected bearer token) — the one metric path that does not go through Prometheus — so it fails independently of everything else. The fallback keeps models waking; it does not make the direct path healthy.
+- **Labels**: `pool` (namespaced InferencePool, e.g. `llm-d-sim/optimized-baseline`), optional `controller_instance`
+- **Use Case**: Alert on a sustained `1`. Wakes still happen but are slower — bounded by the Prometheus scrape interval instead of the engine's 100 ms loop — and the underlying cause (EPP metrics token, EPP tokenreview RBAC, or a NetworkPolicy blocking pod-IP egress from the WVA namespace) will not fix itself. See [troubleshooting](troubleshooting.md#the-epp-scrape-is-failing-but-wva-still-wakes-models-slowly).
+- **Example alert**:
+  ```
+  max_over_time(wva_scale_from_zero_queue_fallback_active[10m]) == 1
+  ```
+
 ### `wva_available_gpus`
 - **Type**: Gauge
 - **Description**: Number of currently available GPUs grouped by accelerator type (e.g., "H100", "A100"). When `wva_gpu_discovery_up` is 1, this shows the number of currently available GPUs. When `wva_gpu_discovery_up` is 0, this metric shows the number of GPUs that were available at the last successful discovery. Only available in clusters such as OpenShift where WVA can iterate over node objects. There are no exclusions such as tainted nodes or GPUs operating in different modes such as MIG.

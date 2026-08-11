@@ -579,6 +579,14 @@ func main() {
 		// at the moment it is consulted, and a workload that has just started
 		// holding GPUs is exactly what a placement must not miss.
 		engine.UsageRefresher = usageRefresher
+		// Second transport for the wake signal. This engine scrapes the EPP pod
+		// directly, which is the only WVA metric path that does not go through
+		// Prometheus — so a broken token, missing EPP tokenreview RBAC or a
+		// NetworkPolicy takes out wakes alone, silently, while the same queue
+		// depth sits readable in Prometheus. Nil source yields a nil fallback and
+		// the pre-existing behaviour; see queue_fallback.go.
+		engine.QueueFallback = scalefromzero.NewQueueFallback(
+			prometheus.NewPrometheusSource(ctx, promAPI, prometheus.DefaultPrometheusSourceConfig()))
 		// Give the engine a limiter so a wake is only published for a variant
 		// that can actually be placed. This is its own instance rather than the
 		// saturation engine's: a limiter supplies constraints from usage passed

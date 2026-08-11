@@ -144,19 +144,30 @@ func RegisterSaturationQueries(sourceRegistry *source.SourceRegistry) {
 	// different namespaces, these queries aggregate across all of them. Once the
 	// upstream adds a namespace label, they should group by (and be scoped to) it.
 
-	// Number of requests queued in the scheduler's flow control layer
+	// Number of requests queued in the scheduler's flow control layer.
+	//
+	// Both families are read, preferring llm-d's. The EPP renamed this metric to
+	// the llm_d_epp_ prefix and upstream gateway-api-inference-extension kept the
+	// inference_extension_ one, so which exists depends on the EPP build — and
+	// PromQL `or` is exactly that preference: the left side where it has series,
+	// the right side only where it does not. Reading only the deprecated name left
+	// this query empty on a newer EPP, which mattered twice over once the
+	// scale-from-zero fallback started reading it (queue_fallback.go): no series
+	// means no demand means nothing is ever woken.
 	registry.MustRegister(source.QueryTemplate{
-		Name:        QuerySchedulerQueueSize,
-		Type:        source.QueryTypePromQL,
-		Template:    `sum by (model_name, target_model_name) (inference_extension_flow_control_queue_size)`,
+		Name: QuerySchedulerQueueSize,
+		Type: source.QueryTypePromQL,
+		Template: `sum by (model_name, target_model_name) (llm_d_epp_flow_control_queue_size)` +
+			` or sum by (model_name, target_model_name) (inference_extension_flow_control_queue_size)`,
 		Description: "Requests queued in scheduler flow control, per model",
 	})
 
 	// Total bytes of request bodies queued in the scheduler's flow control layer
 	registry.MustRegister(source.QueryTemplate{
-		Name:        QuerySchedulerQueueBytes,
-		Type:        source.QueryTypePromQL,
-		Template:    `sum by (model_name, target_model_name) (inference_extension_flow_control_queue_bytes)`,
+		Name: QuerySchedulerQueueBytes,
+		Type: source.QueryTypePromQL,
+		Template: `sum by (model_name, target_model_name) (llm_d_epp_flow_control_queue_bytes)` +
+			` or sum by (model_name, target_model_name) (inference_extension_flow_control_queue_bytes)`,
 		Description: "Bytes queued in scheduler flow control, per model",
 	})
 
