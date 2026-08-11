@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -127,4 +128,50 @@ func joinSorted(values []string) string {
 	sorted := slices.Clone(values)
 	slices.Sort(sorted)
 	return strings.Join(sorted, ",")
+}
+
+// reportUnresolvedAccelerator warns that a variant's accelerator could not be
+// resolved, and says what that actually costs under the current configuration.
+//
+// This is a LOG line rather than only a Kubernetes event because the event does
+// not arrive. Variants are synthesized in memory and their kind is not registered
+// in the scheme, so the recorder cannot build an object reference for one:
+// "no kind is registered for the type variant.VariantAutoscaling". A single e2e
+// run attempted 31 of these warnings and the API server received none of them —
+// the operator's only signal for a real misconfiguration was being dropped, and
+// the emission looked successful from inside WVA.
+//
+// The consequence depends on whether a limiter is declared, and the difference is
+// severe enough to be worth saying rather than leaving to be inferred:
+//
+//   - no limiter: the variant still scales. Its GPUs are charged to no accelerator
+//     pool, so budgets over-state free capacity (wva_unattributed_gpus), and
+//     accelerator-keyed metrics are withheld;
+//   - a limiter declared: a GPU-aware optimizer allocates out of per-accelerator
+//     pools, so this variant is charged to none, receives no budget, and NEVER
+//     SCALES UP. Nothing errors; it simply sits at its current replica count.
+//
+// Reported once per change per variant, so a persistent misconfiguration does not
+// print every cycle.
+func (p *policyReporter) reportUnresolvedAccelerator(ctx context.Context, namespace, variant, limiterMode string) {
+	limited := limiterMode != "" && limiterMode != string(config.LimiterTypeNone)
+	if !p.changed("accel|"+namespace+"/"+variant, strconv.FormatBool(limited)) {
+		return
+	}
+
+	logger := ctrl.LoggerFrom(ctx)
+	if limited {
+		logger.Info("Accelerator not resolved and a GPU limiter is declared: this variant will "+
+			"NOT be allocated any GPU budget and therefore will not scale up. Set a GPU product "+
+			"key in the workload's nodeSelector or nodeAffinity.",
+			"namespace", namespace, "variant", variant, "limiter", limiterMode)
+		return
+	}
+	logger.Info("Accelerator not resolved: this variant's GPUs are charged to no accelerator "+
+		"pool, so GPU budgets over-state free capacity by that amount (wva_unattributed_gpus) "+
+		"and accelerator-keyed saturation/capacity metrics are withheld. Replica scaling metrics "+
+		"still carry accelerator_type=\"unresolved\". Set a GPU product key in the workload's "+
+		"nodeSelector or nodeAffinity. NOTE: declaring a GPU limiter while this is unresolved "+
+		"would stop the variant scaling up entirely.",
+		"namespace", namespace, "variant", variant)
 }

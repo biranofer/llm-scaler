@@ -1581,8 +1581,7 @@ func (e *Engine) applySaturationDecisions(
 		// cycle.
 		if !constants.IsAcceleratorResolved(acceleratorName) {
 			e.emitAcceleratorNotResolvedEvent(&updateVa)
-			logger.V(logging.DEBUG).Info("Accelerator name not resolved - replica scaling metrics emitted with accelerator_type=\"unresolved\"; accelerator-specific saturation/capacity metrics withheld",
-				"variant", vaName)
+			e.policies.reportUnresolvedAccelerator(ctx, va.Namespace, vaName, string(e.Config.EffectiveLimiterMode()))
 		}
 
 		// Stage the just-computed decision on the in-memory VA so that

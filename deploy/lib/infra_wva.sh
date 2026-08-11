@@ -178,7 +178,7 @@ EOF
         gpu-inventory|quota)
             log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap..."
             local policy_cm current_default updated_default
-            policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null                 | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
+             policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null \n                | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
             if [ -z "$policy_cm" ]; then
                 log_error "No scaling-policy ConfigMap found in $WVA_NS"
             fi
@@ -191,7 +191,26 @@ EOF
             # entry would then win over the gpu-inventory one by mode precedence.
             updated_default=$(echo "$current_default"                 | yq ".limiters = [{\"type\": \"${WVA_LIMITER}\"}]")
             kubectl patch configmap "$policy_cm" -n "$WVA_NS" --type=merge                 -p "$(jq -n --arg d "$updated_default" '{data:{"default":$d}}')"
-            log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter. Every managed workload needs a resolvable accelerator (a GPU product nodeSelector) or it will not be allocated any budget — watch for AcceleratorNotResolved events."
+            log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter."
+            # A GPU-aware optimizer allocates out of per-accelerator pools, so a
+            # workload whose accelerator cannot be resolved gets no budget and stops
+            # scaling up — silently. Say so at install, and say how to check, because
+            # the symptom (a workload that simply never grows) looks like anything.
+            if [ "$WVA_LIMITER" = "gpu-inventory" ]; then
+                local gpu_products
+                # Space-separated on one line, then split — a {"\n"} inside the
+                # jsonpath is fragile to quote through the layers this runs under.
+                gpu_products=$(kubectl get nodes \
+                    -o jsonpath='{.items[*].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null \
+                    | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l)
+                if [ "${gpu_products:-0}" -gt 1 ]; then
+                    log_warning "This cluster advertises ${gpu_products} different GPU products. Every managed workload MUST pin one with a nodeSelector/nodeAffinity GPU product key — an unpinned workload is charged to no accelerator pool, receives no budget, and will not scale up. Check with:"
+                    log_warning "    kubectl get nodes -L nvidia.com/gpu.product"
+                    log_warning "    kubectl get events -A --field-selector reason=AcceleratorNotResolved"
+                else
+                    log_info "Single GPU product detected: an unpinned workload is deduced onto it, so no nodeSelector is required."
+                fi
+            fi
             ;;
         *)
             log_error "WVA_LIMITER must be 'none', 'gpu-inventory' or 'quota', got '${WVA_LIMITER}'"
