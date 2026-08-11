@@ -142,8 +142,15 @@ triggers:
 | `inferencePool`, `modelName`, `engine`, `scalingPolicy` ref, `wvaOwnership` | **metadata** | per target |
 | `cost` | **metadata** | per target — per-accelerator by construction |
 | `role`, accelerator type, GPU/replica | **inferred** from `scaleTargetRef` workload | per target |
-| `priority` (tier default), scale thresholds, SLO targets | **named policy CM** | per tier (reusable) |
-| `enableLimiter`, `enableRescale`, GPU budget, fallbacks | **default/namespace CM** | cluster / tenant |
+| `priority` (tier default), scale thresholds, SLO targets, `scaleToZero` | **named policy CM** | per tier (reusable) |
+| `limiters`/`quota`, `enableRescale`, GPU budget, fallbacks | **default/namespace CM** | cluster / tenant |
+
+> **Update (2026-08-11):** `scaleToZero` is now `{enabled, retentionPeriod}` on the
+> scaling entry and is the only per-model surface for it — the separate
+> `wva-model-scale-to-zero-config` ConfigMap is gone. It belongs in the **named
+> policy** row: whether a tier is allowed to idle to zero, and how long it must be
+> idle first, are tier properties, not per-target facts. `WVA_SCALE_TO_ZERO`
+> remains the deployment-level switch.
 
 - **Role** is inferred from the workload: primary = engine args (`--disaggregation-mode prefill|decode`, parsed by `deployment_parser`); fallback = pod-template label `llm-d.ai/role`. Optional metadata override only for ambiguous `both`.
 - **Accelerator type / GPU count** from the `scaleTargetRef` pods' resource requests + node GPU type (existing discovery). **Cost** stays in metadata (per-accelerator); a future iteration can source it from OpenCost without changing shape.
@@ -171,9 +178,30 @@ global default CM      (cluster: fallback thresholds, GPU budget, defaultPolicy)
 ```
 
 - **Priority** = tier default in the policy + **optional per-SO metadata override** (metadata > policy). Priority tracks the tier, so sharing across a tier's models is correct.
-- **Budget-scope knobs** (`enableLimiter`, `enableRescale`, GPU budget) live in the **default/namespace layer**, not the reusable policy — they are cluster/namespace-scoped (the code already reads `EnableRescale` "only from the default entry"; this formalizes it).
+- **Budget-scope knobs** (`limiters`, `enableRescale`, GPU budget) live in the **default/namespace layer**, not the reusable policy — they are cluster/namespace-scoped (the code already reads `EnableRescale` "only from the default entry"; this formalizes it). A tenant must not be able to grant themselves capacity by naming a policy, so a `limiters:` block anywhere but the cluster layer is ignored and reported.
+
+  > **Update (2026-08-11):** the `enableLimiter` flag no longer exists. The `limiters:` list is the sole switch — declaring a limiter is what turns limiting on, and declaring none means nothing is limited. Two knobs meant a quota could be declared and silently not enforced. See `docs/developer-guide/quota-limiter.md`.
 - **Emit the resolved effective policy** per SO (`wva_effective_policy_*` metric / structured log) — layered config is hard to debug without a "which value won" readout; annotations are disallowed, so use a metric/log.
 - **Start with two layers** (global default + named policy); add the namespace layer only when multi-tenancy demands it.
+
+**Three rules the layering needs to be safe (added 2026-08-11).** Each closes a
+way the resolution above can go wrong silently:
+
+- **A model's variants must resolve to ONE policy.** WVA scales a model and the
+  optimizer distributes replicas across its variants, so two ScaledObjects of the
+  same model naming different tiers would have the optimizer balancing them under
+  conflicting thresholds. Treat it as a config error: report it and resolve
+  deterministically rather than letting it half-apply. (Different models sharing a
+  tier is the normal case and stays fine — that is the point of tiers.)
+- **An unknown policy name must be reported, not absorbed.** Falling back to the
+  global default is the right behaviour, but doing it quietly makes a typo look
+  like a working configuration. Warn with the name that did not resolve.
+- **`priority` is tier-scoped, not per-target.** The metadata override above is a
+  capability leak: priority is *how contention is resolved*, so a tenant raising
+  their own is self-granting — the same class of problem as quota, which this
+  design already keeps off the tenant surface. Either keep priority in the policy
+  only, or clamp a metadata override to at most the policy's value. It cannot be
+  a free per-target field.
 
 ### 7.6 Analyzers: a cluster catalog, selected by policy
 
@@ -247,7 +275,8 @@ analyzers:
 ```
 ```yaml
 # ConfigMap: wva-defaults   (GLOBAL default + budget scope)
-enableLimiter: true
+limiters:                    # declaring one is what enables limiting
+  - type: gpu-inventory
 enableRescale: true
 gpuBudget: 128
 defaultPolicy: standard      # used when a SO names no policy
@@ -319,7 +348,7 @@ Both reference the **same reusable `interactive` policy** (§7.6 examples), whic
 3. Collector runs **internal `saturation`** (Go token/capacity model) and **external `ttft-slo`** (PromQL, vLLM body) over `llama-3-70b` metrics, attributed to each SO's pods.
 4. Composite score (`interactive`: `saturation` 1.0, `ttft-slo` 0.5) → one `D/P` per SO.
 5. Scaler returns `metricValue=D`, `targetSize=P`; each HPA scales its Deployment within `[min,max]`.
-6. Under GPU contention, `enableRescale`/`enableLimiter` (from `wva-defaults`, priority-weighted) reallocate; an **urgent ceiling** lowers `maxReplicaCount` on a lower-priority pool to free GPUs immediately (§5).
+6. Under GPU contention, `enableRescale` and the declared `limiters` (from `wva-defaults`, priority-weighted) reallocate; an **urgent ceiling** lowers `maxReplicaCount` on a lower-priority pool to free GPUs immediately (§5).
 
 ### 7.9 Collector: efficient shared queries
 
