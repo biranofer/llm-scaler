@@ -130,10 +130,9 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 		By("Creating the model service with --fake-metrics so the operating point is fixed")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 		Expect(fixtures.CreateModelServiceWithExtraArgs(
-			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
+			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
 			cfg.UseSimulator, cfg.MaxNumSeqs,
-			[]string{"--fake-metrics", tierFakeMetricsJSON},
-		)).To(Succeed())
+			[]string{"--fake-metrics", tierFakeMetricsJSON})).To(Succeed())
 		Expect(fixtures.EnsureService(
 			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000,
 		)).To(Succeed())

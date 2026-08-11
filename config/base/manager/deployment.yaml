@@ -45,6 +45,15 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          # Which namespace a namespace-scoped controller MANAGES, as distinct from
+          # the one it RUNS IN. It defaults to the latter, which is what the flag
+          # used to hardcode — and that forced the controller to live inside the
+          # namespace it manages. For a tenant namespace that hands the tenant
+          # ownership of this very Deployment, so they could edit or remove any
+          # bound placed on them. Kubernetes expands $(POD_NAMESPACE) here from the
+          # env var above, so the default is unchanged.
+          - name: WVA_WATCH_NAMESPACE
+            value: "$(POD_NAMESPACE)"
         name: manager
         ports:
           - name: healthz

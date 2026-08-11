@@ -106,6 +106,24 @@ type scalingPolicyConfig struct {
 
 	// Namespace-local configuration overrides (keyed by namespace name)
 	namespaceConfigs map[string]ScalingPolicySet
+
+	// clusterPolicy holds the limiters and quotas read from PolicyNamespace when
+	// that differs from the controller's own namespace. It is kept apart from
+	// `global` rather than merged into it because the whole point is that the two
+	// have different owners: `global` is whoever can write the controller's
+	// namespace — for a namespace-scoped install, the tenant — while this comes
+	// from a namespace the cluster admin holds. Merging would let the tenant's
+	// ConfigMap raise the tenant's own quota.
+	//
+	// Nil when policy is not separated, which is the default and the
+	// cluster-scoped case; the limiter accessors then read `global` as before.
+	clusterPolicy *ScalingPolicy
+
+	// policyNamespace is the namespace cluster policy is read from, resolved once
+	// at startup against the live cluster (the well-known namespace only wins if
+	// it actually exists). policySource records which rule chose it.
+	policyNamespace string
+	policySource    PolicySource
 }
 
 // // StaticConfig holds configuration that is immutable after startup.
@@ -531,6 +549,15 @@ func (c *Config) setPrometheusBaseURLForTesting(baseURL string) {
 	c.prometheus.baseURL = baseURL
 }
 
+// SetWatchNamespaceForTest overrides the watched namespace on a test Config.
+// Load() takes it from WATCH_NAMESPACE, which is not settable per-case without
+// mutating process env for tests that must vary it. Not for production use.
+func SetWatchNamespaceForTest(c *Config, ns string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.infrastructure.watchNamespace = ns
+}
+
 // SetOptimizationIntervalForTest overrides the optimization interval on a test
 // Config, including to a non-positive value — Load() always sanitizes it to at
 // least MinOptimizationInterval, so this is the only way to exercise a caller's
@@ -601,7 +628,7 @@ func (c *Config) MarkConfigMapsBootstrapFailed(err error) {
 func (c *Config) EffectiveLimiterMode() LimiterType {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	limiters := c.saturation.global["default"].Limiters
+	limiters := c.effectiveLimitersLocked()
 	if len(limiters) == 0 {
 		return LimiterTypeNone
 	}
@@ -622,10 +649,92 @@ func (c *Config) EffectiveQuotaEntries() []QuotaLimiterConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	var inline []QuotaLimiterConfig
-	for _, l := range c.saturation.global["default"].Limiters {
+	for _, l := range c.effectiveLimitersLocked() {
 		if l.Type == string(LimiterTypeQuota) {
 			inline = append(inline, l.clone())
 		}
 	}
 	return inline
+}
+
+// effectiveLimitersLocked returns the limiters that actually bound this cluster.
+//
+// One place decides where they come from, so the limiter MODE and the quota
+// ENTRIES can never disagree about it — a split that would be invisible in the
+// logs and would show up only as a quota limiter enforcing nothing. Callers must
+// hold at least the read lock.
+func (c *Config) effectiveLimitersLocked() []QuotaLimiterConfig {
+	if c.saturation.clusterPolicy != nil {
+		return c.saturation.clusterPolicy.Limiters
+	}
+	return c.saturation.global["default"].Limiters
+}
+
+// SetPolicyNamespace records the resolved cluster-policy namespace and the rule
+// that chose it. Called once at startup, before the manager runs.
+// Thread-safe.
+func (c *Config) SetPolicyNamespace(ns string, source PolicySource) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.saturation.policyNamespace = ns
+	c.saturation.policySource = source
+}
+
+// PolicyNamespace returns the namespace cluster policy is read from. Empty before
+// resolution, in which case callers fall back to the controller's own namespace.
+// Thread-safe.
+func (c *Config) PolicyNamespace() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.saturation.policyNamespace == "" {
+		return SystemNamespace()
+	}
+	return c.saturation.policyNamespace
+}
+
+// PolicySource returns the rule that chose the policy namespace.
+// Thread-safe.
+func (c *Config) PolicySource() PolicySource {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.saturation.policySource == "" {
+		return PolicySourceLocal
+	}
+	return c.saturation.policySource
+}
+
+// PolicyNamespaceIsSeparate reports whether cluster policy comes from a namespace
+// other than the controller's own. When it does, the ConfigMap in the controller's
+// namespace loses its authority over limiters and quotas.
+// Thread-safe.
+func (c *Config) PolicyNamespaceIsSeparate() bool {
+	return c.PolicyNamespace() != SystemNamespace()
+}
+
+// UpdateClusterPolicy replaces the limiters and quotas read from the policy
+// namespace. Passing a nil policy clears the separation, restoring the global
+// entry as the source.
+// Thread-safe.
+func (c *Config) UpdateClusterPolicy(policy *ScalingPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if policy == nil {
+		c.saturation.clusterPolicy = nil
+		return
+	}
+	cloned := *policy
+	cloned.Limiters = make([]QuotaLimiterConfig, 0, len(policy.Limiters))
+	for _, l := range policy.Limiters {
+		cloned.Limiters = append(cloned.Limiters, l.clone())
+	}
+	c.saturation.clusterPolicy = &cloned
+}
+
+// ClusterPolicyIsSeparate reports whether limiters and quotas are being read from
+// a namespace other than the controller's own.
+// Thread-safe.
+func (c *Config) ClusterPolicyIsSeparate() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.saturation.clusterPolicy != nil
 }

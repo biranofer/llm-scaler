@@ -57,9 +57,8 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 	ensureRoleWorkloadAtZero := func(svcName, deployName, variantName, scalerName, role string) {
 		GinkgoHelper()
 		Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, svcName, poolName,
-			sfzModelID("sfz-pd"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
-			fixtures.WithRole(role),
-		)).To(Succeed(), "creating the %s model service", role)
+			sfzModelID("sfz-pd"), cfg.UseSimulator, cfg.MaxNumSeqs,
+			fixtures.WithRole(role))).To(Succeed(), "creating the %s model service", role)
 
 		Eventually(func(g Gomega) {
 			deploy, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deployName, metav1.GetOptions{})

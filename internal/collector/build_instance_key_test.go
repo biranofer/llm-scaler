@@ -28,7 +28,6 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
@@ -115,10 +114,15 @@ var buildInstanceKeyTestCases = []buildInstanceKeyTestCase{
 		// by it — the locator is the only authority.
 		name: "llm_d_ai_variant present but pod unmanaged – label must not attribute it",
 		labels: map[string]string{
-			seriesModelLabel:                    "test-model",
-			"pod":                               "pod-labelled",
-			"instance":                          "10.0.0.4:8000",
-			constants.VariantLabelPrometheusKey: "stale-va",
+			seriesModelLabel: "test-model",
+			"pod":            "pod-labelled",
+			"instance":       "10.0.0.4:8000",
+			// Spelled out rather than taken from a constant. This is a series
+			// arriving from OUTSIDE — a ServiceMonitor relabeling that predates
+			// #1263, or a shadow-pod layout — so the test should say the literal
+			// string the cluster sends, not import our name for it. The constant
+			// itself is gone: nothing in the controller reads this label.
+			"llm_d_ai_variant": "stale-va",
 		},
 		wantSkipped: true,
 	},
@@ -205,13 +209,6 @@ func (m *mockLocator) Locate(ctx context.Context, namespace, podName string) (*l
 		return nil, nil
 	}
 	return m.locateFunc(ctx, namespace, podName)
-}
-
-func (m *mockLocator) LocateByVariant(_ context.Context, _, _ string) (*locator.ManagedScaler, error) {
-	if m == nil {
-		return nil, nil
-	}
-	return nil, nil
 }
 
 // TODO(va-removal): remove ResolveScaleTarget from the mock when the CRD-based

@@ -16,11 +16,10 @@ import (
 )
 
 // EnsureModelServiceLWS creates or replaces a LeaderWorkerSet for model service (idempotent for test setup).
-// variantName is stamped as the llm-d.ai/variant label on both leader and worker pod templates
 // so the collector can attribute pod metrics to the right annotated scaler. Pass "" to omit.
-func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, groupSize int32) error {
+func EnsureModelServiceLWS(ctx context.Context, crClient client.Client, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) error {
 	lwsName := name + decodeNameSuffix
-	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, variantName, useSimulator, maxNumSeqs, groupSize)
+	desiredLWS := buildModelServiceLWS(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, groupSize)
 
 	// Check if LWS already exists
 	existingLWS := &lwsv1.LeaderWorkerSet{}
@@ -103,7 +102,7 @@ func DeleteModelServiceLWS(ctx context.Context, crClient client.Client, namespac
 	return nil
 }
 
-func buildModelServiceLWS(namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, groupSize int32) *lwsv1.LeaderWorkerSet {
+func buildModelServiceLWS(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, groupSize int32) *lwsv1.LeaderWorkerSet {
 	appLabel := name + decodeNameSuffix
 	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
@@ -119,9 +118,6 @@ func buildModelServiceLWS(namespace, name, poolName, modelID, variantName string
 		"llm-d.ai/guide":               defaultGuideLabelValue,
 		"llm-d.ai/inference-serving":   defaultLabelValueTrue,
 		"llm-d.ai/accelerator-variant": defaultAcceleratorVariantValue,
-	}
-	if variantName != "" {
-		labels["llm-d.ai/variant"] = variantName
 	}
 
 	envVars := []corev1.EnvVar{

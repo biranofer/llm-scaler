@@ -72,11 +72,10 @@ func WithGPURequest(count int64) ModelServiceOption {
 // CreateModelService creates the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; callers must use CreateService or EnsureService
 // (typically naming the Service name + "-service") to expose the deployment.
-// variantName is stamped as the llm-d.ai/variant label on the pod template so the
 // collector can attribute pod metrics to the right annotated scaler. Pass "" to omit
 // the label (no WVA-managed scaler targets this deployment).
-func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int) error {
-	return CreateModelServiceWithExtraArgs(ctx, k8sClient, namespace, name, poolName, modelID, variantName, useSimulator, maxNumSeqs, nil)
+func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int) error {
+	return CreateModelServiceWithExtraArgs(ctx, k8sClient, namespace, name, poolName, modelID, useSimulator, maxNumSeqs, nil)
 }
 
 // CreateModelServiceWithExtraArgs is like CreateModelService but appends additional
@@ -89,8 +88,8 @@ func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 // the container to crash-loop if passed to the wrong runtime. Tests that use
 // simulator-only flags should gate their suite on `cfg.UseSimulator` and Skip
 // otherwise.
-func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, extraArgs []string) error {
-	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, variantName, useSimulator, maxNumSeqs, extraArgs)
+func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string) error {
+	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, extraArgs)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
@@ -107,13 +106,12 @@ func DeleteModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 
 // EnsureModelService creates or replaces the model-server Deployment only (name + "-decode").
 // It does not create a Kubernetes Service; pair with EnsureService for a ClusterIP Service.
-// variantName is stamped as the llm-d.ai/variant label on the pod template so the
 // collector can attribute pod metrics to the right annotated scaler. Pass "" to omit.
 // Options adjust the built Deployment before it is applied; see WithRole.
-func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
+func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, opts ...ModelServiceOption) error {
 	appLabel := name + decodeNameSuffix
 	deploymentName := appLabel
-	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, variantName, useSimulator, maxNumSeqs, nil)
+	desiredDeployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, nil)
 	for _, opt := range opts {
 		opt(desiredDeployment)
 	}
@@ -159,7 +157,7 @@ func modelServiceDeploymentMatchesDesired(existing, desired appsv1.Deployment) b
 		apiequality.Semantic.DeepEqual(existing.Spec.Template.Spec, desired.Spec.Template.Spec)
 }
 
-func buildModelServiceDeployment(namespace, name, poolName, modelID, variantName string, useSimulator bool, maxNumSeqs int, extraArgs []string) *appsv1.Deployment {
+func buildModelServiceDeployment(namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string) *appsv1.Deployment {
 	appLabel := name + decodeNameSuffix
 	image := defaultModelServiceSimulatorImage
 	if !useSimulator {
@@ -175,9 +173,6 @@ func buildModelServiceDeployment(namespace, name, poolName, modelID, variantName
 		"llm-d.ai/guide":               defaultGuideLabelValue,
 		"llm-d.ai/inference-serving":   defaultLabelValueTrue,
 		"llm-d.ai/accelerator-variant": defaultAcceleratorVariantValue,
-	}
-	if variantName != "" {
-		labels["llm-d.ai/variant"] = variantName
 	}
 
 	envVars := []corev1.EnvVar{

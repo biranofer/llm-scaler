@@ -87,10 +87,9 @@ var _ = Describe("KEDA external scaler", Label("smoke", "full"), Ordered, func()
 		By("Creating the model service with --fake-metrics so WVA decides deterministically")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 		Expect(fixtures.CreateModelServiceWithExtraArgs(
-			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
+			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
 			cfg.UseSimulator, cfg.MaxNumSeqs,
-			[]string{"--fake-metrics", extScalerFakeMetricsJSON},
-		)).To(Succeed())
+			[]string{"--fake-metrics", extScalerFakeMetricsJSON})).To(Succeed())
 		Expect(fixtures.EnsureService(
 			ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000,
 		)).To(Succeed())

@@ -130,7 +130,7 @@ var _ = Describe("KEDA Smoke Tests - Basic Autoscaling", Label("smoke", "full"),
 		}
 
 		By("Creating model service deployment")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, variantName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceName, poolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		By("Creating service to expose model server")
@@ -279,7 +279,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "full"), Or
 		})
 
 		By("Creating model service deployment for error handling tests")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVariantName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		By("Waiting for model service to be ready")
@@ -317,7 +317,7 @@ var _ = Describe("KEDA Smoke Tests - Error Handling", Label("smoke", "full"), Or
 		Expect(err).NotTo(HaveOccurred(), "ScaledObject should continue to exist after deployment deletion")
 
 		By("Recreating the deployment")
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, errorTestVariantName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, errorTestModelServiceName, errorTestPoolName, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to recreate model service")
 
 		By("Waiting for deployment to be ready after recreation")

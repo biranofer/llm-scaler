@@ -81,7 +81,19 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Determine if this is a global or namespace-local ConfigMap
 	isGlobal := namespace == systemNamespace
-	isNamespaceLocal := !isGlobal && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
+	// The policy namespace is a third source, and it is checked before the
+	// namespace-local test: when it is separate it is by definition NOT a watched
+	// tenant namespace, and treating it as one would file the cluster's limiters
+	// under a namespace override.
+	isPolicySource := r.Config.PolicyNamespaceIsSeparate() && namespace == r.Config.PolicyNamespace()
+	isNamespaceLocal := !isGlobal && !isPolicySource && r.shouldWatchNamespaceLocalConfigMap(ctx, namespace)
+
+	if isPolicySource {
+		if slices.Contains(config.ScalingPolicyConfigMapNames(), name) {
+			r.handleClusterPolicyConfigMap(ctx, cm)
+		}
+		return ctrl.Result{}, nil
+	}
 
 	// Only process if it's global or namespace-local (tracked)
 	if !isGlobal && !isNamespaceLocal {
@@ -202,6 +214,34 @@ func (r *ConfigMapReconciler) supersededByCurrentName(ctx context.Context, cm *c
 	return false
 }
 
+// handleClusterPolicyConfigMap loads limiters and quotas from the policy
+// namespace — the namespace a cluster admin owns, which for a namespace-scoped
+// install is not the one the controller runs in.
+//
+// Only the "default" entry's limiters are taken. Cluster policy is a bound on the
+// whole install; per-model thresholds and tiers stay where the workload's own
+// operator can edit them, because those are tuning, not entitlement.
+func (r *ConfigMapReconciler) handleClusterPolicyConfigMap(ctx context.Context, cm *corev1.ConfigMap) {
+	logger := log.FromContext(ctx)
+
+	configs, _ := parseScalingPolicyConfig(cm.Data, logger)
+	policy, ok := configs["default"]
+	if !ok {
+		// An empty or absent default entry means no bound was declared. That must
+		// clear any previous one rather than leave the last-known limiters in
+		// place: a cluster admin who deletes a quota expects it to stop applying.
+		r.Config.UpdateClusterPolicy(nil)
+		logger.Info("Policy namespace ConfigMap has no default entry: no cluster limiters or quotas are in force",
+			"policyNamespace", cm.GetNamespace(), "configMap", cm.GetName())
+		return
+	}
+
+	r.Config.UpdateClusterPolicy(&policy)
+	logger.Info("Loaded cluster policy from the policy namespace",
+		"policyNamespace", cm.GetNamespace(), "configMap", cm.GetName(),
+		"limiters", len(policy.Limiters), "limiterMode", r.Config.EffectiveLimiterMode())
+}
+
 // handleScalingPolicyConfigMap handles updates to the scaling-policy ConfigMap.
 // Supports both global and namespace-local ConfigMaps.
 func (r *ConfigMapReconciler) handleScalingPolicyConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
@@ -216,6 +256,22 @@ func (r *ConfigMapReconciler) handleScalingPolicyConfigMap(ctx context.Context, 
 
 	// Update global or namespace-local config
 	if isGlobal {
+		// When cluster policy is sourced elsewhere, limiters here carry no
+		// authority — otherwise whoever can write the controller's namespace could
+		// raise their own quota, which is the entire thing WVA_POLICY_NAMESPACE
+		// exists to prevent. Say so rather than dropping it silently: a limiter
+		// block that reads as enforcing and enforces nothing is the worst outcome.
+		if r.Config.PolicyNamespaceIsSeparate() {
+			for key, satConfig := range configs {
+				if len(satConfig.Limiters) > 0 {
+					logger.Info("Ignoring limiters in the controller's own ConfigMap: cluster policy "+
+						"is read from the policy namespace, which this deployment does not own. "+
+						"Ask a cluster admin to change it there.",
+						"entry", key, "policyNamespace", r.Config.PolicyNamespace(),
+						"systemNamespace", config.SystemNamespace())
+				}
+			}
+		}
 		r.Config.UpdateScalingPolicyConfig(configs)
 		logger.Info("Updated global scaling policy from ConfigMap", "entries", count)
 		r.warnIfThroughputRegistrationDiverged(logger, cm)

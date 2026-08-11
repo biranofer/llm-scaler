@@ -172,6 +172,23 @@ func main() {
 	}
 	setupLog.Info("Configuration loaded successfully")
 
+	// Where cluster policy comes from has to be settled BEFORE the manager exists,
+	// because the manager's cache is built from the answer — a namespace absent
+	// from the cache is a namespace whose limiters can never be read. It needs a
+	// live lookup (the well-known namespace only wins if it is actually there), so
+	// it uses a direct client rather than the manager's, which is not running yet.
+	policyProbe, err := client.New(restConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to build a client to resolve the cluster policy namespace")
+		os.Exit(1)
+	}
+	// Not ctrl.SetupSignalHandler(): that may be called only once per process, and
+	// mgr.Start() is its rightful owner. A second call panics.
+	if err := controller.ResolvePolicyNamespace(context.Background(), policyProbe, cfg); err != nil {
+		setupLog.Error(err, "unable to resolve where cluster policy comes from")
+		os.Exit(1)
+	}
+
 	// Conditionally add LeaderWorkerSet scheme if CRD exists
 	lwsEnabled := crd.CheckLeaderWorkerSetCRD(restConfig, setupLog)
 	if lwsEnabled {
@@ -326,10 +343,22 @@ func main() {
 	watchNS := cfg.WatchNamespace()
 	if watchNS != "" {
 		setupLog.Info("Watching single namespace", "namespace", watchNS)
+		namespaces := map[string]cache.Config{
+			watchNS: {},
+		}
+		// The policy namespace must be cached too, or the bound never arrives.
+		// A namespace-scoped install is exactly the case where cluster policy is
+		// held OUTSIDE the watched namespace — that separation is the point — so
+		// restricting the cache to watchNS alone would make every read of the
+		// limiter ConfigMap fail, and the controller would run the tenant
+		// unbounded while an admin believed a quota was in force.
+		if cfg.PolicyNamespaceIsSeparate() {
+			policyNS := cfg.PolicyNamespace()
+			namespaces[policyNS] = cache.Config{}
+			setupLog.Info("Also caching the cluster policy namespace", "policyNamespace", policyNS)
+		}
 		mgrOptions.Cache = cache.Options{
-			DefaultNamespaces: map[string]cache.Config{
-				watchNS: {},
-			},
+			DefaultNamespaces: namespaces,
 		}
 	} else {
 		// Multi-namespace mode: Use label selector to filter ConfigMaps in the cache
@@ -343,11 +372,27 @@ func main() {
 
 		// Configure cache to only watch configmaps with the WVA labels
 		// Other resource types are cached normally without filtering
+		cmNamespaces := map[string]cache.Config{}
+		if cfg.PolicyNamespaceIsSeparate() {
+			// Exempt the policy namespace from the label filter. That ConfigMap is
+			// written by a cluster admin, by hand or by their own tooling, and
+			// expecting them to reproduce one of our labels turns a forgotten label
+			// into a controller that reads no quota and says nothing. The bound has
+			// to survive being authored by someone who has not read our source.
+			// labels.Everything() explicitly: a nil LabelSelector is DEFAULTED to
+			// ByObject.Label, so leaving it unset would silently reapply the very
+			// filter this entry exists to lift.
+			policyNS := cfg.PolicyNamespace()
+			cmNamespaces[cache.AllNamespaces] = cache.Config{LabelSelector: wvaConfigSelector}
+			cmNamespaces[policyNS] = cache.Config{LabelSelector: labels.Everything()}
+			setupLog.Info("Caching the cluster policy namespace without the label filter",
+				"policyNamespace", policyNS)
+		}
 		mgrOptions.Cache = cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.ConfigMap{}: {
 					// Empty map means cache all namespaces, but filter by label
-					Namespaces: map[string]cache.Config{},
+					Namespaces: cmNamespaces,
 					Label:      wvaConfigSelector,
 				},
 			},

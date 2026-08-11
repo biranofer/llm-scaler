@@ -46,6 +46,15 @@ func ConfigMapPredicate(ds datastore.Datastore, cfg *config.Config) predicate.Pr
 			return true
 		}
 
+		// Cluster policy: the namespace holding limiters and quotas, which is
+		// deliberately outside the controller's own when a tenant runs the
+		// controller. Without this it would be filtered out here — the namespace has
+		// no VariantAutoscaling in it and never becomes "tracked" — and limiter
+		// changes would take effect only on restart.
+		if cfg != nil && cfg.PolicyNamespaceIsSeparate() && namespace == cfg.PolicyNamespace() {
+			return true
+		}
+
 		// Single-namespace mode: watch all ConfigMaps in the watched namespace
 		// Explicit CLI flag overrides tracking-based filtering
 		if cfg != nil {

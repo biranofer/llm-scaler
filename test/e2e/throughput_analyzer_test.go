@@ -316,7 +316,7 @@ var _ = Describe("ThroughputAnalyzer wiring health check", Label("smoke", "throu
 
 		By("Creating model service for throughput smoke test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName, cfg.UseSimulator, 2)).To(Succeed())
+		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, cfg.UseSimulator, 2)).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
 
@@ -437,7 +437,7 @@ var _ = Describe("Multi-analyzer engine scale-up (saturation-driven, throughput 
 
 		By("Creating model service with faked saturation metrics for scale-up")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
+		Expect(fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
 			cfg.UseSimulator, 2, []string{"--fake-metrics", throughputScaleUpFakeMetricsJSON})).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
@@ -546,7 +546,7 @@ var _ = Describe("ThroughputAnalyzer TA-only mode", Label("full", "throughput"),
 
 		By("Creating model service for TA-only test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName, cfg.UseSimulator, 2)).To(Succeed())
+		Expect(fixtures.CreateModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, cfg.UseSimulator, 2)).To(Succeed())
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)).To(Succeed())
 		Expect(fixtures.EnsureServiceMonitor(ctx, crClient, cfg.MonitoringNS, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment)).To(Succeed())
 

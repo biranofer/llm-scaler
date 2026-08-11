@@ -85,9 +85,8 @@ HTTPServer(("0.0.0.0", 8000), H).serve_forever()
 // ("<name>-decode").
 //
 // Pair it with CreateService/EnsureServiceMonitor (appLabel "<name>-decode").
-// variantName is stamped as the llm-d.ai/variant pod label for metric attribution
 // (pass "" to skip). The emitted metrics carry model_name == modelID.
-func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID, variantName string) error {
+func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID string) error {
 	appLabel := name + decodeNameSuffix
 	cmName := name + sglangScriptSuffix
 
@@ -107,9 +106,6 @@ func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, 
 		"app":                       appLabel,
 		"llm-d.ai/inferenceServing": defaultLabelValueTrue,
 		"test-resource":             defaultTestResourceLabelValue,
-	}
-	if variantName != "" {
-		labels["llm-d.ai/variant"] = variantName
 	}
 
 	deployment := &appsv1.Deployment{

@@ -49,6 +49,18 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 		}{name: policyNames[i], namespace: systemNamespace, isGlobal: true})
 	}
 
+	// Cluster policy, when it lives outside the controller's namespace, must be
+	// loaded before anything reads a limiter. Loading it here rather than on the
+	// first watch event means the very first optimization cycle is already bounded:
+	// a cycle that ran unbounded because policy had not arrived yet would allocate
+	// against no budget, and the actuation that follows is not undone by loading
+	// the limiter a moment later.
+	if r.Config.PolicyNamespaceIsSeparate() {
+		if err := r.bootstrapClusterPolicy(ctx); err != nil {
+			return err
+		}
+	}
+
 	// Determine which namespaces to scan for namespace-local ConfigMaps
 	var namespacesToScan []string
 
@@ -113,6 +125,44 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 
 	r.Config.MarkConfigMapsBootstrapComplete()
 	logger.Info("Initial ConfigMap bootstrap completed", "targets", len(targets))
+	return nil
+}
+
+// bootstrapClusterPolicy loads limiters and quotas from the policy namespace.
+//
+// A read failure here is FATAL to the bootstrap, unlike a missing tenant
+// ConfigMap. The two are not the same kind of absence: if the policy ConfigMap
+// simply does not exist, no bound was declared and running unbounded is what the
+// admin asked for. But if it exists and cannot be read — almost always a missing
+// RoleBinding in that namespace — then a bound WAS declared and this controller
+// cannot see it. Starting anyway would run the tenant unbounded while the cluster
+// admin has every reason to believe a quota is being enforced.
+func (r *ConfigMapReconciler) bootstrapClusterPolicy(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	policyNS := r.Config.PolicyNamespace()
+
+	for _, name := range config.ScalingPolicyConfigMapNames() {
+		cm := &corev1.ConfigMap{}
+		err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: policyNS}, cm)
+		if err == nil {
+			r.handleClusterPolicyConfigMap(ctx, cm)
+			return nil
+		}
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		errorType := "Failed to read cluster policy"
+		logger.Error(err, errorType,
+			"policyNamespace", policyNS, "configMap", name,
+			"hint", "the controller's ServiceAccount needs get/list/watch on ConfigMaps in this namespace")
+		metrics.RecordError(constants.ComponentController, errorType)
+		r.Config.MarkConfigMapsBootstrapFailed(err)
+		return fmt.Errorf("cannot read cluster policy from %s/%s, refusing to start unbounded: %w", policyNS, name, err)
+	}
+
+	logger.Info("No cluster policy ConfigMap in the policy namespace: no limiters or quotas are in force",
+		"policyNamespace", policyNS)
+	r.Config.UpdateClusterPolicy(nil)
 	return nil
 }
 

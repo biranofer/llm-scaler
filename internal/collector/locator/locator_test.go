@@ -200,33 +200,6 @@ func TestLocate_RegisteredForADifferentTargetFindsNothing(t *testing.T) {
 	}
 }
 
-// TestLocateByVariant_UnregisteredFindsNothing — the by-variant entry point reads
-// the same registry, so an unknown name resolves to nothing.
-func TestLocateByVariant_UnregisteredFindsNothing(t *testing.T) {
-	loc, _ := locator.New(newClients(t), variantsOf(registry.New(0)))
-
-	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
-	if err != nil {
-		t.Fatalf("LocateByVariant: %v", err)
-	}
-	if got != nil {
-		t.Fatalf("got=%v, want nil", got)
-	}
-}
-
-// TestLocateByVariant_Registered resolves by the scaler's own name.
-func TestLocateByVariant_Registered(t *testing.T) {
-	loc, _ := locator.New(newClients(t), variantsOf(registered("v", testNamespace, "Deployment", "d")))
-
-	got, err := loc.LocateByVariant(context.Background(), testNamespace, "v")
-	if err != nil {
-		t.Fatalf("LocateByVariant: %v", err)
-	}
-	if got == nil || got.Name != "v" {
-		t.Fatalf("got=%v, want the registered scaler", got)
-	}
-}
-
 // TODO(va-removal): the TestResolveScaleTarget_* tests below cover the method
 // added for the CRD-based dual-mode fallback. Remove them when the
 // VariantAutoscaling CRD (and ResolveScaleTarget) are removed.

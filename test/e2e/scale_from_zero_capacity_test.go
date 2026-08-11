@@ -132,13 +132,11 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		// saturation engine publish a usage snapshot at all.
 		occupierModel := sfzModelID("sfz-cap-occupier")
 		Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, occupierSvc, poolName,
-			occupierModel, occupierVar, cfg.UseSimulator, cfg.MaxNumSeqs,
+			occupierModel, cfg.UseSimulator, cfg.MaxNumSeqs,
 			fixtures.WithAcceleratorNodeSelector(fullAccelerator),
 			fixtures.WithGPURequest(gpusPerNode),
-			// Its own pool, per the one-model-one-pool contract: it must not
-			// serve the pool whose queue drives the wake under test.
-			fixtures.WithPoolGuide("sfz-cap-occupier-pool"),
-		)).To(Succeed())
+
+			fixtures.WithPoolGuide("sfz-cap-occupier-pool"))).To(Succeed())
 
 		// Scraped, so its replicas turn into measured usage.
 		Expect(fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, occupierSvc, occupierDeploy, 8000)).To(Succeed())
@@ -223,10 +221,9 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 func createParkedVariant(svcName, deployName, variantName, scalerName, poolName, accelerator string) {
 	GinkgoHelper()
 	Expect(fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, svcName, poolName,
-		sfzModelID("sfz-cap"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs,
+		sfzModelID("sfz-cap"), cfg.UseSimulator, cfg.MaxNumSeqs,
 		fixtures.WithAcceleratorNodeSelector(accelerator),
-		fixtures.WithGPURequest(1),
-	)).To(Succeed())
+		fixtures.WithGPURequest(1))).To(Succeed())
 
 	Eventually(func(g Gomega) {
 		deploy, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, deployName, metav1.GetOptions{})

@@ -52,16 +52,6 @@ type PodLocator interface {
 	// cannot attribute contributes no replica metrics.
 	Locate(ctx context.Context, namespace, podName string) (*ManagedScaler, error)
 
-	// LocateByVariant resolves the managed scaler by variant name (the
-	// value of the llm_d_ai_variant metric label, equal to the scaler's
-	// metadata.name), for shadow-pod layouts where the pod's ownerReferences
-	// chain does not reach the scaler's scaleTargetRef.
-	//
-	// Nothing calls this today: the collector stopped reading that label when
-	// it left the query groupings (#1263), and no engine emits it. It is kept
-	// as the entry point a shadow-pod layout would need.
-	LocateByVariant(ctx context.Context, namespace, variantName string) (*ManagedScaler, error)
-
 	// ResolveScaleTarget returns the top-level Deployment / LWS scale target
 	// in the pod's ownerReferences chain, independent of whether a managed
 	// scaler controls it. ok is false when the pod has no scaler-eligible
@@ -164,20 +154,6 @@ func (l *podLocator) resolveTarget(ctx context.Context, namespace, podName strin
 	}
 	l.cache.add(podKey{Namespace: namespace, Name: podName}, target, pod.Labels)
 	return target, nil
-}
-
-func (l *podLocator) LocateByVariant(ctx context.Context, namespace, variantName string) (*ManagedScaler, error) {
-	if variantName == "" {
-		return nil, nil
-	}
-	reg := l.registry()
-	if reg == nil {
-		return nil, nil
-	}
-	if _, ok := reg.Get(namespace, variantName); !ok {
-		return nil, nil
-	}
-	return &ManagedScaler{Namespace: namespace, Name: variantName}, nil
 }
 
 func (l *podLocator) GetPodLabels(ctx context.Context, namespace, podName string) map[string]string {

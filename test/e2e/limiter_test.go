@@ -55,7 +55,7 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 		By("Creating two model services with different accelerator requirements")
 
 		// Pool A - NVIDIA GPUs
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceA, poolA, cfg.ModelID, variantA, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceA, poolA, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service A")
 
 		err = fixtures.EnsureService(ctx, k8sClient, ns, modelServiceA, modelServiceA+"-decode", 8000)
@@ -75,7 +75,7 @@ var _ = Describe("GPU Limiter Feature", Label("full"), Ordered, func() {
 		})
 
 		// Pool B - AMD GPUs
-		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceB, poolB, cfg.ModelID, variantB, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err = fixtures.EnsureModelService(ctx, k8sClient, ns, modelServiceB, poolB, cfg.ModelID, cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service B")
 
 		err = fixtures.EnsureService(ctx, k8sClient, ns, modelServiceB, modelServiceB+"-decode", 8000)

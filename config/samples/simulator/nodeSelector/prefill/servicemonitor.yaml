@@ -17,7 +17,3 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
-      relabelings:
-        - sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_variant]
-          targetLabel: llm_d_ai_variant
-          action: replace

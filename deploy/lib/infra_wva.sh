@@ -143,6 +143,75 @@ EOF
 EOF
     fi
 
+    # WVA_WATCH_NS separates the namespace the controller MANAGES from the one it
+    # RUNS IN.
+    #
+    # Without it a namespace-scoped controller manages its own namespace, so
+    # bounding a tenant means running the controller inside the tenant's namespace —
+    # where the tenant owns this Deployment, and can therefore edit its args, its
+    # env, or its image. No setting carried by a Deployment its subject controls can
+    # bind that subject. Put the controller in a namespace the admin owns and point
+    # it at the tenant's, and the bound holds because the tenant cannot reach it.
+    if [ -n "${WVA_WATCH_NS:-}" ]; then
+        if [ "$(wva_install_scope)" != "namespace" ]; then
+            log_error "WVA_WATCH_NS only applies to a namespace-scoped install (WVA_SCOPE=namespace). A cluster-scoped controller manages every namespace."
+        fi
+        if ! kubectl get namespace "$WVA_WATCH_NS" >/dev/null 2>&1; then
+            log_error "WVA_WATCH_NS=$WVA_WATCH_NS does not exist. Create the tenant namespace before installing."
+        fi
+        if [ "$WVA_WATCH_NS" = "$WVA_NS" ]; then
+            log_warning "WVA_WATCH_NS equals WVA_NS: the controller runs in the namespace it manages. If that namespace belongs to a tenant, they own this Deployment and can lift any limit set on them."
+        else
+            log_info "Controller runs in $WVA_NS and manages $WVA_WATCH_NS"
+        fi
+        # Strategic merge, which matches env entries by NAME. A JSON-patch index
+        # into the env array would silently rewrite whichever variable happened to
+        # sit at that position the day someone added one above it.
+        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: wva-controller-manager
+    spec:
+      template:
+        spec:
+          containers:
+          - name: manager
+            env:
+            - name: WVA_WATCH_NAMESPACE
+              value: "${WVA_WATCH_NS}"
+EOF
+    fi
+
+    # WVA_POLICY_NS moves the limiters and quotas OUT of the controller's own
+    # namespace.
+    #
+    # This only binds a tenant when the tenant does not own the controller — see
+    # WVA_WATCH_NS above. It is what keeps the bound out of reach once the
+    # controller itself is out of reach.
+    if [ -n "${WVA_POLICY_NS:-}" ]; then
+        if ! kubectl get namespace "$WVA_POLICY_NS" >/dev/null 2>&1; then
+            log_error "WVA_POLICY_NS=$WVA_POLICY_NS does not exist. Create it as a cluster admin, with the scaling-policy ConfigMap holding the limiters, before installing. It must NOT be a namespace the tenant can write."
+        fi
+        if [ "$WVA_POLICY_NS" = "$WVA_NS" ]; then
+            log_warning "WVA_POLICY_NS equals WVA_NS, so policy is not actually separated — whoever can write $WVA_NS can still change the limiters. Leave it unset for that, or point it at an admin-owned namespace."
+        else
+            log_info "Cluster policy (limiters, quotas) will be read from $WVA_POLICY_NS, not from $WVA_NS"
+        fi
+        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/env/-
+      value:
+        name: WVA_POLICY_NAMESPACE
+        value: "${WVA_POLICY_NS}"
+  target:
+    kind: Deployment
+    name: wva-controller-manager
+EOF
+    fi
+
     log_info "Applying Kustomize overlay: $kustomize_overlay"
     kubectl apply -k "$tmp_overlay"
 

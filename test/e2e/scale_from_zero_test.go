@@ -406,7 +406,7 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 
 		By("Creating model service deployment with 0 initial replicas")
 		// Create deployment with 0 replicas using the fixture
-		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs)
+		err := fixtures.EnsureModelService(ctx, k8sClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz"), cfg.UseSimulator, cfg.MaxNumSeqs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service")
 
 		// Immediately scale deployment to 0 (with retry to handle race conditions)
@@ -831,7 +831,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 		}).Should(Succeed(), "EPP pods should be ready")
 
 		By("Creating model service LeaderWorkerSet with 0 initial replicas")
-		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
+		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws"), cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service LWS")
 
 		// Register cleanup for LWS
@@ -1204,7 +1204,7 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		}).Should(Succeed(), "EPP pods should be ready")
 
 		By("Creating model service LeaderWorkerSet with single-node (leader only) with 0 initial replicas")
-		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws1"), variantName, cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
+		err := fixtures.EnsureModelServiceLWS(ctx, crClient, cfg.LLMDNamespace, modelServiceName, poolName, sfzModelID("sfz-lws1"), cfg.UseSimulator, cfg.MaxNumSeqs, lwsGroupSize)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create model service LWS")
 
 		// Register cleanup for LWS

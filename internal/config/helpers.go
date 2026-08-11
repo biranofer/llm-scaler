@@ -23,6 +23,34 @@ const (
 	LegacyScalingPolicyConfigMapName = "wva-saturation-scaling-config"
 	// DefaultNamespace is the default namespace for the controller
 	DefaultNamespace = "workload-variant-autoscaler-system"
+
+	// PolicyNamespaceEnvVar names the namespace holding cluster policy — limiters
+	// and quotas. See PolicyNamespace for why it can differ from the controller's
+	// own namespace.
+	PolicyNamespaceEnvVar = "WVA_POLICY_NAMESPACE"
+
+	// WellKnownPolicyNamespace is the namespace every WVA on a cluster reads
+	// cluster policy from when it exists, WHATEVER any individual deployment is
+	// configured to do.
+	//
+	// It is a fixed name on purpose. The configurable form above is carried on the
+	// controller's Deployment, and a Deployment binds nobody who can edit it — a
+	// tenant running their own namespace-scoped WVA owns that Deployment and could
+	// point it at a namespace of their own making, or unset it and fall back to
+	// their own ConfigMap. A name that cannot be configured cannot be redirected.
+	//
+	// So a cluster admin gets one action that binds every WVA on the cluster,
+	// including tenant-owned ones, without editing a single tenant Deployment:
+	// create this namespace, put the limiters in it, and grant each controller
+	// read. Precedence is deliberately "well-known wins" rather than "configured
+	// wins" — the whole value is that a tenant cannot opt out.
+	//
+	// This raises the floor; it is not a sandbox. A tenant who can replace the
+	// controller's IMAGE runs whatever code they like, and no in-process rule
+	// survives that. Enforcement against an untrusted tenant is a Kubernetes
+	// ResourceQuota on their namespace; this makes the GPU budget authoritative
+	// for every WVA that is actually running WVA.
+	WellKnownPolicyNamespace = "wva-policy"
 )
 
 // ConfigValue retrieves a value from a ConfigMap with a default fallback
@@ -78,6 +106,43 @@ func SystemNamespace() string {
 	}
 	return DefaultNamespace
 }
+
+// PolicyNamespace returns the namespace WVA reads CLUSTER POLICY from — the
+// limiters and quotas that bound how much a workload may take.
+//
+// It exists because the system namespace is not always a trustworthy source for
+// them. A namespace-scoped install runs in the tenant's own namespace, which makes
+// the tenant the owner of POD_NAMESPACE and therefore of the ConfigMap that
+// declares their GPU limiter and their quota. A tenant who can raise their own
+// quota does not have a quota. Pointing WVA_POLICY_NAMESPACE at a namespace the
+// cluster admin owns, and granting the tenant's controller only read on it, makes
+// the bound external to the tenant.
+//
+// Returns: WVA_POLICY_NAMESPACE if set, otherwise SystemNamespace(). This is the
+// CONFIGURED value only — it loses to WellKnownPolicyNamespace when that namespace
+// exists. Use Config.PolicyNamespace for the namespace actually in force.
+func ConfiguredPolicyNamespace() string {
+	if ns := os.Getenv(PolicyNamespaceEnvVar); ns != "" {
+		return ns
+	}
+	return SystemNamespace()
+}
+
+// PolicySource records how the policy namespace was chosen, so an admin can tell
+// a bound they imposed from one a tenant chose for themselves.
+type PolicySource string
+
+const (
+	// PolicySourceWellKnown means WellKnownPolicyNamespace exists and won. The
+	// deployment could not have opted out of this.
+	PolicySourceWellKnown PolicySource = "well-known-namespace"
+	// PolicySourceConfigured means WVA_POLICY_NAMESPACE selected it. Trustworthy
+	// exactly insofar as the controller's Deployment is.
+	PolicySourceConfigured PolicySource = "configured"
+	// PolicySourceLocal means policy comes from the controller's own namespace —
+	// the default, and correct when that namespace belongs to an admin.
+	PolicySourceLocal PolicySource = "controller-namespace"
+)
 
 // ConfigMapName returns the main ConfigMap name from environment variable or default (DefaultConfigMapName).
 // Set CONFIG_MAP_NAME in the deployment manifest to use a non-default name.

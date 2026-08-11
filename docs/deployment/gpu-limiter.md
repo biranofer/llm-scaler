@@ -16,6 +16,102 @@ or later, by adding a `limiters:` entry to the `default` entry of the
 scaling-policy ConfigMap — applied live, no restart. **Read the next section
 first.**
 
+## Who is allowed to change the bound
+
+By default the limiter is read from the scaling-policy ConfigMap in the
+controller's own namespace. For a **cluster-scoped** install that namespace belongs
+to a cluster admin, so the bound and its subject already have different owners, and
+there is nothing more to arrange.
+
+It is the **namespace-scoped** install that needs care. There the controller runs
+in the namespace it manages, so whoever administers that namespace administers the
+controller — its Deployment, its args, its env, its ServiceAccount. Nothing carried
+on the controller can bound the person who can edit the controller. A quota its
+subject can edit is not a quota.
+
+So WVA does not accept its limits from anything that person can write.
+
+### What an admin sets, and where
+
+Everything authoritative is a **cluster-scoped object**: a namespace admin holds
+RBAC *inside* their namespace and can neither create a `Namespace` nor edit one's
+annotations.
+
+```bash
+# Once per cluster. Every WVA on the cluster reads this, and none can opt out.
+kubectl create namespace wva-policy
+kubectl -n wva-policy create configmap wva-scaling-policy-config \
+  --from-file=default=cluster-limiters.yaml
+
+# Let a tenant's controller read it (read only — never write)
+kubectl -n wva-policy create role wva-policy-reader \
+  --verb=get,list,watch --resource=configmaps
+kubectl -n wva-policy create rolebinding team-a-wva \
+  --role=wva-policy-reader \
+  --serviceaccount=team-a:wva-controller-manager
+```
+
+Per-namespace variations are annotations on the tenant's `Namespace`:
+
+```bash
+# this namespace draws its limits from somewhere else
+kubectl annotate namespace team-a wva.llmd.ai/policy-namespace=platform-policy
+
+# or: this namespace is explicitly allowed to scale unbounded
+kubectl annotate namespace team-b wva.llmd.ai/unbounded=allowed
+```
+
+### What the controller does with that
+
+A controller that manages the namespace it runs in resolves, in order:
+
+1. `wva.llmd.ai/policy-namespace` on that Namespace
+2. the `wva-policy` namespace, if it exists
+3. `wva.llmd.ai/unbounded=allowed` on that Namespace
+4. **otherwise it refuses to start**
+
+Step 4 is the point. "No policy found" never quietly becomes "no limits" — running
+unbounded is always something an admin decided, never something that happened
+because configuration was missing. The startup error names all four routes out, so
+whoever can fix it is told exactly what to do.
+
+Note that the fixed name in step 2 outranks any `WVA_POLICY_NS` given at install
+time. That inversion is deliberate: install-time settings live on the controller's
+Deployment, which the tenant owns, so a name they cannot configure is a name they
+cannot redirect.
+
+It also refuses to start if it cannot **read** the policy that applies to it —
+usually a missing RoleBinding. Starting would run the tenant unbounded while an
+admin had every reason to believe a quota was in force.
+
+### What stays with the tenant
+
+- **limiters and quotas** — admin only. A `limiters:` block in the tenant's own
+  ConfigMap is ignored *and logged*: a limiter that reads as enforcing and enforces
+  nothing is the worst of the three outcomes.
+- **thresholds, tiers and per-model settings** — the tenant's. Those are tuning,
+  not entitlement, and the team running the workload should own them.
+
+### The honest limit
+
+None of this contains a hostile tenant. Anyone who can change the controller's
+**image** runs code that consults none of it. What this gives you is that the GPU
+budget is authoritative for every WVA that is actually running WVA — which covers
+misconfiguration, drift, and copied manifests, the things that actually happen.
+
+For enforcement against a tenant you do not trust, use Kubernetes' own admission
+path — a `ResourceQuota` on the GPU resource in their namespace — and let WVA's
+limiter be what keeps it from ever getting there.
+
+The stronger arrangement, if you want both: run the controller **outside** the
+namespace it manages, so the tenant never owns it at all.
+
+```bash
+make deploy-wva-on-k8s WVA_SCOPE=namespace \
+  WVA_NS=wva-team-a \        # admin-owned: where the controller runs
+  WVA_WATCH_NS=team-a        # tenant-owned: what it manages
+```
+
 ## Why it ships off
 
 The shipped configuration declares **no limiter**: a fresh install scales

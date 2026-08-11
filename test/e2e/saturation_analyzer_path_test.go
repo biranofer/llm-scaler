@@ -244,8 +244,9 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 
 		By("Creating model service + service + ServiceMonitor for saturation path test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
-		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID, variantName,
+		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
 			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", fakeMetricsJSON})
+
 		Expect(err).NotTo(HaveOccurred())
 		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)
 		Expect(err).NotTo(HaveOccurred())

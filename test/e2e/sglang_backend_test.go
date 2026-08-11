@@ -104,7 +104,7 @@ var _ = Describe("SGLang backend", Label("full"), Ordered, func() {
 			))).To(Succeed())
 
 		By("Deploying the synthetic SGLang model server")
-		Expect(fixtures.CreateSGLangEmulator(ctx, k8sClient, cfg.LLMDNamespace, baseName, modelID, variantName)).To(Succeed())
+		Expect(fixtures.CreateSGLangEmulator(ctx, k8sClient, cfg.LLMDNamespace, baseName, modelID)).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteSGLangEmulator(ctx, k8sClient, cfg.LLMDNamespace, baseName) })
 
 		By("Exposing it via a Service and ServiceMonitor")

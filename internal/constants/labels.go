@@ -21,10 +21,26 @@ const (
 	// and associate them with their managing VariantAutoscaling resource.
 	VariantLabelKey = "llm-d.ai/variant"
 
-	// VariantLabelPrometheusKey is the Prometheus metric label name for the variant label.
-	// Kubernetes labels are sanitized for Prometheus: dots (.) and hyphens (-) become underscores (_).
-	// "llm-d.ai/variant" → "__meta_kubernetes_pod_label_llm_d_ai_variant" → "llm_d_ai_variant".
-	VariantLabelPrometheusKey = "llm_d_ai_variant"
+	// PolicyNamespaceAnnotationKey, on a NAMESPACE object, names where WVA reads
+	// limiters and quotas for workloads in that namespace.
+	//
+	// It lives on the Namespace deliberately. A namespace admin holds RBAC INSIDE
+	// their namespace; the Namespace object itself is cluster-scoped, and editing
+	// it is a permission they do not have. So this is a pointer the subject of the
+	// policy can read but cannot rewrite — which the same value carried on the
+	// controller's Deployment could never be, since a tenant who owns the namespace
+	// owns that Deployment.
+	PolicyNamespaceAnnotationKey = "wva.llmd.ai/policy-namespace"
+
+	// UnboundedAllowedAnnotationKey, on a NAMESPACE object, is a cluster admin
+	// stating that workloads in it may scale with no GPU bound.
+	//
+	// It exists so that "no policy" is always a DECISION rather than an accident.
+	// Without it a controller that cannot find policy simply refuses to start:
+	// running unbounded because configuration was missing is precisely the failure
+	// that is invisible until the bill or the outage arrives. Same reasoning for
+	// the placement — only an admin can grant it.
+	UnboundedAllowedAnnotationKey = "wva.llmd.ai/unbounded"
 )
 
 // Kubernetes Annotation Keys
@@ -40,3 +56,11 @@ const (
 
 // AnnotationValueTrue is the canonical string value for boolean annotations and labels.
 const AnnotationValueTrue = "true"
+
+// PolicyUnboundedAllowed is the value UnboundedAllowedAnnotationKey must carry.
+//
+// It is "allowed" rather than "true" because this annotation waives a safety
+// property, and the word should read like one at the point someone types it: an
+// admin writing `unbounded: allowed` on a namespace has said something they cannot
+// later mistake for a routine boolean.
+const PolicyUnboundedAllowed = "allowed"
