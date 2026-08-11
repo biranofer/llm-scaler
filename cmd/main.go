@@ -725,6 +725,28 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
+	// Cluster policy this controller cannot serve takes it OUT OF SERVICE, rather
+	// than leaving it running and silently refusing to scale anything.
+	//
+	// It is a readiness check, not a startup check, because the failure has two
+	// arrival times and only one of them is an install. On day one it fails the
+	// rollout, so `verify_deployment` reports a failed install instead of a green
+	// one. On day ninety — when a cluster admin adds a gpu-inventory limiter to
+	// cluster policy, which this controller reloads live — the same condition
+	// becomes true and the pod goes NotReady, which is visible, alertable, and
+	// nothing like the alternative: every variant quietly charged to no accelerator
+	// pool, given no budget, and never scaling up again.
+	if err := mgr.AddReadyzCheck("gpu-policy", func(_ *http.Request) error {
+		if cfg.EffectiveLimiterMode() == config.LimiterTypeInventory && metrics.IsNodeAccessDenied() {
+			return errors.New("cluster policy declares a gpu-inventory limiter but this controller may not list nodes. " +
+				"Every variant would be charged to no accelerator pool, receive no GPU budget and never scale up. " +
+				"Grant its ServiceAccount get/list/watch on nodes, or remove the limiter from cluster policy")
+		}
+		return nil
+	}); err != nil {
+		setupLog.Error(err, "unable to set up the GPU policy ready check")
+		os.Exit(1)
+	}
 	if err := mgr.AddReadyzCheck("readyz", func(_ *http.Request) error {
 		if cfg.ConfigMapsBootstrapComplete() {
 			return nil

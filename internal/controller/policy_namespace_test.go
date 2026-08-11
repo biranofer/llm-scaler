@@ -38,6 +38,12 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 		}
 	}
 
+	labelled := func(name string, labels map[string]string) *corev1.Namespace {
+		return &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+		}
+	}
+
 	// selfManaged builds the tenant-owned shape: POD_NAMESPACE and the watched
 	// namespace are the same, which is what the namespace-scoped overlay produces
 	// by default.
@@ -66,10 +72,12 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 			Expect(cfg.PolicyNamespaceIsSeparate()).To(BeFalse())
 		})
 
-		It("takes the policy namespace an admin annotated onto the namespace", func() {
+		// The selectable form, and the one an admin is most likely to reach for:
+		// a label can be listed across the cluster to audit what a policy governs.
+		It("takes the policy namespace an admin labelled onto the namespace", func() {
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
-				WithObjects(namespace(tenantNS, map[string]string{
-					constants.PolicyNamespaceAnnotationKey: "platform-policy",
+				WithObjects(labelled(tenantNS, map[string]string{
+					constants.PolicyNamespaceLabelKey: "platform-policy",
 				})).Build()
 
 			cfg := selfManaged()
@@ -95,11 +103,11 @@ var _ = Describe("ResolvePolicyNamespace", func() {
 
 		// The annotation outranks the well-known namespace, so an admin can move one
 		// namespace's policy without disturbing the cluster-wide default.
-		It("prefers the namespace annotation over the well-known namespace", func() {
+		It("prefers the namespace label over the well-known namespace", func() {
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
 				WithObjects(
-					namespace(tenantNS, map[string]string{
-						constants.PolicyNamespaceAnnotationKey: "platform-policy",
+					labelled(tenantNS, map[string]string{
+						constants.PolicyNamespaceLabelKey: "platform-policy",
 					}),
 					namespace(config.WellKnownPolicyNamespace, nil),
 				).Build()

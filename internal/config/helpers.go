@@ -24,11 +24,6 @@ const (
 	// DefaultNamespace is the default namespace for the controller
 	DefaultNamespace = "workload-variant-autoscaler-system"
 
-	// PolicyNamespaceEnvVar names the namespace holding cluster policy — limiters
-	// and quotas. See PolicyNamespace for why it can differ from the controller's
-	// own namespace.
-	PolicyNamespaceEnvVar = "WVA_POLICY_NAMESPACE"
-
 	// WellKnownPolicyNamespace is the namespace every WVA on a cluster reads
 	// cluster policy from when it exists, WHATEVER any individual deployment is
 	// configured to do.
@@ -107,27 +102,6 @@ func SystemNamespace() string {
 	return DefaultNamespace
 }
 
-// PolicyNamespace returns the namespace WVA reads CLUSTER POLICY from — the
-// limiters and quotas that bound how much a workload may take.
-//
-// It exists because the system namespace is not always a trustworthy source for
-// them. A namespace-scoped install runs in the tenant's own namespace, which makes
-// the tenant the owner of POD_NAMESPACE and therefore of the ConfigMap that
-// declares their GPU limiter and their quota. A tenant who can raise their own
-// quota does not have a quota. Pointing WVA_POLICY_NAMESPACE at a namespace the
-// cluster admin owns, and granting the tenant's controller only read on it, makes
-// the bound external to the tenant.
-//
-// Returns: WVA_POLICY_NAMESPACE if set, otherwise SystemNamespace(). This is the
-// CONFIGURED value only — it loses to WellKnownPolicyNamespace when that namespace
-// exists. Use Config.PolicyNamespace for the namespace actually in force.
-func ConfiguredPolicyNamespace() string {
-	if ns := os.Getenv(PolicyNamespaceEnvVar); ns != "" {
-		return ns
-	}
-	return SystemNamespace()
-}
-
 // PolicySource records how the policy namespace was chosen, so an admin can tell
 // a bound they imposed from one a tenant chose for themselves.
 type PolicySource string
@@ -136,9 +110,6 @@ const (
 	// PolicySourceWellKnown means WellKnownPolicyNamespace exists and won. The
 	// deployment could not have opted out of this.
 	PolicySourceWellKnown PolicySource = "well-known-namespace"
-	// PolicySourceConfigured means WVA_POLICY_NAMESPACE selected it. Trustworthy
-	// exactly insofar as the controller's Deployment is.
-	PolicySourceConfigured PolicySource = "configured"
 	// PolicySourceLocal means policy comes from the controller's own namespace —
 	// the default, and correct when that namespace belongs to an admin.
 	PolicySourceLocal PolicySource = "controller-namespace"

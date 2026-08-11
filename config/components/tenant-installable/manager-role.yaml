@@ -1,0 +1,102 @@
+---
+# The controller's permissions as a NAMESPACED Role.
+#
+# This is manager-clusterrole.yaml with the cluster-scoped resources removed, and
+# what remains is almost all of it — because almost everything WVA reads is
+# namespaced. Only three rules could not come along:
+#
+#   nodes, nodes/status   physical GPU discovery. Needed ONLY by the
+#                         gpu-inventory limiter, so an install without one does
+#                         not miss them. This is why tenant mode requires
+#                         WVA_LIMITER=none or quota.
+#   namespaces            listing namespaces to find namespace-local config, and
+#                         reading a policy annotation. Both are best-effort: a
+#                         single-namespace controller never lists, and the policy
+#                         read tolerates being denied.
+#
+# Everything else — pods, services, configmaps, deployments, replicasets,
+# statefulsets, deployments/scale, inferencepools, scaledobjects,
+# leaderworkersets, servicemonitors, events — is namespaced and works identically
+# through a Role. The grant is read-only apart from Events; WVA never writes to
+# the cluster, because KEDA performs the actuation.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps/status
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - replicasets
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/scale
+  verbs:
+  - get
+- apiGroups:
+  - inference.networking.k8s.io
+  - inference.networking.x-k8s.io
+  resources:
+  - inferencepools
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - keda.sh
+  resources:
+  - scaledobjects
+  verbs:
+  - get
+- apiGroups:
+  - leaderworkerset.x-k8s.io
+  resources:
+  - leaderworkersets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - leaderworkerset.x-k8s.io
+  resources:
+  - leaderworkersets/scale
+  verbs:
+  - get
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  verbs:
+  - get
+  - list
+  - watch

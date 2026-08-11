@@ -742,10 +742,34 @@ func (m *MetricsEmitter) RecordEnforcerMetric(policyType string) {
 	enforcerModificationsTotal.With(labels).Inc()
 }
 
+var (
+	nodeAccessDeniedMu    sync.RWMutex
+	nodeAccessDeniedState bool
+)
+
+// IsNodeAccessDenied reports the last observed node-discovery outcome, for
+// callers that must act on it rather than publish it — the readiness gate, which
+// takes the controller out of service when cluster policy demands a physical
+// limiter this controller cannot serve.
+func IsNodeAccessDenied() bool {
+	nodeAccessDeniedMu.RLock()
+	defer nodeAccessDeniedMu.RUnlock()
+	return nodeAccessDeniedState
+}
+
 // SetNodeAccessDenied records whether a configured physical limiter is unable to
 // read nodes. Published on every refresh, so the series exists while a physical
 // limiter is configured and absence means no limiter is asking.
 func SetNodeAccessDenied(denied bool) {
+	// Mirrored into a plain variable as well as the gauge. The readiness gate has
+	// to answer this question in-process, and reading it back out of a Prometheus
+	// collector means scraping ourselves — an absurd amount of machinery for one
+	// bool, and one that would report "not denied" whenever the metric had not been
+	// registered yet.
+	nodeAccessDeniedMu.Lock()
+	nodeAccessDeniedState = denied
+	nodeAccessDeniedMu.Unlock()
+
 	if nodeAccessDenied == nil {
 		return
 	}

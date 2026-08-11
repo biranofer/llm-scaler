@@ -75,6 +75,40 @@ deploy_wva_controller() {
 
     ln -s "$kustomize_overlay" "$tmp_overlay/base"
 
+    # WVA_ADMIN_GRANTS: this namespace-scoped install is being made BY a cluster
+    # admin, or by someone an admin has granted the cluster-scoped pieces to.
+    #
+    # Namespace scope defaults to the self-service shape — no cluster-scoped object
+    # at all — because that is what makes it installable by a namespace admin. But
+    # the two limitations that shape carries are limitations of the INSTALLER, not
+    # of the scope: authenticated metrics need TokenReview and the gpu-inventory
+    # limiter needs nodes, both cluster-scoped APIs. An admin installing the very
+    # same overlay has both and should not lose them.
+    #
+    # This matters most on OpenShift, where namespace scope is the DEFAULT: without
+    # it, every OpenShift install would silently drop metrics authentication.
+    local admin_grants="${WVA_ADMIN_GRANTS:-false}"
+    if [ "$(wva_install_scope)" = "namespace" ] && [ "$admin_grants" = "true" ]; then
+        log_info "WVA_ADMIN_GRANTS=true: keeping authenticated metrics and cluster-scoped reads for this namespace-scoped install"
+        # Re-render the overlay without the unauthenticated-metrics component. The
+        # overlay lists it, so it is dropped here rather than added there — the
+        # default has to be the shape a tenant can actually install.
+        local rendered="$tmp_overlay/admin-base"
+        mkdir -p "$rendered"
+        # Kustomize rejects ABSOLUTE paths in resources and components, so the
+        # copied overlay's `../../../` references are rehomed onto a relative
+        # symlink rather than expanded to a real path.
+        ln -s "$WVA_PROJECT/config" "$rendered/config"
+        grep -v 'components/unauthenticated-metrics' "$kustomize_overlay/kustomization.yaml" \
+            | sed 's#\.\./\.\./\.\./#./config/#g' > "$rendered/kustomization.yaml"
+        # And the node read, which no Role can provide — a Node is cluster-scoped.
+        # Without it a gpu-inventory limiter resolves no accelerator, and the
+        # controller's readiness gate now refuses to serve that state at all.
+        printf -- '- ./config/components/node-reader/\n' >> "$rendered/kustomization.yaml"
+        rm -f "$tmp_overlay/base"
+        ln -s "$rendered" "$tmp_overlay/base"
+    fi
+
     # Symlink prometheus-alerts component if needed
     if [ "${DEPLOY_ALERTING_RULES:-false}" = "true" ]; then
         ln -s "$WVA_PROJECT/config/components/prometheus-alerts" "$tmp_overlay/prometheus-alerts"
@@ -184,33 +218,6 @@ EOF
 EOF
     fi
 
-    # WVA_POLICY_NS moves the limiters and quotas OUT of the controller's own
-    # namespace.
-    #
-    # This only binds a tenant when the tenant does not own the controller — see
-    # WVA_WATCH_NS above. It is what keeps the bound out of reach once the
-    # controller itself is out of reach.
-    if [ -n "${WVA_POLICY_NS:-}" ]; then
-        if ! kubectl get namespace "$WVA_POLICY_NS" >/dev/null 2>&1; then
-            log_error "WVA_POLICY_NS=$WVA_POLICY_NS does not exist. Create it as a cluster admin, with the scaling-policy ConfigMap holding the limiters, before installing. It must NOT be a namespace the tenant can write."
-        fi
-        if [ "$WVA_POLICY_NS" = "$WVA_NS" ]; then
-            log_warning "WVA_POLICY_NS equals WVA_NS, so policy is not actually separated — whoever can write $WVA_NS can still change the limiters. Leave it unset for that, or point it at an admin-owned namespace."
-        else
-            log_info "Cluster policy (limiters, quotas) will be read from $WVA_POLICY_NS, not from $WVA_NS"
-        fi
-        cat >> "$tmp_overlay/kustomization.yaml" <<EOF
-- patch: |-
-    - op: add
-      path: /spec/template/spec/containers/0/env/-
-      value:
-        name: WVA_POLICY_NAMESPACE
-        value: "${WVA_POLICY_NS}"
-  target:
-    kind: Deployment
-    name: wva-controller-manager
-EOF
-    fi
 
     log_info "Applying Kustomize overlay: $kustomize_overlay"
     kubectl apply -k "$tmp_overlay"
@@ -260,7 +267,7 @@ EOF
     case "${WVA_LIMITER:-none}" in
         none) ;;
         gpu-inventory|quota)
-            log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap..."
+            log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap ..."
             local policy_cm current_default updated_default
             # `|| true` because a no-match is grep exit 1, which pipefail turns into
             # a failed assignment and set -e turns into an exit — before the
@@ -268,7 +275,7 @@ EOF
             policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null \
                 | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2 || true)"
             if [ -z "$policy_cm" ]; then
-                log_error "No scaling-policy ConfigMap found in $WVA_NS"
+                log_error "No scaling-policy ConfigMap found in $policy_ns"
             fi
             current_default=$(kubectl get configmap "$policy_cm" -n "$WVA_NS" -o jsonpath='{.data.default}')
             if [ -z "$current_default" ]; then
@@ -280,7 +287,7 @@ EOF
             updated_default=$(echo "$current_default" | yq ".limiters = [{\"type\": \"${WVA_LIMITER}\"}]")
             kubectl patch configmap "$policy_cm" -n "$WVA_NS" --type=merge \
                 -p "$(jq -n --arg d "$updated_default" '{data:{"default":$d}}')"
-            log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter."
+            log_warning "Scaling is now bounded by the ${WVA_LIMITER} limiter (declared in ${WVA_NS}/${policy_cm})."
             # A GPU-aware optimizer allocates out of per-accelerator pools, so a
             # workload whose accelerator cannot be resolved gets no budget and stops
             # scaling up — silently. Say so at install, and say how to check, because
@@ -508,3 +515,4 @@ extract_openshift_prometheus_ca() {
         log_info "Certificate subject: $cert_subject"
     fi
 }
+

@@ -149,10 +149,132 @@ can_i_as() {
     esac
 }
 
+# wva_cluster_policy_ns echoes the namespace this install's controller will read
+# limiters and quotas from, or nothing when none is published.
+#
+# It resolves the way the CONTROLLER does, because a preflight that consults a
+# different source than the thing it is checking is worse than no preflight:
+#
+#   1. a wva.llmd.ai/policy-namespace label on the namespace being managed
+#   2. the default namespace hardcoded in WVA
+#
+# Step 2's name is read OUT OF THE BINARY rather than repeated here. One
+# definition, in Go; a bash copy would be free to drift, and the drift shows up as
+# a preflight that passes while the controller reads a different namespace.
+wva_cluster_policy_ns() {
+    local managed="${WVA_WATCH_NS:-$WVA_NS}" pointed=""
+    pointed=$(kubectl get namespace "$managed" \
+        -o jsonpath='{.metadata.labels.wva\.llmd\.ai/policy-namespace}' 2>/dev/null || true)
+    [ -n "$pointed" ] || return 0
+    kubectl get namespace "$pointed" >/dev/null 2>&1 || return 0
+    echo "$pointed"
+}
+
+# wva_cluster_policy_limiter echoes the limiter type cluster policy declares, or
+# nothing. Reads the same ConfigMap and the same `default` entry the controller
+# does.
+wva_cluster_policy_limiter() {
+    local policy_ns="$1" cm=""
+    [ -n "$policy_ns" ] || return 0
+    cm="$(kubectl get configmap -n "$policy_ns" -o name 2>/dev/null \
+        | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2 || true)"
+    [ -n "$cm" ] || return 0
+    kubectl get configmap "$cm" -n "$policy_ns" -o jsonpath='{.data.default}' 2>/dev/null \
+        | yq -r '.limiters[0].type // ""' 2>/dev/null || true
+}
+
+# check_tenant_install enforces the contract for a scope that creates no
+# cluster-scoped objects.
+#
+# Limiters and quotas are CLUSTER-defined. A tenant reads them; they do not write
+# them. So the only question at install time is whether this install can honour
+# what the cluster already decided:
+#
+#   physical limiter declared   the controller must be able to list nodes, which
+#                               only a cluster admin can grant. Without it every
+#                               variant is charged to no accelerator pool, gets no
+#                               budget and NEVER SCALES UP — so the install FAILS
+#                               here rather than succeeding into that state.
+#   anything else               install proceeds with a warning saying what is and
+#                               is not bounding it.
+check_tenant_install() {
+    local sa="system:serviceaccount:${WVA_NS}:wva-controller-manager"
+    local policy_ns limiter node_read
+
+    policy_ns="$(wva_cluster_policy_ns)"
+    if [ -z "$policy_ns" ]; then
+        # No label on the managed namespace. The controller will fall back to its
+        # built-in default policy namespace, whose NAME this script deliberately
+        # does not know — one definition, in Go, so the two cannot drift. Which
+        # means the limiter cannot be resolved from here, and the check moves to
+        # where the name lives: the controller refuses to become ready if cluster
+        # policy demands node access it does not have, and verify_deployment turns
+        # that into a failed install.
+        log_info "This namespace carries no wva.llmd.ai/policy-namespace label, so the controller will use its built-in default policy namespace."
+        log_warning "  If no cluster policy exists there either, scaling here is bounded only by each workload's maxReplicas. A ResourceQuota on ${WVA_NS} is the way to bound it."
+        return 0
+    fi
+
+    limiter="$(wva_cluster_policy_limiter "$policy_ns")"
+    log_info "Cluster policy: ${policy_ns} (limiter: ${limiter:-none})"
+
+    if [ "$limiter" != "gpu-inventory" ]; then
+        if [ -z "$limiter" ]; then
+            log_warning "Cluster policy declares no limiter, so scaling is UNBOUNDED. A ResourceQuota on ${WVA_NS} is the only thing that will bound it."
+        else
+            log_info "Cluster policy bounds this install with the '${limiter}' limiter, which needs no cluster-scoped access"
+        fi
+        return 0
+    fi
+
+    node_read="$(can_i_as "$sa" list nodes)"
+    case "$node_read" in
+        yes)
+            log_success "Cluster policy declares the gpu-inventory limiter, and ${sa} can list nodes"
+            ;;
+        *)
+            log_error "Cluster policy declares the gpu-inventory limiter, and ${sa} cannot list nodes.
+
+A GPU-aware limiter allocates out of per-accelerator pools. Without node access a
+variant's accelerator never resolves, it is charged to no pool, it receives no
+budget, and it NEVER SCALES UP — with nothing in the logs to say why. Installing
+into that state would look like it worked.
+
+Reading nodes is cluster-scoped, so only a cluster admin can grant it. Ask for:
+
+  kubectl create clusterrole wva-node-reader --verb=get,list,watch --resource=nodes
+  kubectl create clusterrolebinding wva-node-reader-${WVA_NS} \\
+    --clusterrole=wva-node-reader --serviceaccount=${WVA_NS}:wva-controller-manager
+
+Or ask them to install WVA for you (WVA_SCOPE=namespace), which grants it."
+            ;;
+    esac
+}
+
 check_permissions() {
     log_info "Checking permissions..."
 
     local ns="${WVA_NS}" denied=() sa="system:serviceaccount:${WVA_NS}:wva-controller-manager"
+
+    # The tenant scope creates no cluster-scoped object, so the cluster-scoped
+    # create checks below would refuse an install that is entirely legitimate.
+    # It has its own contract to satisfy instead.
+    if wva_scope_is_tenant; then
+        local kind
+        for kind in deployments configmaps serviceaccounts services roles rolebindings; do
+            kubectl auth can-i create "$kind" -n "$ns" >/dev/null 2>&1 || denied+=("create $kind in $ns")
+        done
+        if [ ${#denied[@]} -ne 0 ]; then
+            log_error "You cannot create everything a tenant-scoped install produces in $ns. Denied:
+$(printf '  - %s\n' "${denied[@]}")
+
+This scope creates no cluster-scoped objects, so namespace admin is enough — but
+it does need full write access inside $ns."
+        fi
+        check_tenant_install
+        log_success "Permissions look sufficient"
+        return 0
+    fi
 
     # What the INSTALLER must be able to create. Cluster-scoped objects are in the
     # base at both scopes, so both scopes need them.

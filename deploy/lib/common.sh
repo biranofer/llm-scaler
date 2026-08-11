@@ -41,17 +41,21 @@ containsElement() {
 
 # wva_install_scope echoes the install scope: "cluster" or "namespace".
 #
-# Both scopes are supported on both platforms — config/overlays carries all four
-# combinations — so the scope is a CHOICE, not a property of the platform. It used
-# to be inferred (openshift => namespace, everything else => cluster), which left
-# two of the four overlays unreachable from any deploy path: there was no way to
-# run namespace-scoped on Kubernetes at all. Note what the scope does and does not
-# do: it narrows what the CONTROLLER reads (its cache), not what the install
-# grants — both scopes create the same cluster-scoped RBAC, so both need a cluster
-# admin. It is blast-radius reduction, not delegation to a tenant.
+# The two differ in WHO CAN INSTALL as much as in what the controller reads:
 #
-# WVA_SCOPE selects it. The default preserves the historical inference so existing
-# invocations keep deploying what they always did.
+#   cluster     manages every namespace. Creates ClusterRoles and
+#               ClusterRoleBindings, so it needs a cluster admin.
+#   namespace   manages ONE namespace and creates NO cluster-scoped object, so a
+#               NAMESPACE ADMIN can install it themselves. It gives up what
+#               genuinely requires cluster scope: the gpu-inventory limiter
+#               (reads nodes), authenticated metrics (TokenReview), and EPP
+#               metrics (nonResourceURLs).
+#
+# Namespace scope used to create the same cluster-scoped RBAC as cluster scope,
+# which made it blast-radius reduction and nothing more — a tenant still could not
+# run it. Now the name means what it says.
+#
+# WVA_SCOPE selects it; the default preserves the historical inference.
 wva_install_scope() {
     local scope="${WVA_SCOPE:-}"
     if [ -z "$scope" ]; then
@@ -65,6 +69,12 @@ wva_install_scope() {
         cluster|namespace) echo "$scope" ;;
         *) log_error "WVA_SCOPE must be 'cluster' or 'namespace', got '$scope'" ;;
     esac
+}
+
+# wva_scope_is_tenant reports whether this install creates NO cluster-scoped
+# objects — i.e. whether a namespace admin could have run it themselves.
+wva_scope_is_tenant() {
+    [ "$(wva_install_scope)" = "namespace" ]
 }
 
 # WVA_SHARED_CLUSTER_ROLE_BINDINGS are the cluster-scoped bindings every overlay

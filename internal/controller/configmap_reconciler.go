@@ -127,6 +127,24 @@ func (r *ConfigMapReconciler) handleConfigMapDeletion(ctx context.Context, name,
 	logger := log.FromContext(ctx)
 	systemNamespace := config.SystemNamespace()
 
+	// Cluster policy first. The policy namespace holds no workloads, so it is
+	// never "tracked", and the tracking check below would return before ever
+	// reaching it — meaning an admin who DELETED the limiters left the
+	// last-loaded ones in force indefinitely, with the config showing nothing
+	// that explained why. Removing a bound has to take effect as reliably as
+	// adding one.
+	if r.Config.PolicyNamespaceIsSeparate() && namespace == r.Config.PolicyNamespace() {
+		if slices.Contains(config.ScalingPolicyConfigMapNames(), name) {
+			// An empty policy, not nil: nil would send the limiter accessors back
+			// to this controller's own namespace, handing limit-setting to whoever
+			// writes that — the party the policy namespace exists to take it from.
+			r.Config.UpdateClusterPolicy(&config.ScalingPolicy{})
+			logger.Info("Cluster policy ConfigMap deleted: no limiters or quotas are in force",
+				"policyNamespace", namespace, "configMap", name)
+		}
+		return
+	}
+
 	// Only handle namespace-local ConfigMap deletions (not global)
 	if namespace == systemNamespace {
 		return

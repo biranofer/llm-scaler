@@ -21,16 +21,19 @@ const (
 	// and associate them with their managing VariantAutoscaling resource.
 	VariantLabelKey = "llm-d.ai/variant"
 
-	// PolicyNamespaceAnnotationKey, on a NAMESPACE object, names where WVA reads
-	// limiters and quotas for workloads in that namespace.
+	// PolicyNamespaceLabelKey, on a NAMESPACE object, names the namespace WVA reads
+	// limiters and quotas from for workloads in that namespace.
 	//
-	// It lives on the Namespace deliberately. A namespace admin holds RBAC INSIDE
-	// their namespace; the Namespace object itself is cluster-scoped, and editing
-	// it is a permission they do not have. So this is a pointer the subject of the
-	// policy can read but cannot rewrite — which the same value carried on the
-	// controller's Deployment could never be, since a tenant who owns the namespace
-	// owns that Deployment.
-	PolicyNamespaceAnnotationKey = "wva.llmd.ai/policy-namespace"
+	// It lives on the Namespace because that object is cluster-scoped: a namespace
+	// admin holds RBAC INSIDE their namespace and cannot edit it. So this is a
+	// pointer the subject of the policy can read but not rewrite.
+	//
+	// A namespace name is a valid label value, and a label is the form that can be
+	// selected on. `kubectl get ns -l wva.llmd.ai/policy-namespace=platform-policy`
+	// answers "which namespaces does this policy govern?" — the question an admin
+	// actually asks when auditing, and one an annotation cannot answer.
+	//
+	PolicyNamespaceLabelKey = "wva.llmd.ai/policy-namespace"
 )
 
 // Kubernetes Annotation Keys

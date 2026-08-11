@@ -61,7 +61,6 @@ import (
 func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Config) error {
 	logger := log.FromContext(ctx)
 	systemNS := config.SystemNamespace()
-	configured := config.ConfiguredPolicyNamespace()
 	managedNS := cfg.WatchNamespace()
 
 	// The tenant-owned shape: this controller manages exactly the namespace it
@@ -92,19 +91,11 @@ func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Co
 		//
 		// The override only earns its keep where the reader might otherwise choose
 		// its own limits, which is the branch below.
-		switch {
-		case configured != systemNS:
-			cfg.SetPolicyNamespace(configured, config.PolicySourceConfigured)
-			logger.Info("Cluster policy comes from the configured namespace", "policyNamespace", configured)
-		default:
-			cfg.SetPolicyNamespace(systemNS, config.PolicySourceLocal)
-			logger.V(1).Info("Cluster policy comes from this controller's own namespace", "namespace", systemNS)
-			if wellKnownExists {
-				logger.Info("A "+config.WellKnownPolicyNamespace+" namespace exists but is NOT being used: this controller "+
-					"does not manage its own namespace, so its own configuration is authoritative. "+
-					"Set WVA_POLICY_NS to read policy from elsewhere.",
-					"policyNamespace", config.WellKnownPolicyNamespace)
-			}
+		cfg.SetPolicyNamespace(systemNS, config.PolicySourceLocal)
+		logger.V(1).Info("Cluster policy comes from this controller's own namespace", "namespace", systemNS)
+		if wellKnownExists {
+			logger.Info("A "+config.WellKnownPolicyNamespace+" namespace exists but is NOT used here: this controller does not manage its own namespace, so its own ConfigMap is authoritative.",
+				"policyNamespace", config.WellKnownPolicyNamespace)
 		}
 		return nil
 	}
@@ -123,16 +114,13 @@ func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Co
 			"namespace", managedNS, "reason", err.Error())
 	}
 
-	if pointed := ns.Annotations[constants.PolicyNamespaceAnnotationKey]; pointed != "" {
+	// Label first, then annotation. The label is the selectable form — an admin can
+	// ask `kubectl get ns -l wva.llmd.ai/policy-namespace=X` which namespaces a
+	// policy governs — so it is the one to prefer when both are somehow present.
+	if pointed := ns.Labels[constants.PolicyNamespaceLabelKey]; pointed != "" {
 		cfg.SetPolicyNamespace(pointed, config.PolicySourceWellKnown)
-		logger.Info("Cluster policy comes from the namespace this one is annotated with",
-			"policyNamespace", pointed, "annotation", constants.PolicyNamespaceAnnotationKey)
-		return nil
-	}
-
-	if configured != systemNS {
-		cfg.SetPolicyNamespace(configured, config.PolicySourceConfigured)
-		logger.Info("Cluster policy comes from the configured namespace", "policyNamespace", configured)
+		logger.Info("Cluster policy comes from the namespace this one is labelled with",
+			"policyNamespace", pointed, "label", constants.PolicyNamespaceLabelKey)
 		return nil
 	}
 

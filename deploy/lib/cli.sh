@@ -39,9 +39,6 @@ Environment Variables:
  Scaling behaviour
   WVA_LIMITER                  none (default) | gpu-inventory | quota. none means scaling is UNBOUNDED.
                                gpu-inventory requires the controller to be able to list nodes.
-  WVA_POLICY_NS                Admin-owned namespace to read limiters and quotas from. Set this for a
-                               namespace-scoped install: without it the limiter ConfigMap lives in the
-                               tenant's own namespace, so the tenant can raise their own quota.
   ENABLE_SCALE_TO_ZERO         Allow parking idle models at 0 replicas (default: true)
   WVA_DEFAULT_SO               Create default ScaledObjects for what is already running:
                                false (default) | plan (print and stop) | edit (plan, \$EDITOR, apply) | true (apply all)
