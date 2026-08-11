@@ -45,38 +45,67 @@ precisely the resources the other overlay owns.
 Both work on both platforms — `config/overlays/` carries all four combinations.
 The default is `namespace` on OpenShift and `cluster` elsewhere.
 
-> **Both scopes need cluster-admin to install.** `namespace` narrows what the
-> controller *reads*, not what it is *granted*: either overlay creates 4
-> ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift).
+> **The scopes differ in who can install them, not only in what is read.**
 >
-> The grant is read-only — WVA never writes to the cluster, because KEDA performs
-> the actuation. Its only write is Events. It reads nodes, pods, services,
-> namespaces and `deployments/scale`, all `get`/`list`/`watch`.
+> `cluster` creates 4 ClusterRoles and 4 ClusterRoleBindings, so it needs a
+> cluster admin. `namespace` creates **none** — only Roles and RoleBindings inside
+> its own namespace — so a namespace admin can install it themselves.
 >
-> So `WVA_SCOPE=namespace` is **blast-radius reduction, not delegation**. A team
-> lead without cluster rights cannot install it themselves; a cluster admin does the
-> install, and the tenant gets a controller that only touches their namespace.
+> Either way the grant is read-only. WVA never writes to the cluster, because KEDA
+> performs the actuation; its only write is Events.
+>
+> A namespace-scoped install gives up the three things that genuinely require
+> cluster-scoped APIs: the `gpu-inventory` limiter (Nodes), authenticated metrics
+> (TokenReview), and EPP metrics (`nonResourceURLs`). A cluster admin installing the
+> same scope keeps all three with `WVA_ADMIN_GRANTS=true` — those limits belong to
+> the *installer*, not to the scope.
 
 #### If you are a namespace admin, not a cluster admin
 
-You cannot install WVA yourself, and no combination of flags changes that — the
-overlays create cluster-scoped RBAC, and creating it is the permission you do not
-have. `./deploy/install.sh --check` will tell you so before anything is created.
-
-What to hand your cluster admin. The second form is better for both of you: the
-controller lives in a namespace you do not administer, so nothing you do to your
-own namespace can break it — and its GPU bound is one you cannot lift, which is
-what lets an admin grant you a bigger one with confidence.
+**You can install it yourself.** One command:
 
 ```bash
-# simplest: controller runs inside your namespace
 make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace>
-
-# better: controller runs outside it, manages yours
-make deploy-wva-on-k8s WVA_SCOPE=namespace \
-  WVA_NS=wva-<your-namespace> \
-  WVA_WATCH_NS=<your-namespace>
 ```
+
+Namespace scope creates **no cluster-scoped object** — only Roles and RoleBindings
+inside your namespace — so full rights in one namespace is enough. Run
+`./deploy/install.sh --check` first; it verifies that before creating anything.
+
+Three capabilities need cluster-scoped APIs and are therefore not available to a
+self-service install:
+
+| not available | why |
+| --- | --- |
+| the `gpu-inventory` limiter | discovers GPUs from **Nodes**, which are cluster-scoped — no Role can reach them |
+| authenticated metrics | the metrics filter issues **TokenReview**/**SubjectAccessReview** |
+| EPP metrics | needs `nonResourceURLs: /metrics`, which a Role cannot express |
+
+Metrics are still scraped, over plain HTTP inside the cluster network, and
+scale-from-zero still works — it falls back to the queue signal it reads from
+Prometheus.
+
+**Your limits are still set by the cluster, not by you.** WVA reads limiters and
+quotas from a namespace your admin controls; see
+[the GPU limiter](gpu-limiter.md#who-is-allowed-to-change-the-bound). If your admin
+has declared a `gpu-inventory` limiter, this install will not become ready until
+they also grant the node read — that is deliberate, because the alternative is a
+controller that silently never scales anything up.
+
+**What to ask an admin for, if you want more.** Either of these gives you the
+limiter and authenticated metrics back:
+
+```bash
+# they install it for you, in your namespace
+make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace> WVA_ADMIN_GRANTS=true
+
+# or they run it outside your namespace and point it at yours
+make deploy-wva-on-k8s WVA_SCOPE=namespace \
+  WVA_NS=wva-<your-namespace> WVA_WATCH_NS=<your-namespace> WVA_ADMIN_GRANTS=true
+```
+
+Also required either way, and not yours to install: **KEDA**, **Prometheus**, and
+the Gateway API / GAIE **CRDs**. CRDs are cluster-scoped.
 
 Everything after the install is yours: you create the ScaledObjects that register
 your workloads, and you set thresholds and policy tiers. See

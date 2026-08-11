@@ -2,7 +2,7 @@
 #
 # Refuse to install a second WVA on top of an existing one.
 #
-# Requires vars: WVA_NS, WVA_ALLOW_COEXIST (optional).
+# Requires vars: WVA_NS.
 # Requires funcs: log_info/log_success/log_warning/log_error, wva_install_scope.
 #
 # The contract:
@@ -69,11 +69,6 @@ check_single_installation() {
     local want
     want="$(wva_install_scope)"
 
-    if [ "${WVA_ALLOW_COEXIST:-false}" = "true" ]; then
-        log_warning "WVA already installed in: $peers. Continuing because WVA_ALLOW_COEXIST=true."
-        return 0
-    fi
-
     # A cluster-wide controller already manages every namespace. Nothing joins it.
     if [ -n "$cluster_wide" ]; then
         log_error "A cluster-scoped WVA is already installed: $cluster_wide.
@@ -87,7 +82,7 @@ Pick one:
   - replace it with per-namespace controllers:
         make undeploy-wva-on-k8s WVA_NS=${cluster_wide%%/*} WVA_SCOPE=cluster
     then install one WVA_SCOPE=namespace per namespace that needs one
-  - or override, knowing both will manage these workloads: WVA_ALLOW_COEXIST=true"
+  - or remove it and install this one in its place"
     fi
 
     # Installing cluster-scoped on top of existing namespace-scoped installs would
@@ -100,8 +95,7 @@ then decide for the same workloads.
 
 Pick one:
   - install this one namespace-scoped too:   WVA_SCOPE=namespace
-  - or remove the existing ones first, then install cluster-scoped
-  - or override: WVA_ALLOW_COEXIST=true"
+  - or remove the existing ones first, then install cluster-scoped"
     fi
 
     # Namespace-scoped beside namespace-scoped: the supported multi-controller shape.

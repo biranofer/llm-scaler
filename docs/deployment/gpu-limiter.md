@@ -51,25 +51,38 @@ kubectl -n wva-policy create rolebinding team-a-wva \
   --serviceaccount=team-a:wva-controller-manager
 ```
 
-Per-namespace variations are annotations on the tenant's `Namespace`:
+A namespace that draws its limits from somewhere other than the default is
+**labelled**:
 
 ```bash
-# this namespace draws its limits from somewhere else
-kubectl annotate namespace team-a wva.llmd.ai/policy-namespace=platform-policy
+kubectl label namespace team-a wva.llmd.ai/policy-namespace=platform-policy
+```
 
-# or: this namespace is explicitly allowed to scale unbounded
-kubectl annotate namespace team-b wva.llmd.ai/unbounded=allowed
+A label rather than an annotation because it is selectable — this answers "which
+namespaces does this policy govern?", which is the question an admin asks when
+auditing:
+
+```bash
+kubectl get ns -l wva.llmd.ai/policy-namespace=platform-policy
 ```
 
 ### What the controller does with that
 
 Policy is resolved once at startup, in order:
 
-1. `wva.llmd.ai/policy-namespace` on the managed Namespace
-2. `WVA_POLICY_NS` given at install time
-3. the `wva-policy` namespace, if it exists *and* the controller manages its own
-   namespace
-4. the controller's own namespace
+1. the `wva.llmd.ai/policy-namespace` **label** on the namespace being managed
+2. the **default policy namespace**, `wva-policy` — a name hardcoded in WVA, which
+   is why the install scripts never mention it: one definition, in one language,
+   so the two cannot drift
+3. the controller's own namespace
+
+Step 2 applies only to a controller that manages its own namespace. A
+**cluster-scoped** controller already runs where only a cluster admin can write,
+so its own ConfigMap *is* cluster-defined policy — a second namespace would add a
+place to look and nothing else. It is also a deliberate guard: letting `wva-policy`
+override an admin-owned controller meant that creating it for one tenant silently
+switched a working, correctly-bounded cluster install to an empty policy, taking
+it from bounded to **unbounded** with no edit to the install that changed.
 
 Limiters written in the controller's own ConfigMap are then ignored *and logged* —
 a limiter that reads as enforcing and enforces nothing is worse than either
@@ -79,6 +92,26 @@ running the workload: those are tuning, not entitlement.
 If the policy ConfigMap **exists but cannot be read** — usually a missing
 RoleBinding — the controller refuses to start rather than run unbounded while an
 admin believes a quota applies.
+
+### When policy demands a limiter the controller cannot serve
+
+If cluster policy declares `gpu-inventory` and the controller may not list nodes,
+it reports **not ready** and stays that way.
+
+That is deliberate, and it is a *readiness* check rather than a startup one
+because the situation has two arrival times:
+
+- **at install** — the rollout never completes, so the install fails loudly
+  instead of reporting success;
+- **long after** — an admin adds the limiter to cluster policy, which the
+  controller reloads live. The pod goes NotReady, which is visible and alertable.
+
+The alternative is the failure this guards against: every variant charged to no
+accelerator pool, given no GPU budget, and never scaling up again — indistinguishable
+from an idle cluster.
+
+Grant the node read (`WVA_ADMIN_GRANTS=true` at install, or a node-reader
+ClusterRole by hand), or remove the limiter from cluster policy.
 
 ### Read this before relying on it
 
@@ -97,7 +130,7 @@ What this mechanism honestly buys you:
 - the GPU budget is authoritative for every controller *actually running WVA* —
   covering misconfiguration, drift, and copied manifests, which is most real
   incidents;
-- an admin can direct a controller they did not deploy, via an annotation on a
+- an admin can direct a controller they did not deploy, via a label on a
   cluster-scoped object.
 
 **For a tenant you do not trust, enforce at admission instead.** A `ResourceQuota`

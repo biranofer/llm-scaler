@@ -28,12 +28,20 @@ Environment Variables:
  The install
   IMG                          WVA image as repo:tag (alternative to -i)
   WVA_NS                       Namespace to install the controller into (default: workload-variant-autoscaler-system)
-  WVA_SCOPE                    cluster | namespace. Narrows what the controller READS; both create
-                               cluster-scoped RBAC (default: cluster, or namespace on openshift)
+  WVA_SCOPE                    cluster | namespace (default: cluster, or namespace on openshift)
+                                 cluster   — manages every namespace, creates cluster-scoped RBAC,
+                                             needs a cluster admin
+                                 namespace — manages ONE namespace and creates NO cluster-scoped
+                                             object, so a namespace admin can install it. Gives up
+                                             the gpu-inventory limiter, authenticated metrics and
+                                             EPP metrics, which all require cluster-scoped APIs.
+  WVA_ADMIN_GRANTS             For a namespace-scoped install made BY a cluster admin (or granted the
+                               cluster-scoped pieces): keeps authenticated metrics and adds the node
+                               read gpu-inventory needs (default: false)
+  WVA_WATCH_NS                 Namespace a namespace-scoped controller MANAGES, when that differs from
+                               the one it runs in (default: its own)
   WVA_REPLICAS                 Controller replicas. >1 is leader-election failover, NOT more throughput (default: 1)
   DEPLOY_WVA                   Deploy WVA controller (default: true)
-  WVA_ALLOW_COEXIST            Permit a second WVA alongside an incompatible one (default: false — the
-                               contract is ONE cluster-scoped install, or N namespace-scoped, one per namespace)
   SKIP_CHECKS                  Skip the prerequisite and permission checks (default: false)
 
  Scaling behaviour

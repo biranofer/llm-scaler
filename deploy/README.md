@@ -24,6 +24,32 @@ make check-prereqs        # tools, versions, cluster reachability - read-only
 make deploy-wva-on-k8s    # cluster-scoped, default namespace, no GPU limiter
 ```
 
+## Every deployment option, as one command
+
+Each row is a complete install. Pick the row that matches who you are and what the
+cluster already has; the rest of this guide explains the pieces.
+
+| I am… | command | what it does |
+| --- | --- | --- |
+| a cluster admin, one WVA for everything | `make deploy-wva-on-k8s` | manages **every** namespace. Creates cluster-scoped RBAC. The usual choice. |
+| a cluster admin, one WVA per team | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a WVA_ADMIN_GRANTS=true` | manages **one** namespace. Separate failure domains per team; keeps authenticated metrics and node access. |
+| a cluster admin, keeping the controller out of the team's reach | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a WVA_ADMIN_GRANTS=true` | controller **runs in** `wva-team-a`, **manages** `team-a`. The team cannot edit the controller, so limits placed on them hold. |
+| a **namespace admin**, no cluster rights | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a` | creates **no cluster-scoped object**, so you can run it yourself. No `gpu-inventory` limiter, no authenticated metrics, no EPP metrics. |
+| adding WVA to a cluster that already has llm-d | `PROMETHEUS_URL=https://prom.monitoring.svc:9090 DEPLOY_PROMETHEUS=false CRD_INSTALL=never make deploy-wva-on-k8s` | controller only. Touches neither the cluster's Prometheus nor its CRDs. |
+| bounding scaling by real GPUs | add `WVA_LIMITER=gpu-inventory` | allocates from per-accelerator pools. Needs node read; the install fails without it. |
+| bounding scaling by declared caps | add `WVA_LIMITER=quota` | bounds from config. Needs no cluster-scoped access. |
+| removing it | `make undeploy-wva-on-k8s` | removes WVA. Leaves Prometheus, KEDA, EPP and the namespace — see [Uninstalling](#uninstalling). |
+
+Two things every row has in common:
+
+- **Nothing scales until a ScaledObject exists** — see the next section.
+- **Without a limiter, scaling is unbounded.** `WVA_LIMITER` is how you bound it,
+  and [the GPU limiter](../docs/deployment/gpu-limiter.md) explains who is allowed
+  to set it.
+
+Add `-e openshift` (or use `make deploy-wva-on-openshift`) on OpenShift, where
+`WVA_SCOPE` defaults to `namespace`.
+
 ### Installing WVA is not the last step
 
 **A ScaledObject is the registration.** WVA has no watch and no listing - it only

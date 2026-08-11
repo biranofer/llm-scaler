@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +122,20 @@ var _ = Describe("Multi-controller Tests - Dual namespace-scoped isolation", Lab
 				`      value: {"name": "CONTROLLER_INSTANCE", "value": "` + controllerInstance + `"}`,
 			}, "\n")
 			Expect(os.WriteFile(tmpOverlay+"/kustomization.yaml", []byte(kustomizationContent), 0600)).To(Succeed())
+
+			// Create the namespace first. The namespace-scoped overlay deliberately
+			// does NOT carry a Namespace object: that scope is installable by a
+			// namespace admin, who installs INTO a namespace that already exists and
+			// is not theirs to create. This test drives the same overlay, so it has
+			// to do what such an installer does.
+			nsCmd := exec.Command("kubectl", "create", "namespace", secondaryController,
+				"--dry-run=client", "-o", "yaml")
+			nsYAML, nsErr := nsCmd.Output()
+			Expect(nsErr).NotTo(HaveOccurred(), "rendering the secondary namespace failed")
+			applyNS := exec.Command("kubectl", "apply", "-f", "-")
+			applyNS.Stdin = bytes.NewReader(nsYAML)
+			nsOut, nsApplyErr := applyNS.CombinedOutput()
+			Expect(nsApplyErr).NotTo(HaveOccurred(), "creating namespace %s failed: %s", secondaryController, string(nsOut))
 
 			cmd := exec.Command("kubectl", "apply", "-k", tmpOverlay, "--server-side", "--force-conflicts")
 			out, err := cmd.CombinedOutput()

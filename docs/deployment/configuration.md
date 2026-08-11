@@ -18,7 +18,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
-| `WVA_POLICY_NS` | Admin-owned namespace to read limiters and quotas from, instead of the controller's own. A guardrail, not a boundary — read [Read this before relying on it](gpu-limiter.md#read-this-before-relying-on-it) | the controller's own namespace |
+| `WVA_ADMIN_GRANTS` | For a **namespace-scoped** install made by a cluster admin, or by someone an admin granted the cluster-scoped pieces to. Keeps authenticated metrics and adds the node read the `gpu-inventory` limiter requires. Without it the install creates no cluster-scoped object at all, which is what makes it self-service | `false` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
 ## Image
@@ -48,7 +48,6 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `DEPLOY_ALERTING_RULES` | Install the PrometheusRule alerts | `false` |
 | `ENABLE_SCALE_TO_ZERO` | Allow a model to be parked at zero replicas, and enable the EPP `flowControl` gate that makes waking it possible | `true` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
-| `WVA_ALLOW_COEXIST` | Install alongside an existing WVA. Refused by default: both controllers would allocate from the same pool of free GPUs without seeing each other's claims, oversubscribing the cluster | `false` |
 | `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
 | `KEDA_NAMESPACE` | Namespace KEDA is installed in | `keda-system` |
 | `KEDA_HELM_INSTALL` | Install KEDA with Helm rather than assuming it is present | `false` |

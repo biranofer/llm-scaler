@@ -121,7 +121,6 @@ CHECK_ONLY=${CHECK_ONLY:-false}
 # Allow a second WVA alongside an existing one. Refused by default because both
 # would allocate from the same pool of free GPUs without seeing each other's
 # claims. See deploy/lib/single_install.sh.
-WVA_ALLOW_COEXIST=${WVA_ALLOW_COEXIST:-false}
 
 # Default ScaledObjects. A ScaledObject is the REGISTRATION — WVA is only asked
 # about workloads KEDA calls it about — so an install with none anywhere is a
