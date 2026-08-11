@@ -1189,7 +1189,10 @@ func (e *Engine) applyScaleToZeroEnforcement(
 		return false
 	}
 
-	scaleToZeroConfig := e.Config.ScaleToZeroConfigForNamespace(namespace)
+	// The resolved scaling entry carries the whole scale-to-zero policy: enabled
+	// and retention, tiered namespace-local → global and merged with this model's
+	// override. Resolved once here and used for both.
+	satConfig := resolveSaturationConfig(e.Config.SaturationConfigForNamespace(namespace), modelID, namespace)
 
 	// A model just woken from zero has served nothing yet: the request that woke
 	// it is still queued in the EPP while the pod pulls and loads. The enforcer's
@@ -1197,18 +1200,15 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// zero for precisely that model — so without this gate the wake is undone
 	// before it can serve the request that asked for it. Hold the model for the
 	// same retention period the operator already configures for idleness.
-	retention := config.ScaleToZeroRetentionPeriod(scaleToZeroConfig, modelID)
+	retention := config.ResolveScaleToZeroRetention(&satConfig)
 	if decision.WithinActivationRetention(namespace, modelID, retention) {
 		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model was recently woken from zero and is inside its retention period",
 			"modelID", modelID, "namespace", namespace, "retention", retention, "optimizer", optimizerName)
 		return false
 	}
 
-	// Resolve the saturation entry so an inline scaleToZero setting can override
-	// the separate scale-to-zero ConfigMap for this model/namespace.
-	satConfig := resolveSaturationConfig(e.Config.SaturationConfigForNamespace(namespace), modelID, namespace)
 	scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicyOnDecisions(
-		ctx, modelID, namespace, decisions, scaleToZeroConfig, &satConfig, optimizerName,
+		ctx, modelID, namespace, decisions, &satConfig, optimizerName,
 	)
 	if scaledToZero {
 		logger.Info("Scale-to-zero enforcement applied",

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
@@ -201,21 +204,58 @@ limiters:
 	})
 })
 
-var _ = Describe("ResolveScaleToZeroEnabled", func() {
-	data := ScaleToZeroConfigData{
-		GlobalDefaultsKey: {EnableScaleToZero: p1BoolPtr(true)},
-	}
+// The scaling entry is the ONLY per-model surface for scale-to-zero. A separate
+// wva-model-scale-to-zero-config ConfigMap used to carry the same two settings,
+// which left three places to look and a precedence rule to remember.
+var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func() {
+	AfterEach(func() { _ = os.Unsetenv("WVA_SCALE_TO_ZERO") })
 
-	It("prefers the inline saturation setting over the ConfigMap", func() {
+	It("uses the inline setting when present", func() {
+		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
+		Expect(ResolveScaleToZeroEnabled(sat)).To(BeTrue())
+
+		sat.ScaleToZero.Enabled = p1BoolPtr(false)
+		Expect(ResolveScaleToZeroEnabled(sat)).To(BeFalse())
+	})
+
+	It("falls back to the deployment flag when the entry says nothing", func() {
+		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
+		Expect(ResolveScaleToZeroEnabled(&SaturationScalingConfig{})).To(BeTrue())
+		Expect(ResolveScaleToZeroEnabled(nil)).To(BeTrue())
+	})
+
+	It("lets an explicit false beat the deployment flag", func() {
+		// The pointer exists for exactly this: "not set" and "set to false" must
+		// not collapse, or a model could never opt out of a cluster-wide default.
+		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
 		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)}}
-		Expect(ResolveScaleToZeroEnabled(sat, data, "m")).To(BeFalse())
+		Expect(ResolveScaleToZeroEnabled(sat)).To(BeFalse())
 	})
-	It("falls back to the ConfigMap when the inline field is nil", func() {
-		sat := &SaturationScalingConfig{}
-		Expect(ResolveScaleToZeroEnabled(sat, data, "m")).To(BeTrue())
+
+	It("resolves the retention period, defaulting when absent or unparseable", func() {
+		sat := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "45s"}}
+		Expect(ResolveScaleToZeroRetention(sat)).To(Equal(45 * time.Second))
+
+		Expect(ResolveScaleToZeroRetention(&SaturationScalingConfig{})).To(Equal(DefaultScaleToZeroRetentionPeriod))
+
+		// A typo must not scale a model down the instant it goes idle.
+		bad := &SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "10 minutes"}}
+		Expect(ResolveScaleToZeroRetention(bad)).To(Equal(DefaultScaleToZeroRetentionPeriod))
 	})
-	It("falls back to the ConfigMap when sat is nil", func() {
-		Expect(ResolveScaleToZeroEnabled(nil, data, "m")).To(BeTrue())
+})
+
+// Both settings live in one envelope, so a per-model override that sets only one
+// of them must not silently discard the other.
+var _ = Describe("ScaleToZero merge", func() {
+	It("merges the envelope field by field", func() {
+		base := SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{
+			Enabled: p1BoolPtr(true), RetentionPeriod: "10m",
+		}}
+		base.Merge(SaturationScalingConfig{ScaleToZero: &ScaleToZeroEnvelope{RetentionPeriod: "30s"}})
+
+		Expect(base.ScaleToZero.RetentionPeriod).To(Equal("30s"))
+		Expect(base.ScaleToZero.Enabled).NotTo(BeNil(), "enabled must survive a retention-only override")
+		Expect(*base.ScaleToZero.Enabled).To(BeTrue())
 	})
 })
 

@@ -48,8 +48,12 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 	// enforcer will zero any model it is actually allowed to act on.
 	engineWithIdleEnforcer := func() *Engine {
 		cfg := config.NewTestConfig()
-		cfg.UpdateScaleToZeroConfigForNamespace(namespace, config.ScaleToZeroConfigData{
-			modelID: {EnableScaleToZero: ptrTo(true), RetentionPeriod: "10m"},
+		// Scale-to-zero policy lives on the scaling entry now, keyed the same way
+		// every other per-model setting is.
+		cfg.UpdateSaturationConfigForNamespace(namespace, map[string]config.SaturationScalingConfig{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m",
+			}},
 		})
 		return &Engine{
 			Config: cfg,
@@ -139,20 +143,32 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		Expect(d[0].TargetReplicas).To(Equal(2))
 	})
 
-	It("does NOT zero an idle vLLM model when the inline scaleToZero override disables it", func() {
-		// The scale-to-zero ConfigMap (via engineWithIdleEnforcer) enables scale-to-zero
-		// for the model; an inline scaleToZero:{enabled:false} on the resolved saturation
-		// entry must win, proving the resolveSaturationConfig -> EnforcePolicyOnDecisions
-		// -> ResolveScaleToZeroEnabled wiring is honored end-to-end.
+	It("does NOT zero an idle vLLM model when a per-model override disables it", func() {
+		// The entry's "default" enables scale-to-zero; the model's own
+		// "{modelID}#{namespace}" override disables it and must win. That is the
+		// whole resolveSaturationConfig → EnforcePolicyOnDecisions →
+		// ResolveScaleToZeroEnabled wiring, end to end.
+		//
+		// This used to prove something weaker — that an inline setting beat a
+		// separate scale-to-zero ConfigMap. With one surface there is no second
+		// source to beat, so the meaningful precedence is override over default,
+		// and an explicit false must survive an inherited true.
 		e := engineWithIdleEnforcer()
-		e.Config.UpdateSaturationConfig(map[string]config.SaturationScalingConfig{
-			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{Enabled: ptrTo(false)}},
+		e.Config.UpdateSaturationConfigForNamespace(namespace, map[string]config.SaturationScalingConfig{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m",
+			}},
+			modelID + "#" + namespace: {
+				ModelID:     modelID,
+				Namespace:   namespace,
+				ScaleToZero: &config.ScaleToZeroEnvelope{Enabled: ptrTo(false)},
+			},
 		})
 		d := decisions()
 		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
 			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
 		Expect(scaledToZero).To(BeFalse())
-		Expect(d[0].TargetReplicas).To(Equal(2), "inline scaleToZero:false must override the enabled ConfigMap")
+		Expect(d[0].TargetReplicas).To(Equal(2), "a per-model scaleToZero:false must override the default entry")
 	})
 })
 

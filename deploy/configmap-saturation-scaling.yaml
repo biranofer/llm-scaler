@@ -75,7 +75,7 @@ data:
   # Example per-model override for llama model in production namespace
   # Shows partial override (only some fields specified, rest inherit from default)
   # Uses the plugin envelope for the analyzer and an inline scale-to-zero setting
-  # (which overrides the wva-model-scale-to-zero-config ConfigMap for this model).
+  # (scaleToZero is the only per-model surface: enabled + retentionPeriod).
   # "meta/llama-70b#production": |
   #   model_id: meta/llama-70b
   #   namespace: production
@@ -89,8 +89,7 @@ data:
   # (no restart) and honored ONLY on the `default` entry above (a cluster-budget
   # scope, like enableRescale). A limiters list selects a SINGLE mode: a quota
   # entry wins over any gpu-inventory entry, so add ONE of the forms below to the
-  # `default` entry. With no limiters: declared, the physical-inventory limiter is
-  # used.
+  # `default` entry. With no limiters: declared — as shipped — nothing is limited.
   #
   #   # (a) physical-capacity limiter:
   #   limiters:

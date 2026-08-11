@@ -105,11 +105,30 @@ type SaturationScalingConfig struct {
 	Limiters []QuotaLimiterConfig `yaml:"limiters,omitempty"`
 }
 
-// ScaleToZeroEnvelope is the inline scale-to-zero setting on a scaling entry.
-// Enabled is a pointer so an absent field (nil) means "inherit from the separate
-// scale-to-zero ConfigMap" rather than "disabled".
+// ScaleToZeroEnvelope is the scale-to-zero policy for a scaling entry, and the
+// only per-model surface for it.
+//
+// It replaced a separate wva-model-scale-to-zero-config ConfigMap that carried
+// the same two settings. Having both meant scale-to-zero was configurable in
+// three places — here, there, and the WVA_SCALE_TO_ZERO env — with a precedence
+// rule to remember and no single answer to "is it on for this model?". Living on
+// the scaling entry also gives retention the namespace tiering and per-model
+// overrides it never had: the entry is resolved namespace-local → global and
+// merged with its "{modelID}#{namespace}" override before either field is read.
 type ScaleToZeroEnvelope struct {
+	// Enabled turns scale-to-zero on for the entry. A pointer so an absent field
+	// (nil) means "inherit": from the merged default entry, and finally from the
+	// WVA_SCALE_TO_ZERO deployment flag. Distinguishing that from an explicit
+	// false is what lets an override disable scale-to-zero for one model without
+	// the default entry's value winning.
 	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// RetentionPeriod is how long a model must be idle before it is scaled to
+	// zero, and how long a model just woken from zero is held up (the request
+	// that woke it is still queued while the pod loads, so the idle signal reads
+	// zero for exactly that model). A duration string, e.g. "5m". Empty inherits,
+	// ending at DefaultScaleToZeroRetentionPeriod.
+	RetentionPeriod string `yaml:"retentionPeriod,omitempty"`
 }
 
 // ScaleFromZeroEnvelope is the inline scale-from-zero setting on a scaling entry.
@@ -389,8 +408,22 @@ func (c *SaturationScalingConfig) Merge(override SaturationScalingConfig) {
 	if len(override.Analyzers) > 0 {
 		c.Analyzers = override.Analyzers
 	}
+	// Merged FIELD BY FIELD, not wholesale. The envelope carries two independent
+	// settings, so replacing it would make an override that sets only
+	// retentionPeriod silently discard an inherited enabled (and vice versa) —
+	// which is the partial-override case both fields document.
 	if override.ScaleToZero != nil {
-		c.ScaleToZero = override.ScaleToZero
+		merged := ScaleToZeroEnvelope{}
+		if c.ScaleToZero != nil {
+			merged = *c.ScaleToZero
+		}
+		if override.ScaleToZero.Enabled != nil {
+			merged.Enabled = override.ScaleToZero.Enabled
+		}
+		if override.ScaleToZero.RetentionPeriod != "" {
+			merged.RetentionPeriod = override.ScaleToZero.RetentionPeriod
+		}
+		c.ScaleToZero = &merged
 	}
 	if override.ScaleFromZero != nil {
 		c.ScaleFromZero = override.ScaleFromZero

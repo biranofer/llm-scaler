@@ -257,7 +257,6 @@ func TestConfig_ThreadSafety(t *testing.T) {
 			defer func() { done <- true }()
 			_ = cfg.OptimizationInterval()
 			_ = cfg.SaturationConfig()
-			_ = cfg.ScaleToZeroConfig()
 			_ = cfg.PrometheusCacheConfig()
 		}()
 	}

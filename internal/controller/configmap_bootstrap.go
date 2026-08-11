@@ -37,7 +37,6 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 		isGlobal  bool
 	}{
 		{name: config.SaturationConfigMapName(), namespace: systemNamespace, isGlobal: true},
-		{name: config.DefaultScaleToZeroConfigMapName, namespace: systemNamespace, isGlobal: true},
 	}
 
 	// Determine which namespaces to scan for namespace-local ConfigMaps
@@ -91,11 +90,6 @@ func (r *ConfigMapReconciler) BootstrapInitialConfigMaps(ctx context.Context) er
 				namespace string
 				isGlobal  bool
 			}{name: config.SaturationConfigMapName(), namespace: ns, isGlobal: false},
-			struct {
-				name      string
-				namespace string
-				isGlobal  bool
-			}{name: config.DefaultScaleToZeroConfigMapName, namespace: ns, isGlobal: false},
 		)
 	}
 
@@ -126,8 +120,6 @@ func (r *ConfigMapReconciler) bootstrapConfigMap(ctx context.Context, name, name
 	switch name {
 	case config.SaturationConfigMapName():
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	case config.DefaultScaleToZeroConfigMapName:
-		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
 	default:
 		logger.V(1).Info("Ignoring unrecognized bootstrap ConfigMap", "name", name, "namespace", namespace)
 	}

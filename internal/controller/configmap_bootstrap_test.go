@@ -51,14 +51,16 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 	})
 
 	It("should bootstrap global secondary ConfigMaps and mark config sync complete", func() {
-		By("Creating global saturation and scale-to-zero ConfigMaps")
+		By("Creating the global saturation ConfigMap, scale-to-zero policy included")
+		// One ConfigMap now: scale-to-zero rides on the scaling entry rather than a
+		// second ConfigMap with its own keys and precedence.
 		saturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      config.SaturationConfigMapName(),
 				Namespace: systemNamespace,
 			},
 			Data: map[string]string{
-				"default": "kvCacheThreshold: 0.70\nqueueLengthThreshold: 8\n",
+				"default": "kvCacheThreshold: 0.70\nqueueLengthThreshold: 8\nscaleToZero:\n  enabled: true\n  retentionPeriod: 5m\n",
 			},
 		}
 		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, saturationCM))).To(Succeed())
@@ -66,21 +68,6 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: saturationCM.Name, Namespace: saturationCM.Namespace}, currentSaturationCM)).To(Succeed())
 		currentSaturationCM.Data = saturationCM.Data
 		Expect(k8sClient.Update(ctx, currentSaturationCM)).To(Succeed())
-
-		scaleToZeroCM := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.DefaultScaleToZeroConfigMapName,
-				Namespace: systemNamespace,
-			},
-			Data: map[string]string{
-				"default": "enable_scale_to_zero: true\nretention_period: 5m",
-			},
-		}
-		Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, scaleToZeroCM))).To(Succeed())
-		currentScaleToZeroCM := &corev1.ConfigMap{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: scaleToZeroCM.Name, Namespace: scaleToZeroCM.Namespace}, currentScaleToZeroCM)).To(Succeed())
-		currentScaleToZeroCM.Data = scaleToZeroCM.Data
-		Expect(k8sClient.Update(ctx, currentScaleToZeroCM)).To(Succeed())
 
 		By("Bootstrapping configmaps")
 		Expect(reconciler.BootstrapInitialConfigMaps(ctx)).To(Succeed())
@@ -94,12 +81,11 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(exists).To(BeTrue())
 		Expect(satConfig.KvCacheThreshold).To(BeNumerically("~", 0.70, 0.01))
 
-		By("Verifying scale-to-zero config was loaded")
-		s2zConfig := cfg.ScaleToZeroConfig()
-		defaultModel, exists := s2zConfig["default"]
-		Expect(exists).To(BeTrue())
-		Expect(defaultModel.EnableScaleToZero).NotTo(BeNil())
-		Expect(*defaultModel.EnableScaleToZero).To(BeTrue())
+		By("Verifying the scale-to-zero policy rode in on the scaling entry")
+		Expect(satConfig.ScaleToZero).NotTo(BeNil())
+		Expect(satConfig.ScaleToZero.Enabled).NotTo(BeNil())
+		Expect(*satConfig.ScaleToZero.Enabled).To(BeTrue())
+		Expect(satConfig.ScaleToZero.RetentionPeriod).To(Equal("5m"))
 	})
 
 	It("should mark sync complete when optional ConfigMaps are absent", func() {
@@ -163,17 +149,17 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		}
 		Expect(k8sClient.Create(ctx, ns1SaturationCM)).To(Succeed())
 
-		By("Creating namespace-local scale-to-zero ConfigMap in namespace2")
-		ns2ScaleToZeroCM := &corev1.ConfigMap{
+		By("Creating a namespace-local saturation ConfigMap in namespace2")
+		ns2SaturationCM := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      config.DefaultScaleToZeroConfigMapName,
+				Name:      config.SaturationConfigMapName(),
 				Namespace: namespace2,
 			},
 			Data: map[string]string{
-				"model-b": "model_id: model-b\nenable_scale_to_zero: true\nretention_period: 10m",
+				"model-b": "model_id: model-b\nscaleToZero:\n  enabled: true\n  retentionPeriod: 10m\n",
 			},
 		}
-		Expect(k8sClient.Create(ctx, ns2ScaleToZeroCM)).To(Succeed())
+		Expect(k8sClient.Create(ctx, ns2SaturationCM)).To(Succeed())
 
 		By("Bootstrapping ConfigMaps (watching all namespaces)")
 		Expect(reconciler.BootstrapInitialConfigMaps(ctx)).To(Succeed())
@@ -194,12 +180,13 @@ var _ = Describe("ConfigMap Bootstrap", func() {
 		Expect(ns1ModelConfig.KvCacheThreshold).To(BeNumerically("~", 0.75, 0.01))
 		Expect(ns1ModelConfig.QueueLengthThreshold).To(BeNumerically("==", 5))
 
-		By("Verifying namespace2 scale-to-zero config was loaded")
-		ns2S2ZConfig := cfg.ScaleToZeroConfigForNamespace(namespace2)
-		ns2ModelConfig, exists := ns2S2ZConfig["model-b"]
+		By("Verifying namespace2 scale-to-zero policy was loaded")
+		ns2SatConfig := cfg.SaturationConfigForNamespace(namespace2)
+		ns2ModelConfig, exists := ns2SatConfig["model-b"]
 		Expect(exists).To(BeTrue())
-		Expect(ns2ModelConfig.EnableScaleToZero).NotTo(BeNil())
-		Expect(*ns2ModelConfig.EnableScaleToZero).To(BeTrue())
+		Expect(ns2ModelConfig.ScaleToZero).NotTo(BeNil())
+		Expect(ns2ModelConfig.ScaleToZero.Enabled).NotTo(BeNil())
+		Expect(*ns2ModelConfig.ScaleToZero.Enabled).To(BeTrue())
 	})
 
 	It("should skip namespaces with exclude annotation during bootstrap", func() {

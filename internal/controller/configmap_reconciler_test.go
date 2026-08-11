@@ -99,16 +99,19 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(satConfig.QueueLengthThreshold).To(BeNumerically("~", 5.0, 0.01))
 		})
 
-		It("should reconcile global scale-to-zero ConfigMap successfully", func() {
-			By("Creating a global scale-to-zero ConfigMap")
+		It("should reconcile a scale-to-zero policy on the saturation ConfigMap", func() {
+			By("Creating a global saturation ConfigMap carrying scale-to-zero policy")
+			// The per-model override key is "{modelID}#{namespace}" — the same key
+			// every other per-model setting uses, which is the point of folding the
+			// separate scale-to-zero ConfigMap into this one.
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      config.DefaultScaleToZeroConfigMapName,
+					Name:      config.SaturationConfigMapName(),
 					Namespace: systemNamespace,
 				},
 				Data: map[string]string{
-					"default": "enable_scale_to_zero: true\nretention_period: 5m",
-					"model1":  "model_id: model1\nenable_scale_to_zero: true\nretention_period: 10m",
+					"default": "scaleToZero:\n  enabled: true\n  retentionPeriod: 5m\n",
+					"model1":  "model_id: model1\nscaleToZero:\n  enabled: true\n  retentionPeriod: 10m\n",
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cm))).To(Succeed())
@@ -129,13 +132,14 @@ var _ = Describe("ConfigMapReconciler", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			By("Verifying the config was updated")
-			s2zConfigMap := cfg.ScaleToZeroConfig()
-			Expect(s2zConfigMap).NotTo(BeNil())
-			model1Config, exists := s2zConfigMap["model1"]
+			satConfigMap := cfg.SaturationConfig()
+			Expect(satConfigMap).NotTo(BeNil())
+			model1Config, exists := satConfigMap["model1"]
 			Expect(exists).To(BeTrue())
-			Expect(model1Config.EnableScaleToZero).NotTo(BeNil())
-			Expect(*model1Config.EnableScaleToZero).To(BeTrue())
-			Expect(model1Config.RetentionPeriod).To(Equal("10m"))
+			Expect(model1Config.ScaleToZero).NotTo(BeNil())
+			Expect(model1Config.ScaleToZero.Enabled).NotTo(BeNil())
+			Expect(*model1Config.ScaleToZero.Enabled).To(BeTrue())
+			Expect(model1Config.ScaleToZero.RetentionPeriod).To(Equal("10m"))
 		})
 
 	})

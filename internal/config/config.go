@@ -18,10 +18,9 @@ type Config struct {
 	tls            tlsConfig
 	prometheus     prometheusConfig
 	// epp            eppConfig
-	features    featureFlagsConfig
-	saturation  saturationConfig  // namespace-aware
-	scaleToZero scaleToZeroConfig // namespace-aware
-	catalog     catalogConfig     // cluster-scoped external-analyzer catalog
+	features   featureFlagsConfig
+	saturation saturationConfig // namespace-aware
+	catalog    catalogConfig    // cluster-scoped external-analyzer catalog
 }
 
 // LimiterType selects which pipeline.Limiter implementation
@@ -108,15 +107,6 @@ type saturationConfig struct {
 
 	// Namespace-local configuration overrides (keyed by namespace name)
 	namespaceConfigs map[string]SaturationScalingConfigPerModel
-}
-
-// scaleToZeroConfig holds scale-to-zero configuration (namespace-aware)
-type scaleToZeroConfig struct {
-	// Global default configuration
-	global ScaleToZeroConfigData
-
-	// Namespace-local configuration overrides (keyed by namespace name)
-	namespaceConfigs map[string]ScaleToZeroConfigData
 }
 
 // // StaticConfig holds configuration that is immutable after startup.
@@ -366,26 +356,6 @@ func (c *Config) resolveSaturationConfig(namespace string) map[string]Saturation
 	return nil
 }
 
-// resolveScaleToZeroConfig resolves scale-to-zero config for a namespace (namespace-local > global).
-// Must be called while holding at least a read lock.
-func (c *Config) resolveScaleToZeroConfig(namespace string) ScaleToZeroConfigData {
-	// Check namespace-local first (if namespace is provided)
-	if namespace != "" {
-		if nsConfig, exists := c.scaleToZero.namespaceConfigs[namespace]; exists {
-			if len(nsConfig) > 0 {
-				return nsConfig
-			}
-		}
-	}
-
-	// Fall back to global
-	if len(c.scaleToZero.global) > 0 {
-		return c.scaleToZero.global
-	}
-
-	return nil
-}
-
 // SaturationConfigForNamespace returns the saturation scaling configuration for the given namespace.
 // Resolution order: namespace-local > global
 // Thread-safe. Returns a copy to prevent external modifications.
@@ -435,36 +405,6 @@ func copySaturationConfig(src map[string]SaturationScalingConfig) map[string]Sat
 	return result
 }
 
-// ScaleToZeroConfig returns the current global scale-to-zero configuration.
-// Thread-safe.
-// For namespace-aware lookups, use ScaleToZeroConfigForNamespace instead.
-func (c *Config) ScaleToZeroConfig() ScaleToZeroConfigData {
-	return c.ScaleToZeroConfigForNamespace("")
-}
-
-// ScaleToZeroConfigForNamespace returns the scale-to-zero configuration for the given namespace.
-// Resolution order: namespace-local > global
-// Thread-safe. Returns a copy to prevent external modifications.
-// If namespace is empty, returns global config.
-func (c *Config) ScaleToZeroConfigForNamespace(namespace string) ScaleToZeroConfigData {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	sourceConfig := c.resolveScaleToZeroConfig(namespace)
-	return copyScaleToZeroConfig(sourceConfig)
-}
-
-// copyScaleToZeroConfig creates a deep copy of the scale-to-zero config map.
-func copyScaleToZeroConfig(src ScaleToZeroConfigData) ScaleToZeroConfigData {
-	if src == nil {
-		return make(ScaleToZeroConfigData)
-	}
-	result := make(ScaleToZeroConfigData, len(src))
-	for k, v := range src {
-		result[k] = v
-	}
-	return result
-}
-
 // UpdateSaturationConfig updates the global saturation scaling configuration.
 // Thread-safe. Takes a copy of the provided map to prevent external modifications.
 // For namespace-local updates, use UpdateSaturationConfigForNamespace instead.
@@ -507,50 +447,6 @@ func (c *Config) UpdateSaturationConfigForNamespace(namespace string, config map
 
 }
 
-// UpdateScaleToZeroConfig updates the global scale-to-zero configuration.
-// Thread-safe. Takes a copy of the provided map to prevent external modifications.
-// For namespace-local updates, use UpdateScaleToZeroConfigForNamespace instead.
-func (c *Config) UpdateScaleToZeroConfig(config ScaleToZeroConfigData) {
-	c.UpdateScaleToZeroConfigForNamespace("", config)
-}
-
-// UpdateScaleToZeroConfigForNamespace updates the scale-to-zero configuration for the given namespace.
-// If namespace is empty, updates global config.
-// Thread-safe. Takes a copy of the provided map to prevent external modifications.
-func (c *Config) UpdateScaleToZeroConfigForNamespace(namespace string, config ScaleToZeroConfigData) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Make a copy to prevent external modifications
-	newConfig := make(ScaleToZeroConfigData, len(config))
-	for k, v := range config {
-		newConfig[k] = v
-	}
-
-	var oldCount int
-	if namespace == "" {
-		// Update global
-		oldCount = len(c.scaleToZero.global)
-		c.scaleToZero.global = newConfig
-		newCount := len(c.scaleToZero.global)
-		if oldCount != newCount {
-			ctrl.Log.Info("Updated global scale-to-zero config", "oldModels", oldCount, "newModels", newCount)
-		}
-	} else {
-		// Update namespace-local
-		if c.scaleToZero.namespaceConfigs == nil {
-			c.scaleToZero.namespaceConfigs = make(map[string]ScaleToZeroConfigData)
-		}
-		oldCount = len(c.scaleToZero.namespaceConfigs[namespace])
-		c.scaleToZero.namespaceConfigs[namespace] = newConfig
-		newCount := len(c.scaleToZero.namespaceConfigs[namespace])
-		if oldCount != newCount {
-			ctrl.Log.Info("Updated namespace-local scale-to-zero config", "namespace", namespace, "oldModels", oldCount, "newModels", newCount)
-		}
-	}
-
-}
-
 // RemoveNamespaceConfig removes the namespace-local configuration for the given namespace.
 // This is called when a namespace-local ConfigMap is deleted, allowing fallback to global config.
 // Thread-safe.
@@ -564,12 +460,6 @@ func (c *Config) RemoveNamespaceConfig(namespace string) {
 	if c.saturation.namespaceConfigs != nil {
 		if _, exists := c.saturation.namespaceConfigs[namespace]; exists {
 			delete(c.saturation.namespaceConfigs, namespace)
-			removed = true
-		}
-	}
-	if c.scaleToZero.namespaceConfigs != nil {
-		if _, exists := c.scaleToZero.namespaceConfigs[namespace]; exists {
-			delete(c.scaleToZero.namespaceConfigs, namespace)
 			removed = true
 		}
 	}
@@ -627,10 +517,6 @@ func NewTestConfig() *Config {
 		saturation: saturationConfig{
 			global:           make(SaturationScalingConfigPerModel),
 			namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
-		},
-		scaleToZero: scaleToZeroConfig{
-			global:           make(ScaleToZeroConfigData),
-			namespaceConfigs: make(map[string]ScaleToZeroConfigData),
 		},
 	}
 	return cfg

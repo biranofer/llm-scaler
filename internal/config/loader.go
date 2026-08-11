@@ -178,11 +178,6 @@ func loadConfig(cfg *Config, flagSet *flag.FlagSet, configFilePath string) error
 		namespaceConfigs: make(map[string]SaturationScalingConfigPerModel),
 	}
 
-	cfg.scaleToZero = scaleToZeroConfig{
-		global:           make(ScaleToZeroConfigData),
-		namespaceConfigs: make(map[string]ScaleToZeroConfigData),
-	}
-
 	// Prometheus cache config from config file / env / defaults
 	cfg.prometheus.cache = parsePrometheusCacheConfigFromViper(v)
 

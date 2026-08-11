@@ -60,16 +60,36 @@ not `analyzers:` is set — see [Analyzer Selection](#analyzer-selection).
 
 ### `scaleToZero`
 
-An entry may set scale-to-zero inline:
+An entry carries the whole scale-to-zero policy, and is the only per-model surface
+for it:
 
 ```yaml
-scaleToZero: { enabled: false }
+scaleToZero:
+  enabled: false
+  retentionPeriod: 5m
 ```
 
-When present, it **overrides** the separate `wva-model-scale-to-zero-config` ConfigMap
-for that model/namespace. When omitted, that ConfigMap (and the `WVA_SCALE_TO_ZERO`
-env fallback) governs, exactly as before. The retention period is unaffected — it
-always comes from the scale-to-zero ConfigMap.
+| field | absent means | ends at |
+| --- | --- | --- |
+| `enabled` | inherit | the `WVA_SCALE_TO_ZERO` deployment flag |
+| `retentionPeriod` | inherit | 10m (`DefaultScaleToZeroRetentionPeriod`) |
+
+Both fields resolve through the entry, so both get namespace tiering and per-model
+overrides: the entry is resolved namespace-local → global and merged with its
+`"{modelID}#{namespace}"` override before either is read. The envelope merges
+**field by field**, so an override that sets only `retentionPeriod` keeps an
+inherited `enabled`.
+
+`enabled` is a pointer internally so "not set" and "set to false" stay distinct —
+without that, a model could never opt out of a cluster-wide default.
+
+> **Changed:** this used to be split across a separate
+> `wva-model-scale-to-zero-config` ConfigMap (per-model `enable_scale_to_zero` and
+> `retention_period`), the inline field here, and the env flag — three places to
+> look and a precedence rule to remember, with retention available in only one of
+> them. That ConfigMap is gone. `WVA_SCALE_TO_ZERO` remains as the deployment-level
+> switch: it answers "may this cluster scale anything to zero", not "should this
+> model".
 
 ### `scaleFromZero`
 
@@ -1023,7 +1043,8 @@ type AnalyzerScoreConfig struct {
 
 // ScaleToZeroEnvelope is the inline scale-to-zero setting on an entry.
 type ScaleToZeroEnvelope struct {
-    Enabled *bool `yaml:"enabled,omitempty"` // nil = inherit from the scale-to-zero ConfigMap
+    Enabled         *bool  `yaml:"enabled,omitempty"`         // nil = inherit, ending at WVA_SCALE_TO_ZERO
+    RetentionPeriod string `yaml:"retentionPeriod,omitempty"` // "" = inherit, ending at 10m
 }
 ```
 

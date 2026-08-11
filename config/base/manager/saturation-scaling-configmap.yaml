@@ -79,8 +79,8 @@ data:
   #   model_id: granite-premium
   #   namespace: production
   #   priority: 2.0
-  #   # scaleToZero here overrides the wva-model-scale-to-zero-config ConfigMap
-  #   # for this model/namespace; omit it to inherit that ConfigMap.
+  #   # scaleToZero is the only per-model surface for it: enabled + retentionPeriod,
+  #   # inherited from the `default` entry unless set here.
   #   scaleToZero: { enabled: false }
   #   analyzers:
   #     - type: saturation

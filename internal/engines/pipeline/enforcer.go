@@ -44,16 +44,18 @@ func (e *Enforcer) EnforcePolicyOnDecisions(
 	modelID string,
 	namespace string,
 	decisions []domain.VariantDecision,
-	scaleToZeroConfig config.ScaleToZeroConfigData,
 	satConfig *config.SaturationScalingConfig,
 	optimizerName string,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)
 
-	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(satConfig, scaleToZeroConfig, modelID)
+	// satConfig is the resolved scaling entry: namespace-local → global, merged
+	// with this model's override. It carries the whole scale-to-zero policy now,
+	// so there is no second config to reconcile it against.
+	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(satConfig)
 
 	if scaleToZeroEnabled {
-		applied := e.applyScaleToZeroOnDecisions(ctx, modelID, namespace, decisions, scaleToZeroConfig, optimizerName)
+		applied := e.applyScaleToZeroOnDecisions(ctx, modelID, namespace, decisions, satConfig, optimizerName)
 		logger.V(logging.DEBUG).Info("Scale-to-zero policy enforced",
 			"modelID", modelID,
 			"optimizer", optimizerName,
@@ -79,12 +81,12 @@ func (e *Enforcer) applyScaleToZeroOnDecisions(
 	modelID string,
 	namespace string,
 	decisions []domain.VariantDecision,
-	scaleToZeroConfig config.ScaleToZeroConfigData,
+	satConfig *config.SaturationScalingConfig,
 	optimizerName string,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)
 
-	retentionPeriod := config.ScaleToZeroRetentionPeriod(scaleToZeroConfig, modelID)
+	retentionPeriod := config.ResolveScaleToZeroRetention(satConfig)
 
 	requestCount, err := e.requestCountFunc(ctx, modelID, namespace, retentionPeriod)
 	if err != nil {

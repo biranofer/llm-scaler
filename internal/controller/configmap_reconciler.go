@@ -92,8 +92,6 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch name {
 	case config.SaturationConfigMapName():
 		r.handleSaturationConfigMap(ctx, cm, namespace, isGlobal)
-	case config.DefaultScaleToZeroConfigMapName:
-		r.handleScaleToZeroConfigMap(ctx, cm, namespace, isGlobal)
 	case config.AnalyzerCatalogConfigMapName():
 		r.handleAnalyzerCatalogConfigMap(ctx, cm, isGlobal)
 	default:
@@ -126,14 +124,11 @@ func (r *ConfigMapReconciler) handleConfigMapDeletion(ctx context.Context, name,
 		return
 	}
 
-	// Remove namespace-local config on deletion
-	switch name {
-	case config.SaturationConfigMapName():
+	// Remove namespace-local config on deletion. One kind now — the separate
+	// scale-to-zero ConfigMap folded into this one.
+	if name == config.SaturationConfigMapName() {
 		r.Config.RemoveNamespaceConfig(namespace)
 		logger.Info("Removed namespace-local saturation config on ConfigMap deletion", "namespace", namespace)
-	case config.DefaultScaleToZeroConfigMapName:
-		r.Config.RemoveNamespaceConfig(namespace)
-		logger.Info("Removed namespace-local scale-to-zero config on ConfigMap deletion", "namespace", namespace)
 	}
 }
 
@@ -178,6 +173,20 @@ func (r *ConfigMapReconciler) handleSaturationConfigMap(ctx context.Context, cm 
 		logger.Info("Updated global saturation config from ConfigMap", "entries", count)
 		r.warnIfThroughputRegistrationDiverged(logger, cm)
 	} else {
+		// Limiters and quotas are CLUSTER-scope: EffectiveLimiterMode reads them only
+		// from the system namespace's ConfigMap, so a tenant cannot grant themselves
+		// capacity by declaring a limiter — or raise a quota by declaring a looser
+		// one — in their own namespace. That is the point, but silently dropping the
+		// block is the same trap enableLimiter was: the config reads as bounded and
+		// nothing is bounding it. Say so.
+		for key, satConfig := range configs {
+			if len(satConfig.Limiters) > 0 {
+				logger.Info("Ignoring limiters in a namespace-local saturation ConfigMap: "+
+					"limiters and quotas are cluster-scope and are read only from the "+
+					"system namespace's ConfigMap. Move this block there, or it has no effect.",
+					"namespace", namespace, "entry", key, "systemNamespace", config.SystemNamespace())
+			}
+		}
 		r.Config.UpdateSaturationConfigForNamespace(namespace, configs)
 		logger.Info("Updated namespace-local saturation config from ConfigMap", "namespace", namespace, "entries", count)
 	}
@@ -220,32 +229,6 @@ func (r *ConfigMapReconciler) warnIfThroughputRegistrationDiverged(logger logr.L
 				"runtime. Restart the wva-controller-manager to apply.",
 			want, r.ThroughputRegistered)
 		r.Recorder.Event(cm, corev1.EventTypeWarning, constants.K8SEventThroughputAnalyzerRestartRequired, msg)
-	}
-}
-
-// handleScaleToZeroConfigMap handles updates to the scale-to-zero ConfigMap.
-// Supports both global and namespace-local ConfigMaps.
-func (r *ConfigMapReconciler) handleScaleToZeroConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
-	logger := log.FromContext(ctx)
-
-	// Parse scale-to-zero config
-	scaleToZeroConfig := config.ParseScaleToZeroConfigMap(cm.Data)
-
-	// Log parsed config for debugging
-	logger.Info("Processing scale-to-zero ConfigMap",
-		"name", cm.GetName(),
-		"namespace", namespace,
-		"isGlobal", isGlobal,
-		"configKeys", len(cm.Data),
-		"parsedModelCount", len(scaleToZeroConfig))
-
-	// Update global or namespace-local config
-	if isGlobal {
-		r.Config.UpdateScaleToZeroConfig(scaleToZeroConfig)
-		logger.Info("Updated global scale-to-zero config from ConfigMap", "modelCount", len(scaleToZeroConfig))
-	} else {
-		r.Config.UpdateScaleToZeroConfigForNamespace(namespace, scaleToZeroConfig)
-		logger.Info("Updated namespace-local scale-to-zero config from ConfigMap", "namespace", namespace, "modelCount", len(scaleToZeroConfig))
 	}
 }
 
