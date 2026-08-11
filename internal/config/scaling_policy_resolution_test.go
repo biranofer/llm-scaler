@@ -70,7 +70,8 @@ func TestOneTierServesManyModels(t *testing.T) {
 // model by model instead of all at once.
 func TestPerModelOverrideBeatsTheTier(t *testing.T) {
 	cfgMap := policyConfig()
-	cfgMap[ModelOverrideKey("m", "ns")] = ScalingPolicy{
+	cfgMap["m-override"] = ScalingPolicy{
+		ModelID: "m", Namespace: "ns",
 		ScaleUpThreshold: 0.50, ScaleDownBoundary: 0.35,
 	}
 
@@ -111,15 +112,69 @@ func TestUnknownPolicyFallsBackToTheDefaultEntry(t *testing.T) {
 	}
 }
 
-// A per-model override key must never be reachable as a policy tier, or a model's
-// private settings could be adopted by any other model naming that key.
-func TestAnOverrideKeyIsNotAPolicyTier(t *testing.T) {
+// A per-model override must never be reachable as a policy tier, or one model's
+// private settings could be adopted by any other model naming that key. The guard
+// is the body: an entry carrying a modelID is not a tier, whatever it is keyed by.
+func TestAnOverrideEntryIsNotAPolicyTier(t *testing.T) {
 	cfgMap := policyConfig()
-	overrideKey := ModelOverrideKey("secret-model", "secret-ns")
-	cfgMap[overrideKey] = ScalingPolicy{ScaleUpThreshold: 0.10}
+	cfgMap["secret"] = ScalingPolicy{
+		ModelID: "secret-model", Namespace: "secret-ns", ScaleUpThreshold: 0.10,
+	}
 
-	cfg := ResolveScalingPolicyForTier(cfgMap, "other", "other-ns", overrideKey)
+	cfg := ResolveScalingPolicyForTier(cfgMap, "other", "other-ns", "secret")
 	if cfg.ScaleUpThreshold != 0.85 {
-		t.Errorf("scaleUpThreshold = %v; a %q key must not resolve as a tier", cfg.ScaleUpThreshold, "modelID#namespace")
+		t.Errorf("scaleUpThreshold = %v; an entry bound to a model must not resolve as a tier", cfg.ScaleUpThreshold)
+	}
+}
+
+// A per-model override entry is a ConfigMap DATA KEY, and Kubernetes restricts
+// those to [-._a-zA-Z0-9]. Model IDs are normally namespaced with a slash, so the
+// naive modelID+"#"+namespace built a key the API server rejects outright — the
+// feature was unusable for almost every real model, and an e2e adding an override
+// for "e2ewva/dummy-model" failed on the write in 7ms.
+func TestAnOverrideKeyIsALegalConfigMapKey(t *testing.T) {
+	legal := func(s string) bool {
+		for _, r := range s {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			case r == '-', r == '.', r == '_':
+			default:
+				return false
+			}
+		}
+		return s != ""
+	}
+
+	for _, modelID := range []string{
+		"meta-llama/Llama-3-8B", // the normal HuggingFace form
+		"e2ewva/dummy-model",    // what the e2e serves
+		"plain-model",           // already legal, must survive unchanged
+	} {
+		key := ModelOverrideKey(modelID, "production")
+		if !legal(key) {
+			t.Errorf("ModelOverrideKey(%q) = %q, which the API server will reject as a "+
+				"ConfigMap data key", modelID, key)
+		}
+	}
+
+	if got := ModelOverrideKey("plain-model", "ns"); got != "plain-model.ns" {
+		t.Errorf("an already-legal model ID must pass through untouched, got %q", got)
+	}
+}
+
+// An override is found by its body, so ANY legal key works — including one an
+// operator picked for readability that looks nothing like the model. This is the
+// case the old {modelID}#{namespace} key form could not express at all.
+func TestAnOverrideIsFoundWhateverItIsKeyedBy(t *testing.T) {
+	cfgMap := policyConfig()
+	cfgMap["granite-in-prod"] = ScalingPolicy{
+		ModelID: "ibm/granite-13b", Namespace: "production",
+		ScaleUpThreshold: 0.42, ScaleDownBoundary: 0.30,
+	}
+
+	cfg := ResolveScalingPolicyForTier(cfgMap, "ibm/granite-13b", "production", "batch")
+	if cfg.ScaleUpThreshold != 0.42 {
+		t.Errorf("scaleUpThreshold = %v, want the override's 0.42 — a slashed model ID must "+
+			"be overridable", cfg.ScaleUpThreshold)
 	}
 }

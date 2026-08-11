@@ -115,6 +115,23 @@ func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThresho
 	)
 }
 
+// buildSaturationConfigYAMLWithModel is buildSaturationConfigYAMLWithThresholds
+// plus the identity that makes the entry a PER-MODEL OVERRIDE. Identity lives in
+// the body, not the key: a ConfigMap data key admits only [-._a-zA-Z0-9], so a
+// namespaced model ID cannot appear in one.
+func buildSaturationConfigYAMLWithModel(
+	analyzerName string,
+	kvCacheThreshold float64, queueLengthThreshold int,
+	scaleUpThreshold, scaleDownBoundary float64,
+	modelID, namespace string,
+) string {
+	entry := buildSaturationConfigYAMLWithThresholds(
+		analyzerName, kvCacheThreshold, queueLengthThreshold, scaleUpThreshold, scaleDownBoundary,
+	)
+	entry = strings.Replace(entry, `model_id: ""`, fmt.Sprintf("model_id: %q", modelID), 1)
+	return strings.Replace(entry, `namespace: ""`, fmt.Sprintf("namespace: %q", namespace), 1)
+}
+
 // scalingPolicyConfigMapName resolves the active saturation ConfigMap name from controller runtime env.
 func scalingPolicyConfigMapName() string {
 	// Match the controller's runtime config map name; discover by label first

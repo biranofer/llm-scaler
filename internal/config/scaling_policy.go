@@ -13,38 +13,88 @@ import "strings"
 // set of models in the tier is declared by the models themselves.
 //
 // Policies live in the same ConfigMap as the default entry and per-model
-// overrides, distinguished by their key:
+// overrides, told apart like this:
 //
-//	default                    the cluster default entry
-//	{modelID}#{namespace}      a per-model override  (contains "#")
-//	anything else              a named policy tier
+//	key "default"              the cluster default entry
+//	body sets model_id         a per-model override, key is arbitrary
+//	anything else              a named policy tier, keyed by its name
 //
-// The "#" is what makes this unambiguous, and it is already the override key's
-// shape — a policy name is a tier name, which has no reason to contain one.
+// Identity in the BODY, not the key. See PolicyEntryKey for why the original
+// {modelID}#{namespace} key form could never work.
 //
 // See docs/proposals/wva-keda-external-scaler.md §7.5.
 
-// PolicyEntryKey reports whether a ConfigMap entry key names a policy tier,
-// rather than the default entry or a per-model override.
-func PolicyEntryKey(key string) bool {
-	return key != GlobalDefaultsKey && !strings.Contains(key, modelOverrideKeySeparator)
+// PolicyEntryKey reports whether a ConfigMap entry names a policy tier, rather
+// than the default entry or a per-model override.
+//
+// An override is identified by its BODY — a non-empty modelID — not by the shape
+// of its key. It had to be: the key form was {modelID}#{namespace}, and a
+// ConfigMap data key may only contain [-._a-zA-Z0-9]. '#' is not in that set and
+// neither is the '/' in a namespaced model ID, so the API server rejected every
+// per-model override anyone ever tried to write. The feature could not be used at
+// all, for any model, which is why no shipped ConfigMap or e2e ever carried one.
+//
+// The fields were always there for this: ScalingPolicy.ModelID and .Namespace are
+// documented as "only used in override entries". It is also the pattern the
+// queueing-model ConfigMap in this repo already uses — "the key name is
+// arbitrary; model_id + namespace identify the model" — so an operator writing
+// both files meets one rule, and every key they choose is legal.
+func PolicyEntryKey(key string, entry ScalingPolicy) bool {
+	return key != GlobalDefaultsKey && entry.ModelID == ""
 }
 
-// ModelOverrideKey builds the per-model override entry key for a model in a
-// namespace. One place, so the readers and the writers cannot drift.
+// FindModelOverride returns the entry overriding settings for one model in one
+// namespace, and whether there was one.
+//
+// Scans rather than looks up, because identity now lives in the body. Ties are
+// broken by the lexicographically smallest key so two entries claiming the same
+// model resolve the same way on every process and every restart — an allocation
+// that changes with map order is worse than either candidate.
+func FindModelOverride(configMap map[string]ScalingPolicy, modelID, namespace string) (ScalingPolicy, bool) {
+	found, foundKey := ScalingPolicy{}, ""
+	for key, entry := range configMap {
+		if key == GlobalDefaultsKey || entry.ModelID != modelID || entry.Namespace != namespace {
+			continue
+		}
+		if foundKey == "" || key < foundKey {
+			found, foundKey = entry, key
+		}
+	}
+	return found, foundKey != ""
+}
+
+// ModelOverrideKey suggests a readable, legal ConfigMap key for a per-model
+// override. It is a CONVENIENCE, not the lookup: the key may be anything, and
+// what binds the entry to a model is the modelID/namespace in its body. Illegal
+// characters become '_' so the suggestion is always writable.
 func ModelOverrideKey(modelID, namespace string) string {
-	return modelID + modelOverrideKeySeparator + namespace
+	return sanitizeConfigMapKey(modelID) + modelOverrideKeySeparator + sanitizeConfigMapKey(namespace)
 }
 
-// modelOverrideKeySeparator joins modelID and namespace in an override entry key.
-const modelOverrideKeySeparator = "#"
+// sanitizeConfigMapKey replaces every character Kubernetes disallows in a
+// ConfigMap data key with '_'.
+func sanitizeConfigMapKey(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '.', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+}
+
+// modelOverrideKeySeparator joins modelID and namespace in a suggested key.
+const modelOverrideKeySeparator = "."
 
 // ScalingPolicies returns the named policy tiers declared in a resolved config
 // map, keyed by tier name.
 func NamedPolicies(configMap map[string]ScalingPolicy) map[string]ScalingPolicy {
 	policies := make(map[string]ScalingPolicy)
 	for key, entry := range configMap {
-		if PolicyEntryKey(key) {
+		if PolicyEntryKey(key, entry) {
 			policies[key] = entry
 		}
 	}
@@ -53,7 +103,7 @@ func NamedPolicies(configMap map[string]ScalingPolicy) map[string]ScalingPolicy 
 
 // ResolveScalingPolicy resolves config for a model.
 // Starts from the "default" entry (or zero-value), then merges the model-specific
-// override "{modelID}#{namespace}" on top (if present). This allows per-model
+// override (an entry whose body names this model) on top. This allows per-model
 // overrides to specify only the fields they want to change.
 // After merging, ApplyDefaults fills remaining zero-valued fields, then
 // ApplyV2ThresholdDefaults calibrates the V2 thresholds on the final config and an
@@ -73,7 +123,7 @@ func ResolveScalingPolicy(
 //	  â–¼ overridden by
 //	named policy tier        the variant's scalingPolicy, or defaultPolicy
 //	  â–¼ overridden by
-//	{modelID}#{namespace}    per-model override, most specific
+//	model override entry     an entry whose body names this model, most specific
 //
 // Most specific wins, per docs/proposals/wva-keda-external-scaler.md Â§7.5. The
 // per-model override stays the innermost layer so existing configs keep working
@@ -99,12 +149,12 @@ func ResolveScalingPolicyForTier(
 		policy = base.DefaultPolicy
 	}
 	if policy != "" {
-		if tier, ok := configMap[policy]; ok && PolicyEntryKey(policy) {
+		if tier, ok := configMap[policy]; ok && PolicyEntryKey(policy, tier) {
 			base.Merge(tier)
 		}
 	}
 	// Overlay model-specific override if present (non-zero fields win)
-	if override, ok := configMap[ModelOverrideKey(modelID, namespace)]; ok {
+	if override, ok := FindModelOverride(configMap, modelID, namespace); ok {
 		base.Merge(override)
 	}
 	base.ApplyDefaults()

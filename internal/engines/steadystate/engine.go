@@ -785,7 +785,7 @@ func (e *Engine) resolveModelPolicy(
 	// A named-but-absent tier resolves to the default entry, which is the right
 	// outcome and the wrong silence — report it against the variants that asked.
 	if policy != "" {
-		if _, ok := configMap[policy]; !ok || !config.PolicyEntryKey(policy) {
+		if entry, ok := configMap[policy]; !ok || !config.PolicyEntryKey(policy, entry) {
 			known := slices.Sorted(maps.Keys(config.NamedPolicies(configMap)))
 			for i := range vas {
 				if vas[i].Spec.ScalingPolicy == policy {

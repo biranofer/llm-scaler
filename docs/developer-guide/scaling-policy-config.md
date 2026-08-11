@@ -76,7 +76,7 @@ scaleToZero:
 
 Both fields resolve through the entry, so both get namespace tiering and per-model
 overrides: the entry is resolved namespace-local → global and merged with its
-`"{modelID}#{namespace}"` override before either is read. The envelope merges
+per-model override entry before either is read. The envelope merges
 **field by field**, so an override that sets only `retentionPeriod` keeps an
 inherited `enabled`.
 
@@ -705,7 +705,7 @@ kubectl apply -f deploy/configmap-saturation-scaling.yaml
 Add model-specific configuration entries to override defaults for specific model/namespace pairs.
 
 The saturation engine resolves per-model config using a lookup key in the format
-`{modelID}#{namespace}` (see `internal/config/scaling_policy.go` — `ResolveScalingPolicy()`).
+an entry whose body names the model (see `internal/config/scaling_policy.go` — `ResolveScalingPolicy()`).
 The ConfigMap data key **must** match this format for overrides to take effect.
 Lookup order: `modelID#namespace` → `default` → zero-value with defaults applied.
 
@@ -738,7 +738,7 @@ data:
 ```
 
 **Key points:**
-- Override keys **must** use the format `{modelID}#{namespace}` to match the engine's lookup
+- An override entry is identified by its **body**: set `model_id` and `namespace`. Its ConfigMap key is arbitrary — pick something readable
 - The `model_id` and `namespace` YAML fields inside the entry are parsed but **not used for lookup**
 - Overrides use **field-level merge**: only non-zero fields in the override replace the corresponding values from `default`; any field you omit (or set to its zero value) inherits from `default`. See `Merge()` in `internal/config/saturation_scaling.go`.
 - Multiple overrides can exist for different model/namespace combinations
@@ -816,7 +816,7 @@ During the optimization loop, the engine reads config from the in-memory cache:
 // In optimize() - reads cached config (no API call)
 saturationConfigMap := e.Config.SaturationConfigForNamespace(namespace)
 
-// Resolve per-model config using "{modelID}#{namespace}" lookup
+// Resolve per-model config by matching model_id + namespace in each entry
 scalingPolicy := config.ResolveScalingPolicy(scalingPolicyConfigMap, modelID, namespace)
 
 // Use saturationConfig for saturation-based scaling decisions
@@ -897,8 +897,18 @@ data:
 
 **Symptom:** Model-specific override is not being used
 
+```yaml
+# A per-model override. The key is yours to choose; the body binds it to a model.
+data:
+  granite-in-prod: |
+    model_id: "ibm/granite-13b"
+    namespace: "production"
+    scaleUpThreshold: 0.75
+    scaleDownBoundary: 0.60
+```
+
 **Checklist:**
-1. Verify the ConfigMap data key uses the format `{modelID}#{namespace}` (e.g., `"ibm/granite-13b#production"`)
+1. Verify the entry sets `model_id` and `namespace` in its **body** (the key is arbitrary). A key like `"ibm/granite-13b#production"` cannot exist — Kubernetes allows only `[-._a-zA-Z0-9]` in a ConfigMap key, which excludes both `/` and `#`
 2. Verify `modelID` exactly matches `va.Spec.ModelID`
 3. Verify `namespace` exactly matches the VariantAutoscaling resource namespace
 4. Check controller logs for validation errors

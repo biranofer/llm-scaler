@@ -222,7 +222,8 @@ var _ = Describe("resolveScalingPolicy", func() {
 				QueueLengthThreshold: 5,
 				AnalyzerName:         "saturation",
 			},
-			"llama-70b#production": {
+			"llama-70b-override": {
+				ModelID: "llama-70b", Namespace: "production",
 				KvCacheThreshold: 0.85,
 				Priority:         5.0,
 			},
@@ -258,7 +259,8 @@ var _ = Describe("resolveScalingPolicy", func() {
 
 	It("should apply defaults on model-specific config", func() {
 		configMap := map[string]config.ScalingPolicy{
-			"model-1#ns-1": {
+			"model-1-override": {
+				ModelID: "model-1", Namespace: "ns-1",
 				AnalyzerName: "saturation",
 			},
 		}
@@ -276,7 +278,8 @@ var _ = Describe("resolveScalingPolicy", func() {
 				KvCacheThreshold:     0.80,
 				QueueLengthThreshold: 5,
 			},
-			"model-1#ns-1": {
+			"model-1-override": {
+				ModelID: "model-1", Namespace: "ns-1",
 				KvCacheThreshold: 0.90,
 			},
 		}
@@ -303,11 +306,16 @@ var _ = Describe("resolveScalingPolicy", func() {
 			KvCacheThreshold: 0.80,
 		}
 		def.ApplyDefaults()
-		override := config.ScalingPolicy{KvCacheThreshold: 0.90} // V1-style, no V2 thresholds
+		// Identity in the body: the key is arbitrary, and a slashed model ID could
+		// never be a legal ConfigMap key.
+		override := config.ScalingPolicy{
+			ModelID: "meta/llama-70b", Namespace: "production",
+			KvCacheThreshold: 0.90, // V1-style, no V2 thresholds
+		}
 		override.ApplyDefaults()
 		configMap := map[string]config.ScalingPolicy{
-			"default":                   def,
-			"meta/llama-70b#production": override,
+			"default":        def,
+			"llama-override": override,
 		}
 		cfg := config.ResolveScalingPolicy(configMap, "meta/llama-70b", "production")
 		Expect(cfg.KvCacheThreshold).To(Equal(0.90))
@@ -326,9 +334,10 @@ var _ = Describe("resolveScalingPolicy", func() {
 		def.ApplyDefaults()
 		override := config.ScalingPolicy{ScaleUpThreshold: 0.90} // only scaleUp set
 		override.ApplyDefaults()
+		override.ModelID, override.Namespace = "model-1", "ns-1"
 		configMap := map[string]config.ScalingPolicy{
-			"default":      def,
-			"model-1#ns-1": override,
+			"default":          def,
+			"model-1-override": override,
 		}
 		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.IsV2()).To(BeFalse())
@@ -348,9 +357,10 @@ var _ = Describe("resolveScalingPolicy", func() {
 		def.ApplyDefaults() // scaleUp=0.85, scaleDown=0.70
 		override := config.ScalingPolicy{ScaleDownBoundary: 0.95}
 		override.ApplyDefaults()
+		override.ModelID, override.Namespace = "model-1", "ns-1"
 		configMap := map[string]config.ScalingPolicy{
-			"default":      def,
-			"model-1#ns-1": override,
+			"default":          def,
+			"model-1-override": override,
 		}
 		cfg := config.ResolveScalingPolicy(configMap, "model-1", "ns-1")
 		Expect(cfg.ScaleUpThreshold).To(Equal(config.DefaultScaleUpThreshold))

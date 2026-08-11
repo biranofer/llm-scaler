@@ -73,7 +73,8 @@ func TestOnlyTheDefaultEntryContributesDefinitions(t *testing.T) {
 		"interactive": {
 			AnalyzerDefinitions: ExternalAnalyzerCatalog{"tier-local": {Query: "q"}},
 		},
-		ModelOverrideKey("m", "ns"): {
+		"m-override": {
+			ModelID: "m", Namespace: "ns",
 			AnalyzerDefinitions: ExternalAnalyzerCatalog{"model-local": {Query: "q"}},
 		},
 	})

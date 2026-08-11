@@ -47,10 +47,13 @@ const (
 	tierPolicyScaleUpThreshold  = 0.30
 	tierPolicyScaleDownBoundary = 0.20
 
-	// The tier's name, and its ConfigMap key. A tier is keyed by nothing but its
-	// own name — no "#", which is what keeps it distinguishable from a per-model
-	// override entry.
+	// The tier's name, which is also its ConfigMap key. A tier carries no model
+	// identity in its body — that is what tells it apart from an override.
 	tierPolicyName = "interactive"
+
+	// The override entry's key. Arbitrary by design — what binds it to the model
+	// is the model_id/namespace in its body.
+	tierOverrideKey = "policy-tier-model-override"
 )
 
 var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
@@ -196,18 +199,24 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 
-		By("Adding a {modelID}#{namespace} override carrying the no-scale threshold pair")
+		By("Adding a per-model override carrying the no-scale threshold pair")
 		// Same numbers as the default entry, so the ONLY question this asks is which
 		// layer wins: the tier still says 0.30, the override says 0.95, and they
 		// disagree about the replica count at this fixed occupancy.
+		//
+		// The entry names the model in its BODY. Its key is arbitrary — and has to
+		// be: the model ID here is "e2ewva/dummy-model", and a ConfigMap data key
+		// admits only [-._a-zA-Z0-9], so neither the slash nor the "#" of the old
+		// {modelID}#{namespace} form could ever be written.
+		overrideYAML := buildSaturationConfigYAMLWithModel(
+			"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+			tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
+			modelID, cfg.LLMDNamespace,
+		)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName,
-			modelID+"#"+cfg.LLMDNamespace,
-			buildSaturationConfigYAMLWithThresholds(
-				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
-				tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
-			))).To(Succeed())
+			tierOverrideKey, overrideYAML)).To(Succeed())
 		DeferCleanup(func() {
-			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, modelID+"#"+cfg.LLMDNamespace)
+			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey)
 		})
 
 		By("Asserting the override's decision of 1 replica beats the tier's 2")
