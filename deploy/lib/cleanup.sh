@@ -70,6 +70,25 @@ EOF
 
     log_info "Left in place: namespace $WVA_NS, and the shared WVA ClusterRoles (other installs may bind them). Delete the namespace yourself if you want it gone."
 
+    # ScaledObjects outlive the controller, and that is a trap rather than a
+    # convenience: their trigger points at wva-external-scaler.$WVA_NS, which no
+    # longer exists. KEDA keeps the HPA and keeps calling a scaler that is gone.
+    #
+    # For a workload parked at zero — and scale-to-zero is ON by default — nothing
+    # can wake it: activation only ever arrives from the scaler. That is a silent
+    # outage that SURVIVES the uninstall, so it is worth a loud, specific list
+    # rather than a general warning.
+    local orphans
+    orphans=$(kubectl get scaledobject -A \
+        -o go-template='{{range .items}}{{$ns := .metadata.namespace}}{{$n := .metadata.name}}{{range .spec.triggers}}{{if .metadata.scalerAddress}}{{$ns}}/{{$n}} {{.metadata.scalerAddress}}{{"\n"}}{{end}}{{end}}{{end}}' 2>/dev/null \
+        | grep -F "wva-external-scaler.${WVA_NS}." | awk '{print $1}' | sort -u || true)
+    if [ -n "$orphans" ]; then
+        log_warning "These ScaledObjects still point at the external scaler you just removed:"
+        printf '    %s\n' $orphans
+        log_warning "  KEDA will keep their HPAs and keep calling a scaler that is gone. Any of them parked at zero CANNOT BE WOKEN — activation only comes from the scaler."
+        log_warning "  Delete them, or repoint their trigger at another WVA, before you consider this uninstall finished."
+    fi
+
     rm -f "$PROM_CA_CERT_PATH"
 
     log_success "WVA uninstalled"

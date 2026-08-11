@@ -84,11 +84,22 @@ so_pool() {
                 *) matched=""; break ;;
             esac
         done
-        [ -n "$matched" ] && { echo "$pool"; return; }
+        [ -n "$matched" ] && { echo "$pool"; return 0; }
     done < <(kubectl get inferencepools -n "$ns" -o go-template="$tmpl" 2>/dev/null)
+    # No pool adopted this workload. That is a normal answer — the column is shown
+    # for orientation — so it must not be a non-zero status: the caller assigns
+    # this in a command substitution under `set -e`, and a "no match" would abort
+    # the whole scan on the first workload no pool selects.
+    return 0
 }
 
-# so_target_namespaces echoes the namespaces to scan.
+# so_target_namespaces echoes the namespaces to scan, one per line.
+#
+# stdout here is DATA, consumed by `for ns in $(so_target_namespaces)`. Anything
+# else written to it becomes a namespace name — which is what happened while the
+# log helpers wrote to stdout: the warning below was split into words and each was
+# used as a namespace, so every lookup failed into 2>/dev/null and the scan
+# reported "no model servers found".
 #
 # The DEFAULT follows the install's scope, because the scope already decides what
 # this controller can reach:
@@ -112,7 +123,8 @@ so_target_namespaces() {
         *)   echo "$scope"; return ;;
     esac
     # Cluster-wide. Only meaningful for a cluster-scoped WVA: a namespace-scoped
-    # install holds a Role, so it could only decline a workload anywhere else and a
+    # install restricts its cache to its own namespace, so it could not read a
+    # workload anywhere else and a
     # ScaledObject there would call a scaler that refuses it.
     if [ "$(wva_install_scope)" != "cluster" ]; then
         log_warning "WVA_DEFAULT_SO_NS=all requested, but this is a namespace-scoped install — it restricts its cache to $WVA_NS and cannot read a workload anywhere else. Scanning $WVA_NS only."

@@ -68,14 +68,17 @@ data:
   #
   # ---------------------------------------------------------------------------
   # ScalingPolicy schema (Phase 1) — additional fields, shown here as examples.
-  # Uncomment and adapt. An override entry's DATA KEY must be "{modelID}#{namespace}"
-  # (the engine looks up overrides by that key); the inner model_id/namespace are
+  # An override entry is identified by its BODY: set model_id and namespace inside
+  # it. Its ConfigMap data key is yours to choose — pick something readable.
+  #
+  # The key cannot contain the model ID: a ConfigMap data key admits only
+  # [-._a-zA-Z0-9], which excludes both the "/" in a namespaced model ID and "#".
   # informational only.
   # ---------------------------------------------------------------------------
   #
   # Per-model override using the plugin envelope + inline scale-to-zero:
   #
-  # "granite-premium#production": |
+  # granite-premium-prod: |
   #   model_id: granite-premium
   #   namespace: production
   #   priority: 2.0

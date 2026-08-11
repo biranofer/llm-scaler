@@ -47,10 +47,11 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 
 > **Both scopes need cluster-admin to install.** `namespace` narrows what the
 > controller *reads*, not what it is *granted*: either overlay creates 4
-> ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift), and the manager
-> ClusterRole carries cluster-wide `deployments/scale` update plus read on nodes,
-> pods, services and namespaces. It has to — WVA lists GPU nodes, which are
-> cluster-scoped objects, so its GPU accounting cannot be confined to a namespace.
+> ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift).
+>
+> The grant is read-only — WVA never writes to the cluster, because KEDA performs
+> the actuation. Its only write is Events. It reads nodes, pods, services,
+> namespaces and `deployments/scale`, all `get`/`list`/`watch`.
 >
 > So `WVA_SCOPE=namespace` is **blast-radius reduction, not delegation**. A team
 > lead without cluster rights cannot install it themselves; a cluster admin does the

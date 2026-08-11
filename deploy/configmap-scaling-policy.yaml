@@ -61,12 +61,15 @@ data:
   # only need the fields they change (kvCacheThreshold, queueLengthThreshold,
   # scaleUpThreshold, scaleDownBoundary, priority).
 
-  # An override entry's DATA KEY must be "{modelID}#{namespace}" — the engine looks
-  # up overrides by that key; the inner model_id/namespace fields are informational.
+  # An override entry is identified by its BODY: set model_id and namespace inside
+  # it. Its ConfigMap data key is yours to choose — pick something readable.
+  #
+  # The key cannot contain the model ID: a ConfigMap data key admits only
+  # [-._a-zA-Z0-9], which excludes both the "/" in a namespaced model ID and "#".
 
   # Example per-model override for granite model in lab namespace
   # Uncomment and customize as needed
-  # "ibm/granite-13b#lab-namespace": |
+  # granite-13b-lab: |
   #   model_id: ibm/granite-13b
   #   namespace: lab-namespace
   #   kvCacheThreshold: 0.75
@@ -76,7 +79,7 @@ data:
   # Shows partial override (only some fields specified, rest inherit from default)
   # Uses the plugin envelope for the analyzer and an inline scale-to-zero setting
   # (scaleToZero is the only per-model surface: enabled + retentionPeriod).
-  # "meta/llama-70b#production": |
+  # llama-70b-prod: |
   #   model_id: meta/llama-70b
   #   namespace: production
   #   priority: 2.0

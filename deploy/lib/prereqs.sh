@@ -48,10 +48,19 @@ tool_version() {
 # It appends to a caller-declared array rather than echoing into mapfile, because
 # mapfile is bash 4+ and macOS still ships bash 3.2.
 append_conditional_tools() {
-    # yq edits the shipped ConfigMaps in place. Needed only when something is
-    # actually patched: a declared limiter, or enabling scale-to-zero.
-    if [ "${WVA_LIMITER:-none}" != "none" ] || [ "${ENABLE_SCALE_TO_ZERO:-true}" = "true" ]; then
-        tools+=("yq")
+    # yq and jq edit the shipped ConfigMaps in place, and the undeploy filters the
+    # rendered overlay with yq. Both are effectively unconditional: the install
+    # always patches PROMETHEUS_BASE_URL, so patch_manager_config always runs.
+    # They were listed as conditional, which let the preflight pass and the install
+    # then die after namespaces, RBAC and the Deployment already existed.
+    tools+=("yq" "jq")
+    # column formats the ScaledObject plan.
+    if [ "${WVA_DEFAULT_SO:-false}" != "false" ]; then
+        tools+=("column")
+    fi
+    # openssl mints the self-signed cert for a Prometheus this install deploys.
+    if [ "${DEPLOY_PROMETHEUS:-true}" = "true" ]; then
+        tools+=("openssl")
     fi
     if [ "${ENVIRONMENT:-kubernetes}" = "openshift" ]; then
         tools+=("oc")
@@ -113,10 +122,11 @@ check_prerequisites() {
 #                         NEVER SCALES UP — silently, because nothing errors. An
 #                         install that cannot read nodes is therefore broken, and
 #                         this is an error.
-#   physical limiter OFF  nodes are not read at all (see variantmeta.DeclaredOnly).
-#                         The install is fine; the operator only loses accelerator
-#                         attribution on metrics. A warning, not a refusal — and it
-#                         says what changes if the limiter is turned on later.
+#   physical limiter OFF  the install still works, degraded: accelerators stay
+#                         unresolved, so metrics lose the accelerator label and the
+#                         capacity model cannot reuse learned capacity. A warning,
+#                         not a refusal — and it says what changes if the limiter is
+#                         turned on later.
 check_permissions() {
     log_info "Checking permissions..."
 
@@ -159,7 +169,7 @@ Either grant the node read, or install without the limiter (WVA_LIMITER=none)."
         log_success "The controller can list nodes, which the gpu-inventory limiter requires"
     else
         if ! kubectl auth can-i list nodes --as "$sa" >/dev/null 2>&1; then
-            log_warning "$sa cannot list nodes. That is FINE with no physical limiter — WVA does not read them (accelerators stay unresolved, which is permissive), and you lose only the accelerator label on metrics."
+            log_warning "$sa cannot list nodes. Without a physical limiter this is survivable but degraded: accelerators stay unresolved, so metrics lose the accelerator label and the capacity model cannot reuse learned capacity across variants."
             log_warning "  It stops being fine the moment someone sets a gpu-inventory limiter: every variant would then get no GPU budget and stop scaling up. Watch wva_node_access_denied."
         fi
     fi

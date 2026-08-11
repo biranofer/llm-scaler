@@ -189,8 +189,8 @@ It controls the controller's cache — **not its RBAC**. Both scopes create the 
 cluster-admin to install**.
 
 The role is read-only: WVA never writes to the cluster, because KEDA performs the
-actuation. The one genuinely cluster-scoped read is **nodes**, and even that
-happens only when a physical GPU limiter is configured — see
+actuation. Its one genuinely cluster-scoped read is **nodes**, which it uses to
+resolve each variant's accelerator — see
 [GPU limiter](gpu-limiter.md#permission-nodes).
 
 > **The constraint that follows, and it is easy to get wrong:** a namespace-scoped

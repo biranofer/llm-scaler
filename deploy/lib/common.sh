@@ -7,19 +7,19 @@
 #
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
     exit 1
 }
 
@@ -45,8 +45,10 @@ containsElement() {
 # combinations — so the scope is a CHOICE, not a property of the platform. It used
 # to be inferred (openshift => namespace, everything else => cluster), which left
 # two of the four overlays unreachable from any deploy path: there was no way to
-# run namespace-scoped on Kubernetes, which is exactly what a tenant without
-# cluster-wide RBAC needs.
+# run namespace-scoped on Kubernetes at all. Note what the scope does and does not
+# do: it narrows what the CONTROLLER reads (its cache), not what the install
+# grants — both scopes create the same cluster-scoped RBAC, so both need a cluster
+# admin. It is blast-radius reduction, not delegation to a tenant.
 #
 # WVA_SCOPE selects it. The default preserves the historical inference so existing
 # invocations keep deploying what they always did.
@@ -78,8 +80,16 @@ WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
 )
 
 # wva_ns_suffix echoes the per-namespace suffix appended to those names.
+# sha256sum is GNU; macOS ships shasum. The suffix must be IDENTICAL on whatever
+# host installs and whatever host uninstalls — a different suffix means the
+# uninstall leaks every ClusterRoleBinding it was meant to remove — so this picks
+# one implementation deterministically rather than depending on the box.
 wva_ns_suffix() {
-    printf '%s' "$1" | sha256sum | cut -c1-8
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | cut -c1-8
+    else
+        printf '%s' "$1" | shasum -a 256 | cut -c1-8
+    fi
 }
 
 # wva_append_crb_name_patches appends the rename patches to a kustomization file.

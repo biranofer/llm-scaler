@@ -193,8 +193,11 @@ EOF
         gpu-inventory|quota)
             log_info "Declaring the ${WVA_LIMITER} limiter in the scaling-policy ConfigMap..."
             local policy_cm current_default updated_default
+            # `|| true` because a no-match is grep exit 1, which pipefail turns into
+            # a failed assignment and set -e turns into an exit — before the
+            # log_error below can say which ConfigMap is missing.
             policy_cm="$(kubectl get configmap -n "$WVA_NS" -o name 2>/dev/null \
-                | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2)"
+                | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2 || true)"
             if [ -z "$policy_cm" ]; then
                 log_error "No scaling-policy ConfigMap found in $WVA_NS"
             fi
@@ -219,7 +222,7 @@ EOF
                 # jsonpath is fragile to quote through the layers this runs under.
                 gpu_products=$(kubectl get nodes \
                     -o jsonpath='{.items[*].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null \
-                    | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l)
+                    | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l || true)
                 if [ "${gpu_products:-0}" -gt 1 ]; then
                     log_warning "This cluster advertises ${gpu_products} different GPU products. Every managed workload MUST pin one with a nodeSelector/nodeAffinity GPU product key — an unpinned workload is charged to no accelerator pool, receives no budget, and will not scale up. Check with:"
                     log_warning "    kubectl get nodes -L nvidia.com/gpu.product"
@@ -312,15 +315,16 @@ create_namespaces_shared_loop() {
 delete_namespaces_kube_like() {
     log_info "Deleting namespaces..."
 
-    # Only namespaces THIS install created. The guards mirror the ones in
-    # create_namespaces: a namespace the install declined to create is one it must
-    # decline to delete. LLMD_NS had no guard, so the documented existing-cluster
-    # install (DEPLOY_LLMD_NS=false, models already there) paired with the
-    # symmetric uninstall deleted the namespace holding the production model
-    # servers.
+    # Only namespaces THIS install created.
+    #
+    # LLMD_NS needs its own opt-in rather than mirroring DEPLOY_LLMD_NS, because
+    # that flag describes the INSTALL and an uninstall never restates it —
+    # `make undeploy-wva-on-k8s` forwards only WVA_NS and WVA_SCOPE, so the flag
+    # would read as its default (true) and delete anyway. It holds the model
+    # servers; deleting it is never something to infer.
     for ns in $LLMD_NS $WVA_NS $MONITORING_NAMESPACE; do
         if kubectl get namespace $ns &> /dev/null; then
-            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$LLMD_NS" && "${DEPLOY_LLMD_NS:-true}" == "false" ]]; then
+            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$LLMD_NS" && "${DELETE_LLMD_NS:-false}" != "true" ]]; then
                 log_info "Skipping deletion of namespace $ns as it was not deployed"
             else
                 log_info "Deleting namespace $ns..."

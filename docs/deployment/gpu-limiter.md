@@ -55,15 +55,17 @@ kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=w
 ## Permission: nodes
 
 The limiter reads **nodes** to learn what GPUs exist, and nodes are cluster-scoped.
-This is the only thing WVA reads outside its own namespace in the normal path, and
-it is read **only when a physical limiter is configured** — without one the
-accelerator simply stays unresolved, which is permissive.
 
-That makes node permission conditional, and the install treats it that way:
+WVA reads nodes on every cycle regardless of the limiter — a variant's accelerator
+is resolved from the nodes its pods run on, and that identity is what the capacity
+model keys learned per-replica capacity by. What the limiter changes is whether
+that identity is also used to charge the variant to a GPU **budget**.
+
+The consequence of a missing node permission therefore depends on the limiter:
 
 | limiter | controller can list nodes | outcome |
 | --- | --- | --- |
-| `none` | no | **fine.** Nodes are never read. You lose the accelerator label on metrics, nothing else |
+| `none` | no | degraded: accelerators stay unresolved, so metrics lose the accelerator label and the capacity model cannot reuse learned capacity across variants |
 | `gpu-inventory` | no | **install refused.** Every variant would be charged to no pool, receive no budget and stop scaling up, silently |
 | `gpu-inventory` | yes | as intended |
 

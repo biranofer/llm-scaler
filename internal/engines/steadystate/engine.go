@@ -1088,10 +1088,26 @@ func (e *Engine) optimizeV2(
 // This is what lets a namespace-scoped install run with no cluster-scoped RBAC at
 // all when no physical limiter is configured.
 func observeAccelerators(cfg *config.Config) variantmeta.ObserveAccelerators {
-	if cfg != nil && allocation.PhysicalUsageConfigured(cfg) {
-		return variantmeta.FromNodes
-	}
-	return variantmeta.DeclaredOnly
+	// ALWAYS FromNodes, for now, and the reasoning that said otherwise was wrong.
+	//
+	// The argument was: only a physical limiter charges a variant to an accelerator
+	// pool, so with no limiter the observation buys nothing and the cluster-scoped
+	// node read can be skipped. The budgeting half of that is true. The rest is not
+	// — accelerator identity is also how the V2 capacity store keys learned
+	// capacity (saturation_v2/capacity_store.go:171 matches on AcceleratorName
+	// before reusing a record), so leaving it unresolved denies a variant its own
+	// prior capacity knowledge and any compatible variant's.
+	//
+	// Gating it on the limiter made the e2e "per-model override" spec run a
+	// workload to maxReplicas instead of settling at 1: with no capacity record the
+	// demand-to-capacity ratio has no sane denominator. 53/0 before, 51/1 after.
+	//
+	// The reduction is still worth having — it is the difference between a
+	// namespace-scoped install needing cluster-scoped RBAC and not — but it needs
+	// the capacity store to key on something the workload declares, not on an
+	// observation of where its pods landed. Until then, correctness wins.
+	_ = cfg
+	return variantmeta.FromNodes
 }
 
 // BuildVariantStates extracts current and desired replica counts from VAs for capacity analysis.

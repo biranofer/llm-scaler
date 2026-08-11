@@ -126,11 +126,16 @@ WVA_ALLOW_COEXIST=${WVA_ALLOW_COEXIST:-false}
 # Default ScaledObjects. A ScaledObject is the REGISTRATION — WVA is only asked
 # about workloads KEDA calls it about — so an install with none anywhere is a
 # controller that never scales anything and looks healthy doing it.
-# WVA_DEFAULT_SO_NS: a namespace, or "all" for every namespace holding llm-d model
+# WVA_DEFAULT_SO_NS: a namespace, "wva", or "all" for every namespace holding llm-d model
 # servers (cluster-scoped installs only). Defaults to LLMD_NS.
 # false | plan (list and stop) | edit (list, $EDITOR, confirm) | true (apply all)
 WVA_DEFAULT_SO=${WVA_DEFAULT_SO:-false}
-WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-$LLMD_NS}
+# Unset means "what this install can reach": every namespace holding model servers
+# when cluster-scoped, its own namespace when namespace-scoped. Defaulting it to
+# LLMD_NS here would defeat that, and did — the scope-derived default then applied
+# only to the make targets, so the same variable behaved differently depending on
+# how you invoked it.
+WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-}
 # An existing file is applied as-is, edits included, with no terminal needed.
 WVA_DEFAULT_SO_PLAN=${WVA_DEFAULT_SO_PLAN:-}
 # Repoint a workload's EXISTING ScaledObject at WVA instead of leaving it alone.
@@ -142,6 +147,9 @@ WVA_DEFAULT_SO_TEMPLATE=${WVA_DEFAULT_SO_TEMPLATE:-}
 WVA_DEFAULT_SO_MIN=${WVA_DEFAULT_SO_MIN:-1}
 WVA_DEFAULT_SO_MAX=${WVA_DEFAULT_SO_MAX:-10}
 DELETE_NAMESPACES=${DELETE_NAMESPACES:-false}
+# Delete the llm-d namespace too. Separate and explicit: it holds the model servers,
+# and an uninstall never restates the install flags, so this must never be inferred.
+DELETE_LLMD_NS=${DELETE_LLMD_NS:-false}
 # With UNDEPLOY=true, also remove Prometheus, the scaler backend and EPP. Off by
 # default: those are shared, this install may not have created them, and removing
 # them takes out every other thing on the cluster that uses them.
