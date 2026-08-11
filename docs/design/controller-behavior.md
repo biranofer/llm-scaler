@@ -249,6 +249,14 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 
 ### `llm-d.ai/variant` Label on the Scale Target
 
+> **Superseded — the label is read by no code.** `VariantLabelKey` /
+> `VariantLabelPrometheusKey` survive in `internal/constants/labels.go` but have no
+> remaining consumer; `replica_metrics.go` records that the metric label *used to*
+> short-circuit attribution. Variant identity now comes from the pod locator in
+> every layout, so neither the pod label nor the relabeling rule below is required,
+> including for shadow pods. Stamping them is harmless but does nothing. The
+> section is kept for operators reading older manifests.
+
 **Required only for shadow-pod layouts.** For ordinary `Deployment` and `LeaderWorkerSet` scale targets, WVA's `PodLocator` (under `internal/collector/locator/`) derives the pod → variant association by walking `ownerReferences` from the vLLM pod up to the managed scaler's `scaleTargetRef`. No operator action is required at the metrics layer for those layouts.
 
 For *shadow-pod* layouts — where the vLLM pod is **not** in the HPA-scaled target's `ownerReferences` chain — the label is the only viable linkage. Two things must be true in that case:

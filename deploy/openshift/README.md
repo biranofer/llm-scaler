@@ -191,7 +191,7 @@ After deployment, the script verifies:
 
 - KEDA / CMA is running
 
-- VariantAutoscaling resource exists
+- the ScaledObject exists and KEDA created its HPA
 
 - HPA is configured
 
@@ -242,7 +242,7 @@ Displays:
 
 ### 4. Autoscaling Resources
 
-- **VariantAutoscaling**: Custom resource for WVA optimization
+- **ScaledObject**: the KEDA object whose trigger registers the workload with WVA
 - **HPA**: HorizontalPodAutoscaler for deployment scaling
 - **Probes**: Health checks for vLLM pods
 
@@ -331,7 +331,7 @@ kubectl logs -n llm-d-optimized-baseline deployment/optimized-baseline-nvidia-gp
 # Check all components
 kubectl get pods -n workload-variant-autoscaler-system
 kubectl get pods -n llm-d-optimized-baseline
-kubectl get variantautoscaling -n llm-d-optimized-baseline
+kubectl get scaledobject -n llm-d-optimized-baseline
 kubectl get hpa -n llm-d-optimized-baseline
 
 # Check external metrics

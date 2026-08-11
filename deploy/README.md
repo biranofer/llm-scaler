@@ -61,62 +61,43 @@ Platform-specific requirements:
 
 ### Workload Requirements
 
-WVA needs two things to associate Prometheus metrics with a `VariantAutoscaling` resource: the pod label must be present, and the Prometheus monitor must propagate it into metrics.
+Two things, and neither is an annotation or a label on the workload.
 
-**1. `llm-d.ai/variant` label on your scale target**
+**1. A KEDA ScaledObject whose trigger points at WVA.** That call is what makes a
+workload managed — WVA has no watch and no listing, so a workload it is never
+called about does not exist to it. The trigger metadata carries the per-workload
+configuration, and `modelID` is the only required field. See
+[Choosing your install](#choosing-your-install) for the full trigger and for what
+is derived rather than declared.
 
-Add the `llm-d.ai/variant` label to the **pod template** of your Deployment or LeaderWorkerSet. Set the value to the name of the corresponding `VariantAutoscaling` resource. WVA does not add this label automatically.
-
-```yaml
-# Deployment — add to spec.template.metadata.labels
-spec:
-  template:
-    metadata:
-      labels:
-        llm-d.ai/variant: <VariantAutoscaling-name>
-```
-
-```yaml
-# LeaderWorkerSet — add to both leaderTemplate and workerTemplate
-spec:
-  leaderWorkerTemplate:
-    leaderTemplate:
-      metadata:
-        labels:
-          llm-d.ai/variant: <VariantAutoscaling-name>
-    workerTemplate:
-      metadata:
-        labels:
-          llm-d.ai/variant: <VariantAutoscaling-name>
-```
-
-**2. Relabeling rule on your ServiceMonitor or PodMonitor**
-
-The `llm-d.ai/variant` pod label must be propagated into Prometheus metric series as `llm_d_ai_variant`. Add the following target relabeling rule to the `ServiceMonitor` or `PodMonitor` that scrapes your model-server pods:
+**2. Prometheus must scrape your model-server pods.** WVA reads vLLM/SGLang
+metrics from Prometheus, filtered by namespace, so the series must exist and carry
+a `namespace` label. A standard `ServiceMonitor` or `PodMonitor` over the model
+service gives you both:
 
 ```yaml
-# ServiceMonitor — add to spec.endpoints[].relabelings
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-model-monitor
+  namespace: <monitoring-namespace>
 spec:
+  namespaceSelector:
+    matchNames: [<workload-namespace>]
+  selector:
+    matchLabels:
+      app: <your-model-service>
   endpoints:
-  - relabelings:
-    - sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_variant]
-      targetLabel: llm_d_ai_variant
-      action: replace
+    - port: metrics
 ```
 
-```yaml
-# PodMonitor — add to spec.podMetricsEndpoints[].relabelings
-spec:
-  podMetricsEndpoints:
-  - relabelings:
-    - sourceLabels: [__meta_kubernetes_pod_label_llm_d_ai_variant]
-      targetLabel: llm_d_ai_variant
-      action: replace
-```
+Without those metrics WVA has no demand signal and will not scale the workload.
 
-> **Important**: This rule must be under `relabelings` (target relabeling), **not** `metricRelabelings`. The `__meta_kubernetes_pod_label_*` labels are only available during target relabeling.
-
-If either requirement is missing, WVA will not make scaling decisions for the affected variant. See [Controller Behavior](../docs/design/controller-behavior.md#prerequisites) for more details.
+> **Removed:** earlier versions required an `llm-d.ai/variant` label on the pod
+> template plus a `relabelings` rule propagating it as `llm_d_ai_variant`, and an
+> `llm-d.ai/managed: "true"` annotation to opt in. Both are gone — variant identity
+> now comes from the pod locator, and being called by KEDA *is* being managed.
+> Existing labels are harmless; they are simply not read.
 
 ### Required Tokens
 
@@ -133,7 +114,7 @@ are in **bold**.
 | namespace | `WVA_NS` | any (**`workload-variant-autoscaler-system`**) | where the controller runs |
 | scope | `WVA_SCOPE` | `cluster` / `namespace` (**platform default**) | which namespaces it may manage |
 | GPU limiter | `WVA_LIMITER` | **`none`** / `gpu-inventory` / `quota` | whether scaling is bounded |
-| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`false`** / `true` | whether a model may idle to zero |
+| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`true`** / `false` | whether a model may idle to zero (but `make deploy-e2e-infra` defaults it OFF — see [Deployment Flags](#deployment-flags-installsh)) |
 
 ```bash
 export HF_TOKEN="hf_xxxxxxxxxxxxx"
@@ -197,8 +178,7 @@ The deployment script provides a complete, automated setup including:
 - llm-d infrastructure (Gateway, Scheduler, vLLM)
 - KEDA for external metrics (ScaledObject-driven)
 - ServiceMonitors for metric collection
-- VariantAutoscaling custom resources
-- HPA configuration
+- ScaledObjects are yours to create — they are how a workload reaches WVA
 - Automatic GPU detection
 - Environment-specific optimizations
 
@@ -270,7 +250,7 @@ export DEPLOY_OPERATIONAL_DASHBOARD=true    # Deploy Grafana and operational das
 
 #### Script deployment examples
 
-**VariantAutoscaling** and **HPA** resources are not created by `install.sh`; create them directly with `kubectl apply` or let tests/operators manage them.
+**ScaledObjects** are not created by `install.sh` — create them with `kubectl apply`, or let your tests/operators manage them. KEDA creates and owns the HPA behind each one; you never create an HPA yourself.
 
 ##### Example 1: Base WVA infra + EPP
 
@@ -451,8 +431,11 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ENVIRONMENT` | Deployment environment | `kubernetes` |
-| `WVA_BASE_NAME` | Controller base name | `optimized-baseline` |
+| `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
+| `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
+| `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
+| `CONTROLLER_INSTANCE` | Instance name for running several WVAs on one cluster | `""` (single instance) |
 
 #### Image Configuration
 
@@ -478,17 +461,35 @@ Each guide includes platform-specific examples, troubleshooting, and quick start
 | `DEPLOY_OPERATIONAL_DASHBOARD` | Deploy Grafana and operational dashboard | `true` |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet (needed only for full e2e suite; skip for smoke, benchmarks, or pre-installed clusters) | `false` |
+| `DEPLOY_ALERTING_RULES` | Install the PrometheusRule alerts | `false` |
+| `ENABLE_SCALE_TO_ZERO` | Allow a model to be parked at zero replicas, and enable the EPP `flowControl` gate that makes waking it possible | `true` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
 | `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
+| `KEDA_NAMESPACE` | Namespace KEDA is installed in | `keda-system` |
+| `KEDA_HELM_INSTALL` | Install KEDA with Helm rather than assuming it is present | `false` |
+| `KEDA_CHART_VERSION` | KEDA Helm chart version | `2.19.0` |
+| `UNDEPLOY` | Remove instead of install (`install.sh` doubles as the uninstaller) | `false` |
+| `DELETE_NAMESPACES` | With `UNDEPLOY=true`, also delete the namespaces | `false` |
 
-VariantAutoscaling, HPA stabilization, and vLLM ModelService tuning are not controlled by `install.sh`; manage them via `kubectl apply` directly (see the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) for reference manifests).
+> `make deploy-e2e-infra` passes `ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED)`,
+> whose Makefile default is **`false`** — the opposite of `install.sh`'s. So an
+> e2e deploy has scale-to-zero OFF unless you pass
+> `SCALE_TO_ZERO_ENABLED=true`, while a plain `make deploy-wva-on-k8s` has it ON.
+> Three e2e suites skip silently when it is off.
+
+ScaledObjects, HPA stabilization (`spec.advanced.horizontalPodAutoscalerConfig.behavior`) and vLLM ModelService tuning are not controlled by `install.sh`; manage them via `kubectl apply` directly (see the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) for reference manifests).
 
 #### Advanced (`install.sh`)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SKIP_TLS_VERIFY` | Skip TLS verification | Auto-detected |
+| `SKIP_TLS_VERIFY` | Skip Prometheus TLS verification | `false`, forced to `true` on OpenShift and for in-cluster self-signed Prometheus |
 | `WVA_LOG_LEVEL` | WVA logging level | `info` |
+| `WVA_METRICS_SECURE` | Serve the WVA metrics endpoint over HTTPS with authn/authz | `true` |
+| `PROMETHEUS_SECRET_NAME` | Secret holding the Prometheus serving cert | `prometheus-web-tls` |
+| `PROMETHEUS_SECRET_NS` | Namespace of that secret | `$MONITORING_NAMESPACE` |
+| `PROM_CA_CERT_PATH` | Where the extracted Prometheus CA is written | `/tmp/prometheus-ca.crt` |
+| `GATEWAY_API_VERSION` | Gateway API version installed for llm-d | `v1.2.0` |
 | `LWS_NAMESPACE` | Namespace for LeaderWorkerSet installation | `lws-system` |
 | `LWS_CHART_VERSION` | LeaderWorkerSet Helm chart version | `0.8.0` |
 
@@ -506,10 +507,6 @@ If `SCALE_UP_THRESHOLD` and/or `SCALE_DOWN_BOUNDARY` are set in the environment,
 # WVA controller
 kubectl get pods -n workload-variant-autoscaler-system
 kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler
-
-# VariantAutoscaling resources
-kubectl get variantautoscaling -A
-kubectl describe variantautoscaling <name> -n <namespace>
 
 # ScaledObjects and the HPAs KEDA manages for them
 kubectl get scaledobject -A
@@ -558,20 +555,19 @@ kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=wor
   jq 'select(.level=="ERROR")'
 ```
 
-**Check VariantAutoscaling status**:
+**Check what WVA decided, and whether KEDA acted on it**:
+
+WVA writes no custom resource — its decision reaches KEDA over gRPC and surfaces
+as HPA state. Read it from both ends:
 
 ```bash
-# List with custom columns
-kubectl get variantautoscaling -A -o custom-columns=\
-NAME:.metadata.name,\
-NAMESPACE:.metadata.namespace,\
-MODEL:.spec.model,\
-CURRENT:.status.currentReplicas,\
-DESIRED:.status.desiredReplicas,\
-METRICS:.status.conditions[?(@.type=="MetricsAvailable")].status
+# What KEDA is doing with WVA's answer. CurrentMetrics is populated only once a
+# scaler has returned a value, so an empty one means KEDA never got an answer.
+kubectl get scaledobject -A
+kubectl describe hpa -n <namespace> keda-hpa-<scaledobject-name>
 
-# Detailed status
-kubectl describe variantautoscaling <name> -n <namespace>
+# What WVA decided, and why
+kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep scaling-decision
 ```
 
 ### Testing Autoscaling
@@ -613,8 +609,8 @@ done
 **Watch autoscaling**:
 
 ```bash
-# Watch VariantAutoscaling
-watch kubectl get variantautoscaling -n <namespace>
+# Watch the ScaledObject
+watch kubectl get scaledobject -n <namespace>
 
 # Watch HPA
 watch kubectl get hpa -n <namespace>
@@ -668,8 +664,8 @@ kubectl logs <pod-name> -n workload-variant-autoscaler-system
 
 **Symptoms**:
 
-- VariantAutoscaling shows `MetricsAvailable: False`
 - WVA logs show "Metrics unavailable" warnings
+- the KEDA HPA reports no `CurrentMetrics`, or `ScalingActive: False`
 
 **Diagnosis**:
 
@@ -765,7 +761,7 @@ kubectl port-forward -n <monitoring-namespace> svc/prometheus-k8s 9090:9090
 If you encounter issues not covered here:
 
 1. **Check logs**: WVA, Prometheus, KEDA operator, vLLM
-2. **Verify configuration**: VariantAutoscaling spec, ServiceMonitor, ScaledObject
+2. **Verify configuration**: ScaledObject trigger metadata, ServiceMonitor, scaling-policy ConfigMap
 3. **Test components individually**: Metrics exposure, Prometheus scraping, external metrics API
 4. **Review documentation**: Platform-specific READMEs
 5. **Open an issue**: Include logs, configuration, and environment details
@@ -778,10 +774,9 @@ kubectl get pods -n workload-variant-autoscaler-system
 kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler -f
 kubectl describe deployment controller-manager -n workload-variant-autoscaler-system
 
-# === VariantAutoscaling Resources ===
-kubectl get variantautoscaling -A
-kubectl describe variantautoscaling <name> -n <namespace>
-kubectl get variantautoscaling <name> -n <namespace> -o yaml
+# === Managed workloads (a ScaledObject IS the registration) ===
+kubectl get scaledobject -A
+kubectl describe scaledobject <name> -n <namespace>
 
 # === Metrics and Monitoring ===
 kubectl get servicemonitor -A

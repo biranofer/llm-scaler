@@ -30,63 +30,59 @@ See the [docs](docs/README.md) directory for design docs, developer guide, and m
 
 ## How It Works
 
-**Prerequisites:** deploy llm-d infrastructure (model servers) and create an `HPA` or `KEDA` object targeting each deployment.
+**Prerequisites:** deploy llm-d infrastructure (model servers), have Prometheus
+scraping them, and create a **KEDA ScaledObject** per workload whose trigger points
+at WVA's external scaler.
 
 **WVA then:**
 
-1. Continuously monitors request rates and server performance via Prometheus metrics
-2. Capacity model obtains KV cache utilization and queue depth to determine desired replica counts
-3. Actuator emits optimization metrics to Prometheus
-4. External autoscaler (`HPA`/`KEDA`) reads the metrics and scales the deployment accordingly
-
+1. Learns which workloads it manages **from the KEDA calls themselves** — there is
+   no watch, no listing and no opt-in annotation. Being called is being managed,
+   and the trigger `metadata` is the per-workload configuration.
+2. Continuously reads request rates and server performance from Prometheus.
+3. Runs its capacity model — KV-cache utilization, queue depth, token throughput —
+   to decide the replica count each model needs, across all its variants at once
+   and within the GPU budget any declared limiter allows.
+4. Returns that decision to KEDA over the external-scaler gRPC contract. KEDA owns
+   the HPA and actuates it; WVA never writes the scale subresource.
 
 ## Example
 
 ```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
 metadata:
-  name: llama-8b-autoscaler
+  name: llama-8b-scaler
   namespace: llm-inference
-  annotations:
-    llm-d.ai/managed: "true"  # Opt-in to WVA management
-    llm-d.ai/variant-cost: "10.0"  # Optional, defaults to "10.0"
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: llama-8b
-  # minReplicas: 0  # scale to zero - alpha feature
-  maxReplicas: 2
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: 60
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-  metrics:
-  - type: External
-    external:
-      metric:
-        name: wva_desired_replicas
-        selector:
-          matchLabels:
-            variant_name: llama-8b
-            exported_namespace: llm-inference
-      target:
-        type: AverageValue
-        averageValue: "1"
+  pollingInterval: 5
+  minReplicaCount: 1        # 0 to allow scale-to-zero (alpha)
+  maxReplicaCount: 10
+  triggers:
+  - type: external-push     # push: WVA wakes a parked workload immediately
+    name: wva-external-scaler
+    metadata:
+      scalerAddress: wva-external-scaler.workload-variant-autoscaler-system.svc.cluster.local:9090
+      modelID: meta/llama-3-8b   # required — the only field you must supply
+      scalingPolicy: interactive # optional — a named policy tier
+      variantCost: "10.0"        # optional — defaults to "10.0"
 ```
 
+`modelID` is the one required field. The accelerator, the role, GPUs per replica
+and the InferencePool are all **derived** from the workload itself, so they cannot
+drift from reality. See
+[deploy/README.md](deploy/README.md#what-the-controller-needs-from-a-workload).
 
-More examples in [config/samples/hpa/](config/samples/hpa/) and [config/samples/keda/](config/samples/keda/).
+More examples in [config/samples/keda/](config/samples/keda/).
+
+> **Note:** WVA used to publish a `wva_desired_replicas` metric for an HPA to read
+> through prometheus-adapter, with an `llm-d.ai/managed: "true"` annotation to opt
+> in. Both are gone: WVA is a KEDA external scaler, and a trigger naming it is what
+> registers a workload.
 
 ## Upgrading
 
@@ -115,7 +111,7 @@ data:
     queueSpareTrigger: 3
 ```
 
-Apply with `kubectl apply -f deploy/configmap-saturation-scaling.yaml`; the change
+Apply with `kubectl apply -f deploy/configmap-scaling-policy.yaml`; the change
 takes effect immediately (the controller watches the ConfigMap).
 
 > V1 is deprecated and scheduled for removal in a future release. See the

@@ -182,6 +182,45 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 			Should(Succeed())
 	})
 
+	// The layering is default entry -> tier -> {modelID}#{namespace}, most specific
+	// winning. The per-model override stays innermost so a fleet can adopt tiers
+	// model by model rather than all at once: a model that already has an override
+	// keeps it when its workload joins a tier.
+	It("lets a per-model override win over the tier the workload names", func() {
+		By("Confirming the tier is in force at >= 2 replicas before overriding it")
+		Eventually(func(g Gomega) {
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 2),
+				"the override assertion is meaningless unless the tier first drove the count up")
+		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
+		By("Adding a {modelID}#{namespace} override carrying the no-scale threshold pair")
+		// Same numbers as the default entry, so the ONLY question this asks is which
+		// layer wins: the tier still says 0.30, the override says 0.95, and they
+		// disagree about the replica count at this fixed occupancy.
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName,
+			modelID+"#"+cfg.LLMDNamespace,
+			buildSaturationConfigYAMLWithThresholds(
+				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+				tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
+			))).To(Succeed())
+		DeferCleanup(func() {
+			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, modelID+"#"+cfg.LLMDNamespace)
+		})
+
+		By("Asserting the override's decision of 1 replica beats the tier's 2")
+		Eventually(func(g Gomega) {
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1),
+				"a per-model override is the innermost layer; the workload still names the "+
+					"tier, and the tier must not win over settings bound to this model")
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+	})
+
 	// Removing the tier a workload names must fall back to the default entry rather
 	// than fail: refusing to scale a workload because its policy name no longer
 	// resolves would turn a config edit into an outage. The engine reports the

@@ -28,10 +28,13 @@ This script automates the complete deployment process on kubernetes cluster incl
 - **Workload-Variant-Autoscaler** controller with metrics validation
 - **llm-d infrastructure** (Gateway, Scheduler, vLLM)
 - **KEDA** for external metrics (ScaledObject-driven)
-- **HPA** integration for autoscaling
 - **ServiceMonitors** for metrics collection
-- **VariantAutoscaling** custom resources
 - All required ConfigMaps and RBAC
+
+> **Note:** the `VariantAutoscaling` CRD is gone and no longer shipped. A workload is
+> managed by creating a **KEDA ScaledObject** whose trigger names WVA's external
+> scaler — the call IS the registration. KEDA owns the HPA behind it.
+
 
 ## Prerequisites
 
@@ -84,8 +87,8 @@ That's it! The script will:
 5. Deploy WVA controller  (by default)
 6. Deploy llm-d infrastructure  (by default)
 7. Deploy KEDA for external metrics (by default)
-8. Create the VariantAutoscaling resource for the vLLM deployment  (by default)
-9. Deploy HPA  (by default)
+8. Create the KEDA ScaledObject for the vLLM deployment (by default) — KEDA
+   creates the HPA behind it
 10. Verify the deployment process
 11. Print a summary with next steps
 
@@ -207,8 +210,7 @@ After deployment, the script verifies:
 - WVA controller is running
 - Prometheus stack is deployed
 - llm-d infrastructure is deployed
-- VariantAutoscaling resource exists
-- HPA is configured
+- the ScaledObject exists and KEDA created its HPA
 - ServiceMonitors are created
 
 ### Summary Report
@@ -264,8 +266,8 @@ Displays:
 
 ### 5. Autoscaling Resources
 
-- **VariantAutoscaling**: Custom resource for WVA optimization
-- **HPA**: HorizontalPodAutoscaler for deployment scaling
+- **ScaledObject**: the KEDA object whose trigger registers the workload with WVA
+- **HPA**: created and owned by KEDA for each ScaledObject — not authored by hand
 - **ServiceMonitors**: Metrics collection configuration
 
 ## Troubleshooting
@@ -425,11 +427,9 @@ kubectl get pods -n workload-variant-autoscaler-system
 kubectl get pods -n workload-variant-autoscaler-monitoring
 kubectl get pods -n llm-d-optimized-baseline
 
-# Check VariantAutoscaling (with NEW MetricsReady column!)
-kubectl get variantautoscaling -n llm-d-optimized-baseline -o wide
-
-# Check detailed status with conditions
-kubectl describe variantautoscaling optimized-baseline-nvidia-gpu-vllm-decode -n llm-d-optimized-baseline
+# Check the managed workloads and what KEDA is doing with WVA's decision
+kubectl get scaledobject -n llm-d-optimized-baseline
+kubectl get hpa -n llm-d-optimized-baseline
 
 # Check HPA
 kubectl get hpa -n llm-d-optimized-baseline
@@ -512,8 +512,8 @@ EOF
 Watch the autoscaling:
 
 ```bash
-# Watch VariantAutoscaling status update
-kubectl get variantautoscaling -n llm-d-optimized-baseline -w
+# Watch the ScaledObject
+kubectl get scaledobject -n llm-d-optimized-baseline -w
 
 # Watch HPA scaling
 kubectl get hpa -n llm-d-optimized-baseline -w
@@ -553,44 +553,26 @@ kubectl delete namespace workload-variant-autoscaler-system
 kubectl delete namespace workload-variant-autoscaler-monitoring
 ```
 
-## Metrics Validation Feature
+## Metrics Health
 
-This deployment includes the **NEW metrics health monitoring system**:
+WVA validates that vLLM metrics exist before it optimizes a workload, and degrades
+gracefully rather than guessing when they do not.
 
-### What It Does
-
-1. **Validates vLLM metrics** before optimization
-2. **Sets status conditions** on VariantAutoscaling:
-   - `MetricsAvailable` - Are vLLM metrics available?
-   - `OptimizationReady` - Can optimization run?
-3. **Provides actionable errors** when ServiceMonitor isn't working
-4. **Implements graceful degradation** when metrics unavailable
-
-### Viewing Metrics Health
+There is no custom resource to read this from — WVA writes none. Metrics health is
+observable in two places:
 
 ```bash
-# See MetricsReady column
-kubectl get variantautoscaling -n llm-d-optimized-baseline
+# The metrics WVA publishes about its own collection
+kubectl port-forward -n workload-variant-autoscaler-system svc/wva-metrics 8443:8443
+# then look for wva_metrics_freshness_status and wva_metrics_collection_errors_total
 
-# Example output:
-# NAME        MODEL           ACCELERATOR  CURRENT  OPTIMIZED  METRICSREADY  AGE
-# my-variant  llama-3-8b      A100         2        3          True          5m
+# The controller's own account of what it found
+kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler | grep -i "metrics"
 ```
 
-### Viewing Detailed Conditions
-
-```bash
-kubectl describe variantautoscaling optimized-baseline-nvidia-gpu-vllm-decode \
-  -n llm-d-optimized-baseline
-
-# Look for:
-# Status:
-#   Conditions:
-#     Type:     MetricsAvailable
-#     Status:   True/False
-#     Reason:   MetricsFound/MetricsMissing/MetricsStale/PrometheusError
-#     Message:  Detailed troubleshooting information
-```
+A workload with no usable metrics is not scaled, and the reason is logged. The
+most common cause is a ServiceMonitor that does not select the model-server pods,
+so the series never reach Prometheus at all.
 
 ### Understanding Metrics Validation Logs
 

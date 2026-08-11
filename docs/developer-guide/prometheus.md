@@ -649,6 +649,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Type**: Gauge
 - **Description**: `1` while the scale-from-zero engine is reading the EPP flow-control queue from Prometheus because the **direct EPP scrape is failing**, `0` while the direct scrape works. WVA reads the wake signal by scraping the EPP pod directly (pod IP, EPP metrics port, projected bearer token) — the one metric path that does not go through Prometheus — so it fails independently of everything else. The fallback keeps models waking; it does not make the direct path healthy.
 - **Labels**: `pool` (namespaced InferencePool, e.g. `llm-d-sim/optimized-baseline`), optional `controller_instance`
+- **Absence is meaningful**: the series is published on every healthy scrape, so a pool WVA is watching always has one. No series at all means WVA is not reading that pool — a different problem from the fallback being active.
 - **Use Case**: Alert on a sustained `1`. Wakes still happen but are slower — bounded by the Prometheus scrape interval instead of the engine's 100 ms loop — and the underlying cause (EPP metrics token, EPP tokenreview RBAC, or a NetworkPolicy blocking pod-IP egress from the WVA namespace) will not fix itself. See [troubleshooting](troubleshooting.md#the-epp-scrape-is-failing-but-wva-still-wakes-models-slowly).
 - **Example alert**:
   ```

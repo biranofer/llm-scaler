@@ -160,8 +160,13 @@ func (f *QueueFallback) ScrapeSucceeded(ctx context.Context, pool string) {
 	delete(f.engaged, pool)
 	f.mu.Unlock()
 
+	// Published on every healthy scrape, not only on recovery, so the series
+	// EXISTS for a pool WVA is watching. A gauge that only appears while broken
+	// cannot be alerted on: absence would mean both "healthy" and "WVA is not
+	// looking at this pool at all", and those need different responses.
+	metrics.SetScaleFromZeroQueueFallbackActive(pool, false)
+
 	if wasEngaged {
-		metrics.SetScaleFromZeroQueueFallbackActive(pool, false)
 		log.FromContext(ctx).Info("Scale-from-zero: EPP metrics scrape recovered; "+
 			"reading the flow-control queue directly again", "pool", pool)
 	}
