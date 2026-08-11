@@ -10,6 +10,7 @@ Complete guide for deploying the Workload-Variant-Autoscaler (WVA) on Kubernetes
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
+- [Choosing your install](#choosing-your-install)
 - [Deployment Methods](#deployment-methods)
   - [Method 1: Automated Deployment Script](#method-1-automated-deployment-script-recommended)
   - [Method 2: Kustomize (direct controller install)](#method-2-kustomize-direct-controller-install)
@@ -121,6 +122,69 @@ If either requirement is missing, WVA will not make scaling decisions for the af
 
 - **HuggingFace Token** (for llm-d deployment): after getting access to a model, set a token on [HuggingFace](https://huggingface.co/settings/tokens)
   - Required for: Full deployment script with llm-d
+
+## Choosing your install
+
+Four decisions, all made at install time and all changeable afterwards. Defaults
+are in **bold**.
+
+| decision | variable | values | what it changes |
+| --- | --- | --- | --- |
+| namespace | `WVA_NS` | any (**`workload-variant-autoscaler-system`**) | where the controller runs |
+| scope | `WVA_SCOPE` | `cluster` / `namespace` (**platform default**) | which namespaces it may manage |
+| GPU limiter | `WVA_LIMITER` | **`none`** / `gpu-inventory` / `quota` | whether scaling is bounded |
+| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`false`** / `true` | whether a model may idle to zero |
+
+```bash
+export HF_TOKEN="hf_xxxxxxxxxxxxx"
+
+# Simplest: cluster-wide, default namespace, unbounded
+make deploy-wva-on-k8s
+
+# A team's own namespace, managing only that namespace, bounded by real GPUs
+make deploy-wva-on-k8s WVA_NS=team-a-wva WVA_SCOPE=namespace WVA_LIMITER=gpu-inventory
+```
+
+Pass the same `WVA_NS` and `WVA_SCOPE` to `undeploy-wva-on-*`: an uninstall
+resolves the overlay exactly as the install did, so a mismatch leaves behind
+precisely the resources the other overlay owns.
+
+### Scope: what the controller may manage
+
+| scope | RBAC | manages | use when |
+| --- | --- | --- | --- |
+| `cluster` | ClusterRole | every namespace | one WVA for the whole cluster |
+| `namespace` | Role | its own namespace | a tenant without cluster-wide RBAC, or one WVA per team |
+
+Both work on both platforms — `config/overlays/` carries all four combinations.
+The default preserves the historical behaviour: `namespace` on OpenShift,
+`cluster` elsewhere.
+
+### What the controller needs from a workload
+
+WVA discovers a workload when **KEDA calls its external scaler** — being called is
+what being managed means, so there is no annotation or label to add. The trigger
+carries everything WVA needs per workload:
+
+```yaml
+triggers:
+  - type: external
+    metadata:
+      scalerAddress: wva-external-scaler.workload-variant-autoscaler-system:9090
+      modelID: meta/llama-70b        # required
+      scalingPolicy: interactive     # optional: a policy tier
+      variantCost: "30.0"            # optional
+```
+
+**`modelID` is the only required field.** Everything else about the workload is
+derived: the accelerator from its `nodeSelector` (or the nodes its pods run on),
+the role from its engine args or `llm-d.ai/role` label, GPUs per replica from its
+resource requests, and the InferencePool from matching its pod-template labels
+against each pool's selector. Nothing that can be observed is asked for.
+
+`modelID` cannot be derived, and that is not an oversight: it is the grouping key
+for every multi-variant decision, and a workload parked at zero has no pods and no
+metrics to infer it from — which is exactly when it matters most.
 
 ## Deployment Methods
 

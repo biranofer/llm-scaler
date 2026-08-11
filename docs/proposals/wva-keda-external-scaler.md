@@ -139,7 +139,8 @@ triggers:
 
 | Attribute | Where | Scope |
 |---|---|---|
-| `inferencePool`, `modelName`, `engine`, `scalingPolicy` ref, `wvaOwnership` | **metadata** | per target |
+| `modelID`, `scalingPolicy` ref, `wvaOwnership` | **metadata** | per target |
+| `inferencePool`, `engine` | **inferred** — see the update below | per target |
 | `cost` | **metadata** | per target — per-accelerator by construction |
 | `role`, accelerator type, GPU/replica | **inferred** from `scaleTargetRef` workload | per target |
 | `priority` (tier default), scale thresholds, SLO targets, `scaleToZero` | **named policy CM** | per tier (reusable) |
@@ -151,6 +152,19 @@ triggers:
 > policy** row: whether a tier is allowed to idle to zero, and how long it must be
 > idle first, are tier properties, not per-target facts. `WVA_SCALE_TO_ZERO`
 > remains the deployment-level switch.
+
+> **Update (2026-08-11): `inferencePool` is not in metadata, and should not be.**
+> It is derived by matching the workload's pod-template labels against each
+> InferencePool's selector (`Datastore.PoolGetFromLabels`), which is strictly
+> better than declaring it: a declared pool can disagree with the selector that
+> actually decides membership, and then WVA reasons about a queue the workload is
+> not in. The same argument retires `engine`, read from the container image and
+> args. `modelID` stays required — it is the grouping key for every multi-variant
+> decision, and a workload parked at zero has no pods and no metrics to infer it
+> from, which is precisely when it is needed.
+>
+> The rule this follows: **ask only for what cannot be observed.** Anything
+> derivable is derived, so it cannot drift from reality.
 
 - **Role** is inferred from the workload: primary = engine args (`--disaggregation-mode prefill|decode`, parsed by `deployment_parser`); fallback = pod-template label `llm-d.ai/role`. Optional metadata override only for ambiguous `both`.
 - **Accelerator type / GPU count** from the `scaleTargetRef` pods' resource requests + node GPU type (existing discovery). **Cost** stays in metadata (per-accelerator); a future iteration can source it from OpenCost without changing shape.
