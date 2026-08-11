@@ -160,18 +160,55 @@ func (r *ConfigMapReconciler) shouldWatchNamespaceLocalConfigMap(ctx context.Con
 	return isNamespaceConfigEnabled(ctx, r.Reader, namespace)
 }
 
-// handleScalingPolicyConfigMap handles updates to the saturation scaling ConfigMap.
+// supersededByCurrentName reports whether this ConfigMap should be ignored because
+// it carries the PRE-RENAME name while a ConfigMap with the current name also
+// exists — and logs the deprecation notice when it is the one being used.
+//
+// Both names are read so an upgrade cannot silently drop a deployment's scaling
+// configuration, but "both" needs an order, and bootstrap ordering alone does not
+// give one: after startup these arrive as independent watch events, so whichever
+// ConfigMap was edited last would win. A stale copy left behind by an upgrade
+// would then overwrite the live one at an arbitrary moment — the worst kind of
+// configuration bug, because nothing changed at the time it took effect.
+//
+// So the rule is positional, not temporal: if the current name exists, it is the
+// configuration, and the old one is inert.
+func (r *ConfigMapReconciler) supersededByCurrentName(ctx context.Context, cm *corev1.ConfigMap, namespace string) bool {
+	logger := log.FromContext(ctx)
+	current := config.ScalingPolicyConfigMapName()
+	if cm.GetName() != config.LegacyScalingPolicyConfigMapName || current == config.LegacyScalingPolicyConfigMapName {
+		return false
+	}
+
+	var existing corev1.ConfigMap
+	err := r.Get(ctx, client.ObjectKey{Name: current, Namespace: namespace}, &existing)
+	if err == nil {
+		logger.V(1).Info("Ignoring the pre-rename scaling-policy ConfigMap: one with the current "+
+			"name exists and takes precedence. Delete the old one once you have confirmed the "+
+			"new one carries everything.",
+			"ignoring", cm.GetName(), "using", current, "namespace", namespace)
+		return true
+	}
+	if !apierrors.IsNotFound(err) {
+		// Could not tell. Proceed rather than drop the only config we can see.
+		logger.V(1).Info("Could not check for a current-named scaling-policy ConfigMap; "+
+			"using the pre-rename one", "error", err.Error())
+	}
+
+	logger.Info("Reading scaling policy from the pre-rename ConfigMap name. It outgrew "+
+		"\"saturation\" — it now carries policy tiers, analyzer definitions, limiters and "+
+		"scale-to-zero — so rename it; the old name is still read but will not be forever.",
+		"using", config.LegacyScalingPolicyConfigMapName, "rename to", current)
+	return false
+}
+
+// handleScalingPolicyConfigMap handles updates to the scaling-policy ConfigMap.
 // Supports both global and namespace-local ConfigMaps.
 func (r *ConfigMapReconciler) handleScalingPolicyConfigMap(ctx context.Context, cm *corev1.ConfigMap, namespace string, isGlobal bool) {
 	logger := log.FromContext(ctx)
 
-	if cm.GetName() == config.LegacyScalingPolicyConfigMapName &&
-		config.ScalingPolicyConfigMapName() != config.LegacyScalingPolicyConfigMapName {
-		logger.Info("Reading scaling policy from the pre-rename ConfigMap name. It outgrew "+
-			"\"saturation\" — it now carries policy tiers, analyzer definitions, limiters and "+
-			"scale-to-zero — so rename it; the old name is still read but will not be forever.",
-			"using", config.LegacyScalingPolicyConfigMapName,
-			"rename to", config.ScalingPolicyConfigMapName())
+	if r.supersededByCurrentName(ctx, cm, namespace) {
+		return
 	}
 
 	// Parse scaling policy entries
@@ -180,7 +217,7 @@ func (r *ConfigMapReconciler) handleScalingPolicyConfigMap(ctx context.Context, 
 	// Update global or namespace-local config
 	if isGlobal {
 		r.Config.UpdateScalingPolicyConfig(configs)
-		logger.Info("Updated global saturation config from ConfigMap", "entries", count)
+		logger.Info("Updated global scaling policy from ConfigMap", "entries", count)
 		r.warnIfThroughputRegistrationDiverged(logger, cm)
 	} else {
 		// Limiters and quotas are CLUSTER-scope: EffectiveLimiterMode reads them only
