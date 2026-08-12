@@ -167,6 +167,12 @@ wva_namespaces_with_model_servers() {
 # the model-server marker, on its pod template or on the object itself.
 so_namespaces_of() {
     local resource="$1" pod="$2"
+    # `|| true` is load-bearing. A cluster-wide list is exactly what a NAMESPACE
+    # ADMIN may not do, and a denied kubectl exits non-zero: under the callers'
+    # `set -e` with pipefail, that took the whole preflight down without printing
+    # a single line — a tenant running `make check-prereqs-namespace-on-k8s` got
+    # silence. Not finding namespaces is a legitimate answer here; the caller
+    # decides what it means.
     kubectl get "$resource" -A -o json 2>/dev/null \
         | jq -r --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
             .items[]
@@ -174,7 +180,7 @@ so_namespaces_of() {
               as $labels
             | select($labels | to_entries
                      | any(.key + "=" + (.value|tostring) == $marker))
-            | .metadata.namespace'
+            | .metadata.namespace' 2>/dev/null || true
 }
 
 # scaledobject_exists reports whether some ScaledObject already targets this

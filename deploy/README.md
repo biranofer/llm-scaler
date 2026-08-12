@@ -14,6 +14,15 @@ Three things about the cluster. The installer handles the first two where it can
 | **Prometheus** | yes — WVA reads model-server metrics from it | **detected.** You do not pass a URL. On OpenShift it is the platform's Thanos Querier, at a fixed address |
 | **model servers** labelled `llm-d.ai/inferenceServing=true` | yes | llm-d's own install does this |
 
+**If you are a namespace admin, export your namespace first.** Finding it
+automatically means listing workloads cluster-wide, which you are not permitted
+to do — the check says so plainly rather than guessing, and with `NAMESPACE` set
+every read it makes is inside your own namespace:
+
+```bash
+export NAMESPACE=<your-namespace>
+```
+
 Check all of it, read-only, before you commit to anything:
 
 ```bash

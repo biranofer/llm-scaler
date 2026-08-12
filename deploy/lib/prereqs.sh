@@ -295,8 +295,19 @@ wva_autoselect_namespace() {
     [ "${WVA_NS_SOURCE:-}" = "default" ] || return 0
     [ "$(wva_install_scope)" = "namespace" ] || return 0
 
+    # Searching means listing workloads cluster-wide, which a NAMESPACE ADMIN may
+    # not do. Say that, rather than falling back to the default namespace as
+    # though the cluster genuinely had no llm-d in it: one is "tell me which
+    # namespace", the other is "deploy llm-d first", and they are not the same
+    # instruction.
+    if ! kubectl auth can-i list deployments -A >/dev/null 2>&1; then
+        log_info "Cannot search the cluster for llm-d model servers (listing workloads cluster-wide is not permitted for you), so the namespace cannot be found for you."
+        log_info "  Name it:  NAMESPACE=<your namespace>   — llm-d's own variable, so if you followed one of its guides it is already exported."
+        return 0
+    fi
+
     local found count
-    found="$(wva_namespaces_with_model_servers)"
+    found="$(wva_namespaces_with_model_servers || true)"
     count="$(printf '%s' "$found" | grep -c . || true)"
 
     if [ "${count:-0}" -eq 1 ]; then
@@ -404,12 +415,16 @@ wva_model_server_count() {
     local ns="$1" total=0 resource pod n
     for resource in deployments:"$SO_POD_PATH_DEPLOYMENT" leaderworkersets:"$SO_POD_PATH_LWS"; do
         pod="${resource#*:}"; resource="${resource%%:*}"
+        # Keep exactly one integer. `|| echo 0` on a pipeline that already printed
+        # a count appends a SECOND value — the resource kind may be absent (no LWS
+        # CRD) or unreadable, and then `$((total + 0\n0))` is a syntax error that
+        # takes the preflight down mid-report. Last line, digits only.
         n="$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
             | jq --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
                 [ .items[]
                   | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
                   | select(to_entries | any(.key + "=" + (.value|tostring) == $marker))
-                ] | length' 2>/dev/null || echo 0)"
+                ] | length' 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
         total=$((total + ${n:-0}))
     done
     echo "$total"

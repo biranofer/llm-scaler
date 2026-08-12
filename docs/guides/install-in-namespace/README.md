@@ -26,11 +26,13 @@ source docs/guides/env.sh
 
 <!-- guide:env.static.namespace start -->
 ```bash
-# The namespace WVA installs into and manages. Leave it unset and the
-# install FINDS the namespace running llm-d model servers; set it when you
-# have more than one, or mean a different one.
-# NAMESPACE is llm-d's own variable, so a reader who followed one of its
-# guides already has this exported.
+# The namespace WVA installs into and manages.
+# Export it FIRST if you are a namespace admin: finding it automatically
+# means listing workloads cluster-wide, which you are not permitted to do,
+# and the check will tell you so rather than guess. With it exported,
+# everything the check does is a read inside your own namespace.
+# NAMESPACE is llm-d's own variable, so if you followed one of its guides
+# it is already set.
 export NAMESPACE=<your-namespace>
 ```
 <!-- guide:env.static.namespace end -->
