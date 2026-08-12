@@ -312,8 +312,9 @@ check-prereqs: ## Phase 1, read-only: tools, permissions, the namespace and the 
 	$(call wva_check,$(ENVIRONMENT_INSTALL))
 
 ## List the llm-d model servers WVA would create ScaledObjects for, and stop.
-## Writes an editable plan; nothing is applied. A ScaledObject is how a workload
-## REGISTERS with WVA, so this is the step between "installed" and "scaling".
+## Writes an editable YAML plan; nothing is applied. A ScaledObject is how a
+## workload REGISTERS with WVA, so this is the step between "installed" and
+## "scaling". The plan documents its own fields in the comments it is written with.
 .PHONY: scaledobjects-plan
 scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObject plan. WVA_DEFAULT_SO_NS=<ns>|wva|all, WVA_DEFAULT_SO_PLAN=<file>.
 	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
@@ -322,7 +323,7 @@ scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObje
 ## that file, edits included, and needs no terminal. Without one it re-discovers
 ## and applies everything found.
 .PHONY: scaledobjects-apply
-scaledobjects-apply: ## Create default ScaledObjects (this is what makes WVA scale anything). WVA_DEFAULT_SO_PLAN=<edited file>, WVA_DEFAULT_SO_ADOPT=true, WVA_DEFAULT_SO_TEMPLATE=<file>.
+scaledobjects-apply: ## Apply a ScaledObject plan (this is what makes WVA scale anything). Per entry: apply: yes|no|adopt. WVA_DEFAULT_SO_PLAN=<edited file>, WVA_DEFAULT_SO_TEMPLATE=<file>.
 	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Review the list in $EDITOR, then apply what you confirm. Needs a terminal;

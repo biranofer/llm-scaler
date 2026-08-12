@@ -11,16 +11,17 @@ env:
 prerequisites:
   check:
     run: make check-prereqs
-  admin:
-    run: make setup-prereqs
 
 deploy:
+  prereqs:
+    run: make setup-prereqs
   controller:
     run: make deploy-wva INSTALL_PHASE=wva
   register:
     run: |
-      make scaledobjects-plan
-      make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
+      make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+      # edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
+      make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 
 verify:
   objects:

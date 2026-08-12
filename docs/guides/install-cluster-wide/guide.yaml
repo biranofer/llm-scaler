@@ -14,8 +14,9 @@ deploy:
     run: make deploy-wva SCOPE=cluster
   register:
     run: |
-      make scaledobjects-plan
-      make scaledobjects-apply
+      make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+      # edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
+      make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 
 verify:
   objects:

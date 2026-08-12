@@ -87,32 +87,64 @@ cluster is not something to discover the shape of afterwards.
 
 ```bash
 # 1. See what would be created. Nothing is applied.
-make scaledobjects-plan
+make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 
-# 2. Edit the plan it wrote: set the first column to yes or no, correct a modelID,
-#    change min/max, delete rows you do not want.
-$EDITOR /tmp/wva-scaledobject-plan.XXXX
+# 2. Edit it: apply: yes|no|adopt, the modelID, the replica bounds, the cost.
+$EDITOR wva-plan.yaml
 
 # 3. Apply exactly that file.
-make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 ```
 
-The plan is a tab-separated table you can read and edit in place:
+The plan is YAML, and carries its own documentation — every field it accepts is
+explained in the comments it is written with, so editing it needs nothing open
+next to it. Printed as a table on the way past, and written like this:
 
+```yaml
+# WVA ScaledObject plan. Nothing here has been applied yet.
+#
+# apply          Required. One of:
+#                  yes    create a ScaledObject for this workload
+#                  no     leave the workload alone
+#                  adopt  it already has a ScaledObject — repoint that one at WVA
+#                         instead of adding a second.
+# ...
+plan:
+
+  - apply: "yes"
+    namespace: llm-d-sim
+    kind: Deployment
+    name: sotest-a
+    modelID: "e2ewva/dummy-model"
+    minReplicas: 1
+    maxReplicas: 10
+    variantCost: "10.0"
+    inferencePool: "optimized-baseline"
+
+  # note: no --served-model-name or --model on the container, so the model could
+  # not be read. Fill in modelID and set apply: yes to include it.
+  - apply: "no"
+    namespace: llm-d-sim
+    kind: Deployment
+    name: sotest-b
+    modelID: ""
+    minReplicas: 1
+    maxReplicas: 10
+    variantCost: "10.0"
+    inferencePool: ""
 ```
-#apply  namespace  kind        name      modelID             inferencePool       min  max
-yes     llm-d-sim  Deployment  sotest-a  e2ewva/dummy-model  optimized-baseline  1    10
-no      llm-d-sim  Deployment  sotest-b  UNKNOWN             -                   1    10
-# ^ llm-d-sim/sotest-b: no --served-model-name or --model; set modelID by hand to include it
-```
 
-`inferencePool` is shown for orientation: it is the EPP queue that workload sits
-behind, resolved by matching pod labels against each pool's selector — the same way
-WVA resolves it. A `-` means no pool has adopted the workload.
+| field | |
+| --- | --- |
+| `apply` | `yes` creates, `no` skips, `adopt` repoints a ScaledObject the workload already has. Never both: two ScaledObjects on one target is two HPAs writing the same replica count, so `yes` on a workload that already has one is refused rather than quietly adopted |
+| `modelID` | **Required.** What the container serves, and the grouping key — entries sharing a `modelID` are sized against each other. An entry with none is never applied: an object created without it registers a variant of a model nobody runs |
+| `minReplicas` / `maxReplicas` | What KEDA holds the workload between; WVA decides within them. Default 1 and 10, and for `adopt` they are read from the object being adopted, so applying it unedited changes only who decides the count |
+| `variantCost` | The relative price of one replica of this variant. Only the ratio between variants of one model matters, so with one variant it changes nothing |
+| `inferencePool` | Informational, never applied: the EPP queue that workload sits behind, resolved by matching pod labels against each pool's selector — the same way WVA resolves it. Empty means no pool has adopted it |
 
-Rows that cannot be applied are marked `no` **and kept**, with the reason, rather
-than dropped: the list you are shown is then the whole truth about what was found,
-and turning a `no` into a `yes` is a deliberate act.
+Entries that cannot be applied are marked `no` **and kept**, with the reason,
+rather than dropped: the file is then the whole truth about what was found, and
+turning a `no` into a `yes` is a deliberate act.
 
 If you would rather review interactively, `make scaledobjects-edit` opens the same
 plan in `$EDITOR` and asks before applying. It needs a terminal; everything it can
@@ -125,8 +157,10 @@ do is also reachable through plan-then-apply, which does not.
 | `WVA_DEFAULT_SO_PLAN` | An existing file is applied as-is, edits included. Otherwise, where the generated plan is written | a temp file |
 | `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on generated objects. Not `0` even with scale-to-zero on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
 | `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
-| `WVA_DEFAULT_SO_ADOPT` | Repoint a workload's **existing** ScaledObject at WVA instead of leaving it alone. Patches only its `triggers`; envelope and behavior are untouched, and no second object is created | `false` |
-| `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
+
+Both are only the value the plan is *written* with. What gets applied is what the
+file says when you apply it, per entry.
+| `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}` `{{VARIANT_COST}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
 
 Set them on a deploy to do this during install:
 

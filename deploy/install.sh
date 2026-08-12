@@ -178,9 +178,6 @@ WVA_DEFAULT_SO=${WVA_DEFAULT_SO:-false}
 WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-}
 # An existing file is applied as-is, edits included, with no terminal needed.
 WVA_DEFAULT_SO_PLAN=${WVA_DEFAULT_SO_PLAN:-}
-# Repoint a workload's EXISTING ScaledObject at WVA instead of leaving it alone.
-# For adding WVA to a cluster whose workloads something else already scales.
-WVA_DEFAULT_SO_ADOPT=${WVA_DEFAULT_SO_ADOPT:-false}
 # Your own ScaledObject template instead of the shipped one. See
 # config/samples/keda/external-scaler/scaledobject-template.yaml.
 WVA_DEFAULT_SO_TEMPLATE=${WVA_DEFAULT_SO_TEMPLATE:-}

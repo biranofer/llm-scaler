@@ -17,8 +17,6 @@ namespace's owner installs and upgrades the controller themselves.
 - llm-d model servers in the namespace
 - KEDA, installed for you if the cluster has none
 - a Prometheus scraping those model servers
-- [`make setup-prereqs`](../admin-cluster-setup/README.md) run for the namespace
-  by a cluster admin
 
 <!-- guide:env.static.namespace start -->
 ```bash
@@ -39,7 +37,25 @@ healthy and scales nothing.
 
 ## Installation Instructions
 
-### 1. Install the controller
+### 1. Cluster admin: prepare the namespace
+
+**This step needs cluster-admin rights** — everything after it does not.
+
+<!-- guide:deploy.prereqs start -->
+```bash
+make setup-prereqs
+```
+<!-- guide:deploy.prereqs end -->
+
+Once per namespace, not once per upgrade. It creates the namespace, the
+cluster-scoped RBAC and the ServiceMonitor: the objects a namespace admin is not
+allowed to create. See [Cluster-admin setup](../admin-cluster-setup/README.md)
+for what each one is and why it needs an admin.
+
+Already done for your namespace? `make check-prereqs` above names anything still
+missing; if it names nothing, go to step 2.
+
+### 2. Install the controller
 
 <!-- guide:deploy.controller start -->
 ```bash
@@ -47,28 +63,44 @@ make deploy-wva INSTALL_PHASE=wva
 ```
 <!-- guide:deploy.controller end -->
 
-If the admin step has not happened, this stops and names every missing object.
+If step 1 has not happened, this stops and names every missing object.
 
-### 2. Register the workloads
+### 3. Register the workloads
 
 Nothing scales until a ScaledObject exists: WVA is only ever asked about
 workloads KEDA calls it about.
 
 <!-- guide:deploy.register start -->
 ```bash
-make scaledobjects-plan
-make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
+make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+# edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 ```
 <!-- guide:deploy.register end -->
 
-`scaledobjects-plan` writes an editable table, one row per model server, and
-applies nothing. `scaledobjects-apply` applies exactly what you leave in it.
+`scaledobjects-plan` finds the model servers and writes one entry each, applying
+nothing:
 
-### 3. (Optional) Take over existing ScaledObjects
+```yaml
+plan:
 
-Workloads something else already scales keep theirs, unless you pass
-`WVA_DEFAULT_SO_ADOPT=true`, which repoints their triggers at WVA. Two
-ScaledObjects on one target is two HPAs writing the same replica count.
+  - apply: "yes"                        # yes | no | adopt
+    namespace: llm-d-sim
+    kind: Deployment
+    name: dev-model-decode
+    modelID: "meta/llama"               # required — what the container serves
+    minReplicas: 1
+    maxReplicas: 10
+    variantCost: "10.0"
+    inferencePool: "optimized-baseline" # informational
+```
+
+Edit it; `scaledobjects-apply` does exactly what you left in it. Every field is
+explained in the comments the file is written with, so there is nothing to look
+up. `apply: adopt` is for a workload something else already scales: it repoints
+that object at WVA instead of adding a second, because two ScaledObjects on one
+target is two HPAs writing the same replica count. A workload whose model could
+not be read is written as `no` with the reason, and never created without one.
 
 ## Verification
 
@@ -118,7 +150,6 @@ preflight reported.
 | `NAMESPACE` | the namespace running llm-d, discovered | `llm-d-optimized-baseline` |
 | `IMG` | the published image | `ghcr.io/you/wva:dev` |
 | `PROMETHEUS_URL` | detected; Thanos on OpenShift | `http://prom.monitoring.svc:9090` |
-| `WVA_DEFAULT_SO_ADOPT` | `false` | `true` |
 
 Full list: [Configuration reference](../../deployment/configuration.md).
 

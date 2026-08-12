@@ -34,20 +34,30 @@ make deploy-wva SCOPE=cluster
 ```
 <!-- guide:deploy.all end -->
 
-One command: prerequisites and controller together, which is right when you are
-an admin installing for yourself.
+One command, because at this scope the cluster-admin half and the install half are
+the same person: it runs [`setup-prereqs`](../admin-cluster-setup/README.md) —
+cluster-scoped RBAC, the namespace, the ServiceMonitor — and then the controller.
+Where those are separate people, the namespace guide splits them into two steps.
 
 ### 2. Register the workloads
 
 Nothing scales until a ScaledObject exists. At this scope the plan covers every
-namespace holding model servers.
+namespace holding model servers, so read it before applying it.
 
 <!-- guide:deploy.register start -->
 ```bash
-make scaledobjects-plan
-make scaledobjects-apply
+make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+# edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 ```
 <!-- guide:deploy.register end -->
+
+One entry per model server, applying nothing until you say so. `apply` takes
+`yes`, `no`, or `adopt` — the last repoints a ScaledObject something else already
+owns rather than adding a second. Each entry also carries `minReplicas`,
+`maxReplicas` and `variantCost`; the file explains all of them in its own
+comments. There is an example in
+[Install WVA in a namespace](../install-in-namespace/README.md#3-register-the-workloads).
 
 ## Verification
 

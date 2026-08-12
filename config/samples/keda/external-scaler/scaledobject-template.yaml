@@ -15,7 +15,8 @@
 #   {{APIVERSION}}      apps/v1 | leaderworkerset.x-k8s.io/v1
 #   {{MODEL_ID}}        read from --served-model-name, else --model
 #   {{SCALER_ADDRESS}}  WVA's external-scaler service, host:port
-#   {{MIN}} {{MAX}}     WVA_DEFAULT_SO_MIN / _MAX
+#   {{MIN}} {{MAX}}     the entry's replica bounds
+#   {{VARIANT_COST}}    the entry's variantCost, or 10.0 where it set none
 #
 # Usage:
 #   make scaledobjects-apply WVA_DEFAULT_SO_TEMPLATE=$PWD/this-file.yaml
@@ -49,4 +50,7 @@ spec:
       name: wva-external-scaler
       metadata:
         scalerAddress: {{SCALER_ADDRESS}}
-        modelID: {{MODEL_ID}}
+        modelID: "{{MODEL_ID}}"
+        # The relative price of one replica of this variant. Only the ratio
+        # between variants of one model matters.
+        variantCost: "{{VARIANT_COST}}"

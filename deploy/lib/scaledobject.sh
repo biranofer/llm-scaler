@@ -14,11 +14,16 @@
 #
 # It is built as plan-then-apply rather than one shot, because creating autoscaling
 # objects across a cluster is not something to discover the shape of afterwards.
-# The plan is a plain TSV file: look at it, delete the rows you do not want, change
-# a model or a replica bound, then apply it. The same file is the interchange for
-# the interactive path and the scripted one, so there is no capability that needs a
-# terminal — which matters, because these install scripts are otherwise
-# non-interactive and CI depends on that.
+# The plan is a YAML file that carries its own documentation: every field it
+# accepts is explained in the comments it is written with, so editing it needs
+# nothing open next to it. It was a TSV, and a table has nowhere to say what a
+# column means or which values a column accepts — so the file could only be edited
+# by someone who had already read the docs, and the docs had to repeat it all.
+#
+# The same file is the interchange for the interactive path and the scripted one,
+# so there is no capability that needs a terminal — which matters, because these
+# install scripts are otherwise non-interactive and CI depends on that. It is
+# printed as a table as well: YAML is what you edit, a table is what you read.
 #
 # WVA_DEFAULT_SO:
 #   false (default)  do nothing
@@ -33,7 +38,119 @@
 #   cluster-scoped, its own namespace when namespace-scoped.
 #
 
-readonly SO_PLAN_HEADER=$'#apply\tnamespace\tkind\tname\tmodelID\tinferencePool\tmin\tmax'
+readonly SO_PLAN_HEADER=$'APPLY\tNAMESPACE\tKIND\tNAME\tMODELID\tMIN\tMAX\tCOST\tPOOL'
+
+# The variantCost an entry gets when nothing else decides one. It is WVA's own
+# default for a trigger that omits the field, so writing it into every entry
+# changes no behaviour — it makes the number visible and editable, which is what
+# matters the first time a model gets a second variant.
+readonly SO_DEFAULT_VARIANT_COST=10.0
+
+# so_plan_preamble writes the plan's header comment: what every field means, and
+# which values `apply` takes. It is generated with the plan and read in the editor,
+# which is the whole point of the file being YAML.
+so_plan_preamble() {
+    cat <<'EOF'
+# WVA ScaledObject plan. Nothing here has been applied yet.
+#
+# Edit this file, then apply exactly what you leave in it:
+#
+#     make scaledobjects-apply WVA_DEFAULT_SO_PLAN=<this file>
+#
+# apply          Required. One of:
+#                  yes    create a ScaledObject for this workload
+#                  no     leave the workload alone
+#                  adopt  it already has a ScaledObject — repoint that one at WVA
+#                         instead of adding a second. Two ScaledObjects on one
+#                         target is two HPAs writing the same replica count.
+#
+# modelID        Required. What the container serves: --served-model-name, or
+#                --model where there is no served name. It is also the grouping
+#                key — entries sharing a modelID are sized against each other, so
+#                a wrong one mis-scales both of them.
+#
+# minReplicas    The bounds KEDA holds this workload between; WVA decides within
+# maxReplicas    them. Defaults 1 and 10. minReplicas: 0 parks the workload when
+#                idle and costs its next request a cold start. maxReplicas is the
+#                only ceiling on this workload unless a GPU limiter is configured.
+#
+# variantCost    The relative price of one replica of this variant. Only the ratio
+#                between variants of the same model matters, so with one variant
+#                per model it changes nothing and 10.0 is as good as any number.
+#                Where a model has two, this is what makes WVA prefer one: give
+#                the cheaper variant the smaller cost.
+#
+# namespace      Where the workload is; with kind and name, what the ScaledObject
+# kind           will target.
+# name
+#
+# inferencePool  Informational, never applied: the EPP queue this workload sits
+#                behind. Empty means no InferencePool selects these pods.
+EOF
+}
+
+# so_plan_entry writes one plan entry, with its note (if any) as the comment above
+# it. Notes are comments rather than a column so that they survive editing and can
+# be a sentence: the reason a row says `no` is the thing a reader most needs.
+so_plan_entry() {
+    local apply="$1" ns="$2" kind="$3" name="$4" model="$5" min="$6" max="$7" cost="$8" pool="$9" note="${10:-}"
+    echo ""
+    [ -z "$note" ] || printf '  # note: %s\n' "$note"
+    # apply and modelID are quoted: YAML reads a bare yes/no/on/off as a boolean
+    # under some parsers, and a model called `3.5` or `1e6` as a number. Both would
+    # arrive here as something that is not the text anybody typed.
+    printf '  - apply: "%s"\n' "$apply"
+    printf '    namespace: %s\n' "$ns"
+    printf '    kind: %s\n' "$kind"
+    printf '    name: %s\n' "$name"
+    printf '    modelID: "%s"\n' "$model"
+    printf '    minReplicas: %s\n' "$min"
+    printf '    maxReplicas: %s\n' "$max"
+    # Quoted, so an edit keeps what you typed: unquoted 10.0 is a YAML float, and
+    # a float that round-trips through JSON comes back as "10".
+    printf '    variantCost: "%s"\n' "$cost"
+    printf '    inferencePool: "%s"\n' "$pool"
+}
+
+# so_plan_rows echoes one row per plan entry, fields separated by US (\037): the
+# file is YAML for whoever edits it, and a record stream for everything that
+# consumes it.
+#
+# NOT tab-separated. Tab is an IFS *whitespace* character, so `IFS=$'\t' read`
+# collapses a run of them into one delimiter and an empty field simply vanishes —
+# every later field then arrives one place to the left. A workload whose model
+# could not be read has an empty modelID, so it got a ScaledObject whose modelID
+# was its minReplicas: the value 1, registered as a model name, silently. US is
+# not IFS whitespace, so empty fields survive; values are scrubbed of it below,
+# though nothing a Kubernetes object can hold contains one.
+#
+# yq converts and jq selects, rather than yq doing both: expressing "this field or
+# this default, joined" in yq's filter language needs quoting that is its own
+# hazard.
+#
+# An unparseable plan is fatal and says why. The alternative — skipping what could
+# not be read — would apply part of a plan, and on this file a partial apply means
+# creating autoscaling objects for a subset nobody chose.
+so_plan_rows() {
+    local file="$1" json
+    if ! json=$(yq -o=json '.' "$file" 2>&1); then
+        log_error "$file is not valid YAML, so nothing was applied: $json"
+    fi
+    if [ "$(printf '%s' "$json" | jq -r 'if (.plan | type) == "array" then "ok" else "bad" end' 2>/dev/null)" != "ok" ]; then
+        log_error "$file has no 'plan:' list. It must keep a top-level plan: key holding one entry per workload — see the comments at the top of the file."
+    fi
+    printf '%s' "$json" | jq -r --arg cost "$SO_DEFAULT_VARIANT_COST" '
+        .plan[]
+        | [ (if (.apply | type) == "boolean"
+             then (if .apply then "yes" else "no" end)
+             else (.apply // "" | tostring) end | ascii_downcase),
+            (.namespace // ""), (.kind // ""), (.name // ""), (.modelID // ""),
+            (.minReplicas // 1 | tostring), (.maxReplicas // 10 | tostring),
+            (.variantCost // $cost | tostring), (.inferencePool // "") ]
+        | map(tostring | gsub("[
+	]"; " "))
+        | join("")'
+}
 
 # What marks a workload as an llm-d model server.
 #
@@ -183,29 +300,51 @@ so_namespaces_of() {
             | .metadata.namespace' 2>/dev/null || true
 }
 
-# scaledobject_exists reports whether some ScaledObject already targets this
-# workload. Never adopt or overwrite one: it may be hand-tuned or GitOps-managed,
-# and two ScaledObjects on one target is two HPAs fighting over a replica count.
-scaledobject_exists() {
-    [ -n "$(so_existing_name "$1" "$2")" ]
-}
-
-# so_existing_name echoes the name of the ScaledObject already targeting a
+# so_existing_info echoes `name min max cost` for the ScaledObject already targeting a
 # workload, if any. Adoption has to patch THAT object: creating our own alongside
 # it would put two ScaledObjects on one target, which is two HPAs writing the same
 # replica count — the exact failure the skip-by-default exists to avoid.
-so_existing_name() {
+#
+# The bounds come with the name because an `adopt` row must show the bounds the
+# workload actually has, not the ones a fresh install would have picked. A plan
+# that showed 1-10 for a workload someone had pinned to 4-4 would quietly widen it
+# on apply, and the file gave no hint that it was about to.
+#
+# jq, not a go-template: `{{if .spec.minReplicaCount}}` is false for 0, so
+# scale-to-zero workloads would read as "unset" and come back as 1. The `//`
+# defaults below are KEDA's own for an absent field.
+so_existing_info() {
     local ns="$1" target="$2"
-    kubectl get scaledobject -n "$ns" -o go-template='{{range .items}}{{.metadata.name}} {{.spec.scaleTargetRef.name}}{{"\n"}}{{end}}' 2>/dev/null \
-        | awk -v t="$target" '$2 == t {print $1; exit}'
+    kubectl get scaledobject -n "$ns" -o json 2>/dev/null \
+        | jq -r --arg t "$target" '
+            .items[]
+            | select(.spec.scaleTargetRef.name == $t)
+            | [ .metadata.name,
+                (.spec.minReplicaCount // 0 | tostring),
+                (.spec.maxReplicaCount // 100 | tostring),
+                ([ .spec.triggers[]? | select(.type | startswith("external"))
+                   | .metadata.variantCost // empty ] | first // "10.0") ]
+            | join(" ")' 2>/dev/null \
+        | head -1
 }
 
-# so_discover writes plan rows to stdout, one per candidate workload. A row is
-# marked "no" when it should not be applied, with the reason in the note, rather
-# than dropped — the list you were shown is then the whole truth about what was
-# found, and flipping a "no" to "yes" is a deliberate act.
+# so_existing_name echoes just the name, for callers that only ask whether one is
+# there. Re-read at apply time: a plan can be applied long after it was written.
+so_existing_name() {
+    so_existing_info "$1" "$2" | awk '{print $1}'
+}
+
+# so_discover writes the plan to stdout: the documented preamble, then one entry
+# per candidate workload. An entry is marked "no" when it should not be applied,
+# with the reason in its note, rather than dropped — the file you were shown is
+# then the whole truth about what was found, and turning a "no" into a "yes" is a
+# deliberate act rather than an undiscoverable one.
 so_discover() {
     local ns name args labels objlabels model pool kind apply note
+    local existing existing_name existing_min existing_max existing_cost
+    local min max cost
+    so_plan_preamble
+    echo "plan:"
     for ns in $(so_target_namespaces); do
         for kind in Deployment LeaderWorkerSet; do
             local resource='deployments' pod="$SO_POD_PATH_DEPLOYMENT"
@@ -227,28 +366,33 @@ so_discover() {
                     *) continue ;;
                 esac
                 apply=yes; note=""
+                min="${WVA_DEFAULT_SO_MIN:-1}"; max="${WVA_DEFAULT_SO_MAX:-10}"
+                cost="$SO_DEFAULT_VARIANT_COST"
                 model=$(so_model_id "$args")
                 if [ -z "$model" ]; then
-                    apply=no; note="no --served-model-name or --model; set modelID by hand to include it"
-                    model="UNKNOWN"
+                    apply=no
+                    note="no --served-model-name or --model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
                 fi
-                if scaledobject_exists "$ns" "$name"; then
-                    # Default is to leave it: it may be hand-tuned or
-                    # GitOps-managed. WVA_DEFAULT_SO_ADOPT=true says you want it
-                    # pointed at WVA, which is the case when you are adding WVA to
-                    # a cluster whose workloads are already scaled by something
-                    # else. The row is still yours to flip either way.
-                    if [ "${WVA_DEFAULT_SO_ADOPT:-false}" = "true" ]; then
-                        note="has a ScaledObject; will be UPDATED to use WVA (WVA_DEFAULT_SO_ADOPT=true)"
-                    else
-                        apply=no; note="already has a ScaledObject; set WVA_DEFAULT_SO_ADOPT=true to point it at WVA instead"
-                    fi
+                existing=$(so_existing_info "$ns" "$name")
+                if [ -n "$existing" ]; then
+                    # Default is to leave it alone: it may be hand-tuned or
+                    # GitOps-managed. `apply: adopt` is how you say you want it
+                    # pointed at WVA — the case when you are adding WVA to a
+                    # cluster whose workloads something else already scales.
+                    #
+                    # Its own bounds are carried into the entry, so adopting it
+                    # unedited changes only who decides the count.
+                    read -r existing_name existing_min existing_max existing_cost <<< "$existing"
+                    min="$existing_min"; max="$existing_max"; cost="$existing_cost"
+                    apply=no
+                    # Appended, not assigned: a workload can both be scaled by
+                    # something else and have no readable model, and adopting it
+                    # would then point a ScaledObject at an empty modelID.
+                    note="${note:+$note }Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
                 fi
                 pool=$(so_pool "$ns" "$labels")
-                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-                    "$apply" "$ns" "$kind" "$name" "$model" "${pool:--}" \
-                    "${WVA_DEFAULT_SO_MIN:-1}" "${WVA_DEFAULT_SO_MAX:-10}"
-                [ -n "$note" ] && printf '# ^ %s/%s: %s\n' "$ns" "$name" "$note"
+                so_plan_entry "$apply" "$ns" "$kind" "$name" "$model" \
+                    "$min" "$max" "$cost" "$pool" "$note"
             done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
                 | jq -r --argjson p "$pod" '
                     .items[]
@@ -266,56 +410,129 @@ so_discover() {
     done
 }
 
+# so_show_plan prints the plan as a table. The file stays the thing you edit; this
+# is the thing you read before deciding to.
+#
+# Empty fields become "-": `column -t` folds consecutive delimiters into one, so a
+# workload with no readable model would print with every later column shifted one
+# place left, and the table would say its min was its model.
 so_show_plan() {
-    local file="$1" rows
-    rows=$(grep -cv '^#' "$file" 2>/dev/null || echo 0)
+    local file="$1" rows count
+    # `|| exit 1`, not `|| true`: so_plan_rows dies on a plan it cannot read, and
+    # that death happens inside this command substitution's subshell. Without this
+    # the caller would print an empty table and carry on to apply nothing, having
+    # already shown the user the reason and then contradicted it.
+    rows=$(so_plan_rows "$file") || exit 1
+    count=$(printf '%s' "$rows" | grep -c . || true)
     echo ""
-    echo "  Discovered llm-d model servers ($rows):"
+    echo "  Discovered llm-d model servers ($count):"
     echo ""
-    (echo "$SO_PLAN_HEADER"; cat "$file") | grep -v '^# \^' | column -t -s $'\t' | sed 's/^/    /'
+    { echo "$SO_PLAN_HEADER"
+      # `$1 = $1` forces the record to be rebuilt with OFS. Without it awk only
+      # rebuilds when a field is assigned, so a row that happened to have no empty
+      # field printed with its original separators still in it — and the table
+      # showed that row as one unsplit run of text while its neighbours lined up.
+      printf '%s\n' "$rows" \
+        | awk -F'\037' -v OFS='\t' '{for (i = 1; i <= NF; i++) if ($i == "") $i = "-"; $1 = $1; print}'
+    } | column -t -s $'\t' | sed 's/^/    /'
     echo ""
-    grep '^# \^' "$file" | sed 's/^# \^/    note:/' || true
+    grep -E '^[[:space:]]*# note:' "$file" 2>/dev/null | sed -E 's/^[[:space:]]*# note:/    note:/' || true
     echo ""
 }
 
-# so_apply_plan creates a ScaledObject for every row marked yes.
+# so_apply_plan acts on every entry: creating for yes, repointing for adopt.
 so_apply_plan() {
     local file="$1" scaler_addr="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
-    local apply ns kind name model pool min max created=0 skipped=0
-    while IFS=$'\t' read -r apply ns kind name model pool min max; do
-        case "$apply" in ''|'#'*) continue ;; esac
-        if [ "$apply" != "yes" ]; then
-            skipped=$((skipped + 1)); continue
+    local apply ns kind name model min max cost pool existing rows
+    local created=0 adopted=0 skipped=0 unresolved=0
+
+    # Read the whole plan before touching anything, and stop if it could not be
+    # read. so_plan_rows exits on an unparseable file, but that exit happens in
+    # this subshell — without `|| exit 1` the loop saw no rows, applied nothing,
+    # and reported a clean "0 created" for a file whose error it had just printed.
+    rows=$(so_plan_rows "$file") || exit 1
+
+    while IFS=$'\037' read -r apply ns kind name model min max cost pool; do
+        [ -n "$name" ] || continue
+        case "$apply" in
+            yes|adopt) : ;;
+            no) skipped=$((skipped + 1)); continue ;;
+            '') log_warning "  $ns/$name: no apply: field — skipping. It must be yes, no or adopt."
+                skipped=$((skipped + 1)); continue ;;
+            *)  log_warning "  $ns/$name: apply: $apply is not one of yes, no, adopt — skipping."
+                skipped=$((skipped + 1)); continue ;;
+        esac
+        # No modelID, no object. It is the grouping key and the only thing tying a
+        # ScaledObject to what the container actually serves: an object created
+        # without it registers a variant of a model nobody runs, and WVA then sizes
+        # a group that does not exist. Guessing is worse than refusing.
+        if [ -z "$model" ]; then
+            log_warning "  $ns/$name: apply: $apply, but modelID is empty — NOT creating anything for it. Set the model the container serves (--served-model-name, else --model) and run this again."
+            unresolved=$((unresolved + 1)); skipped=$((skipped + 1)); continue
         fi
-        if [ -z "$model" ] || [ "$model" = "UNKNOWN" ]; then
-            log_warning "  $ns/$name: marked yes but modelID is UNKNOWN — skipping rather than guessing"
-            skipped=$((skipped + 1)); continue
-        fi
-        local existing
+        # Bounds are edited by hand, and reach kubectl as JSON numbers. Anything
+        # that is not one falls back to the default rather than being passed
+        # through: a `minReplicas: two` would otherwise produce an invalid patch
+        # against a live object, which is a worse way to find out.
+        case "$min" in ''|*[!0-9]*) log_warning "  $ns/$name: minReplicas '$min' is not a number — using 1."; min=1 ;; esac
+        case "$max" in ''|*[!0-9]*) log_warning "  $ns/$name: maxReplicas '$max' is not a number — using 10."; max=10 ;; esac
+        case "$cost" in
+            ''|*[!0-9.]*|*.*.*)
+                log_warning "  $ns/$name: variantCost '$cost' is not a number — using $SO_DEFAULT_VARIANT_COST."
+                cost="$SO_DEFAULT_VARIANT_COST" ;;
+        esac
+
         existing=$(so_existing_name "$ns" "$name")
-        if [ -n "$existing" ]; then
-            # Adoption: replace the triggers on the object that is already there,
-            # leaving its envelope, behavior and everything else alone. Whoever
-            # tuned min/max and stabilization had reasons; the only thing being
-            # changed is who decides the count.
+        if [ "$apply" = "yes" ] && [ -n "$existing" ]; then
+            # Not silently adopted instead: "yes" asked for a new object, and
+            # creating one beside $existing is two ScaledObjects on one target,
+            # which is two HPAs writing one replica count. Adoption is a different
+            # act, which is why it has its own value.
+            log_warning "  $ns/$name: apply: yes, but ScaledObject $existing already targets it — skipping. Use apply: adopt to point that one at WVA."
+            skipped=$((skipped + 1)); continue
+        fi
+        if [ "$apply" = "adopt" ] && [ -z "$existing" ]; then
+            log_warning "  $ns/$name: apply: adopt, but nothing targets it any more — creating one instead."
+            apply=yes
+        fi
+
+        if [ "$apply" = "adopt" ]; then
+            # Triggers and bounds, and nothing else: the rest of that object —
+            # polling interval, fallback, stabilization, whoever's labels — stays
+            # as its author left it. The bounds are included because the plan
+            # showed them, carried over from this very object, so applying them
+            # unedited is a no-op and editing them is how you change them.
             if kubectl patch scaledobject "$existing" -n "$ns" --type=merge \
-                -p "$(so_trigger_patch "$model" "$scaler_addr")" > /dev/null; then
-                log_success "  $ns/$name ($kind) -> UPDATED existing ScaledObject $existing to scale on WVA (modelID: $model)"
-                created=$((created + 1))
+                -p "$(so_adopt_patch "$model" "$scaler_addr" "$min" "$max" "$cost")" > /dev/null; then
+                log_success "  $ns/$name ($kind) -> ScaledObject $existing now scales on WVA (modelID: $model, $min-$max)"
+                adopted=$((adopted + 1))
             else
                 log_warning "  $ns/$name: failed to update ScaledObject $existing"
             fi
             continue
         fi
+
         if render_scaledobject "$ns" "$kind" "$name" "$model" "$scaler_addr" \
-            "${min:-1}" "${max:-10}" | kubectl apply -f - > /dev/null; then
-            log_success "  $ns/$name ($kind) -> ScaledObject ${name}-wva (modelID: $model)"
+            "$min" "$max" "$cost" | kubectl apply -f - > /dev/null; then
+            log_success "  $ns/$name ($kind) -> ScaledObject ${name}-wva (modelID: $model, $min-$max)"
             created=$((created + 1))
         else
             log_warning "  $ns/$name: failed to create its ScaledObject"
         fi
-    done < "$file"
-    log_success "Default ScaledObjects: $created created, $skipped not applied"
+    done <<< "$rows"
+    log_success "ScaledObjects: $created created, $adopted adopted, $skipped not applied"
+
+    # Non-zero, after the rest of the plan has been applied: an entry asking to be
+    # created with no model is a mistake in the file, and a caller that scripts
+    # this — the installer, CI — must not read "some of what you asked for" as
+    # success. The entries that were complete are already applied; nothing here
+    # needs undoing, and running it again after filling in the model is safe.
+    if [ "$unresolved" -gt 0 ]; then
+        if [ "$unresolved" = 1 ]; then
+            log_error "1 entry asked to be applied with no modelID and was skipped. Fill in its modelID, or set apply: no."
+        fi
+        log_error "$unresolved entries asked to be applied with no modelID and were skipped. Fill in their modelID, or set apply: no."
+    fi
 }
 
 install_default_scaledobjects() {
@@ -334,11 +551,11 @@ install_default_scaledobjects() {
         return 0
     fi
 
-    [ -n "$plan" ] || plan=$(mktemp -t wva-scaledobject-plan.XXXXXX)
+    [ -n "$plan" ] || plan=$(mktemp -t wva-scaledobject-plan.XXXXXX.yaml)
     log_info "Scanning for llm-d model servers..."
     so_discover > "$plan"
 
-    if ! grep -qv '^#' "$plan"; then
+    if ! so_plan_rows "$plan" | grep -q .; then
         log_warning "No llm-d model servers found (label llm-d.ai/inferenceServing=true) in: $(so_target_namespaces | tr '\n' ' '). Deploy them first, then run 'make scaledobjects-apply'. Until a ScaledObject exists, WVA is never called and scales nothing."
         return 0
     fi
@@ -348,15 +565,16 @@ install_default_scaledobjects() {
     case "$mode" in
         plan)
             log_success "Plan written to $plan — nothing applied."
-            log_info "Edit it (set the first column to yes/no, fix a modelID, change min/max), then:"
+            log_info "Edit it — apply: yes/no/adopt, the modelID, the replica bounds — then:"
             log_info "    make scaledobjects-apply WVA_DEFAULT_SO_PLAN=$plan"
+            log_info "Every field it takes is explained in the comments at the top of that file."
             return 0
             ;;
         edit)
             if [ ! -t 0 ]; then
                 log_error "WVA_DEFAULT_SO=edit needs a terminal. Use WVA_DEFAULT_SO=plan, edit the file it writes, then apply it with WVA_DEFAULT_SO_PLAN=<file>."
             fi
-            log_info "Opening the plan in ${EDITOR:-vi}. Set the first column to yes or no; delete rows to drop them."
+            log_info "Opening the plan in ${EDITOR:-vi}. Set each apply: to yes, no or adopt; the comments at the top explain every field."
             read -r -p "  Press Enter to edit, or Ctrl-C to stop with the plan at $plan " _
             ${EDITOR:-vi} "$plan"
             so_show_plan "$plan"
@@ -373,18 +591,21 @@ install_default_scaledobjects() {
     so_apply_plan "$plan"
 }
 
-# so_trigger_patch prints the merge patch that repoints an existing ScaledObject at
-# WVA. Triggers only: the envelope, behavior and everything else on that object
-# stay as whoever tuned them left them.
+# so_adopt_patch prints the merge patch that repoints an existing ScaledObject at
+# WVA: its triggers, and the bounds and cost the plan carried. Everything else on that
+# object — polling interval, cooldown, fallback, advanced behavior, its labels —
+# stays as whoever tuned it left it.
 #
-# `triggers` is a list, so a merge patch REPLACES it wholesale — which is what is
+# `triggers` is a list, so a merge patch REPLACES it wholesale, which is what is
 # wanted. An object scaled by a prometheus or cpu trigger must stop being scaled by
 # it, or two scalers feed one HPA and the larger answer silently wins.
-so_trigger_patch() {
-    local model="$1" scaler_addr="$2"
-    jq -nc --arg m "$model" --arg a "$scaler_addr" \
-        '{spec:{triggers:[{type:"external-push",name:"wva-external-scaler",
-          metadata:{scalerAddress:$a, modelID:$m}}]}}'
+so_adopt_patch() {
+    local model="$1" scaler_addr="$2" min="$3" max="$4" cost="$5"
+    jq -nc --arg m "$model" --arg a "$scaler_addr" --arg c "$cost" \
+        --argjson min "$min" --argjson max "$max" \
+        '{spec:{minReplicaCount:$min, maxReplicaCount:$max,
+          triggers:[{type:"external-push",name:"wva-external-scaler",
+          metadata:{scalerAddress:$a, modelID:$m, variantCost:$c}}]}}'
 }
 
 # render_scaledobject prints one ScaledObject: the shipped shape, or yours.
@@ -395,14 +616,20 @@ so_trigger_patch() {
 # Placeholders, all optional:
 #
 #   {{NAMESPACE}} {{NAME}} {{KIND}} {{APIVERSION}} {{MODEL_ID}}
-#   {{SCALER_ADDRESS}} {{MIN}} {{MAX}}
+#   {{SCALER_ADDRESS}} {{MIN}} {{MAX}} {{VARIANT_COST}}
 #
 # Substitution is literal, so a template is also just a valid manifest with the
 # placeholders written in — you can `kubectl apply` it by hand to check the shape
 # before letting the installer fill it in for every model server you have.
 render_scaledobject() {
-    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7"
+    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
     local api="apps/v1"
+
+    # The last gate before a manifest exists. The caller checks this too, and the
+    # caller's check was once defeated by a field-splitting bug that shifted a
+    # replica count into this argument — so the check that matters is the one next
+    # to the thing being built, where no amount of upstream plumbing can skip it.
+    [ -n "$model" ] || log_error "refusing to build a ScaledObject for $ns/$target with an empty modelID"
     [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
 
     local tmpl="${WVA_DEFAULT_SO_TEMPLATE:-}"
@@ -418,10 +645,11 @@ render_scaledobject() {
             -e "s|{{SCALER_ADDRESS}}|${scaler_addr}|g" \
             -e "s|{{MIN}}|${min}|g" \
             -e "s|{{MAX}}|${max}|g" \
+            -e "s|{{VARIANT_COST}}|${cost:-$SO_DEFAULT_VARIANT_COST}|g" \
             "$tmpl"
         return
     fi
-    render_default_scaledobject "$ns" "$kind" "$target" "$model" "$scaler_addr" "$min" "$max"
+    render_default_scaledobject "$ns" "$kind" "$target" "$model" "$scaler_addr" "$min" "$max" "$cost"
 }
 
 # render_default_scaledobject prints one ScaledObject.
@@ -434,7 +662,7 @@ render_scaledobject() {
 # next request a cold start, and that is a decision about that workload's users,
 # not one an installer should make for them.
 render_default_scaledobject() {
-    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7"
+    local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
     local api="apps/v1"
     [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
 
@@ -465,6 +693,7 @@ spec:
       name: wva-external-scaler
       metadata:
         scalerAddress: ${scaler_addr}
-        modelID: ${model}
+        modelID: "${model}"
+        variantCost: "${cost:-$SO_DEFAULT_VARIANT_COST}"
 EOF
 }
