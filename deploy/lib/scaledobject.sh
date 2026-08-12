@@ -151,6 +151,13 @@ so_target_namespaces() {
         echo "$WVA_NS"
         return
     fi
+    wva_namespaces_with_model_servers
+}
+
+# wva_namespaces_with_model_servers echoes every namespace holding an llm-d model
+# server, one per line. Empty output means either none or "not allowed to look" —
+# callers that care must ask which, because they are different problems.
+wva_namespaces_with_model_servers() {
     { so_namespaces_of deployments "$SO_POD_PATH_DEPLOYMENT"
       so_namespaces_of leaderworkersets "$SO_POD_PATH_LWS"
     } | sort -u

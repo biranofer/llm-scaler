@@ -277,6 +277,53 @@ wva_api_resource() {
         | awk -v k="$kind" '$NF == k { print $1, $(NF-1); exit }' || true
 }
 
+# wva_autoselect_namespace points a namespace-scoped install at the namespace
+# that actually runs llm-d, when nobody said which.
+#
+# Naming the namespace was never information the installer lacked — the model
+# servers are labelled, so the cluster already knows. Asking for it anyway is how
+# someone installs into the default namespace, gets a healthy controller managing
+# nothing, and has no error to go on.
+#
+# It only ever acts when NOTHING was chosen: WVA_NS_SOURCE=default means the
+# caller set neither WVA_NS nor LLMD_NS. Anything explicit is left alone.
+#
+# With several llm-d namespaces it REFUSES rather than picking. A namespace-scoped
+# controller manages exactly one, and choosing someone's namespace for them is not
+# a guess worth making silently.
+wva_autoselect_namespace() {
+    [ "${WVA_NS_SOURCE:-}" = "default" ] || return 0
+    [ "$(wva_install_scope)" = "namespace" ] || return 0
+
+    local found count
+    found="$(wva_namespaces_with_model_servers)"
+    count="$(printf '%s' "$found" | grep -c . || true)"
+
+    if [ "${count:-0}" -eq 1 ]; then
+        WVA_NS="$(printf '%s' "$found" | tr -d '[:space:]')"
+        WVA_NS_SOURCE=discovered
+        export WVA_NS WVA_NS_SOURCE
+        return 0
+    fi
+
+    if [ "${count:-0}" -gt 1 ]; then
+        log_error "Several namespaces run llm-d model servers, and a namespace-scoped WVA manages exactly one:
+
+$(printf '  - %s\n' $found)
+Say which:
+
+    make deploy-wva-namespace-on-${WVA_TARGET_PLATFORM:-k8s} WVA_NS=<one of the above>
+
+Or install one WVA for all of them:
+
+    make deploy-wva-cluster-on-${WVA_TARGET_PLATFORM:-k8s}"
+    fi
+
+    # None found, or not allowed to look. Either way, keep the default and let
+    # wva_report_namespace explain which of the two it is.
+    return 0
+}
+
 # wva_report_namespace says which namespace this install will use, how that was
 # decided, and whether it holds anything to scale.
 #
@@ -291,6 +338,9 @@ wva_report_namespace() {
     managed="${WVA_WATCH_NS:-$ns}"
 
     case "${WVA_NS_SOURCE:-}" in
+        discovered)
+            log_success "Namespace: $ns  (found: it is the only namespace running llm-d model servers)"
+            log_info "  Override with WVA_NS=<ns> if you meant a different one." ;;
         llmd-ns)  log_info "Namespace: $ns  (from LLMD_NS)" ;;
         explicit) log_info "Namespace: $ns  (you set WVA_NS)" ;;
         *)        log_info "Namespace: $ns$([ "$ns" = "workload-variant-autoscaler-system" ] && echo '  (the default)')" ;;
@@ -317,7 +367,20 @@ wva_report_namespace() {
     if [ "$count" -gt 0 ] 2>/dev/null; then
         log_success "  $managed holds $count llm-d model server(s) for it to manage."
     else
+        # Distinguish "there are none" from "I could not look" — a tenant cannot
+        # list workloads cluster-wide, and reporting that as "no model servers"
+        # would send them looking for a problem that is not theirs.
+        if ! kubectl auth can-i list deployments -A >/dev/null 2>&1; then
+            log_warning "  $managed holds no llm-d model servers, and this check cannot search the rest of the cluster for them (listing workloads cluster-wide is not permitted for you)."
+            log_warning "    If your models are elsewhere, name it:  WVA_NS=<their namespace>"
+            return 0
+        fi
         log_warning "  $managed holds NO llm-d model servers (nothing labelled ${SO_SERVING_MARKER})."
+        local elsewhere
+        elsewhere="$(wva_namespaces_with_model_servers)"
+        if [ -n "$elsewhere" ]; then
+            log_warning "    They are in: $(printf '%s ' $elsewhere)"
+        fi
         log_warning "    A namespace-scoped controller manages only the namespace it runs in, so this one would install cleanly, report healthy, and scale nothing."
         log_warning "    Install where your models are:  WVA_NS=<their namespace>   (or LLMD_NS=<their namespace>)"
         log_warning "    Or keep the controller here and manage theirs:  WVA_WATCH_NS=<their namespace>"

@@ -92,6 +92,7 @@ main() {
         fi
         # The two questions a reader actually arrives with — which namespace, and
         # what do I pass for PROMETHEUS_URL — both answerable from here.
+        wva_autoselect_namespace
         wva_report_namespace
         check_permissions
         check_single_installation
@@ -124,6 +125,12 @@ main() {
     if [ "$SKIP_CHECKS" != "true" ]; then
         check_prerequisites
     fi
+
+    # Before ANY object is created, and before the permission checks that depend
+    # on which namespace this is: point a namespace-scoped install at the
+    # namespace actually running llm-d, when the caller named none.
+    wva_autoselect_namespace
+    wva_report_namespace
 
     # Before anything is created: a second install repoints the shared
     # ClusterRoleBindings and leaves the existing controller without permissions,

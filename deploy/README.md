@@ -47,6 +47,18 @@ The single most common confusion, so plainly:
 | `WVA_DEFAULT_SO_NS` | where `scaledobjects-plan` **looks for model servers** | what this install can reach |
 | `LLMD_NS` | where llm-d runs. Setting it **defaults `WVA_NS` for the namespace-scoped targets**, so you name the namespace once. It is never passed to the controller | `llm-d-optimized-baseline` |
 
+**Usually you need none of them.** A namespace-scoped install with nothing
+specified **finds** the namespace running llm-d — the model servers are labelled,
+so the cluster already knows — and says so:
+
+```
+[SUCCESS] Namespace: my-llmd  (found: it is the only namespace running llm-d model servers)
+[INFO]      Override with WVA_NS=<ns> if you meant a different one.
+```
+
+With **several** llm-d namespaces it refuses and lists them, rather than picking
+someone's namespace for them. Name one, or install cluster-wide.
+
 **Yes, `WVA_NS` can be your llm-d namespace** — that is the normal shape: the
 controller runs alongside the models it manages. Name it once, either way:
 
