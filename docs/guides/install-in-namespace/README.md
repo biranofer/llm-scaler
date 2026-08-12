@@ -1,119 +1,146 @@
 # Install WVA in your namespace
 
 **The common path.** You own a namespace, your model servers run in it, and you
-want WVA to size them. You do not need to be a cluster admin — you need one
-thing from one, once.
+want WVA to size them. You do not need to be a cluster admin — you need one thing
+from one, once.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
+> Part of the [WVA guides](../README.md).
 
 ## What you get
 
 WVA watches how saturated your model servers are and tells KEDA how many replicas
 each variant needs. KEDA owns the HPA and does the scaling. WVA never writes to
-the cluster itself; its only write is Events.
+your workloads; its only write is Events.
 
 It manages **only your namespace**. Another team's WVA cannot see your workloads,
 and yours cannot see theirs.
 
-> **Your models are in this namespace.** That is the shape this path assumes:
-> `WVA_NS` is where the controller runs *and* what it manages, so set it to your
-> llm-d namespace. To run the controller somewhere else and point it here, see
-> [Cluster-admin setup](admin-cluster-setup.md#keeping-the-controller-out-of-the-tenants-reach).
+## Environment
 
-## Before you start
+Source the shared environment, then name your namespace — or do not, and let the
+install find it:
 
-| you need | how to check |
+```bash
+source docs/guides/env.sh
+```
+
+<!-- guide:env.static.namespace start -->
+```bash
+# The namespace WVA installs into and manages. Leave it unset and the
+# install FINDS the namespace running llm-d model servers; set it when you
+# have more than one, or mean a different one.
+# NAMESPACE is llm-d's own variable, so a reader who followed one of its
+# guides already has this exported.
+export NAMESPACE=<your-namespace>
+```
+<!-- guide:env.static.namespace end -->
+
+## Prerequisites
+
+| you need | who provides it |
 | --- | --- |
-| your namespace | `kubectl get ns <your-namespace>` |
-| KEDA on the cluster | `kubectl get crd scaledobjects.keda.sh` |
-| a Prometheus that scrapes your model servers | the check below finds it and prints it — you do not pass a URL |
-| model servers labelled `llm-d.ai/inferenceServing=true` | `kubectl get deploy -n <ns> -o yaml \| grep inferenceServing` |
+| KEDA | the install adds it if the cluster has none; platform-managed on OpenShift |
+| Prometheus | detected. On OpenShift it is the platform's Thanos Querier, at a fixed address |
+| model servers labelled `llm-d.ai/inferenceServing=true` | llm-d's own install does this |
 
-Then run the read-only check. It renders the exact manifests this install would
-apply and asks the API server whether you may create each kind — so it answers
-for *your* rights on *this* cluster, rather than assuming:
+Check all of it, read-only, before committing to anything:
 
+<!-- guide:prerequisites.check start -->
 ```bash
-make check-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
-# on OpenShift:
-make check-prereqs-namespace-on-openshift WVA_NS=<your-namespace>
+# Read-only. Renders the manifests this install would apply, asks the API
+# server whether you may create each kind, and reports the namespace it
+# resolved and the Prometheus it found.
+make check-prereqs-namespace-on-k8s
+```
+<!-- guide:prerequisites.check end -->
+
+It answers the things you would otherwise guess at:
+
+```
+[SUCCESS] Namespace: my-llmd  (found: it is the only namespace running llm-d model servers)
+[SUCCESS]   my-llmd holds 3 llm-d model server(s) for it to manage.
+[SUCCESS] Prometheus: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+[INFO]      You do not need to pass PROMETHEUS_URL. Set it only to override this.
 ```
 
-## Step 1 — ask an admin to run one command
+If the namespace it names is empty, it says so loudly — a namespace-scoped
+controller pointed at the wrong namespace installs cleanly, reports healthy, and
+scales nothing.
 
-WVA needs a few cluster-scoped objects: the metrics authn filter issues
-TokenReviews, EPP metrics need `nonResourceURLs`, and resolving which GPU a
-variant runs on reads Nodes. None of that can be expressed in a Role, so a
-namespace admin cannot create it — and it is not something you should be granted
-just to install an autoscaler.
+### One command from an admin
 
-Send your admin this:
+WVA needs a few cluster-scoped objects: the metrics filter issues TokenReviews,
+EPP metrics need `nonResourceURLs`, and resolving which GPU a variant runs on
+reads Nodes. None of that fits in a Role, so a namespace admin cannot create it —
+and it is not something you should be granted just to install an autoscaler.
 
+Send your admin this. It is **once per namespace**, not once per upgrade:
+
+<!-- guide:prerequisites.admin start -->
 ```bash
-make setup-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
+# Run by a CLUSTER ADMIN, once per namespace. Creates the cluster-scoped RBAC
+# and the ServiceMonitor that a namespace admin cannot create for themselves.
+# See ../admin-cluster-setup/README.md.
+make setup-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
 ```
+<!-- guide:prerequisites.admin end -->
 
-It is **once per namespace**, not once per upgrade. They can read exactly what it
-creates in [Cluster-admin setup](admin-cluster-setup.md).
+## Deploy
 
-## Step 2 — install the controller
-
-Yours to run, now and for every future upgrade, with no cluster-scoped rights:
-
+<!-- guide:deploy.controller start -->
 ```bash
-make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace>
-# or, if you already name your llm-d namespace that way:
-make deploy-wva-namespace-on-k8s LLMD_NS=<your-namespace>
+# Yours to run, now and for every upgrade, with no cluster-scoped rights.
+# Add IMG=<your build> to install an unmerged branch.
+make deploy-wva-namespace-on-k8s
 ```
+<!-- guide:deploy.controller end -->
 
-That is the whole command. The Prometheus is detected — on OpenShift it is the
-platform's Thanos Querier, at a fixed address that needs no permission to know.
-Pass `PROMETHEUS_URL=<url>` only to override what the check reported, or to point
-at a Prometheus outside the cluster.
+On OpenShift use `deploy-wva-namespace-on-openshift`. If the admin step has not
+happened, this stops and names every missing object, so you have a list to hand
+back rather than a permissions error.
 
-If Step 1 has not happened, this stops and names every object that is missing, so
-you have a precise list to hand back rather than a permissions error.
-
-## Step 3 — register your workloads
+### Register your workloads
 
 **Nothing scales until you do this.** WVA has no watch and no listing: it learns
-a workload exists only when KEDA calls it about one. A ScaledObject is that
-registration. Until one exists, the controller runs, reports healthy, and scales
-nothing.
+a workload exists only when KEDA calls it about one. Until then the controller
+runs, reports healthy, and scales nothing.
 
+<!-- guide:deploy.register start -->
 ```bash
-make scaledobjects-plan WVA_NS=<your-namespace> WVA_DEFAULT_SO_NS=<your-namespace>
-```
-
-That writes an editable table — one row per model server it found — and applies
-nothing:
-
-```
-#apply  namespace  kind        name              modelID     inferencePool       min  max
-yes     team-a     Deployment  llama-decode      meta/llama  optimized-baseline  1    10
-```
-
-Edit it (flip `yes`/`no`, fix a `modelID`, change the bounds), then:
-
-```bash
+# Nothing scales until a ScaledObject exists — WVA is only ever asked about
+# workloads KEDA calls it about. The plan is an editable table; apply exactly
+# what you leave in it.
+make scaledobjects-plan
 make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
 ```
+<!-- guide:deploy.register end -->
 
-## Step 4 — check it works
+The plan lists one row per model server found, and applies nothing until you say
+so:
 
-```bash
-kubectl get scaledobject,hpa -n <your-namespace>
+```
+#apply  namespace  kind        name          modelID     inferencePool       min  max
+yes     team-a     Deployment  llama-decode  meta/llama  optimized-baseline  1    10
 ```
 
-The HPA is KEDA's — it creates one per ScaledObject. **An HPA whose
-`CurrentMetrics` is populated means the whole chain works**: KEDA called WVA, WVA
-decided, KEDA got the answer.
+## Verify
 
-To see the decisions themselves:
-
+<!-- guide:verify.objects start -->
 ```bash
-kubectl logs -n <your-namespace> deploy/wva-controller-manager | grep scaling-decision
+# The HPA is KEDA's — it creates one per ScaledObject.
+kubectl get scaledobject,hpa -n ${NAMESPACE}
 ```
+<!-- guide:verify.objects end -->
+
+**An HPA whose `CurrentMetrics` is populated means the whole chain works**: KEDA
+called WVA, WVA decided, KEDA got the answer.
+
+<!-- guide:verify.decisions start -->
+```bash
+# What the controller decided, and why.
+kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decision
+```
+<!-- guide:verify.decisions end -->
 
 ```
 scaling-decision {"modelID":"meta/llama","decisions":[{"name":"llama-decode-wva","curr":1,"tgt":3,"action":"scale-up"}]}
@@ -121,33 +148,36 @@ scaling-decision {"modelID":"meta/llama","decisions":[{"name":"llama-decode-wva"
 
 ## Upgrading
 
-Step 2 again, with a newer image. No admin needed — the prerequisites stand until
-a WVA version changes what it needs cluster-wide, which is rare and called out in
-release notes.
+Run the deploy step again with a newer `IMG`. No admin needed — the prerequisites
+stand until a WVA version changes what it needs cluster-wide, which is rare and
+called out in release notes.
 
-## Uninstalling
+## Cleanup
 
+<!-- guide:cleanup.uninstall start -->
 ```bash
-make undeploy-wva-on-k8s WVA_NS=<your-namespace> WVA_SCOPE=namespace
+# Delete the ScaledObjects too unless you are reinstalling: their trigger
+# points at a scaler that no longer exists, so KEDA keeps the HPA and keeps
+# calling nothing, and a workload parked at zero can never be woken.
+kubectl delete scaledobject --all -n ${NAMESPACE}
+make undeploy-wva-on-k8s WVA_NS=${NAMESPACE} WVA_SCOPE=namespace
 ```
+<!-- guide:cleanup.uninstall end -->
 
-Your namespace and your workloads stay. **Your ScaledObjects also stay, and that
-is a trap worth knowing**: their trigger points at a scaler that no longer exists,
-so KEDA keeps the HPA and keeps calling nothing. A workload parked at zero cannot
-then be woken. Delete them along with the controller unless you are reinstalling.
+Your namespace and your workloads stay.
 
-## What this path does not give you
+## What this guide does not give you
 
 | not included | why, and what to do |
 | --- | --- |
-| a GPU bound | your controller scales to each workload's `maxReplicaCount` unless a cluster policy bounds it. That policy is an admin's to publish — see [Bounding GPU usage](admin-gpu-bounding.md) |
+| a GPU bound | your controller scales to each workload's `maxReplicaCount` unless cluster policy bounds it. That policy is an admin's to publish — see [Bounding GPU usage](../admin-gpu-bounding/README.md) |
 | cross-namespace scaling | by construction: this controller reads one namespace |
 | control over your own limits | deliberate. WVA reads limiters from a namespace you cannot edit, so a bound placed on you holds |
 
 ## Next
 
-- [After the install](operations.md) — what to watch, and the metrics that answer
-  specific questions
-- [Configuration reference](configuration.md) — every variable the installer reads
-- [Tuning how it scales](../developer-guide/scaling-policy-config.md) — thresholds
-  and policy tiers, which are yours to set
+- [After the install](../../deployment/operations.md) — what to watch, and the
+  metrics that answer specific questions
+- [Configuration reference](../../deployment/configuration.md)
+- [Tuning how it scales](../../developer-guide/scaling-policy-config.md) —
+  thresholds and policy tiers, which are yours to set

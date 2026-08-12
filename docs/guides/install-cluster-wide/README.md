@@ -3,15 +3,15 @@
 **For a cluster admin.** One controller manages every namespace. This is the
 simplest thing that works, and the right choice when one team runs the cluster.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
+> Part of the [WVA deployment guide](../../../deploy/README.md).
 >
 > **Want WVA for one namespace instead?** That is the common path and it does not
 > need you to be an admin for more than one command — see
-> [Install WVA in your namespace](install-in-namespace.md).
+> [Install WVA in your namespace](../install-in-namespace/README.md).
 >
 > **Already running llm-d?** Do not use this page — it deploys a Prometheus and an
 > llm-d namespace you do not want. See
-> [Adding WVA to a cluster that already runs llm-d](existing-cluster.md).
+> [Adding WVA to a cluster that already runs llm-d](../existing-llm-d/README.md).
 
 ## Install
 
@@ -59,7 +59,7 @@ Defaults are in **bold**.
 | namespace | `WVA_NS` | any (**`workload-variant-autoscaler-system`**) | where the controller runs |
 | scope | `WVA_SCOPE` | `cluster` / `namespace` (**platform default**) | which namespaces it may manage |
 | GPU limiter | `WVA_LIMITER` | **`none`** / `gpu-inventory` / `quota` | whether scaling is bounded |
-| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`true`** / `false` | whether a model may idle to zero (but `make deploy-e2e-infra` defaults it OFF — see [Deployment Flags](configuration.md#deployment-flags)) |
+| scale-to-zero | `ENABLE_SCALE_TO_ZERO` | **`true`** / `false` | whether a model may idle to zero (but `make deploy-e2e-infra` defaults it OFF — see [Deployment Flags](../../deployment/configuration.md#deployment-flags)) |
 
 ```bash
 export HF_TOKEN="hf_xxxxxxxxxxxxx"
@@ -105,7 +105,7 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 #### If you are a namespace admin, not a cluster admin
 
 You are on the wrong page, and in a good way: that path is shorter. See
-[Install WVA in your namespace](install-in-namespace.md) — an admin runs one
+[Install WVA in your namespace](../install-in-namespace/README.md) — an admin runs one
 command for you, and the controller is yours from then on.
 
 ### How many WVAs a cluster has
@@ -153,13 +153,13 @@ install with a quota limiter; if they do not, give each its own GPU nodes.
 ### Bounding scaling with a GPU limiter
 
 One command, cluster-wide: `make enable-physical-limiter`. See
-[Bounding GPU usage](admin-gpu-bounding.md).
+[Bounding GPU usage](../admin-gpu-bounding/README.md).
 
 
 The shipped configuration declares **no limiter**, so a fresh install scales
 unconstrained. Turning one on has a precondition that will silently freeze
 workloads if you skip it — see
-[Bounding scaling: the GPU limiter](gpu-limiter.md).
+[Bounding scaling: the GPU limiter](../../deployment/gpu-limiter.md).
 
 ### What the controller needs from a workload
 
@@ -257,7 +257,7 @@ install produces — the last of which is the usual reason an install dies halfw
 **llm-d stack** (gateway, EPP, ModelService): deploy using the [llm-d guides](https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline) directly. For EPP-only setup (llm-d-router-standalone chart + tokenreview RBAC), use `deploy/install-epp.sh` after `install.sh`.
 
 **Environment variables**: every option the script reads is tabulated in
-[Configuration Reference](configuration.md).
+[Configuration Reference](../../deployment/configuration.md).
 
 #### Script deployment examples
 
@@ -268,7 +268,7 @@ install produces — the last of which is the usual reason an install dies halfw
 ```bash
 ./deploy/install.sh -e kubernetes
 # EPP (llm-d-router-standalone chart + RBAC):
-LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 LLMD_NS=llm-d-optimized-baseline \
+LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-optimized-baseline \
   ./deploy/install-epp.sh
 # Model server: follow llm-d/llm-d guides/optimized-baseline
 ```
@@ -367,9 +367,9 @@ Or just use `./deploy/install.sh --undeploy`, which does exactly this.
 
 For platform-specific instructions and considerations:
 
-- **[Kubernetes Guide](../../deploy/kubernetes/README.md)**: Detailed Kubernetes-specific instructions including kube-prometheus-stack setup, GPU operator installation, and ServiceMonitor configuration
-- **[OpenShift Guide](../../deploy/openshift/README.md)**: OpenShift-specific instructions including User Workload Monitoring (Thanos), Routes, Security Context Constraints (SCC), and GPU operator on OpenShift
-- **[Kind Guide (Local Testing)](../../deploy/kind-emulator/README.md)**: Local development and testing with Kind clusters and emulated GPUs
+- **[Kubernetes Guide](../../../deploy/kubernetes/README.md)**: Detailed Kubernetes-specific instructions including kube-prometheus-stack setup, GPU operator installation, and ServiceMonitor configuration
+- **[OpenShift Guide](../../../deploy/openshift/README.md)**: OpenShift-specific instructions including User Workload Monitoring (Thanos), Routes, Security Context Constraints (SCC), and GPU operator on OpenShift
+- **[Kind Guide (Local Testing)](../../../deploy/kind-emulator/README.md)**: Local development and testing with Kind clusters and emulated GPUs
 
-Each guide includes platform-specific examples, troubleshooting, and quick start commands. All guides use the same [Configuration Reference](configuration.md) documented below.
+Each guide includes platform-specific examples, troubleshooting, and quick start commands. All guides use the same [Configuration Reference](../../deployment/configuration.md) documented below.
 

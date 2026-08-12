@@ -1,0 +1,34 @@
+name: admin-gpu-bounding
+
+env:
+  static:
+    limiter:
+      note: gpu-inventory bounds by GPUs actually free; quota by declared caps.
+      run: export WVA_LIMITER_TYPE=gpu-inventory
+
+prerequisites:
+  accelerators:
+    note: |
+      Check accelerators resolve FIRST. A GPU-aware optimizer gives no budget to a
+      variant whose accelerator it cannot resolve, and it then never scales up.
+    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i AcceleratorNotResolved
+
+deploy:
+  enable:
+    note: |
+      Publishes cluster policy AND grants every controller the node read it then
+      requires — grants first, because declaring the limiter without them takes
+      out every WVA that lacks node access at once.
+    run: make enable-physical-limiter
+
+verify:
+  controllers:
+    note: A controller that is not Ready is one this did not reach.
+    run: kubectl get pods -A -l app.kubernetes.io/name=workload-variant-autoscaler
+  budget:
+    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep "GPU budgets available"
+
+cleanup:
+  disable:
+    note: Scaling becomes unbounded again for every WVA that reads this policy.
+    run: make disable-physical-limiter

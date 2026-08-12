@@ -4,8 +4,8 @@ Use this when llm-d is serving already and you want WVA to start scaling it. It
 installs the controller and nothing else — no Prometheus, no llm-d namespace, no
 model servers.
 
-> Part of the [WVA deployment guide](../../deploy/README.md). Building a cluster
-> from nothing instead? See [Installing on a new cluster](install-cluster-wide.md).
+> Part of the [WVA deployment guide](../../../deploy/README.md). Building a cluster
+> from nothing instead? See [Installing on a new cluster](../install-cluster-wide/README.md).
 
 ## What WVA needs from the cluster you have
 
@@ -22,7 +22,7 @@ Three things, and the installer cannot guess any of them:
 One cluster-scoped controller, or one per namespace — never both, and the install
 refuses a combination that would leave two controllers deciding for the same
 workloads. See
-[How many WVAs a cluster has](install-cluster-wide.md#how-many-wvas-a-cluster-has).
+[How many WVAs a cluster has](../install-cluster-wide/README.md#how-many-wvas-a-cluster-has).
 
 ## Install
 
@@ -122,7 +122,7 @@ make scaledobjects-apply WVA_DEFAULT_SO_TEMPLATE=$PWD/my-scaledobject.yaml
 ```
 
 Start from
-[`config/samples/keda/external-scaler/scaledobject-template.yaml`](../../config/samples/keda/external-scaler/scaledobject-template.yaml).
+[`config/samples/keda/external-scaler/scaledobject-template.yaml`](../../../config/samples/keda/external-scaler/scaledobject-template.yaml).
 Placeholders are substituted per workload: `{{NAMESPACE}}`, `{{NAME}}`,
 `{{KIND}}`, `{{APIVERSION}}`, `{{MODEL_ID}}`, `{{SCALER_ADDRESS}}`, `{{MIN}}`,
 `{{MAX}}`. Substitution is literal, so the template is also a valid manifest as
@@ -139,4 +139,4 @@ A KEDA HPA with `CurrentMetrics` populated means the whole chain works: WVA was
 called, decided, and KEDA received the answer. Empty means KEDA never got one —
 check the trigger's `scalerAddress` and that `modelID` is set.
 
-More in [After the install](operations.md).
+More in [After the install](../../deployment/operations.md).

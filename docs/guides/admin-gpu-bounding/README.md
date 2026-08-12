@@ -3,8 +3,8 @@
 **For a cluster admin.** WVA scales without a GPU budget unless you give it one.
 This is the one command that gives it one, and what it does to the cluster.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
-> The reasoning behind the design: [the GPU limiter](gpu-limiter.md).
+> Part of the [WVA deployment guide](../../../deploy/README.md).
+> The reasoning behind the design: [the GPU limiter](../../deployment/gpu-limiter.md).
 
 ## The command
 
@@ -107,7 +107,7 @@ there it cannot be argued with:
 kubectl -n team-a create quota gpus --hard=requests.nvidia.com/gpu=8
 ```
 
-And run their controller [outside their namespace](admin-cluster-setup.md#keeping-the-controller-out-of-the-tenants-reach),
+And run their controller [outside their namespace](../admin-cluster-setup/README.md#keeping-the-controller-out-of-the-tenants-reach),
 so the Deployment that bounds them is not one they can edit.
 
 ## Declare one kind, not both
@@ -135,6 +135,6 @@ GPU budgets available for placement {"namespace":"team-a","gpuBudgets":{"A100":0
 
 ## Next
 
-- [The GPU limiter](gpu-limiter.md) — why policy lives where it does, what the
+- [The GPU limiter](../../deployment/gpu-limiter.md) — why policy lives where it does, what the
   controller does when it cannot honour it, and the quota form
-- [Cluster-admin setup](admin-cluster-setup.md) — per-namespace prerequisites
+- [Cluster-admin setup](../admin-cluster-setup/README.md) — per-namespace prerequisites

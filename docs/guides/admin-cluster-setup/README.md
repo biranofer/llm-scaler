@@ -3,8 +3,8 @@
 **For a cluster admin.** Someone owns a namespace, runs model servers in it, and
 wants WVA. This is the one command you run for them, and what it creates.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
-> Their side of it: [Install WVA in your namespace](install-in-namespace.md).
+> Part of the [WVA deployment guide](../../../deploy/README.md).
+> Their side of it: [Install WVA in your namespace](../install-in-namespace/README.md).
 
 ## The command
 
@@ -84,6 +84,6 @@ not have created them.
 
 ## Next
 
-- [Bounding GPU usage](admin-gpu-bounding.md) — one command to make every WVA on
+- [Bounding GPU usage](../admin-gpu-bounding/README.md) — one command to make every WVA on
   the cluster respect a real GPU budget
-- [Configuration reference](configuration.md)
+- [Configuration reference](../../deployment/configuration.md)

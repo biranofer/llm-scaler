@@ -1,0 +1,62 @@
+# Machine-readable half of this guide. The bash blocks in README.md are rendered
+# from here — see hack/render-guides.py — so the commands a reader copies and the
+# commands a tool would run are the same strings.
+name: install-in-namespace
+
+env:
+  static:
+    namespace:
+      note: |
+        The namespace WVA installs into and manages. Leave it unset and the
+        install FINDS the namespace running llm-d model servers; set it when you
+        have more than one, or mean a different one.
+        NAMESPACE is llm-d's own variable, so a reader who followed one of its
+        guides already has this exported.
+      run: export NAMESPACE=<your-namespace>
+
+prerequisites:
+  check:
+    note: |
+      Read-only. Renders the manifests this install would apply, asks the API
+      server whether you may create each kind, and reports the namespace it
+      resolved and the Prometheus it found.
+    run: make check-prereqs-namespace-on-k8s
+  admin:
+    note: |
+      Run by a CLUSTER ADMIN, once per namespace. Creates the cluster-scoped RBAC
+      and the ServiceMonitor that a namespace admin cannot create for themselves.
+      See ../admin-cluster-setup/README.md.
+    run: make setup-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
+
+deploy:
+  controller:
+    note: |
+      Yours to run, now and for every upgrade, with no cluster-scoped rights.
+      Add IMG=<your build> to install an unmerged branch.
+    run: make deploy-wva-namespace-on-k8s
+  register:
+    note: |
+      Nothing scales until a ScaledObject exists — WVA is only ever asked about
+      workloads KEDA calls it about. The plan is an editable table; apply exactly
+      what you leave in it.
+    run: |
+      make scaledobjects-plan
+      make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX
+
+verify:
+  objects:
+    note: The HPA is KEDA's — it creates one per ScaledObject.
+    run: kubectl get scaledobject,hpa -n ${NAMESPACE}
+  decisions:
+    note: What the controller decided, and why.
+    run: kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decision
+
+cleanup:
+  uninstall:
+    note: |
+      Delete the ScaledObjects too unless you are reinstalling: their trigger
+      points at a scaler that no longer exists, so KEDA keeps the HPA and keeps
+      calling nothing, and a workload parked at zero can never be woken.
+    run: |
+      kubectl delete scaledobject --all -n ${NAMESPACE}
+      make undeploy-wva-on-k8s WVA_NS=${NAMESPACE} WVA_SCOPE=namespace
