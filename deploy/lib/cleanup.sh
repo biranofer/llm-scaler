@@ -6,6 +6,23 @@
 # undeploy_prometheus_stack(), delete_namespaces(), undeploy_epp(), log_*().
 #
 
+# wva_scaledobjects_calling_us echoes `namespace/name` for every ScaledObject with
+# a trigger pointing at this install's external scaler. Extra args are passed to
+# kubectl, so a caller can narrow it with a label selector.
+#
+# Cluster-wide first, then this namespace: a namespace admin may not list across
+# the cluster, and a denied list is not an empty cluster. Folding the two together
+# would report "nothing points at the scaler you removed" to precisely the person
+# whose own namespace is full of objects that do.
+wva_scaledobjects_calling_us() {
+    local tmpl='{{range .items}}{{$ns := .metadata.namespace}}{{$n := .metadata.name}}{{range .spec.triggers}}{{if .metadata.scalerAddress}}{{$ns}}/{{$n}} {{.metadata.scalerAddress}}{{"\n"}}{{end}}{{end}}{{end}}'
+    local out
+    if ! out=$(kubectl get scaledobject -A "$@" -o go-template="$tmpl" 2>/dev/null); then
+        out=$(kubectl get scaledobject -n "$WVA_NS" "$@" -o go-template="$tmpl" 2>/dev/null) || return 0
+    fi
+    printf '%s\n' "$out" | grep -F "wva-external-scaler.${WVA_NS}." | awk '{print $1}' | sort -u || true
+}
+
 undeploy_keda() {
     if [ "$ENVIRONMENT" = "openshift" ]; then
         log_info "OpenShift: skipping KEDA uninstall (platform-managed)"
@@ -22,8 +39,30 @@ undeploy_keda() {
     log_success "KEDA uninstalled"
 }
 
+# wva_undeploy_watch_namespace_rbac removes the Role and RoleBinding an
+# admin-owned controller was given in the namespace it managed.
+#
+# The namespace is read from the live Deployment rather than from WVA_WATCH_NS,
+# because an uninstall is typically run without the variables the install had —
+# and RBAC granted in someone else's namespace is the last thing that should
+# depend on the operator remembering to repeat a flag. Called before the
+# Deployment is deleted, while it can still be asked.
+wva_undeploy_watch_namespace_rbac() {
+    local watched role binding
+    watched="$(kubectl get deploy -n "$WVA_NS" -l app.kubernetes.io/name=workload-variant-autoscaler \
+        -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="WVA_WATCH_NAMESPACE")].value}' 2>/dev/null || true)"
+    [ -n "$watched" ] || return 0
+    [ "$watched" != "$WVA_NS" ] || return 0
+
+    read -r role binding <<< "$(wva_watch_rbac_names)"
+    kubectl delete rolebinding "$binding" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
+    kubectl delete role "$role" -n "$watched" --ignore-not-found > /dev/null 2>&1 || true
+    log_info "Removed the controller's permissions in $watched (Role/$role, RoleBinding/$binding)"
+}
+
 undeploy_wva_controller() {
     log_info "Uninstalling Workload-Variant-Autoscaler..."
+    wva_undeploy_watch_namespace_rbac
 
     local kustomize_overlay
     kustomize_overlay="$(wva_overlay_dir)"
@@ -88,15 +127,44 @@ EOF
     # can wake it: activation only ever arrives from the scaler. That is a silent
     # outage that SURVIVES the uninstall, so it is worth a loud, specific list
     # rather than a general warning.
-    local orphans
-    orphans=$(kubectl get scaledobject -A \
-        -o go-template='{{range .items}}{{$ns := .metadata.namespace}}{{$n := .metadata.name}}{{range .spec.triggers}}{{if .metadata.scalerAddress}}{{$ns}}/{{$n}} {{.metadata.scalerAddress}}{{"\n"}}{{end}}{{end}}{{end}}' 2>/dev/null \
-        | grep -F "wva-external-scaler.${WVA_NS}." | awk '{print $1}' | sort -u || true)
-    if [ -n "$orphans" ]; then
-        log_warning "These ScaledObjects still point at the external scaler you just removed:"
-        printf '    %s\n' $orphans
+    # What we created, we remove. What we only pointed at WVA, we report: an
+    # `apply: adopt` object belongs to whoever wrote it — it may be GitOps-managed
+    # or hand-tuned, and deleting it would take a workload's autoscaling away
+    # entirely rather than just taking WVA out of it. So the split is by who made
+    # the object, not by who it currently calls.
+    local orphans ours theirs
+    orphans=$(wva_scaledobjects_calling_us)
+    ours=$(wva_scaledobjects_calling_us \
+        -l 'app.kubernetes.io/managed-by=workload-variant-autoscaler,app.kubernetes.io/component=default-scaledobject')
+    theirs=$(comm -13 <(printf '%s\n' $ours | sort -u) <(printf '%s\n' $orphans | sort -u) | grep -v '^$' || true)
+
+    if [ -n "$ours" ] && [ "${UNDEPLOY_SCALEDOBJECTS:-true}" = "true" ]; then
+        log_info "Removing the ScaledObjects this installer created:"
+        local so ns name
+        for so in $ours; do
+            ns="${so%%/*}"; name="${so#*/}"
+            if kubectl delete scaledobject "$name" -n "$ns" --ignore-not-found > /dev/null 2>&1; then
+                log_success "  $so removed"
+            else
+                log_warning "  $so could not be removed — delete it by hand, or its HPA will keep calling a scaler that is gone"
+            fi
+        done
+        # Worth saying out loud: these carry restoreToOriginalReplicaCount, so KEDA
+        # puts each workload back to the count it had before it was autoscaled. An
+        # uninstall that quietly resizes running workloads is a surprise; an
+        # uninstall that says it is doing so is just an uninstall.
+        log_info "  KEDA restores each workload to its pre-autoscaling replica count as these go."
+    elif [ -n "$ours" ]; then
+        log_warning "Kept the ScaledObjects this installer created (UNDEPLOY_SCALEDOBJECTS=false). Their HPAs now call a scaler that is gone."
+        printf '    %s\n' $ours
+    fi
+
+    # Whatever is left calls our scaler but was not ours to make.
+    if [ -n "$theirs" ]; then
+        log_warning "These ScaledObjects were not created by this installer, and still point at the external scaler you just removed:"
+        printf '    %s\n' $theirs
         log_warning "  KEDA will keep their HPAs and keep calling a scaler that is gone. Any of them parked at zero CANNOT BE WOKEN — activation only comes from the scaler."
-        log_warning "  Delete them, or repoint their trigger at another WVA, before you consider this uninstall finished."
+        log_warning "  Repoint their trigger at another WVA, or at whatever scaled them before, or delete them. They are not this installer's to remove."
     fi
 
     rm -f "$PROM_CA_CERT_PATH"

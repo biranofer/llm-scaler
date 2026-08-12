@@ -281,7 +281,7 @@ deploy-wva: manifests kustomize ## Install WVA. ENVIRONMENT=kubernetes|openshift
 
 .PHONY: undeploy-wva
 undeploy-wva: ## Remove WVA. Pass the same ENVIRONMENT, SCOPE and namespace you installed with.
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) $(if $(ENVIRONMENT_INSTALL),ENVIRONMENT=$(ENVIRONMENT_INSTALL),) WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) $(if $(ENVIRONMENT_INSTALL),ENVIRONMENT=$(ENVIRONMENT_INSTALL),) $(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
 
 .PHONY: deploy-wva-on-k8s
 deploy-wva-on-k8s: manifests kustomize ## Install WVA on Kubernetes. SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>. Prometheus and the namespace are detected.
@@ -297,12 +297,12 @@ deploy-wva-on-openshift: manifests kustomize ## Install WVA on OpenShift. SCOPE=
 .PHONY: undeploy-wva-on-k8s
 undeploy-wva-on-k8s: ## Remove WVA from Kubernetes. Pass the same SCOPE and NAMESPACE/WVA_NS you installed with.
 	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes $(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
 
 .PHONY: undeploy-wva-on-openshift
 undeploy-wva-on-openshift: ## Remove WVA from OpenShift. Pass the same SCOPE and NAMESPACE/WVA_NS you installed with.
 	@echo ">>> Undeploying workload-variant-autoscaler from OpenShift"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift $(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
 
 ## Check that everything a deploy needs is present, without deploying anything.
 ## Runs the SAME check the install runs (deploy/lib/prereqs.sh), so a pass here
@@ -317,20 +317,20 @@ check-prereqs: ## Phase 1, read-only: tools, permissions, the namespace and the 
 ## "scaling". The plan documents its own fields in the comments it is written with.
 .PHONY: scaledobjects-plan
 scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObject plan. WVA_DEFAULT_SO_NS=<ns>|wva|all, WVA_DEFAULT_SO_PLAN=<file>.
-	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; install_default_scaledobjects'
 
 ## Apply a ScaledObject plan. With WVA_DEFAULT_SO_PLAN=<file> it applies exactly
 ## that file, edits included, and needs no terminal. Without one it re-discovers
 ## and applies everything found.
 .PHONY: scaledobjects-apply
 scaledobjects-apply: ## Apply a ScaledObject plan (this is what makes WVA scale anything). Per entry: apply: yes|no|adopt. WVA_DEFAULT_SO_PLAN=<edited file>, WVA_DEFAULT_SO_TEMPLATE=<file>.
-	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; install_default_scaledobjects'
 
 ## Review the list in $EDITOR, then apply what you confirm. Needs a terminal;
 ## use scaledobjects-plan + scaledobjects-apply where there is none.
 .PHONY: scaledobjects-edit
 scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply what you confirm.
-	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; install_default_scaledobjects'
 
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

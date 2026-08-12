@@ -163,6 +163,24 @@ procedures, including the simulator and the e2e suites, are in
 | HPA exists but `CurrentMetrics` is empty | KEDA never got an answer — usually the trigger's `scalerAddress` or a missing `modelID` | `kubectl describe hpa -n <ns> keda-hpa-<so-name>` |
 | nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
 | a model never wakes from zero | the EPP flow-control queue is not reaching WVA | see [Troubleshooting](../developer-guide/troubleshooting.md) |
+| `READY False` on the ScaledObject, and the HPA's `TARGETS` reads `cpu: <unknown>/80%` | KEDA could not fetch the metric spec from WVA, so it fell back to a CPU metric. The trigger names a scaler it cannot reach | `kubectl logs -n keda deploy/keda-operator \| grep external` |
+
+### `no children to pick from` after a reinstall
+
+KEDA's gRPC client backs off on a name that did not resolve, and keeps backing
+off for far longer than an uninstall/reinstall takes. So a ScaledObject that
+outlived a WVA uninstall can stay `READY False` against a scaler that is now
+running perfectly — the name was NXDOMAIN while WVA was gone, and KEDA has not
+re-resolved it yet.
+
+```bash
+kubectl rollout restart deploy/keda-operator -n keda
+```
+
+Verified on kind: the ScaledObjects went `READY True` within a poll interval of
+the restart, with nothing else changed. Deleting the ScaledObjects before
+uninstalling avoids it — which `make undeploy-wva` now does for the ones it
+created.
 
 First stop for any of these:
 

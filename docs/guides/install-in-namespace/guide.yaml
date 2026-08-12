@@ -31,6 +31,4 @@ verify:
 
 cleanup:
   uninstall:
-    run: |
-      kubectl delete scaledobject --all -n ${NAMESPACE}
-      make undeploy-wva
+    run: make undeploy-wva

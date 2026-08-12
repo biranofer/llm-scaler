@@ -112,8 +112,30 @@ kubectl get scaledobject,hpa -n ${NAMESPACE}
 ```
 <!-- guide:verify.objects end -->
 
-The HPA is KEDA's. `CurrentMetrics` populated means the whole chain works: KEDA
-called WVA, WVA decided, KEDA got the answer.
+A working registration looks like this:
+
+```
+NAME                                        SCALETARGETKIND      SCALETARGETNAME    MIN  MAX  READY  ACTIVE  TRIGGERS
+scaledobject.keda.sh/dev-model-decode-wva   apps/v1.Deployment   dev-model-decode   1    10   True   True    external-push
+
+NAME                                                  REFERENCE                     TARGETS     MINPODS  MAXPODS  REPLICAS
+horizontalpodautoscaler.autoscaling/keda-hpa-dev-...  Deployment/dev-model-decode   1/1 (avg)   1        10       1
+```
+
+Three things to read, in this order:
+
+- **`READY True`** — KEDA reached WVA and got a metric spec back. The HPA is
+  KEDA's; it creates one per ScaledObject.
+- **`TARGETS` showing a number** — the decision is flowing. `1/1 (avg)` is WVA
+  saying one replica is the right size.
+- **`ACTIVE True`** — there is traffic. `Unknown` on a workload nobody is
+  calling is normal, and not a fault.
+
+`TARGETS` reading **`cpu: <unknown>/80%`** means the opposite of it looks: KEDA
+could not fetch the metric spec from WVA and fell back to a CPU metric, so the
+workload is not being scaled by WVA at all. `READY False` accompanies it. The
+usual cause is a trigger naming a scaler it cannot reach — see
+[First-line troubleshooting](../../deployment/operations.md#first-line-troubleshooting).
 
 ### 2. Read the decisions
 
@@ -131,14 +153,17 @@ scaling-decision {"modelID":"meta/llama","decisions":[{"name":"llama-decode-wva"
 
 <!-- guide:cleanup.uninstall start -->
 ```bash
-kubectl delete scaledobject --all -n ${NAMESPACE}
 make undeploy-wva
 ```
 <!-- guide:cleanup.uninstall end -->
 
-Delete the ScaledObjects as well, unless you are reinstalling: their trigger
-points at a scaler that no longer exists, so KEDA keeps the HPA and keeps calling
-nothing — and a workload parked at zero can never be woken.
+This removes the ScaledObjects it created, and KEDA restores each workload to the
+replica count it had before WVA sized it. Objects you adopted are left alone and
+listed by name — they were not this installer's to delete — so repoint or remove
+them yourself: their trigger now calls a scaler that is gone, KEDA keeps the HPA,
+and a workload parked at zero can never be woken.
+
+`UNDEPLOY_SCALEDOBJECTS=false` keeps everything, for reinstalling in place.
 
 ## Configuration
 

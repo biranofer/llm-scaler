@@ -37,7 +37,7 @@ $(printf '  - %s\n' "${missing[@]}")
 
 Ask a cluster admin to run, once, for this namespace:
 
-    make setup-prereqs-$(wva_install_scope)-on-$([ "$ENVIRONMENT" = openshift ] && echo openshift || echo k8s) WVA_NS=$WVA_NS
+    NAMESPACE=$WVA_NS make setup-prereqs$([ "$(wva_install_scope)" = cluster ] && echo " SCOPE=cluster")
 
 after which this phase needs no cluster-scoped rights and you can re-run it, and
 every later upgrade, yourself."

@@ -17,6 +17,7 @@
 #   {{SCALER_ADDRESS}}  WVA's external-scaler service, host:port
 #   {{MIN}} {{MAX}}     the entry's replica bounds
 #   {{VARIANT_COST}}    the entry's variantCost, or 10.0 where it set none
+#   {{SCALING_POLICY}}  the entry's scalingPolicy; empty means the cluster default
 #
 # Usage:
 #   make scaledobjects-apply WVA_DEFAULT_SO_TEMPLATE=$PWD/this-file.yaml
@@ -54,3 +55,7 @@ spec:
         # The relative price of one replica of this variant. Only the ratio
         # between variants of one model matters.
         variantCost: "{{VARIANT_COST}}"
+        # A named policy tier from the scaling-policy ConfigMap. Empty is the
+        # normal value: it means "whatever the cluster's default entry says",
+        # which an admin can then change for every workload at once.
+        scalingPolicy: "{{SCALING_POLICY}}"

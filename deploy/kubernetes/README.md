@@ -529,7 +529,7 @@ kubectl get pods -n llm-d-optimized-baseline -w
 To remove all deployed components:
 
 ```bash
-make undeploy-wva-on-k8s
+make undeploy-wva
 ```
 
 Or manually:

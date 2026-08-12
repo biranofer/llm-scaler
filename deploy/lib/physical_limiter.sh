@@ -259,6 +259,14 @@ enable_physical_limiter() {
         granted=$((granted + 1))
     done
 
+    # The well-known namespace too, matching what disable already clears — and it
+    # is the ONLY target when the cluster has no controller yet. Without it, this
+    # command created the policy namespace, wrote nothing into it, and reported
+    # that "the limiter is now in force for every WVA on this cluster": the exact
+    # claim a safety bound must never make falsely. A WVA installed the next day
+    # would have read an empty namespace and scaled with no GPU budget at all.
+    case " $targets " in *" $policy_ns "*) : ;; *) targets="$targets $policy_ns" ;; esac
+
     # Every ConfigMap some controller actually reads, not just the well-known one.
     for cm_ns in $targets; do
         pl_set_limiter "$cm_ns" "$limiter"

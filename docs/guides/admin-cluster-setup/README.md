@@ -59,13 +59,19 @@ must hold, run it in a namespace you own:
 
 <!-- guide:deploy.out_of_reach start -->
 ```bash
-make setup-prereqs   WVA_NS=wva-${NAMESPACE}
+make setup-prereqs   WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE}
 make deploy-wva      WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE} INSTALL_PHASE=wva
 ```
 <!-- guide:deploy.out_of_reach end -->
 
 with `WVA_NS` yours and `WVA_WATCH_NS` theirs. This is the recommended
 multi-tenant shape.
+
+Pass `WVA_WATCH_NS` to **both** commands. The controller needs permissions in the
+namespace it manages, and writing RBAC into someone else's namespace is an
+admin's act by definition — so `setup-prereqs` creates that Role and RoleBinding,
+and the uninstall removes them. Without it the controller starts, cannot read the
+namespace it was pointed at, and crash-loops on its first ConfigMap read.
 
 ## Cleanup
 

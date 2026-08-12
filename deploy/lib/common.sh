@@ -247,6 +247,28 @@ wva_prereq_kind_filter() {
 #
 # Cluster scope is untouched: that controller manages every namespace and belongs
 # in its own, not inside whichever one runs llm-d.
+# wva_bootstrap_env gives a caller that sources these libraries directly — rather
+# than going through install.sh — the same namespace install.sh would have used.
+#
+# The targets that plan and apply ScaledObjects do exactly that, so none of
+# install.sh's preamble runs for them: they saw WVA_NS's default and ignored
+# `export NAMESPACE=…` entirely. The plan then scanned the wrong namespace and
+# found nothing, or — worse, because it looks like it worked — wrote every trigger
+# with a scaler address in a namespace where no scaler runs. KEDA reports that as
+# a failing trigger on a healthy-looking install, which reads as "WVA is broken"
+# rather than "WVA was handed the wrong address".
+#
+# ${VAR-…} without the colon, so an explicitly empty value set by install.sh is
+# left alone: a nested call must not re-capture a WVA_NS that a default filled in.
+wva_bootstrap_env() {
+    WVA_NS_EXPLICIT=${WVA_NS_EXPLICIT-${WVA_NS:-}}
+    NAMESPACE_EXPLICIT=${NAMESPACE_EXPLICIT-${NAMESPACE:-}}
+    export WVA_NS_EXPLICIT NAMESPACE_EXPLICIT
+    WVA_NS=${WVA_NS:-workload-variant-autoscaler-system}
+    export WVA_NS
+    wva_resolve_namespace
+}
+
 wva_resolve_namespace() {
     WVA_NS_SOURCE=default
     export WVA_NS_SOURCE

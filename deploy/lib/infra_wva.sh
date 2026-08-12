@@ -56,6 +56,68 @@ set_wva_logging_level() {
     echo ""
 }
 
+# wva_watch_rbac_names echoes `role binding` — the names this install owns in the
+# namespace it manages. Suffixed by the controller's namespace, so two admin-owned
+# controllers pointed at one tenant do not overwrite or delete each other's.
+wva_watch_rbac_names() {
+    local suffix
+    suffix="$(wva_ns_suffix "$WVA_NS")"
+    printf 'wva-manager-role-%s wva-manager-rolebinding-%s' "$suffix" "$suffix"
+}
+
+# wva_apply_watch_namespace_rbac grants the controller its permissions in the
+# namespace it MANAGES, when that is not the namespace it RUNS IN.
+#
+# The overlay puts the Role and RoleBinding in the controller's own namespace,
+# which is right when those are the same namespace and useless when they are not:
+# a controller in an admin-owned namespace watching a tenant's could not read a
+# ConfigMap there, and crash-looped on its first bootstrap read. So the one
+# configuration that puts a controller beyond the reach of the tenant it bounds
+# was the one configuration that could not run.
+#
+# It is applied in the PREREQS phase because it is an admin's act by definition:
+# writing RBAC into someone else's namespace is precisely what the tenant cannot
+# do, and what they must not be able to undo.
+#
+# The Role is a copy of the rendered one rather than a second definition, so it
+# cannot drift from the permissions the controller actually needs.
+wva_apply_watch_namespace_rbac() {
+    local tmp_overlay="$1" role binding rendered
+    [ -n "${WVA_WATCH_NS:-}" ] || return 0
+    [ "$WVA_WATCH_NS" != "$WVA_NS" ] || return 0
+
+    read -r role binding <<< "$(wva_watch_rbac_names)"
+    rendered=$(kubectl kustomize "$tmp_overlay" 2>/dev/null         | WVA_TARGET_NS="$WVA_WATCH_NS" WVA_ROLE_NAME="$role" yq '
+            select(.kind == "Role" and (.metadata.name | test("manager-role$")))
+            | .metadata.name = strenv(WVA_ROLE_NAME)
+            | .metadata.namespace = strenv(WVA_TARGET_NS)') || true
+    if [ -z "$rendered" ]; then
+        log_error "Could not find the manager Role in the rendered overlay, so the controller would have no permissions in $WVA_WATCH_NS. Refusing to install a controller that cannot read the namespace it manages."
+    fi
+
+    log_info "Granting the controller its permissions in $WVA_WATCH_NS (it runs in $WVA_NS)"
+    printf '%s
+' "$rendered" | kubectl apply -f - > /dev/null
+    kubectl apply -f - > /dev/null <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${binding}
+  namespace: ${WVA_WATCH_NS}
+  labels:
+    app.kubernetes.io/managed-by: workload-variant-autoscaler
+subjects:
+- kind: ServiceAccount
+  name: wva-controller-manager
+  namespace: ${WVA_NS}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${role}
+EOF
+    log_success "  Role/$role and RoleBinding/$binding in $WVA_WATCH_NS"
+}
+
 deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
@@ -167,6 +229,15 @@ EOF
         # Strategic merge, which matches env entries by NAME. A JSON-patch index
         # into the env array would silently rewrite whichever variable happened to
         # sit at that position the day someone added one above it.
+        #
+        # The explicit `target:` is required, not decoration. Without one, kustomize
+        # derives the target from the patch's own metadata — including a namespace
+        # the patch does not carry — while the overlay's namespace transformer has
+        # already stamped one on the Deployment. The two never match, and kustomize
+        # fails the whole build with "no matches for Id
+        # Deployment.v1.apps/wva-controller-manager.[noNs]", so the install of the
+        # one configuration that puts the controller beyond a tenant's reach was the
+        # one configuration that could not be installed.
         cat >> "$tmp_overlay/kustomization.yaml" <<EOF
 - patch: |-
     apiVersion: apps/v1
@@ -181,6 +252,9 @@ EOF
             env:
             - name: WVA_WATCH_NAMESPACE
               value: "${WVA_WATCH_NS}"
+  target:
+    kind: Deployment
+    name: wva-controller-manager
 EOF
     fi
 
@@ -198,6 +272,10 @@ EOF
     # Before the apply, and only for the phases that carry the bindings.
     case "${WVA_APPLY_SCOPE:-all}" in
         all|prereqs) wva_repair_immutable_rolerefs ;;
+    esac
+
+    case "${WVA_APPLY_SCOPE:-all}" in
+        all|prereqs) wva_apply_watch_namespace_rbac "$tmp_overlay" ;;
     esac
 
     log_info "Applying Kustomize overlay: $kustomize_overlay (scope: ${WVA_APPLY_SCOPE:-all})"
@@ -237,6 +315,45 @@ EOF
         kubectl delete prometheusrule controller-manager-alerts -n "$WVA_NS" --ignore-not-found=true
     fi
 
+# wva_reconcile_prometheus_scheme makes the rest of the Prometheus settings agree
+# with the URL's scheme.
+#
+# WVA refuses a plain-HTTP Prometheus unless told to allow it, refuses to send a
+# bearer token over one, and refuses TLS settings alongside one — three separate
+# checks, all of them right. The installer wrote the URL and left the other three
+# as they were, so pointing at a plain-HTTP Prometheus produced a ConfigMap the
+# controller would not start on.
+#
+# It did not fail the install, which is the part that made it dangerous: the pod
+# had already started on the previous value and kept running on it. The install
+# reported success, the controller ran for days, and the CrashLoopBackOff arrived
+# with the next unrelated restart — a node drain, an upgrade, an eviction — long
+# after anyone would connect it to an install-time setting.
+#
+# So the settings move together with the scheme, or not at all.
+wva_reconcile_prometheus_scheme() {
+    local url="$1"
+    case "$url" in
+        http://*) : ;;
+        *) return 0 ;;
+    esac
+
+    log_warning "This Prometheus speaks plain HTTP, so WVA will read metrics over an unencrypted connection."
+    log_warning "  Enabling PROMETHEUS_ALLOW_HTTP and dropping the TLS settings, which WVA rejects alongside an http:// URL."
+    log_warning "  Pass PROMETHEUS_URL=https://<host>:<port> to use a TLS endpoint instead."
+    patch_manager_config '.PROMETHEUS_ALLOW_HTTP = "true"
+        | .PROMETHEUS_TLS_INSECURE_SKIP_VERIFY = "false"
+        | del(.PROMETHEUS_CA_CERT_PATH)'
+
+    # The token path is Deployment env, and env beats the ConfigMap: leaving it set
+    # trips "refusing to send bearer token authentication over plain HTTP" even
+    # once the ConfigMap agrees. Emptied by NAME through a strategic merge, so it
+    # does not depend on where in the list it happens to sit.
+    kubectl patch deployment wva-controller-manager -n "$WVA_NS" --type=strategic -p '{
+        "spec":{"template":{"spec":{"containers":[{"name":"manager",
+        "env":[{"name":"PROMETHEUS_TOKEN_PATH","value":""}]}]}}}}' > /dev/null 2>&1 || true
+}
+
     # Point the controller at THIS cluster's Prometheus.
     #
     # PROMETHEUS_URL used to be accepted, logged, and then dropped: the shipped
@@ -264,6 +381,7 @@ EOF
     if [ -n "${PROMETHEUS_URL:-}" ]; then
         log_info "Pointing WVA at Prometheus: $PROMETHEUS_URL"
         patch_manager_config ".PROMETHEUS_BASE_URL = \"$PROMETHEUS_URL\""
+        wva_reconcile_prometheus_scheme "$PROMETHEUS_URL"
     fi
     if [ -n "${PROMETHEUS_TLS_INSECURE_SKIP_VERIFY:-}" ]; then
         patch_manager_config ".PROMETHEUS_TLS_INSECURE_SKIP_VERIFY = \"${PROMETHEUS_TLS_INSECURE_SKIP_VERIFY}\""

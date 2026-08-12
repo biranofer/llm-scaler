@@ -18,7 +18,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
-| `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you by the `setup-prereqs-*` and `deploy-wva-*` targets — see [deploy/README.md](../../deploy/README.md) | `all` |
+| `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you: `make setup-prereqs` is the `prereqs` phase and `make deploy-wva INSTALL_PHASE=wva` the other — see [deploy/README.md](../../deploy/README.md) | `all` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
 ## Image
@@ -59,6 +59,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `DELETE_LLMD_NS` | With `DELETE_NAMESPACES=true`, also delete `LLMD_NS`. Separate because that namespace holds the model servers: deleting it takes the workloads with it | `false` |
 | `CHECK_ONLY` | Run the prerequisite and permission checks, then exit without deploying. Set by `--check` / `make check-prereqs` | `false` |
 | `WVA_REPLICAS` | Controller replicas. The manifest already elects a leader, so extra replicas are **warm standbys, not extra throughput** — only the leader runs the optimization loops. Two turns a node drain from "no decisions until rescheduled" into a lease timeout | `1` |
+| `UNDEPLOY_SCALEDOBJECTS` | On uninstall, remove the ScaledObjects **this installer created** (KEDA then restores each workload to its pre-autoscaling replica count). Objects you adopted are never removed — they were not this installer's to make — but are listed, because their trigger now calls a scaler that is gone | `true` |
 | `UNDEPLOY_SHARED` | With `UNDEPLOY=true`, also remove Prometheus, the scaler backend and EPP. **Off by default**: they are shared, this install may not have created them, and removing them takes out everything else on the cluster that uses them | `false` |
 
 > `make deploy-e2e-infra` passes `ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED)`,
@@ -119,11 +120,12 @@ plan:
     minReplicas: 1
     maxReplicas: 10
     variantCost: "10.0"
-    inferencePool: "optimized-baseline"
+    # scalingPolicy: "standard"
+    # inferencePool: optimized-baseline
 
   # note: no --served-model-name or --model on the container, so the model could
   # not be read. Fill in modelID and set apply: yes to include it.
-  - apply: "no"
+  - apply: "no"  # yes | no
     namespace: llm-d-sim
     kind: Deployment
     name: sotest-b
@@ -131,8 +133,15 @@ plan:
     minReplicas: 1
     maxReplicas: 10
     variantCost: "10.0"
-    inferencePool: ""
+    # scalingPolicy: "standard"
+    # inferencePool: (none)
 ```
+
+Two things the entries carry that are not fields. The `apply:` line lists the
+values **that entry** accepts — `adopt` appears only where there is something to
+adopt. And anything informational is a comment, so that editing it cannot change
+what happens: `# scaledObject:` names the object `adopt` would repoint, and
+`# inferencePool:` the EPP queue the workload sits behind.
 
 | field | |
 | --- | --- |
@@ -140,7 +149,8 @@ plan:
 | `modelID` | **Required.** What the container serves, and the grouping key — entries sharing a `modelID` are sized against each other. An entry with none is never applied: an object created without it registers a variant of a model nobody runs |
 | `minReplicas` / `maxReplicas` | What KEDA holds the workload between; WVA decides within them. Default 1 and 10, and for `adopt` they are read from the object being adopted, so applying it unedited changes only who decides the count |
 | `variantCost` | The relative price of one replica of this variant. Only the ratio between variants of one model matters, so with one variant it changes nothing |
-| `inferencePool` | Informational, never applied: the EPP queue that workload sits behind, resolved by matching pod labels against each pool's selector — the same way WVA resolves it. Empty means no pool has adopted it |
+| `scalingPolicy` | Optional, and commented out by default. Names a reusable policy tier — `interactive`, `standard`, `batch` — from the scaling-policy ConfigMap. Leaving it out means "whatever the cluster default says", which an admin can then change for every workload at once; naming one opts this workload out of that. A name no tier matches falls back to the default silently |
+| `inferencePool` | Informational, a comment, never applied: the EPP queue that workload sits behind, resolved by matching pod labels against each pool's selector — the same way WVA resolves it. `(none)` means no pool has adopted it |
 
 Entries that cannot be applied are marked `no` **and kept**, with the reason,
 rather than dropped: the file is then the whole truth about what was found, and
@@ -160,7 +170,7 @@ do is also reachable through plan-then-apply, which does not.
 
 Both are only the value the plan is *written* with. What gets applied is what the
 file says when you apply it, per entry.
-| `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}` `{{VARIANT_COST}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
+| `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}` `{{VARIANT_COST}}` `{{SCALING_POLICY}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
 
 Set them on a deploy to do this during install:
 

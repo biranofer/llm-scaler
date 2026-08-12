@@ -100,7 +100,7 @@ Pick one:
   - use it as it is — it already covers $WVA_NS
   - upgrade it:                     WVA_NS=${cluster_wide%%/*} ...
   - replace it with per-namespace controllers:
-        make undeploy-wva-on-k8s WVA_NS=${cluster_wide%%/*} WVA_SCOPE=cluster
+        make undeploy-wva SCOPE=cluster WVA_NS=${cluster_wide%%/*}
     then install one WVA_SCOPE=namespace per namespace that needs one
   - or remove it and install this one in its place"
     fi

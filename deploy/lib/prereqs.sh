@@ -323,11 +323,11 @@ wva_autoselect_namespace() {
 $(printf '  - %s\n' $found)
 Say which:
 
-    make deploy-wva-namespace-on-${WVA_TARGET_PLATFORM:-k8s} WVA_NS=<one of the above>
+    NAMESPACE=<one of the above> make deploy-wva
 
 Or install one WVA for all of them:
 
-    make deploy-wva-cluster-on-${WVA_TARGET_PLATFORM:-k8s}"
+    make deploy-wva SCOPE=cluster"
     fi
 
     # None found, or not allowed to look. Either way, keep the default and let
@@ -525,9 +525,9 @@ is cluster-scoped, and without it the controller cannot reach Prometheus at all.
 You do not need those rights to run the controller. Have an admin create them
 once for this namespace:
 
-    make setup-prereqs-$(wva_install_scope)-on-$([ "${ENVIRONMENT:-}" = openshift ] && echo openshift || echo k8s) WVA_NS=$ns
+    NAMESPACE=$ns make setup-prereqs$([ "$(wva_install_scope)" = cluster ] && echo " SCOPE=cluster")
 
-then install with 'make deploy-wva-$(wva_install_scope)-on-$([ "${ENVIRONMENT:-}" = openshift ] && echo openshift || echo k8s) WVA_NS=$ns', which needs none of them."
+then install with 'NAMESPACE=$ns make deploy-wva INSTALL_PHASE=wva', which needs none of them."
         fi
         log_error "You cannot create everything this install produces. Denied:
 $(printf '  - %s\n' "${denied[@]}")

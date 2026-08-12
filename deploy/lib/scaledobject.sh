@@ -38,7 +38,7 @@
 #   cluster-scoped, its own namespace when namespace-scoped.
 #
 
-readonly SO_PLAN_HEADER=$'APPLY\tNAMESPACE\tKIND\tNAME\tMODELID\tMIN\tMAX\tCOST\tPOOL'
+readonly SO_PLAN_HEADER=$'APPLY\tNAMESPACE\tKIND\tNAME\tMODELID\tMIN\tMAX\tCOST\tPOLICY'
 
 # The variantCost an entry gets when nothing else decides one. It is WVA's own
 # default for a trigger that omits the field, so writing it into every entry
@@ -57,12 +57,18 @@ so_plan_preamble() {
 #
 #     make scaledobjects-apply WVA_DEFAULT_SO_PLAN=<this file>
 #
+# Commented lines are never read back. Anything informational is written as a
+# comment for exactly that reason: editing it would change what you were told,
+# not what gets applied. Each entry's `apply:` line carries the values that entry
+# actually accepts — `adopt` only appears where there is something to adopt.
+#
 # apply          Required. One of:
 #                  yes    create a ScaledObject for this workload
 #                  no     leave the workload alone
 #                  adopt  it already has a ScaledObject — repoint that one at WVA
 #                         instead of adding a second. Two ScaledObjects on one
 #                         target is two HPAs writing the same replica count.
+#                         Offered only for workloads that have one.
 #
 # modelID        Required. What the container serves: --served-model-name, or
 #                --model where there is no served name. It is also the grouping
@@ -80,12 +86,26 @@ so_plan_preamble() {
 #                Where a model has two, this is what makes WVA prefer one: give
 #                the cheaper variant the smaller cost.
 #
+# scalingPolicy  Optional, and commented out because absent is the right value for
+#                most installs. It names a reusable TIER — "interactive",
+#                "standard", "batch" — defined in the scaling-policy ConfigMap,
+#                whose thresholds this variant scales under. Leave it out and the
+#                cluster's own default applies, which an admin can change for
+#                every workload at once; name one here and this workload stops
+#                following that. A name no tier matches falls back to the default
+#                silently, so an entry naming one is a claim that can go stale.
+#
 # namespace      Where the workload is; with kind and name, what the ScaledObject
 # kind           will target.
 # name
 #
-# inferencePool  Informational, never applied: the EPP queue this workload sits
-#                behind. Empty means no InferencePool selects these pods.
+# The comments each entry carries:
+#
+#   scaledObject   the ScaledObject already scaling this workload, if any. Its
+#                  name is what `apply: adopt` would repoint.
+#   inferencePool  the EPP queue this workload sits behind, resolved by matching
+#                  pod labels against each pool's selector — the same way WVA
+#                  resolves it. "(none)" means no pool selects these pods.
 EOF
 }
 
@@ -93,13 +113,20 @@ EOF
 # it. Notes are comments rather than a column so that they survive editing and can
 # be a sentence: the reason a row says `no` is the thing a reader most needs.
 so_plan_entry() {
-    local apply="$1" ns="$2" kind="$3" name="$4" model="$5" min="$6" max="$7" cost="$8" pool="$9" note="${10:-}"
+    local apply="$1" ns="$2" kind="$3" name="$4" model="$5" min="$6" max="$7" cost="$8"
+    local policy="$9" pool="${10}" existing="${11}" note="${12:-}"
+    # The values this entry accepts, not the values the field accepts: offering
+    # `adopt` for a workload with nothing to adopt invites a choice that can only
+    # be a mistake, and offering it where there is something is the one place
+    # anybody would look for it.
+    local choices="yes | no"
+    [ -z "$existing" ] || choices="yes | no | adopt"
     echo ""
     [ -z "$note" ] || printf '  # note: %s\n' "$note"
     # apply and modelID are quoted: YAML reads a bare yes/no/on/off as a boolean
     # under some parsers, and a model called `3.5` or `1e6` as a number. Both would
     # arrive here as something that is not the text anybody typed.
-    printf '  - apply: "%s"\n' "$apply"
+    printf '  - apply: "%s"  # %s\n' "$apply" "$choices"
     printf '    namespace: %s\n' "$ns"
     printf '    kind: %s\n' "$kind"
     printf '    name: %s\n' "$name"
@@ -109,7 +136,15 @@ so_plan_entry() {
     # Quoted, so an edit keeps what you typed: unquoted 10.0 is a YAML float, and
     # a float that round-trips through JSON comes back as "10".
     printf '    variantCost: "%s"\n' "$cost"
-    printf '    inferencePool: "%s"\n' "$pool"
+    if [ -n "$policy" ]; then
+        printf '    scalingPolicy: "%s"\n' "$policy"
+    else
+        printf '    # scalingPolicy: "standard"\n'
+    fi
+    # Informational, and comments so they stay that way: neither is read back,
+    # so changing one cannot change what happens behind the reader's back.
+    [ -z "$existing" ] || printf '    # scaledObject: %s\n' "$existing"
+    printf '    # inferencePool: %s\n' "${pool:-(none)}"
 }
 
 # so_plan_rows echoes one row per plan entry, fields separated by US (\037): the
@@ -146,7 +181,7 @@ so_plan_rows() {
              else (.apply // "" | tostring) end | ascii_downcase),
             (.namespace // ""), (.kind // ""), (.name // ""), (.modelID // ""),
             (.minReplicas // 1 | tostring), (.maxReplicas // 10 | tostring),
-            (.variantCost // $cost | tostring), (.inferencePool // "") ]
+            (.variantCost // $cost | tostring), (.scalingPolicy // "") ]
         | map(tostring | gsub("[
 	]"; " "))
         | join("")'
@@ -255,7 +290,12 @@ so_target_namespaces() {
         if [ "$(wva_install_scope)" = "cluster" ]; then scope=all; else scope=wva; fi
     fi
     case "$scope" in
-        wva) echo "$WVA_NS"; return ;;
+        # The namespace this controller MANAGES, which is its own unless it was
+        # installed to watch another. Scanning WVA_NS unconditionally meant that an
+        # admin-owned controller — the whole point of which is to sit outside the
+        # namespace it manages — planned against its own empty namespace and
+        # reported that there was nothing to autoscale.
+        wva) echo "${WVA_WATCH_NS:-$WVA_NS}"; return ;;
         all) : ;;
         *)   echo "$scope"; return ;;
     esac
@@ -323,7 +363,9 @@ so_existing_info() {
                 (.spec.minReplicaCount // 0 | tostring),
                 (.spec.maxReplicaCount // 100 | tostring),
                 ([ .spec.triggers[]? | select(.type | startswith("external"))
-                   | .metadata.variantCost // empty ] | first // "10.0") ]
+                   | .metadata.variantCost // empty ] | first // "10.0"),
+                ([ .spec.triggers[]? | select(.type | startswith("external"))
+                   | .metadata.scalingPolicy // empty ] | first // "") ]
             | join(" ")' 2>/dev/null \
         | head -1
 }
@@ -341,8 +383,8 @@ so_existing_name() {
 # deliberate act rather than an undiscoverable one.
 so_discover() {
     local ns name args labels objlabels model pool kind apply note
-    local existing existing_name existing_min existing_max existing_cost
-    local min max cost
+    local existing existing_name existing_min existing_max existing_cost existing_policy
+    local min max cost policy
     so_plan_preamble
     echo "plan:"
     for ns in $(so_target_namespaces); do
@@ -367,7 +409,11 @@ so_discover() {
                 esac
                 apply=yes; note=""
                 min="${WVA_DEFAULT_SO_MIN:-1}"; max="${WVA_DEFAULT_SO_MAX:-10}"
-                cost="$SO_DEFAULT_VARIANT_COST"
+                # Reset every per-workload variable here, not only the ones this
+                # workload sets: existing_name is assigned inside a conditional, so
+                # a stale one would offer `adopt` on the next workload and name an
+                # object that scales something else entirely.
+                cost="$SO_DEFAULT_VARIANT_COST"; policy=""; existing_name=""
                 model=$(so_model_id "$args")
                 if [ -z "$model" ]; then
                     apply=no
@@ -382,8 +428,9 @@ so_discover() {
                     #
                     # Its own bounds are carried into the entry, so adopting it
                     # unedited changes only who decides the count.
-                    read -r existing_name existing_min existing_max existing_cost <<< "$existing"
+                    read -r existing_name existing_min existing_max existing_cost existing_policy <<< "$existing"
                     min="$existing_min"; max="$existing_max"; cost="$existing_cost"
+                    policy="$existing_policy"
                     apply=no
                     # Appended, not assigned: a workload can both be scaled by
                     # something else and have no readable model, and adopting it
@@ -392,7 +439,7 @@ so_discover() {
                 fi
                 pool=$(so_pool "$ns" "$labels")
                 so_plan_entry "$apply" "$ns" "$kind" "$name" "$model" \
-                    "$min" "$max" "$cost" "$pool" "$note"
+                    "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
             done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
                 | jq -r --argjson p "$pod" '
                     .items[]
@@ -443,7 +490,7 @@ so_show_plan() {
 # so_apply_plan acts on every entry: creating for yes, repointing for adopt.
 so_apply_plan() {
     local file="$1" scaler_addr="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
-    local apply ns kind name model min max cost pool existing rows
+    local apply ns kind name model min max cost policy existing rows
     local created=0 adopted=0 skipped=0 unresolved=0
 
     # Read the whole plan before touching anything, and stop if it could not be
@@ -452,7 +499,7 @@ so_apply_plan() {
     # and reported a clean "0 created" for a file whose error it had just printed.
     rows=$(so_plan_rows "$file") || exit 1
 
-    while IFS=$'\037' read -r apply ns kind name model min max cost pool; do
+    while IFS=$'\037' read -r apply ns kind name model min max cost policy; do
         [ -n "$name" ] || continue
         case "$apply" in
             yes|adopt) : ;;
@@ -503,7 +550,7 @@ so_apply_plan() {
             # showed them, carried over from this very object, so applying them
             # unedited is a no-op and editing them is how you change them.
             if kubectl patch scaledobject "$existing" -n "$ns" --type=merge \
-                -p "$(so_adopt_patch "$model" "$scaler_addr" "$min" "$max" "$cost")" > /dev/null; then
+                -p "$(so_adopt_patch "$model" "$scaler_addr" "$min" "$max" "$cost" "$policy")" > /dev/null; then
                 log_success "  $ns/$name ($kind) -> ScaledObject $existing now scales on WVA (modelID: $model, $min-$max)"
                 adopted=$((adopted + 1))
             else
@@ -513,7 +560,7 @@ so_apply_plan() {
         fi
 
         if render_scaledobject "$ns" "$kind" "$name" "$model" "$scaler_addr" \
-            "$min" "$max" "$cost" | kubectl apply -f - > /dev/null; then
+            "$min" "$max" "$cost" "$policy" | kubectl apply -f - > /dev/null; then
             log_success "  $ns/$name ($kind) -> ScaledObject ${name}-wva (modelID: $model, $min-$max)"
             created=$((created + 1))
         else
@@ -600,12 +647,16 @@ install_default_scaledobjects() {
 # wanted. An object scaled by a prometheus or cpu trigger must stop being scaled by
 # it, or two scalers feed one HPA and the larger answer silently wins.
 so_adopt_patch() {
-    local model="$1" scaler_addr="$2" min="$3" max="$4" cost="$5"
-    jq -nc --arg m "$model" --arg a "$scaler_addr" --arg c "$cost" \
+    local model="$1" scaler_addr="$2" min="$3" max="$4" cost="$5" policy="${6:-}"
+    # scalingPolicy is added only when the entry names one: an empty value would
+    # be a metadata key whose value says "the default", which is what its absence
+    # already says, and it would survive in the object long after anybody knew why.
+    jq -nc --arg m "$model" --arg a "$scaler_addr" --arg c "$cost" --arg p "$policy" \
         --argjson min "$min" --argjson max "$max" \
         '{spec:{minReplicaCount:$min, maxReplicaCount:$max,
           triggers:[{type:"external-push",name:"wva-external-scaler",
-          metadata:{scalerAddress:$a, modelID:$m, variantCost:$c}}]}}'
+          metadata:({scalerAddress:$a, modelID:$m, variantCost:$c}
+                    + (if $p == "" then {} else {scalingPolicy:$p} end))}]}}'
 }
 
 # render_scaledobject prints one ScaledObject: the shipped shape, or yours.
@@ -623,6 +674,7 @@ so_adopt_patch() {
 # before letting the installer fill it in for every model server you have.
 render_scaledobject() {
     local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
+    local policy="${9:-}"
     local api="apps/v1"
 
     # The last gate before a manifest exists. The caller checks this too, and the
@@ -646,10 +698,11 @@ render_scaledobject() {
             -e "s|{{MIN}}|${min}|g" \
             -e "s|{{MAX}}|${max}|g" \
             -e "s|{{VARIANT_COST}}|${cost:-$SO_DEFAULT_VARIANT_COST}|g" \
+            -e "s|{{SCALING_POLICY}}|${policy}|g" \
             "$tmpl"
         return
     fi
-    render_default_scaledobject "$ns" "$kind" "$target" "$model" "$scaler_addr" "$min" "$max" "$cost"
+    render_default_scaledobject "$ns" "$kind" "$target" "$model" "$scaler_addr" "$min" "$max" "$cost" "$policy"
 }
 
 # render_default_scaledobject prints one ScaledObject.
@@ -663,8 +716,14 @@ render_scaledobject() {
 # not one an installer should make for them.
 render_default_scaledobject() {
     local ns="$1" kind="$2" target="$3" model="$4" scaler_addr="$5" min="$6" max="$7" cost="${8:-}"
+    local policy="${9:-}"
     local api="apps/v1"
     [ "$kind" = "LeaderWorkerSet" ] && api="leaderworkerset.x-k8s.io/v1"
+
+    # Written only when the entry names a tier — an absent key and an empty one
+    # mean the same thing to WVA, and only one of them says so to a reader.
+    local policy_line=""
+    [ -z "$policy" ] || policy_line=$'\n        scalingPolicy: "'"$policy"'"'
 
     cat <<EOF
 apiVersion: keda.sh/v1alpha1
@@ -694,6 +753,6 @@ spec:
       metadata:
         scalerAddress: ${scaler_addr}
         modelID: "${model}"
-        variantCost: "${cost:-$SO_DEFAULT_VARIANT_COST}"
+        variantCost: "${cost:-$SO_DEFAULT_VARIANT_COST}"${policy_line}
 EOF
 }

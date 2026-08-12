@@ -106,7 +106,19 @@ wva_detect_prometheus_url() {
         if kubectl get svc prometheus-operated -n "$ns" >/dev/null 2>&1; then
             port="$(kubectl get svc prometheus-operated -n "$ns" \
                 -o jsonpath='{.spec.ports[?(@.name=="web")].port}' 2>/dev/null || true)"
-            echo "http://prometheus-operated.${ns}.svc.cluster.local:${port:-9090}"
+            # The scheme comes from the Prometheus CR, not from the port number. A
+            # Prometheus with spec.web.tlsConfig serves HTTPS on its ordinary 9090 —
+            # which is what this repo's own kube-prometheus-stack install produces —
+            # so calling it http:// pointed WVA at a TLS port in plaintext. Worse than
+            # the reset that would cause: the controller refuses an http:// Prometheus
+            # outright, while the pod that had already started kept running on the old
+            # value. The install went green and the next restart CrashLoopBackOff-ed.
+            scheme=http
+            if [ -n "$(kubectl get prometheuses.monitoring.coreos.com "$name" -n "$ns" \
+                -o jsonpath='{.spec.web.tlsConfig}' 2>/dev/null || true)" ]; then
+                scheme=https
+            fi
+            echo "${scheme}://prometheus-operated.${ns}.svc.cluster.local:${port:-9090}"
             return 0
         fi
     done < <(kubectl get prometheuses.monitoring.coreos.com -A \
