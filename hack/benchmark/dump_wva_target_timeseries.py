@@ -31,16 +31,32 @@ except ImportError:
     sys.exit(1)
 
 
+# The caller field is matched loosely on the FILE name only. Pinning the package
+# path is what silently broke this: the decision log moved from saturation/ to
+# steadystate/, the pattern stopped matching, and the dump went to zero samples
+# with no error — post_run_analyze.sh swallows the failure, so two plot panels
+# just disappeared.
 DECISION_PAT = re.compile(
-    r'^(?P<ts>\S+)\t\S+\tsaturation/engine\.go:\d+\t'
-    r'Applied saturation decision via shared cache\t'
+    r'^(?P<ts>\S+)	\S+	\S*engine\.go:\d+	'
+    r'Applied saturation decision via shared cache	'
     r'(?P<json>\{.*\})$'
 )
+# The V2 analyzer emits "analyzer-result"; there has never been a
+# "V2 saturation analysis completed" line in the tree, so this matched nothing.
 ANALYSIS_PAT = re.compile(
-    r'^(?P<ts>\S+)\t\S+\tsaturation/engine_v2\.go:\d+\t'
-    r'V2 saturation analysis completed\t'
+    r'^(?P<ts>\S+)	\S+	\S*engine_v2\.go:\d+	'
+    r'analyzer-result	'
     r'(?P<json>\{.*\})$'
 )
+
+# analyzer-result uses short keys; the plots use the long ones.
+ANALYSIS_KEYS = {
+    "supply": "totalSupply",
+    "demand": "totalDemand",
+    "util": "utilization",
+    "rc": "requiredCapacity",
+    "sc": "spareCapacity",
+}
 
 
 def main():
@@ -110,10 +126,11 @@ def main():
             except (ValueError, json.JSONDecodeError):
                 continue
             b = bucket(ts_dt)
-            for k in ("totalSupply", "totalDemand", "utilization",
-                      "requiredCapacity", "spareCapacity"):
-                if k in d:
-                    b[k] = d[k]
+            for short, long in ANALYSIS_KEYS.items():
+                if short in d:
+                    b[long] = d[short]
+                elif long in d:
+                    b[long] = d[long]
 
     samples = []
     for ts, b in sorted(samples_by_ts.items()):
