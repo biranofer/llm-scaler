@@ -118,6 +118,13 @@ source "$DEPLOY_LIB_DIR/cleanup.sh"
 # shellcheck source=lib/install_core.sh
 source "$DEPLOY_LIB_DIR/install_core.sh"
 
+# Captured BEFORE the platform script defaults it. Those defaults name the
+# Prometheus this installer would deploy, so once they have run there is no way
+# left to tell "the user asked for this URL" from "nobody was asked" — and the
+# second case is the one that should go looking for the cluster's own Prometheus.
+PROMETHEUS_URL_EXPLICIT=${PROMETHEUS_URL:-}
+export PROMETHEUS_URL_EXPLICIT
+
 UNDEPLOY=${UNDEPLOY:-false}
 # CHECK_ONLY runs the prerequisite check and exits. Same code path the install
 # takes, so "make check-prereqs" passing and the install then failing on a

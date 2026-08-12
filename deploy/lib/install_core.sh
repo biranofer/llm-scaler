@@ -92,6 +92,9 @@ main() {
         fi
         check_permissions
         check_single_installation
+        # "What do I pass for PROMETHEUS_URL?" is the question a reader actually
+        # arrives with, and the answer is knowable from here.
+        wva_report_prometheus
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi

@@ -15,13 +15,18 @@ the cluster itself; its only write is Events.
 It manages **only your namespace**. Another team's WVA cannot see your workloads,
 and yours cannot see theirs.
 
+> **Your models are in this namespace.** That is the shape this path assumes:
+> `WVA_NS` is where the controller runs *and* what it manages, so set it to your
+> llm-d namespace. To run the controller somewhere else and point it here, see
+> [Cluster-admin setup](admin-cluster-setup.md#keeping-the-controller-out-of-the-tenants-reach).
+
 ## Before you start
 
 | you need | how to check |
 | --- | --- |
 | your namespace | `kubectl get ns <your-namespace>` |
 | KEDA on the cluster | `kubectl get crd scaledobjects.keda.sh` |
-| a Prometheus that scrapes your model servers | ask your admin for its URL |
+| a Prometheus that scrapes your model servers | the check below finds it and prints it — you do not pass a URL |
 | model servers labelled `llm-d.ai/inferenceServing=true` | `kubectl get deploy -n <ns> -o yaml \| grep inferenceServing` |
 
 Then run the read-only check. It renders the exact manifests this install would
@@ -56,9 +61,13 @@ creates in [Cluster-admin setup](admin-cluster-setup.md).
 Yours to run, now and for every future upgrade, with no cluster-scoped rights:
 
 ```bash
-make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace> \
-  PROMETHEUS_URL=https://<prometheus>.<ns>.svc.cluster.local:9090
+make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace>
 ```
+
+That is the whole command. The Prometheus is detected — on OpenShift it is the
+platform's Thanos Querier, at a fixed address that needs no permission to know.
+Pass `PROMETHEUS_URL=<url>` only to override what the check reported, or to point
+at a Prometheus outside the cluster.
 
 If Step 1 has not happened, this stops and names every object that is missing, so
 you have a precise list to hand back rather than a permissions error.

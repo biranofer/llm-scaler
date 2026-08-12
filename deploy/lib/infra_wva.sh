@@ -246,6 +246,21 @@ EOF
     # one — and WVA exits on that ("CRITICAL: Failed to connect to Prometheus"), so
     # it presented as CrashLoopBackOff, reading like a cluster fault rather than a
     # setting that was silently ignored.
+    # Nobody set one: the value in PROMETHEUS_URL is the platform default, which
+    # names the Prometheus this installer would deploy. On a cluster that already
+    # has its own, that is wrong, and WVA exits on a Prometheus it cannot reach —
+    # arriving as CrashLoopBackOff, which reads like a broken image rather than a
+    # setting nobody was asked for. So look before falling back to it.
+    if [ -z "${PROMETHEUS_URL_EXPLICIT:-}" ]; then
+        local detected
+        detected="$(wva_detect_prometheus_url)"
+        if [ -n "$detected" ] && [ "$detected" != "${PROMETHEUS_URL:-}" ]; then
+            log_info "Using the Prometheus already on this cluster: $detected"
+            log_info "  (the default names the one this installer would deploy; pass PROMETHEUS_URL=<url> to override)"
+            PROMETHEUS_URL="$detected"
+        fi
+    fi
+
     if [ -n "${PROMETHEUS_URL:-}" ]; then
         log_info "Pointing WVA at Prometheus: $PROMETHEUS_URL"
         patch_manager_config ".PROMETHEUS_BASE_URL = \"$PROMETHEUS_URL\""
