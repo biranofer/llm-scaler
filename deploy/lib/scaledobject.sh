@@ -35,6 +35,26 @@
 
 readonly SO_PLAN_HEADER=$'#apply\tnamespace\tkind\tname\tmodelID\tinferencePool\tmin\tmax'
 
+# What marks a workload as an llm-d model server.
+#
+# It is matched against the POD TEMPLATE's labels, and the object's own only as a
+# fallback — NOT with `kubectl get -l`, which only ever looks at the object. llm-d
+# puts these labels where they do the work: on the pod template, because that is
+# what the InferencePool's EPP selects on, and on the selector. The Deployment
+# itself carries none of them. So `-l llm-d.ai/inferenceServing=true` matched
+# nothing on a real install, and the scan reported "no llm-d model servers found"
+# — an install that then autoscales nothing, and says only that it found nothing
+# to autoscale.
+readonly SO_SERVING_MARKER='llm-d.ai/inferenceServing=true'
+
+# Where each kind keeps its pod template, as a jq path. An LWS may omit
+# leaderTemplate entirely, and plenty of workloads have a container with no args
+# — getpath and // handle both, which a go-template does not: `range` over a
+# missing field is an execution error that empties the WHOLE listing, and this
+# scan reads every workload in the namespace, not only the model servers.
+readonly SO_POD_PATH_DEPLOYMENT='["spec","template"]'
+readonly SO_POD_PATH_LWS='["spec","leaderWorkerTemplate","leaderTemplate"]'
+
 # so_model_id echoes the model a serving container runs: --served-model-name where
 # the workload sets one (it is the name clients and the EPP use), else --model.
 # Both "--flag value" and "--flag=value" are accepted; both appear in the wild.
@@ -131,11 +151,23 @@ so_target_namespaces() {
         echo "$WVA_NS"
         return
     fi
-    { kubectl get deployments -A -l llm-d.ai/inferenceServing=true \
-        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null
-      kubectl get leaderworkersets -A -l llm-d.ai/inferenceServing=true \
-        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null
+    { so_namespaces_of deployments "$SO_POD_PATH_DEPLOYMENT"
+      so_namespaces_of leaderworkersets "$SO_POD_PATH_LWS"
     } | sort -u
+}
+
+# so_namespaces_of echoes the namespace of every workload of one kind that carries
+# the model-server marker, on its pod template or on the object itself.
+so_namespaces_of() {
+    local resource="$1" pod="$2"
+    kubectl get "$resource" -A -o json 2>/dev/null \
+        | jq -r --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
+            .items[]
+            | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
+              as $labels
+            | select($labels | to_entries
+                     | any(.key + "=" + (.value|tostring) == $marker))
+            | .metadata.namespace'
 }
 
 # scaledobject_exists reports whether some ScaledObject already targets this
@@ -160,21 +192,27 @@ so_existing_name() {
 # than dropped — the list you were shown is then the whole truth about what was
 # found, and flipping a "no" to "yes" is a deliberate act.
 so_discover() {
-    local ns name args labels model pool kind apply note
+    local ns name args labels objlabels model pool kind apply note
     for ns in $(so_target_namespaces); do
         for kind in Deployment LeaderWorkerSet; do
-            # go-template, not jsonpath: kubectl's jsonpath has no two-variable
-            # range, so iterating a label map there is a parse error — and one that
-            # produces an EMPTY result rather than a loud failure, which reads as
-            # "no model servers found".
-            local resource='deployments' pod='.spec.template'
+            local resource='deployments' pod="$SO_POD_PATH_DEPLOYMENT"
             if [ "$kind" = "LeaderWorkerSet" ]; then
                 resource='leaderworkersets'
-                pod='.spec.leaderWorkerTemplate.leaderTemplate'
+                pod="$SO_POD_PATH_LWS"
             fi
-            local tmpl='{{range .items}}{{.metadata.name}}|{{range (index '"$pod"'.spec.containers 0).args}}{{.}} {{end}}|{{range $k,$v := '"$pod"'.metadata.labels}}{{$k}}={{$v}} {{end}}{{"\n"}}{{end}}'
-            while IFS='|' read -r name args labels; do
+            # args LAST: a serving container's args can legitimately contain a
+            # pipe (a shell string, a chat template), and `read` gives the final
+            # variable the whole remainder — so only a trailing field is safe.
+            while IFS='|' read -r name labels objlabels args; do
                 [ -n "$name" ] || continue
+                # The marker, on the pod template or on the object. Kept separate
+                # from $labels, which is POD labels only: so_pool matches those
+                # against InferencePool selectors, and folding the object's in
+                # could claim a pool that does not actually select these pods.
+                case " $labels $objlabels " in
+                    *" $SO_SERVING_MARKER "*) : ;;
+                    *) continue ;;
+                esac
                 apply=yes; note=""
                 model=$(so_model_id "$args")
                 if [ -z "$model" ]; then
@@ -198,8 +236,19 @@ so_discover() {
                     "$apply" "$ns" "$kind" "$name" "$model" "${pool:--}" \
                     "${WVA_DEFAULT_SO_MIN:-1}" "${WVA_DEFAULT_SO_MAX:-10}"
                 [ -n "$note" ] && printf '# ^ %s/%s: %s\n' "$ns" "$name" "$note"
-            done < <(kubectl get "$resource" -n "$ns" -l llm-d.ai/inferenceServing=true \
-                -o go-template="$tmpl" 2>/dev/null)
+            done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+                | jq -r --argjson p "$pod" '
+                    .items[]
+                    | . as $o
+                    | (getpath($p) // {}) as $t
+                    | [ $o.metadata.name,
+                        (($t.metadata.labels // {}) | to_entries
+                         | map(.key + "=" + (.value|tostring)) | join(" ")),
+                        (($o.metadata.labels // {}) | to_entries
+                         | map(.key + "=" + (.value|tostring)) | join(" ")),
+                        (($t.spec.containers[0].args // [])
+                         | map(tostring) | join(" "))
+                      ] | join("|")')
         done
     done
 }
