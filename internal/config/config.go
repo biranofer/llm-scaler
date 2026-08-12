@@ -640,6 +640,17 @@ func (c *Config) EffectiveLimiterMode() LimiterType {
 	return LimiterTypeInventory
 }
 
+// UnenforcedLimiterTypes returns the limiter types cluster policy declares that
+// will not be built. See ScalingPolicy.UnenforcedLimiterTypes for why a mixed
+// list silently loses one. Reads the same source as EffectiveLimiterMode, so the
+// two cannot disagree about what is in force.
+// Thread-safe.
+func (c *Config) UnenforcedLimiterTypes() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return ScalingPolicy{Limiters: c.effectiveLimitersLocked()}.UnenforcedLimiterTypes()
+}
+
 // EffectiveQuotaEntries returns the quota entries the quota limiter should
 // enforce, taken from the inline quota entries on the global saturation "default"
 // entry (each deep-copied). Empty when none are declared. Reads the live config,

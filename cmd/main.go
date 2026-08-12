@@ -557,6 +557,19 @@ func main() {
 				"(gpu-inventory or quota) to bound scaling.")
 		}
 
+		// A limiters: list with more than one kind reads as several bounds that all
+		// apply. Only one is built, quota wins, and the physical one is dropped —
+		// so the fleet is bounded by the declared allowance while nothing checks
+		// whether the GPUs exist. Said at startup as well as at ConfigMap parse,
+		// because this is where an operator looks to see what is limiting them.
+		if dropped := cfg.UnenforcedLimiterTypes(); len(dropped) > 0 {
+			setupLog.Info("WARNING: declared limiters that are NOT enforced: a quota entry selects the "+
+				"quota limiter, and it is the only one built. Physical GPU capacity is not "+
+				"consulted, so scaling is bounded by the declared allowance alone. Declare one "+
+				"kind, or track issue #1003 for bounding by min(physical, quota)",
+				"notEnforced", dropped, "enforcing", cfg.EffectiveLimiterMode())
+		}
+
 		// Quota mode means "no physical-capacity discovery" — including the
 		// inventory-collection call in the saturation engine. We honor that
 		// at the call site (see steadystate.shouldCollectClusterInventory),

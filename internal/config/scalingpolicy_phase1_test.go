@@ -302,6 +302,66 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 		Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeNone))
 	})
 
+	// A mixed list is not a chain. Quota wins and the physical limiter is never
+	// built, so a policy that reads as "bounded by real GPUs as well" consults no
+	// physical capacity at all. Bounding by min(physical, quota) is #1003; until
+	// then the only defence is that the drop is reported rather than silent.
+	Describe("a mixed limiters list", func() {
+		mixed := func() *Config {
+			c := &Config{}
+			c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
+				"default": {Limiters: []QuotaLimiterConfig{
+					{Type: "gpu-inventory"},
+					{Type: "quota", Name: "cluster-h100", Scope: QuotaScopeCluster,
+						ClusterQuotas: map[string]int{"H100": 32}},
+				}},
+			})
+			return c
+		}
+
+		It("builds the quota limiter only", func() {
+			Expect(mixed().EffectiveLimiterMode()).To(Equal(LimiterTypeQuota))
+		})
+
+		It("reports the physical limiter as not enforced", func() {
+			Expect(mixed().UnenforcedLimiterTypes()).To(Equal([]string{"gpu-inventory"}))
+		})
+
+		It("reports nothing when every declared limiter is enforced", func() {
+			c := &Config{}
+			c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
+				"default": {Limiters: []QuotaLimiterConfig{{Type: "gpu-inventory"}}},
+			})
+			Expect(c.UnenforcedLimiterTypes()).To(BeEmpty())
+
+			c = &Config{}
+			c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{
+				"default": {Limiters: []QuotaLimiterConfig{
+					{Type: "quota", Name: "a", Scope: QuotaScopeCluster,
+						ClusterQuotas: map[string]int{"H100": 1}},
+					{Type: "quota", Name: "b", Scope: QuotaScopeCluster,
+						ClusterQuotas: map[string]int{"A100": 1}},
+				}},
+			})
+			Expect(c.UnenforcedLimiterTypes()).To(BeEmpty(),
+				"two quota entries are both built — a CompositeLimiter — so neither is dropped")
+		})
+
+		It("de-duplicates and keeps declaration order", func() {
+			p := ScalingPolicy{Limiters: []QuotaLimiterConfig{
+				{Type: "inventory"},
+				{Type: "gpu-inventory"},
+				{Type: "inventory"},
+				{Type: "quota", Name: "a", Scope: QuotaScopeCluster},
+			}}
+			Expect(p.UnenforcedLimiterTypes()).To(Equal([]string{"inventory", "gpu-inventory"}))
+		})
+
+		It("reports nothing for a policy with no limiters at all", func() {
+			Expect(ScalingPolicy{}.UnenforcedLimiterTypes()).To(BeEmpty())
+		})
+	})
+
 	It("ignores limiters declared on a non-default (per-model) entry", func() {
 		c := &Config{}
 		c.UpdateScalingPolicyConfig(map[string]ScalingPolicy{

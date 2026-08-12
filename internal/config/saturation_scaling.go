@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // DefaultPriority is the default model priority multiplier.
 // Higher priority → preferential GPU allocation in fair-share.
@@ -568,6 +571,47 @@ func (c *ScalingPolicy) validateLimiters() error {
 		}
 	}
 	return nil
+}
+
+// UnenforcedLimiterTypes returns the limiter types this policy declares that
+// will NOT be built, in declaration order and de-duplicated. Empty when
+// everything declared is enforced.
+//
+// The limiters: list reads like a set of bounds that all apply. It is not:
+// Config.EffectiveLimiterMode collapses it to ONE mode — quota if any entry is
+// quota — and NewLimiterFromConfig builds only that. So a policy declaring both
+// quota and gpu-inventory gets the quota caps and NO physical limiter at all,
+// which is the dangerous direction: the operator reads the config as "bounded by
+// real GPUs as well" while nothing consults physical capacity, and a
+// scale-from-zero wake can be placed onto an accelerator that is already full.
+//
+// Bounding by min(physical, quota) is issue #1003. Until that exists, the drop
+// has to be visible — validateLimiters deliberately does not reject the
+// combination, because refusing a config that used to install is a worse failure
+// than one that says what it is doing.
+func (c ScalingPolicy) UnenforcedLimiterTypes() []string {
+	if len(c.Limiters) == 0 {
+		return nil
+	}
+	hasQuota := false
+	for _, l := range c.Limiters {
+		if l.Type == string(LimiterTypeQuota) {
+			hasQuota = true
+			break
+		}
+	}
+	if !hasQuota {
+		// Every entry is a physical one, and the inventory limiter is built.
+		return nil
+	}
+	var dropped []string
+	for _, l := range c.Limiters {
+		if l.Type == string(LimiterTypeQuota) || slices.Contains(dropped, l.Type) {
+			continue
+		}
+		dropped = append(dropped, l.Type)
+	}
+	return dropped
 }
 
 // AnalyzerScore returns the AnalyzerScoreConfig.Score for the named analyzer,

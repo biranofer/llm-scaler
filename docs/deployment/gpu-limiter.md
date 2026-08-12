@@ -16,6 +16,17 @@ or later, by adding a `limiters:` entry to the `default` entry of the
 scaling-policy ConfigMap — applied live, no restart. **Read the next section
 first.**
 
+> **Declare one kind, not both.** `limiters:` is a list, and it reads like a set
+> of bounds that all apply. It is not. One limiter is built, and a quota entry
+> wins: declaring `quota` alongside `gpu-inventory` gives you the declared caps
+> and **no physical limiter at all**, so nothing checks whether the GPUs exist.
+> That is the dangerous direction — the config says "bounded by real GPUs too"
+> and a scale-from-zero wake can still be placed onto a full accelerator.
+>
+> WVA says so rather than dropping it silently: the ConfigMap parse and the
+> startup log both name what is not enforced (`notEnforced`). Bounding by
+> `min(physical, quota)` is [issue #1003](https://github.com/llm-d/llm-d-workload-variant-autoscaler/issues/1003).
+
 ## Who is allowed to change the bound
 
 By default the limiter is read from the scaling-policy ConfigMap in the
