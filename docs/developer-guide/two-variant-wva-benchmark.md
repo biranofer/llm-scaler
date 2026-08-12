@@ -19,8 +19,8 @@ up after those.
 ## Topology
 
 One `InferencePool` and one EPP front two `vLLM` `Deployment`s of the same
-model. Each `Deployment` has its own `VariantAutoscaling` (VA) and `HPA`, but
-both VAs share the same `spec.modelID` so the WVA saturation engine groups
+model. Each `Deployment` has its own KEDA `ScaledObject`, and both carry the
+same `modelID` in their trigger metadata, so the WVA saturation engine groups
 them and applies cost-weighted scaling.
 
 ```
@@ -33,12 +33,33 @@ them and applies cost-weighted scaling.
      +---------+--------+        +-----------+-----+
      | vLLM decode      |        | vLLM decode     |
      | primary (cost 10)|        | secondary (5)   |
-     | VA + HPA         |        | VA + HPA        |
+     | ScaledObject     |        | ScaledObject    |
      +------------------+        +-----------------+
                    ^                       ^
-                   +-------- WVA ----------+
-                              controller
+                   +--- KEDA ---- WVA -----+
+                              external scaler
 ```
+
+### The ScaledObject IS the registration
+
+WVA does not watch or list anything to find these workloads. It learns a
+variant exists from the KEDA call the `ScaledObject`'s trigger causes, and
+takes the variant's identity from that trigger's metadata:
+
+| key | meaning |
+|---|---|
+| `modelID` | required; groups the two variants under one model |
+| `variantCost` | price; omitted means `10.0`, which is the primary's price here |
+| `variantName` | optional scale-target override — **not** set on either variant here |
+| `scalingPolicy` | optional named policy tier |
+
+Two consequences worth knowing before debugging a run:
+
+- A variant with no `ScaledObject` is invisible. Not degraded — absent. WVA
+  reports nothing about it because it has never been told it exists.
+- A `ScaledObject` scaled by a `prometheus` trigger never contacts WVA at all,
+  so it is equally invisible, and the deadlock is silent: nothing errors, the
+  workload simply sits at its replica count.
 
 ### Label strategy (how both Deployments share one pool)
 
@@ -61,45 +82,50 @@ The secondary `Deployment` created by `add_variant.py`:
 - **Adds** `wva.llmd.ai/variant: <suffix>` (default `v2`) as the secondary
   `Deployment`'s own selector discriminator.
 
-Both VAs additionally carry a `llm-d.ai/variant: <va-name>` pod label so
-Prometheus can map each scrape target back to its VA (see "Required
-relabeling" below).
+No `llm-d.ai/variant` pod label is involved. It used to be documented as
+required; no code reads it. The collector keys metrics on the model, and
+per-variant WVA gauges are labelled `variant_name` — whose value is the
+**ScaledObject's** name, which is why the secondary's `ScaledObject` keeps the
+`-v2` suffix (`dump_wva_full_timeseries.py` buckets on it).
 
 ---
 
 ## Required pieces
 
-The benchmark only works end-to-end when **all** of these are in place. The
-scenario yaml at [`hack/benchmark/scenarios/guides/two-variant-wva.yaml`](../../hack/benchmark/scenarios/guides/two-variant-wva.yaml)
-pins versions that satisfy these requirements out of the box.
+The benchmark only works end-to-end when **all** of these are in place.
 
-### 1. WVA chart and controller image at v0.8.0-rc5 or newer
+### 1. WVA built from this working tree
 
-The published chart and controller image must include:
+`make benchmark-standup` installs WVA from this repo's `deploy/` — but with
+`IMG` pointing at whatever you give it, defaulting to the published
+`ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest`. **Pass `IMG=<your
+build>` or you are benchmarking a registry image, not your changes.**
 
-- The `vllm-servicemonitor.yaml` template (propagates the per-pod
-  `llm-d.ai/variant` label into scraped metrics as `llm_d_ai_variant`, gated
-  by `wva.vllmService.enabled: true`). Without this, every reconcile prints
-  `No saturation metrics available for model, skipping analysis` and the
-  controller cannot scale.
-- The `cache_config_info` collector fixes (PR #1198) so the V2 analyzer
-  groups per-replica KV capacity correctly when more than one model lives
-  in the cluster.
+```bash
+make docker-build docker-push IMG=quay.io/<you>/wva:<tag>
+make benchmark-standup ... IMG=quay.io/<you>/wva:<tag>
+```
 
-Both landed in `v0.8.0-rc1`. The scenario yaml pins both `chartVersions.wva`
-and `wva.image.tag` to `v0.8.0-rc5`. `v0.7.0` and earlier are missing one or
-both fixes — do not downgrade.
+This is the failure the current wiring exists to prevent: the scenario used to
+carry a `wva:` block pinning chart and image to `v0.8.0-rc5`, so every run
+measured a released binary while appearing to test the branch.
 
-### 2. Saturation V2 enabled via configmap
+### 2. KEDA on the cluster
 
-Saturation V2 is not the default in upstream (the default was reverted in
-PR #1286). The benchmark flow enables it via [`make benchmark-enable-v2-saturation`](#step-3--enable-saturation-v2)
-which applies the ConfigMap at
+The `ScaledObject` is the registration, so no KEDA means no discovery and no
+scaling. `deploy/install.sh` installs KEDA if the cluster has none, and leaves
+a platform-managed one alone.
+
+### 3. Scaling policy for the run
+
+The shipped `wva-scaling-policy-config` already selects the V2 (token/capacity)
+analyzer. [`make benchmark-enable-v2-saturation`](#step-3--set-the-scaling-policy)
+overwrites it with the benchmark's thresholds at
 [`hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml`](../../hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml)
-and restarts the controller. Each reconcile should then print
-`Processing model (V2)` in the controller log.
+and restarts the controller. Run it to pin the thresholds a comparison depends
+on, not to turn V2 on.
 
-### 3. Newer vLLM image
+### 4. Newer vLLM image
 
 The scenario yaml pins `docker.io/vllm/vllm-openai:v0.14.0`. This is required
 because the default llm-d ships `v0.9.2` which does **not** emit
@@ -124,44 +150,33 @@ make benchmark-install
 Idempotent — re-running checks out the pinned `BENCHMARK_REPO_REF` and
 re-installs the CLI.
 
-### Cluster prerequisites — check before Step 1
+### No prometheus-adapter
 
-The standup installs `prometheus-adapter` via Helm into
-`openshift-user-workload-monitoring`. On clusters where `prometheus-adapter`
-is **already** running but **not** as a Helm release (the new
-Kustomize-based WVA install does this, as do plain `kubectl apply`
-deployments), the install fails because the cluster-scoped APIService
-`v1beta1.external.metrics.k8s.io` is owned by the non-Helm install.
+`BENCHMARK_SKIP_PROMETHEUS_ADAPTER` now defaults to `true`, and should stay
+that way: prometheus-adapter and KEDA both register the
+`v1beta1.external.metrics.k8s.io` APIService, and a cluster has exactly one.
+Installing it takes that group away from the metrics server every
+`ScaledObject`'s HPA queries. It was here to serve `wva_desired_replicas` to
+hand-written HPAs — the path the KEDA external scaler replaced.
 
-Run all three of these checks. If the answers match what's shown, you must
-pass `BENCHMARK_SKIP_PROMETHEUS_ADAPTER=true` to **every** `benchmark-standup`
-invocation in Step 1:
-
-```bash
-helm list -A | grep prometheus-adapter                    # → empty
-kubectl get apiservice v1beta1.external.metrics.k8s.io    # → exists
-kubectl get clusterrole prometheus-adapter-resource-reader # → NotFound
-```
-
-The flag creates a stub `prometheus-adapter-resource-reader` ClusterRole
-annotated with Helm release metadata, which makes `llmdbenchmark`'s
-existing-PA probe pass and the conflicting Helm install is skipped. The
-cluster's existing PA continues to serve `wva_desired_replicas` to your
-HPAs. Override the release-namespace annotation with
-`WVA_MONITORING_NAMESPACE=<ns>` if your PA lives somewhere other than
-`workload-variant-autoscaler-monitoring`.
-
-If all three checks return the *opposite* (no APIService, ClusterRole
-exists with Helm annotations, or a Helm release shows up), skip the flag —
-the standup will install or upgrade PA cleanly.
+The flag stubs a `prometheus-adapter-resource-reader` ClusterRole annotated
+with Helm release metadata, which makes `llmdbenchmark`'s existing-PA probe
+pass so its install is skipped. Override the release-namespace annotation with
+`WVA_MONITORING_NAMESPACE=<ns>` if you have a PA elsewhere.
 
 ### Step 1 — Stand up the primary variant
 
 ```bash
 make benchmark-standup BENCHMARK_NAMESPACE=$NS \
                        BENCHMARK_SPEC=guides/two-variant-wva \
-                       BENCHMARK_MODEL_ID=unsloth/Meta-Llama-3.1-8B-Instruct
+                       BENCHMARK_MODEL_ID=unsloth/Meta-Llama-3.1-8B-Instruct \
+                       IMG=quay.io/<you>/wva:<tag> \
+                       ENVIRONMENT=openshift
 ```
+
+`ENVIRONMENT` picks the install path (`openshift` → `deploy-wva-on-openshift`,
+anything else → `deploy-wva-on-k8s`). `IMG` decides what is measured — see
+[Required pieces #1](#1-wva-built-from-this-working-tree).
 
 > **Model requirement — must be chat-template-bearing.** Use an
 > instruct/chat-tuned model (the scenario default is
@@ -175,15 +190,32 @@ make benchmark-standup BENCHMARK_NAMESPACE=$NS \
 `benchmark-standup` copies two files into the `llm-d-benchmark` checkout:
 
 - [`hack/benchmark/scenarios/guides/two-variant-wva.yaml`](../../hack/benchmark/scenarios/guides/two-variant-wva.yaml)
-  — the scenario values (variant costs, replicas, image pins, HPA behavior).
+  — the scenario values (replicas, image pins, decode shape).
 - [`hack/benchmark/scenarios/guides/two-variant-wva.yaml.j2`](../../hack/benchmark/scenarios/guides/two-variant-wva.yaml.j2)
   — the specification wrapper that the `--spec` flag actually loads.
 
-Standup then installs the `llm-d-infra`, `inferencepool-gaie`,
-`modelservice`, and `workload-variant-autoscaler` Helm releases for the
-chosen model with `variantCost: "10.0"`, `min/maxReplicas: 1/10`, and primary
-`tensor: 2`. `BENCHMARK_MODEL_ID` is required — without it the standup
-defaults to a placeholder dummy model.
+Standup then installs the `llm-d-infra`, `inferencepool-gaie` and
+`modelservice` Helm releases for the chosen model with primary `tensor: 2`.
+`BENCHMARK_MODEL_ID` is required — without it the standup defaults to a
+placeholder dummy model.
+
+When that returns, the target installs WVA itself, in two steps you can also
+run separately as `make benchmark-deploy-wva`:
+
+1. `deploy-wva-on-{openshift,k8s}` with `WVA_NS=$NS WVA_SCOPE=namespace` — the
+   controller lands *in the benchmark namespace* and manages only it.
+2. `scaledobjects-apply` — discovers the model servers in that namespace and
+   creates one `ScaledObject` each, at `BENCHMARK_KEDA_MIN_REPLICAS` /
+   `BENCHMARK_KEDA_MAX_REPLICAS` (default 1/10) and the default
+   `variantCost` of 10.0.
+
+Check that the primary registered before going further — an empty result here
+is the whole benchmark silently measuring nothing:
+
+```bash
+kubectl get scaledobject -n $NS
+kubectl logs -n $NS deploy/wva-controller-manager | grep -i "scaling-decision"
+```
 
 ### Step 2 — Add the secondary variant
 
@@ -193,51 +225,54 @@ make benchmark-add-variant BENCHMARK_NAMESPACE=$NS
 
 This invokes `hack/benchmark/add_variant.py` against the variant config at
 `hack/benchmark/scenarios/guides/variants/v2-tp1-cheaper.yaml` (default —
-override with `VARIANT_CONFIG=<path>`), creating a secondary `Deployment`,
-`VariantAutoscaling`, and `HPA` named with the `v2` suffix and
-`variantCost: "5.0"`.
+override with `VARIANT_CONFIG=<path>`), creating a secondary `Deployment` and
+a `ScaledObject` cloned from the primary's, both named with the `v2` suffix,
+with `variantCost: "5.0"` in the trigger metadata.
 
-Verify both VAs and HPAs are present:
+The clone inherits the scaler address, polling interval, cooldown and
+`advanced` behaviour the standup chose, and changes only four things: the
+name, what it scales, its replica bounds, and its price. An inherited
+`variantName` is dropped — it would point the secondary's registry entry at
+the primary's `Deployment`.
+
+Verify both variants registered:
 
 ```bash
-kubectl get va,hpa -n $NS
+kubectl get scaledobject,hpa -n $NS
 kubectl get pods -n $NS -l 'llm-d.ai/inferenceServing=true,llm-d.ai/model=unsloth--6b24a594-instruct'
 ```
 
-### Step 3 — Enable saturation V2
+The `hpa` rows are KEDA's — it creates one per `ScaledObject`. Nothing in this
+flow writes an HPA by hand.
 
-Saturation V2 is not the default upstream. Apply the ConfigMap and restart
-the controller:
+### Step 3 — Set the scaling policy
+
+The shipped config already selects V2. Apply the benchmark's thresholds and
+restart the controller so a comparison is not run against whatever the install
+defaults happen to be:
 
 ```bash
 make benchmark-enable-v2-saturation BENCHMARK_NAMESPACE=$NS
 ```
 
-Confirm the analyzer switched:
+Confirm the analyzer in use:
 
 ```bash
 kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \
-  --tail=200 | grep "Processing model"
+  --tail=200 | grep -i "analyzer-result"
 ```
 
-You should see `Processing model (V2)` lines — one per model per cycle.
+### Step 4 — (Optional) Tune the scale-up envelope
 
-### Step 4 — (Optional) Tune HPA scale-up
-
-The shipped HPA matches the canonical WVA install samples
-(`config/samples/hpa/...`): `scaleUp.stabilizationWindowSeconds: 0`
-(immediate — the HPA follows WVA's optimizer decisions without damping)
-and `scaleDown.stabilizationWindowSeconds: 120` (windowed, to avoid
-flapping when a brief lull arrives). No patch is needed for responsive
-scaling.
-
-If you instead want to *damp* scale-up (e.g. to study the optimizer under
-a slower actuator), patch the window up:
+Damping now lives on the `ScaledObject`, not on a hand-written HPA — KEDA
+renders `spec.advanced.horizontalPodAutoscalerConfig.behavior` into the HPA it
+owns, and patching that HPA directly is undone the next time KEDA reconciles.
 
 ```bash
-for hpa in unsloth--6b24a594-instruct-decode unsloth--6b24a594-instruct-decode-v2; do
-  kubectl patch hpa -n $NS "$hpa" --type=json \
-    -p '[{"op":"replace","path":"/spec/behavior/scaleUp/stabilizationWindowSeconds","value":120}]'
+for so in $(kubectl get scaledobject -n $NS -o name); do
+  kubectl patch -n $NS "$so" --type=merge -p '{"spec":{"advanced":
+    {"horizontalPodAutoscalerConfig":{"behavior":{"scaleUp":
+    {"stabilizationWindowSeconds":120}}}}}}'
 done
 ```
 
@@ -352,12 +387,16 @@ make benchmark-teardown BENCHMARK_NAMESPACE=$NS \
 `guides/workload-autoscaling` scenario, which the CLI can't find for
 two-variant teardown).
 
-This removes the four Helm releases and the secondary variant. The
-secondary `Deployment` is created by `benchmark-add-variant` outside any
+Teardown removes WVA **first**, then the Helm releases: a namespace-scoped
+install still creates cluster-scoped RBAC, which deleting the namespace would
+leave behind. Pass the same `ENVIRONMENT` you installed with.
+
+The secondary `Deployment` is created by `benchmark-add-variant` outside any
 Helm release; the llm-d-benchmark teardown explicitly deletes orphaned
-Deployments in the namespace, and `add_variant.py` sets `ownerReferences`
-on the secondary `VariantAutoscaling` and `HPA` pointing at the secondary
-`Deployment` so they cascade-delete with it.
+Deployments in the namespace, and `add_variant.py` sets an `ownerReference` on
+the secondary `ScaledObject` pointing at that `Deployment` so it cascades with
+it. That matters beyond tidiness — an orphaned `ScaledObject` keeps
+registering a workload that no longer exists.
 
 ---
 
@@ -372,20 +411,23 @@ priority:
    `maxReplicas` cannot absorb demand alone.
 3. On scale-down, the less efficient variant shrinking first.
 
-Sample line (taken from a real run):
+Two structured lines carry it. `analyzer-result`, once per model per cycle
+(`steadystate/engine_v2.go`), with short keys — `supply`, `demand`, `util`,
+`rc` (required capacity), `sc` (spare capacity) — and a `variants` list:
 
 ```
-saturation/engine_v2.go:65   V2 saturation analysis completed
-  modelID=unsloth/Meta-Llama-3.1-8B-Instruct totalSupply=2503400 totalDemand=2229945
-  utilization=0.89 requiredCapacity=120065 spareCapacity=0
+steadystate/engine_v2.go:995  analyzer-result
+  {"modelID":"unsloth/Meta-Llama-3.1-8B-Instruct","analyzer":"saturation",
+   "supply":2503400,"demand":2229945,"util":0.89,"rc":120065,"sc":0,...}
 ```
 
-`totalSupply` should track the realized capacity (sum of `cache_config_info`
-across ready pods) — typical values for Llama-3.1-8B / H100 are ~315k tokens
-per pod, so ~3M tokens at 10+0 replicas. If you see numbers near 13k, the
-collector fell back to the per-step batch budget — verify the chart and
-controller image are both at `v0.8.0-rc5` or newer
-([Required pieces #1](#1-wva-chart-and-controller-image-at-v080-rc5-or-newer)).
+and `scaling-decision`, which names each variant and its current/target count.
+
+`supply` should track the realized capacity (sum of `cache_config_info` across
+ready pods) — typical values for Llama-3.1-8B / H100 are ~315k tokens per pod,
+so ~3M tokens at 10+0 replicas. Numbers near 13k mean the collector fell back
+to the per-step batch budget: check the model server emits
+`vllm:cache_config_info` ([Required pieces #4](#4-newer-vllm-image)).
 
 ---
 
@@ -393,9 +435,10 @@ controller image are both at `v0.8.0-rc5` or newer
 
 | Path | Role |
 |---|---|
-| `hack/benchmark/scenarios/guides/two-variant-wva.yaml` | Scenario / values for primary stack (cost 10, min/max 1/10, TP=2, HPA 100% per 15 s, vllmService enabled). Copied into the `llm-d-benchmark` checkout automatically by `make benchmark-standup`. |
+| `hack/benchmark/scenarios/guides/two-variant-wva.yaml` | Scenario / values for the primary stack (decode shape, TP=2, image pins). Installs **no** autoscaler: `wva.enabled: false`. Copied into the `llm-d-benchmark` checkout automatically by `make benchmark-standup`. |
 | `hack/benchmark/scenarios/guides/variants/v2-tp1-cheaper.yaml` | Default secondary-variant config (suffix `v2`, cost 5.0, TP=1) consumed by `make benchmark-add-variant`. Override path with `VARIANT_CONFIG=<path>`. |
-| `hack/benchmark/add_variant.py` | Creates secondary `Deployment`/`VA`/`HPA` from primary, with the kebab-label trick. |
+| `hack/benchmark/add_variant.py` | Creates the secondary `Deployment` and clones the primary's `ScaledObject` onto it, with the kebab-label trick. |
+| `deploy/lib/scaledobject.sh` | Discovers llm-d model servers and renders their `ScaledObject`s. Driven by `make scaledobjects-apply`, which `benchmark-deploy-wva` calls. |
 | `hack/benchmark/post_run_analyze.sh` | Wraps the five post-run dump+plot steps. Must run promptly after `benchmark-run` — the WVA controller log buffer rotates. Usage: `bash hack/benchmark/post_run_analyze.sh <results-dir> [namespace]`. |
 | `hack/benchmark/dump_wva_target_timeseries.py` | Extracts WVA controller decisions and V2 saturation analysis numbers (supply, demand, utilization, required/spare capacity) from pod logs into `metrics/processed/wva_target_timeseries.json`. |
 | `hack/benchmark/dump_capacity_demand_estimate.py` | Computes per-variant capacity/demand estimate from raw vLLM/EPP scrapes into `metrics/processed/capacity_demand_estimate.json`. |
@@ -403,7 +446,7 @@ controller image are both at `v0.8.0-rc5` or newer
 | `hack/benchmark/dump_wva_full_timeseries.py` | Extracts WVA Prometheus metrics timeseries into `metrics/processed/wva_metrics_timeseries.json`. |
 | `hack/benchmark/postprocess.py` | Generates a markdown results table (matching `docs/benchmark.md`) from a results directory. Called automatically by `make benchmark-report`. Pass `--secondary-suffix v2` for per-variant replica rows and weighted cost. |
 | `hack/benchmark/plot_two_variant_pipeline.py` | Generates the full-pipeline PNG (up to 7 panels: replicas, capacity/demand, KV cache, requests running/waiting, EPP queue, gateway throughput, WVA saturation utilization). Called automatically by `make benchmark-plot-two-variant`. |
-| `hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml` | ConfigMap setting `analyzerName: saturation` to select V2. Applied by `make benchmark-enable-v2-saturation`. |
+| `hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml` | The `wva-scaling-policy-config` ConfigMap for the run: `analyzerName: saturation` plus the thresholds. Applied by `make benchmark-enable-v2-saturation`. |
 | `test/benchmark/scenarios/prefill_heavy.yaml.in` | Default workload for `make benchmark-run`. Edit `rate`/`max_seconds` here — `make benchmark-run` copies this file at run-time, overriding any stale defaults in the benchmark repo. |
 
 ---
@@ -412,27 +455,33 @@ controller image are both at `v0.8.0-rc5` or newer
 
 | Knob | Where | Effect |
 |---|---|---|
-| `scenario[0].wva.variantAutoscaling.variantCost` | `two-variant-wva.yaml` | Primary cost (default 10) |
+| `IMG` | `make benchmark-standup` / `benchmark-deploy-wva` | **What is measured.** Defaults to the published `:latest`, not your build |
+| primary cost | trigger metadata on the primary's `ScaledObject` | Omitted = 10.0. `kubectl patch` it, or supply `WVA_DEFAULT_SO_TEMPLATE=<file>` to `scaledobjects-apply` |
 | `variantCost` field | `variants/v2-tp1-cheaper.yaml` (or other `VARIANT_CONFIG`) | Secondary cost (default 5) |
-| `suffix` field | variant config yaml | Secondary `Deployment`/VA/HPA name suffix (default `v2`) |
-| `minReplicas` / `maxReplicas` | scenario yaml & variant config | Per-variant scaling bounds |
-| `HPA spec.behavior.scaleUp.stabilizationWindowSeconds` | `two-variant-wva.yaml` (default `0`) or live patch | 0 = follow WVA immediately (shipped default, matches install samples); raise to damp |
+| `suffix` field | variant config yaml | Secondary `Deployment`/`ScaledObject` name suffix (default `v2`; keep the `-v2` ending — the timeseries dump buckets on it) |
+| `BENCHMARK_KEDA_MIN_REPLICAS` / `_MAX_REPLICAS` | `make benchmark-standup` | Primary's bounds (default 1/10) |
+| `minReplicas` / `maxReplicas` | variant config | Secondary's bounds |
+| `spec.advanced.horizontalPodAutoscalerConfig.behavior` | the `ScaledObject` | Scale-up/down damping. Patching KEDA's HPA directly is reverted on its next reconcile |
 | `rate`, `max_seconds`, `prompt_tokens`, `output_tokens` | `prefill_heavy.yaml.in` | Workload shape |
 
 ---
 
 ## Common failure modes
 
-- **`No saturation metrics available for model, skipping analysis` on every reconcile**
-  → Variant label not propagated. Verify the chart pinned in the scenario
-  yaml is `v0.8.0-rc5` or newer
-  ([Required pieces #1](#1-wva-chart-and-controller-image-at-v080-rc5-or-newer)).
+- **Nothing in the controller log mentions the variant at all**
+  → It has no `ScaledObject`, or its `ScaledObject` has no
+  `external`/`external-push` trigger. WVA is never called about it and so has
+  nothing to say. `kubectl get scaledobject -n $NS -o yaml` and check the
+  trigger type; `make scaledobjects-apply WVA_NS=$NS WVA_DEFAULT_SO_NS=$NS`
+  creates the missing ones.
+- **`Default ScaledObjects: 0 created` / `No llm-d model servers found`**
+  → The discovery scan looks for `llm-d.ai/inferenceServing=true` on the pod
+  template. If the model servers are up and labelled and it still finds
+  nothing, check the namespace it scanned: a namespace-scoped install scans
+  only its own, which is why the benchmark installs WVA *into* `$NS`.
 - **Both variants scale to `maxReplicas` immediately under modest load**
-  → V2 read fallback capacity, not real KV. Verify the controller image
-  pinned in the scenario yaml is `v0.8.0-rc5` or newer (carries the
-  `cache_config_info` collector fixes from PR #1198), and that the model
-  server image emits `vllm:cache_config_info`
-  ([Required pieces #3](#3-newer-vllm-image)).
+  → The analyzer read fallback capacity, not real KV. Check the model server
+  image emits `vllm:cache_config_info` ([Required pieces #4](#4-newer-vllm-image)).
 - **Primary scales up while the secondary stays at one replica**
   → Expected at the shipped 10/5 pricing: the TP=2 primary is the more
   efficient variant (cost ratio == GPU/TP ratio), so the optimizer scales it
@@ -446,7 +495,10 @@ controller image are both at `v0.8.0-rc5` or newer
   to flush it ([Step 5](#step-5--run-the-benchmark)).
 - **Standup fails at `[03] workload_monitoring` with**
   `APIService "v1beta1.external.metrics.k8s.io" exists and cannot be imported into the current release`
-  → You skipped the [Cluster prerequisites](#cluster-prerequisites--check-before-step-1)
-  check. Re-run standup with `BENCHMARK_SKIP_PROMETHEUS_ADAPTER=true`. The
-  proper long-term fix is migrating the scenario yaml to the Kustomize-based
-  WVA install path (tracked as follow-up to the Helm → Kustomize migration).
+  → Something set `BENCHMARK_SKIP_PROMETHEUS_ADAPTER=false`. It defaults to
+  `true` and should stay there: that APIService belongs to KEDA
+  ([No prometheus-adapter](#no-prometheus-adapter)).
+- **The results look like a released build, because they are**
+  → `IMG` was left at its default. There is no way to tell after the fact from
+  the metrics alone; the standup prints the image it installs, so check the
+  standup log ([Required pieces #1](#1-wva-built-from-this-working-tree)).
