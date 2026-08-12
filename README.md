@@ -45,7 +45,10 @@ it is running and idle.
 | Then | |
 | --- | --- |
 | Full install guide | [deploy/README.md](deploy/README.md) |
+| Installing WVA in my namespace | [install-in-namespace.md](docs/deployment/install-in-namespace.md) |
+| Installing one WVA cluster-wide | [install-cluster-wide.md](docs/deployment/install-cluster-wide.md) |
 | Adding WVA to a running llm-d | [existing-cluster.md](docs/deployment/existing-cluster.md) |
+| Bounding GPU usage (admin) | [admin-gpu-bounding.md](docs/deployment/admin-gpu-bounding.md) |
 | Running it day to day | [operations.md](docs/deployment/operations.md) |
 
 ## Documentation
@@ -101,7 +104,7 @@ spec:
 `modelID` is the one required field. The accelerator, the role, GPUs per replica
 and the InferencePool are all **derived** from the workload itself, so they cannot
 drift from reality. See
-[docs/deployment/new-cluster.md](docs/deployment/new-cluster.md#what-the-controller-needs-from-a-workload).
+[docs/deployment/install-cluster-wide.md](docs/deployment/install-cluster-wide.md#what-the-controller-needs-from-a-workload).
 
 More examples in [config/samples/keda/](config/samples/keda/).
 

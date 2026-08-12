@@ -5,7 +5,7 @@ installs the controller and nothing else — no Prometheus, no llm-d namespace, 
 model servers.
 
 > Part of the [WVA deployment guide](../../deploy/README.md). Building a cluster
-> from nothing instead? See [Installing on a new cluster](new-cluster.md).
+> from nothing instead? See [Installing on a new cluster](install-cluster-wide.md).
 
 ## What WVA needs from the cluster you have
 
@@ -22,7 +22,7 @@ Three things, and the installer cannot guess any of them:
 One cluster-scoped controller, or one per namespace — never both, and the install
 refuses a combination that would leave two controllers deciding for the same
 workloads. See
-[How many WVAs a cluster has](new-cluster.md#how-many-wvas-a-cluster-has).
+[How many WVAs a cluster has](install-cluster-wide.md#how-many-wvas-a-cluster-has).
 
 ## Install
 

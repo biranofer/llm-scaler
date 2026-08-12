@@ -1,9 +1,13 @@
-# Installing on a new cluster
+# Install one WVA for the whole cluster
 
-The full stack: WVA, Prometheus, KEDA, and the namespaces to run llm-d in. Use this
-when you are building a cluster up from nothing, or standing up a test environment.
+**For a cluster admin.** One controller manages every namespace. This is the
+simplest thing that works, and the right choice when one team runs the cluster.
 
 > Part of the [WVA deployment guide](../../deploy/README.md).
+>
+> **Want WVA for one namespace instead?** That is the common path and it does not
+> need you to be an admin for more than one command — see
+> [Install WVA in your namespace](install-in-namespace.md).
 >
 > **Already running llm-d?** Do not use this page — it deploys a Prometheus and an
 > llm-d namespace you do not want. See
@@ -100,74 +104,9 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 
 #### If you are a namespace admin, not a cluster admin
 
-**Have an admin run the prerequisites once, then it is yours.** This is the
-supported shape on both platforms, and it is what makes the OpenShift case work
-at all:
-
-```bash
-# your cluster admin, once for your namespace:
-make setup-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
-
-# you, now and for every later upgrade — no cluster-scoped rights needed:
-make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace> IMG=<image>
-```
-
-The admin phase creates what you cannot: the namespace, the cluster-scoped RBAC,
-and the ServiceMonitor — the stock `admin` ClusterRole does not grant
-`monitoring.coreos.com`, which is the one denial that otherwise stops a
-"self-service" install on a real cluster. The controller phase refuses, naming
-every missing object, if that has not happened.
-
-**If no admin is available at all**, add
-`config/components/unauthenticated-metrics` to the namespace-scoped Kubernetes
-overlay and apply it by hand. That renders an overlay with no cluster-scoped
-object in it, and gives up the three capabilities below. There is no such shape
-on OpenShift: reading the platform's Thanos requires a cluster-scoped binding.
-
-Run `./deploy/install.sh --check` first either way. It renders the overlay your
-install would apply and asks whether you may create each kind in it, rather than
-assuming from the scope name.
-
-Three capabilities need cluster-scoped APIs, and are what that trade gives up:
-
-| not available | why |
-| --- | --- |
-| the `gpu-inventory` limiter | discovers GPUs from **Nodes**, which are cluster-scoped — no Role can reach them |
-| authenticated metrics | the metrics filter issues **TokenReview**/**SubjectAccessReview** |
-| EPP metrics | needs `nonResourceURLs: /metrics`, which a Role cannot express |
-
-Metrics are still scraped, over plain HTTP inside the cluster network, and
-scale-from-zero still works — it falls back to the queue signal it reads from
-Prometheus.
-
-**Your limits are still set by the cluster, not by you.** WVA reads limiters and
-quotas from a namespace your admin controls; see
-[the GPU limiter](gpu-limiter.md#who-is-allowed-to-change-the-bound). If your admin
-has declared a `gpu-inventory` limiter, this install will not become ready until
-they also grant the node read — that is deliberate, because the alternative is a
-controller that silently never scales anything up.
-
-**What to ask an admin for, if you want more.** Either of these gives you the
-limiter and authenticated metrics back:
-
-```bash
-# the prereqs for your namespace, after which the controller is yours to
-# install and upgrade
-make setup-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
-
-# or they run the controller outside your namespace and point it at yours, so
-# the Deployment that bounds you is not one you can edit
-make setup-prereqs-namespace-on-k8s WVA_NS=wva-<your-namespace>
-make deploy-wva-namespace-on-k8s \
-  WVA_NS=wva-<your-namespace> WVA_WATCH_NS=<your-namespace>
-```
-
-Also required either way, and not yours to install: **KEDA**, **Prometheus**, and
-the Gateway API / GAIE **CRDs**. CRDs are cluster-scoped.
-
-Everything after the install is yours: you create the ScaledObjects that register
-your workloads, and you set thresholds and policy tiers. See
-[After the install](operations.md).
+You are on the wrong page, and in a good way: that path is shorter. See
+[Install WVA in your namespace](install-in-namespace.md) — an admin runs one
+command for you, and the controller is yours from then on.
 
 ### How many WVAs a cluster has
 
@@ -212,6 +151,10 @@ surfaces as pods that will not schedule. If your tenants share GPUs, bound each
 install with a quota limiter; if they do not, give each its own GPU nodes.
 
 ### Bounding scaling with a GPU limiter
+
+One command, cluster-wide: `make enable-physical-limiter`. See
+[Bounding GPU usage](admin-gpu-bounding.md).
+
 
 The shipped configuration declares **no limiter**, so a fresh install scales
 unconstrained. Turning one on has a precondition that will silently freeze
@@ -295,12 +238,13 @@ The script accepts both command-line flags and environment variables:
 
 **Command-line flags** (`deploy/install.sh`):
 
-```bash
+```text
 bash install.sh [OPTIONS]
 
 Options:
   -i, --wva-image IMAGE    WVA container image (default: ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest)
   -c, --check              Run the prerequisite and permission checks, then exit
+  -p, --phase PHASE        prereqs | wva | all (default: all) — see deploy/README.md
   -u, --undeploy           Undeploy WVA, monitoring, and scaler (not llm-d)
   -e, --environment ENV    kubernetes | openshift | kind-emulator
   -h, --help               Show help
