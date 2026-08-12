@@ -1,6 +1,12 @@
 # Workload-Variant-Autoscaler Deployment Guide
 
-> **Note:** This guide is developer/operator-oriented and covers deploying WVA from source. If you are an end user looking to install WVA as part of llm-d, see the [llm-d workload-autoscaling guide](https://github.com/llm-d/llm-d/blob/main/guides/workload-autoscaling/README.wva.md) instead.
+> **This guide is authoritative for installing WVA.** llm-d's own
+> [workload-autoscaling guide](https://github.com/llm-d/llm-d/blob/main/guides/workload-autoscaling/README.wva.md)
+> covers where WVA sits in llm-d, but check it against this page before following
+> its install steps: WVA ships **no CustomResourceDefinition** — a workload is
+> registered by a KEDA ScaledObject naming WVA's external scaler — and any
+> instruction to apply a `VariantAutoscaling` CRD, or to point an HPA straight at
+> a WVA metric, predates that.
 
 WVA is a KEDA **external scaler**. It decides how many replicas each llm-d model
 needs and hands that decision to KEDA over gRPC; KEDA owns the HPA and actuates it.

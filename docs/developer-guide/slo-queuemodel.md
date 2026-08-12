@@ -9,15 +9,15 @@ queueing model to predict per-replica capacity — no manual calibration needed.
 
 ## Table of Contents
 
-1. [Activating the Analyzer](#activating)
-2. [ConfigMap Reference](#configmap-reference)
-3. [SLO Targeting](#slo-targeting)
-4. [How It Works](#how-it-works)
-5. [Cold Start Behavior](#cold-start)
-6. [Data Flow](#data-flow)
-7. [Key Files](#key-files)
-8. [Defaults Reference](#defaults-reference)
-9. [Theoretical Background](#theory)
+1. [Activating the Analyzer](#1-activating-the-analyzer)
+2. [ConfigMap Reference](#2-configmap-reference)
+3. [SLO Targeting](#3-slo-targeting)
+4. [How It Works](#4-how-it-works)
+5. [Cold Start Behavior](#5-cold-start-behavior)
+6. [Data Flow](#6-data-flow)
+7. [Key Files](#7-key-files)
+8. [Defaults Reference](#8-defaults-reference)
+9. [Theoretical Background](#9-theoretical-background)
 
 ---
 
@@ -137,7 +137,7 @@ When explicit targets are absent and at least one variant has learned parameters
 `(alpha, beta, gamma)`, the SLO is derived from the queueing model using `sloMultiplier` k.
 At the target utilisation rho = 1 − 1/k, the steady-state iteration time equals `k × alpha`.
 The SLO is then the latency that corresponds to that iteration time, with token-processing
-work added at its true cost (see [Section 9](#theory) for the full derivation):
+work added at its true cost (see [Section 9](#9-theoretical-background) for the full derivation):
 
 ```
 TargetTTFT = k×alpha + (beta + gamma) × avg_input_len
@@ -200,7 +200,7 @@ parameters `(alpha, beta, gamma)` as the hidden state and `(AvgTTFT, AvgITL)` as
 observations. On each reconcile cycle it:
 
 1. **Restores** the previous state estimate and error covariance from the `ParameterStore`
-   (or bootstraps from a cold-start guess — see [Section 5](#cold-start)).
+   (or bootstraps from a cold-start guess — see [Section 5](#5-cold-start-behavior)).
 2. **Predicts** the next state using an identity transition (parameters are assumed slowly
    varying).
 3. **Updates** by comparing the TTFT and ITL predicted by the queueing model at the current
@@ -244,7 +244,7 @@ scaling decision is emitted for that model during that cycle.
 
 When a variant receives traffic for the first time, the `ParameterStore` has no prior
 `(alpha, beta, gamma)`. The analyzer bootstraps an initial estimate analytically from
-observed TTFT, ITL, and token lengths (see [Section 9.3](#theory-cold-start) for the
+observed TTFT, ITL, and token lengths (see [Section 9.3](#9-theoretical-background) for the
 derivation). If the bootstrap produces valid positive values, the EKF starts from that
 estimate with tightened bounds to converge quickly. If the bootstrap fails (e.g. due to
 unusual metric ratios), the EKF falls back to hardcoded defaults

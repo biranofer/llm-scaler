@@ -29,16 +29,20 @@ import (
 // here are the ones the KEDA external-scaler suite and the V2 suite already pin to
 // 2 replicas and 1 replica respectively at exactly this occupancy.
 //
-// The default entry alone therefore decides 1. If the deployment reaches 2, the
-// tier's numbers reached the optimizer; if removing the tier returns it to 1, the
-// tier's numbers — not some other pressure — were what held it there.
+// The default entry alone therefore decides 1, and the tier decides 2.
 //
-// The arcs run in order — tier wins, tier removed falls back, override beats tier
-// — and each starts from the state the last one settled at. Note which direction
-// each asserts: the scale-UP arcs are the load-bearing ones, and the override arc
-// asserts suppression rather than a scale-down, because scale-down here depends on
-// spare capacity that the demand model does not always release. See the comment on
-// that arc.
+// The suite builds the policy up one layer at a time, so every assertion is either
+// "stays at 1" or "reaches 2" — never "comes back down". Scale-down is not a
+// reliable signal here: at the ceiling, demand tracks supply, so utilization sits
+// at 1.0 and spare capacity at 0, and the workload stays where it is however the
+// policy resolves.
+//
+//	arc 1  tier absent            → holds at 1   (falls back to the default entry)
+//	arc 2  tier + model override  → holds at 1   (override outranks the tier)
+//	arc 3  override removed       → reaches 2    (the tier now decides)
+//
+// Arc 3 is what makes arcs 1 and 2 mean anything: it shows the flat line was the
+// policy holding the workload down, not a workload that was never going to scale.
 const tierFakeMetricsJSON = `{"kv-cache-usage":0.3,"running-requests":1,"waiting-requests":0}`
 
 const (
@@ -113,7 +117,7 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "failed reading existing scaling policy configmap")
 		}
 
-		By("Installing a default entry that holds at 1 replica, and an " + tierPolicyName + " tier that does not")
+		By("Installing ONLY the default entry, which holds at 1 replica")
 		// Written before the workload registers, so the first decision the engine
 		// makes for it already has the tier to resolve against.
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey,
@@ -121,11 +125,9 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
 				tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
 			))).To(Succeed())
-		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, tierPolicyName,
-			buildSaturationConfigYAMLWithThresholds(
-				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
-				tierPolicyScaleUpThreshold, tierPolicyScaleDownBoundary,
-			))).To(Succeed())
+		// The tier is deliberately NOT created here. The workload registers naming
+		// it anyway, so the first arc observes the unresolvable-name fallback from a
+		// standing start rather than by waiting for a scale-down.
 
 		By("Creating the model service with --fake-metrics so the operating point is fixed")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
@@ -182,106 +184,59 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 		_ = k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Delete(ctx, modelDecodeDeployment, metav1.DeleteOptions{})
 	})
 
-	// The tier's thresholds — not the default entry's — decide the count. At this
-	// occupancy the default entry alone decides 1, so reaching 2 is only possible
-	// if the name in the trigger metadata survived the whole path and selected the
-	// tier's numbers.
-	It("scales on the thresholds of the tier the workload names", func() {
-		By("Asserting KEDA actuates scale-up to >= 2 replicas on the tier's scaleUpThreshold")
-		Eventually(func(g Gomega) {
-			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 2),
-				"the "+tierPolicyName+" tier sets scaleUpThreshold=0.30, which decides 2 replicas at this "+
-					"occupancy; the default entry's 0.95 decides 1, so staying at 1 means the tier never "+
-					"reached the optimizer")
-		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
-	})
-
-	// Removing the tier a workload names must fall back to the default entry rather
-	// than fail: refusing to scale a workload because its policy name no longer
-	// resolves would turn a config edit into an outage. The engine reports the
-	// unknown name separately, so the fallback is not silent.
+	// The three arcs below assert only SUPPRESSION or SCALE-UP, never a
+	// scale-down, and that is the whole design of this suite.
 	//
-	// This arc also closes the first one. Returning to 1 when the tier disappears
-	// proves the tier was what held the workload at 2 — nothing else about the
-	// workload, the metrics or the cluster changed.
-	It("falls back to the default entry when the named tier is removed", func() {
-		By("Confirming the deployment is at >= 2 replicas before removing the tier")
-		Eventually(func(g Gomega) {
-			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 2),
-				"the fallback assertion is meaningless unless the tier first drove the count above minReplicas")
-		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
+	// An earlier ordering drove the workload up with the tier and then waited for
+	// it to come back down. It failed intermittently while the feature worked
+	// perfectly: once a workload is at its ceiling, demand tracks supply, so
+	// utilization sits at 1.0, spare capacity at 0, and scale-down stays blocked
+	// for as long as that holds. The assertions were timing out on a property of
+	// the capacity model and reporting it as a policy-resolution failure.
+	//
+	// Read in order, the arcs still prove the full precedence chain:
+	// default entry < named tier < per-model override.
 
-		By("Deleting the " + tierPolicyName + " entry, leaving the workload naming a tier that no longer exists")
-		Expect(deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierPolicyName)).To(Succeed())
-
-		By("Asserting the workload settles back to the default entry's decision of 1 replica")
-		Eventually(func(g Gomega) {
+	// Arc 1. The workload names a tier that does not exist. An unresolvable name
+	// must fall back to the default entry rather than fail — refusing to scale a
+	// workload because its policy name went missing would turn a config edit into
+	// an outage.
+	It("falls back to the default entry when the named tier does not exist", func() {
+		By("Holding at 1 replica: the default entry's 0.95 decides 1 at this occupancy")
+		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1),
-				"an unresolvable tier must resolve to the default entry, whose scaleUpThreshold=0.95 "+
-					"decides 1 replica at this occupancy")
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+				"the workload names a tier with no entry in the ConfigMap; that must resolve to "+
+					"the default entry, not fail and not scale")
+		}, tierOverrideHoldSeconds*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})
 
-	// The layering is default entry -> tier -> per-model override, most specific
-	// winning. The override stays innermost so a fleet can adopt tiers model by
-	// model rather than all at once: a model that already has an override keeps it
-	// when its workload joins a tier.
+	// Arc 2. The tier now exists AND a per-model override exists. The tier alone
+	// would decide 2; the override decides 1. Staying at 1 can therefore only mean
+	// the override outranks the tier the workload names.
 	//
-	// This runs LAST, and asserts that the workload does not scale UP, rather than
-	// that it scales back down. That is deliberate. Written the other way round —
-	// override a workload the tier had already driven to its ceiling, then wait for
-	// it to come down — it failed while the override was working perfectly: the
-	// engine's own analyzer-result showed the override's 0.95/0.85 in force, but
-	// with demand tracking supply, utilization sits at 1.0, spare capacity at 0,
-	// and scale-down is blocked for as long as that holds. The assertion was
-	// timing out on an unrelated capacity-model property, not on the layering.
-	//
-	// Suppression is the stronger claim anyway: the preceding arc establishes that
-	// this tier at this occupancy drives the count to 2, so a workload that still
-	// names the tier and nonetheless stays at 1 can only be reading the override.
+	// The override stays innermost so a fleet can adopt tiers model by model: a
+	// model that already has one keeps it when its workload joins a tier.
 	It("lets a per-model override win over the tier the workload names", func() {
-		By("Starting from the settled 1-replica state the previous arc left behind")
-		Eventually(func(g Gomega) {
-			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("<=", 1))
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
-
-		By("Adding a per-model override carrying the no-scale threshold pair")
-		// Same numbers as the default entry, so the ONLY question this asks is which
-		// layer wins: the tier says 0.30, the override says 0.95, and they disagree
-		// about the replica count at this fixed occupancy.
-		//
-		// The entry names the model in its BODY. Its key is arbitrary — and has to
-		// be: the model ID here is "e2ewva/dummy-model", and a ConfigMap data key
-		// admits only [-._a-zA-Z0-9], so neither the slash nor the "#" of the old
-		// {modelID}#{namespace} form could ever be written.
-		overrideYAML := buildSaturationConfigYAMLWithModel(
-			"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
-			tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
-			modelID, cfg.LLMDNamespace,
-		)
-		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName,
-			tierOverrideKey, overrideYAML)).To(Succeed())
-		DeferCleanup(func() {
-			_ = deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey)
-		})
-
-		By("Restoring the " + tierPolicyName + " tier, so the workload again names a tier that would scale it to 2")
+		By("Adding the " + tierPolicyName + " tier, which alone would decide 2 replicas")
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, tierPolicyName,
 			buildSaturationConfigYAMLWithThresholds(
 				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
 				tierPolicyScaleUpThreshold, tierPolicyScaleDownBoundary,
+			))).To(Succeed())
+
+		By("Adding a per-model override carrying the no-scale threshold pair")
+		// Same numbers as the default entry, so the ONLY question this asks is which
+		// layer wins. The entry names the model in its BODY; its key is arbitrary and
+		// has to be, because a ConfigMap data key admits only [-._a-zA-Z0-9] and the
+		// model ID here contains a slash.
+		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey,
+			buildSaturationConfigYAMLWithModel(
+				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+				tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
+				modelID, cfg.LLMDNamespace,
 			))).To(Succeed())
 
 		By("Asserting the override holds the workload at 1 while the tier alone would take it to 2")
@@ -292,6 +247,24 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 				"a per-model override is the innermost layer; the workload still names the "+
 					"tier, and the tier must not win over settings bound to this model")
 		}, tierOverrideHoldSeconds*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+	})
+
+	// Arc 3. Remove the override and the tier takes effect. This closes the loop:
+	// it proves the previous arc's flat line was the override holding the workload
+	// down, and not simply a workload that was never going to scale.
+	It("scales on the tier's thresholds once the override is removed", func() {
+		By("Deleting the per-model override, leaving the tier the workload names")
+		Expect(deleteSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey)).To(Succeed())
+
+		By("Asserting KEDA actuates scale-up to >= 2 replicas on the tier's scaleUpThreshold")
+		Eventually(func(g Gomega) {
+			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically(">=", 2),
+				"the "+tierPolicyName+" tier sets scaleUpThreshold=0.30, which decides 2 replicas at "+
+					"this occupancy; staying at 1 means the tier never reached the optimizer")
+		}, time.Duration(cfg.ScaleUpTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})
 })

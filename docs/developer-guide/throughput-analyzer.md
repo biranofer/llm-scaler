@@ -58,7 +58,6 @@ operating point, and scales before demand exceeds that supply.
   - [Tier 2 — Constrained OLS](#tier-2--constrained-ols)
 - [Supply Estimation](#supply-estimation)
 - [Demand Estimation](#demand-estimation)
-  - [Priority Chain](#priority-chain)
   - [Scheduler Queue Demand](#scheduler-queue-demand)
 - [Scaling Signal](#scaling-signal)
   - [Model-Level Aggregation](#model-level-aggregation)
@@ -103,7 +102,7 @@ analyzers:
     score: 1.0
 ```
 
-See [scaling-policy-config.md — Multi-Analyzer Pipeline](./scaling-policy-config.md#multi-analyzer-pipeline)
+See [scaling-policy-config.md — Multi-Analyzer Pipeline](./scaling-policy-config.md#multi-analyzer-registration)
 for the full `analyzers:` field reference and combine algorithm.
 
 ## Metrics
