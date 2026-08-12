@@ -187,21 +187,22 @@ name of one.
 | `cluster` | unset | reads Deployments, pods, InferencePools and nodes in **any** namespace |
 | `namespace` | its own (`POD_NAMESPACE`) | reads only **its own namespace** |
 
-It controls the controller's cache — **not its RBAC**. Both scopes create the same
-4 ClusterRoles and 4 ClusterRoleBindings (6 on OpenShift), so **both need
-cluster-admin to install**.
+The scopes differ in who can install them as well as in what is read. `cluster`
+creates 4 ClusterRoles and 4 ClusterRoleBindings and needs a cluster admin;
+`namespace` creates **none** — only Roles and RoleBindings in its own namespace —
+so a namespace admin can install it themselves.
 
-The role is read-only: WVA never writes to the cluster, because KEDA performs the
-actuation. Its one genuinely cluster-scoped read is **nodes**, which it uses to
-resolve each variant's accelerator — see
-[GPU limiter](gpu-limiter.md#permission-nodes).
+Either way the grant is read-only: WVA never writes to the cluster, because KEDA
+performs the actuation. The one genuinely cluster-scoped read is **nodes**, used to
+resolve each variant's accelerator, which is why the `gpu-inventory` limiter needs
+`WVA_ADMIN_GRANTS=true` — see [GPU limiter](gpu-limiter.md#permission-nodes).
 
 > **The constraint that follows, and it is easy to get wrong:** a namespace-scoped
 > WVA can only manage model servers **in its own namespace**. Installing one into
 > `wva-system` while your models run in `llm-d-prod` gives you a controller that
 > KEDA will call and that cannot read the workload it is being asked about. For a
-> namespace-scoped install, put the controller in the namespace with the models —
-> `WVA_NS` and `LLMD_NS` are the same namespace.
+> namespace-scoped install, either put the controller in the namespace with the
+> models, or point it at that namespace with `WVA_WATCH_NS`.
 >
 > Cluster-scoped has no such constraint: models can be anywhere.
 

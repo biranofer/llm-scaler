@@ -6,12 +6,26 @@ Verifying WVA works, watching what it decides, and the first things to check whe
 
 ## Verifying the install
 
+Every command on this page uses `$NS` for the namespace the **controller** runs
+in. That is whatever `WVA_NS` was at install time, not a fixed name — the default
+is `workload-variant-autoscaler-system`, but a per-team install is somewhere else.
+Find it rather than assume it:
+
 ```bash
-NS=workload-variant-autoscaler-system
-kubectl get pods -n $NS                       # the controller is Running
+# the namespace WVA is actually installed in
+NS=$(kubectl get deploy -A -l app.kubernetes.io/name=workload-variant-autoscaler \
+       -o jsonpath='{.items[0].metadata.namespace}')
+echo "$NS"
+```
+
+```bash
+kubectl get pods -n "$NS"                     # the controller is Running
 kubectl get scaledobject -A                   # your managed workloads
 kubectl get hpa -A                            # KEDA created one per ScaledObject
 ```
+
+If that returns more than one namespace, this cluster is running one WVA per
+namespace; pick the one managing the workload you are looking at.
 
 A ScaledObject with a KEDA HPA whose `CurrentMetrics` is populated means the whole
 chain works: WVA was called, decided, and KEDA received the answer. An empty
@@ -144,16 +158,16 @@ procedures, including the simulator and the e2e suites, are in
 
 | symptom | most likely cause | check |
 | --- | --- | --- |
-| WVA pod not `Running` | image pull, resources, or Prometheus unreachable | `kubectl describe pod -n $WVA_NS -l app.kubernetes.io/name=workload-variant-autoscaler` |
+| WVA pod not `Running` | image pull, resources, or Prometheus unreachable | `kubectl describe pod -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler` |
 | "Metrics unavailable" in the logs | the ServiceMonitor does not select your model pods, so the series never reach Prometheus | `kubectl get servicemonitor -A`, then Prometheus `/targets` |
 | HPA exists but `CurrentMetrics` is empty | KEDA never got an answer — usually the trigger's `scalerAddress` or a missing `modelID` | `kubectl describe hpa -n <ns> keda-hpa-<so-name>` |
-| nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $WVA_NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
+| nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
 | a model never wakes from zero | the EPP flow-control queue is not reaching WVA | see [Troubleshooting](../developer-guide/troubleshooting.md) |
 
 First stop for any of these:
 
 ```bash
-kubectl logs -n workload-variant-autoscaler-system   -l app.kubernetes.io/name=workload-variant-autoscaler --tail=200
+kubectl logs -n "$NS"   -l app.kubernetes.io/name=workload-variant-autoscaler --tail=200
 ```
 
 Deeper diagnosis — EPP metrics, scale-from-zero, slow scale-up — is in
@@ -163,9 +177,9 @@ Deeper diagnosis — EPP metrics, scale-from-zero, slow scale-up — is in
 
 ```bash
 # === WVA Controller ===
-kubectl get pods -n workload-variant-autoscaler-system
-kubectl logs -n workload-variant-autoscaler-system -l app.kubernetes.io/name=workload-variant-autoscaler -f
-kubectl describe deployment controller-manager -n workload-variant-autoscaler-system
+kubectl get pods -n "$NS"
+kubectl logs -n "$NS" -l app.kubernetes.io/name=workload-variant-autoscaler -f
+kubectl describe deployment wva-controller-manager -n "$NS"
 
 # === Managed workloads (a ScaledObject IS the registration) ===
 kubectl get scaledobject -A
@@ -192,8 +206,8 @@ kubectl logs -n <app-namespace> <vllm-pod>
 kubectl port-forward -n <app-namespace> <vllm-pod> 8000:8000
 
 # === Configuration ===
-kubectl get configmap -n workload-variant-autoscaler-system
-kubectl get configmap service-classes -n workload-variant-autoscaler-system -o yaml
-kubectl get configmap model-accelerator-data -n workload-variant-autoscaler-system -o yaml
+kubectl get configmap -n "$NS"
+kubectl get configmap wva-manager-config -n "$NS" -o yaml          # Prometheus URL, intervals
+kubectl get configmap wva-scaling-policy-config -n "$NS" -o yaml   # thresholds, tiers, limiters
 ```
 

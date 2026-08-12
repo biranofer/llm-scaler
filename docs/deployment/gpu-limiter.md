@@ -137,9 +137,9 @@ Run the controller **outside** the namespace it manages, so the tenant never own
 it:
 
 ```bash
-make deploy-wva-on-k8s WVA_SCOPE=namespace \
-  WVA_NS=wva-team-a \        # admin-owned: where the controller runs
-  WVA_WATCH_NS=team-a        # tenant-owned: what it manages
+# WVA_NS is admin-owned — where the controller runs.
+# WVA_WATCH_NS is the tenant's — what it manages.
+make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a
 ```
 
 This is the recommended multi-tenant shape. Everything above then applies with the

@@ -1,8 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Namespace scope: the controller manages ONE namespace and creates no
-# cluster-scoped object, so a namespace admin can install it themselves.
+# Namespace scope on OpenShift: the controller manages ONE namespace.
 #
 # `namespace:` is a placeholder — deploy/install.sh rewrites it to $WVA_NS.
 namespace: wva-system
@@ -12,11 +11,13 @@ namePrefix: wva-
 resources:
 - ../../../base/
 
-# unauthenticated-metrics is appended by deploy/install.sh unless
-# WVA_ADMIN_GRANTS=true. Applying this overlay by hand gives the self-service
-# shape; a cluster admin who wants authenticated metrics and node access should
-# install with WVA_ADMIN_GRANTS=true.
+# components/openshift is NOT optional here. It carries the platform's own
+# monitoring wiring — the Thanos Querier URL, the service-ca certificate, the
+# user-workload-monitoring label — and without it the controller keeps the
+# Kubernetes default Prometheus URL, cannot reach anything at it, and exits at
+# startup. It is listed FIRST so the tenant components below can still subtract
+# from what it adds.
 components:
 - ../../../components/namespace-scoped/
+- ../../../components/openshift/
 - ../../../components/tenant-installable/
-- ../../../components/unauthenticated-metrics/

@@ -16,7 +16,6 @@ Automated deployment script for WVA, llm-d infrastructure, Prometheus, and HPA o
 - [Troubleshooting](#troubleshooting)
 - [Post-Deployment](#post-deployment)
 - [Cleanup](#cleanup)
-- [Metrics Validation Feature](#metrics-validation-feature)
 - [Advanced Usage](#advanced-usage)
 - [Performance Tuning](#performance-tuning)
 
@@ -137,7 +136,7 @@ make deploy-wva-on-k8s
 The model is not chosen here. WVA does not deploy models — it scales the ones
 already running, and it learns which ones from the ScaledObjects that name its
 external scaler. Deploy models with the llm-d guides, then see
-[Default ScaledObjects](../README.md#default-scaledobjects).
+[Default ScaledObjects](../../docs/deployment/configuration.md#default-scaledobjects).
 
 ### Example 3: CI-style stack (WVA + llm-d)
 

@@ -87,6 +87,12 @@ WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
     wva-metrics-auth-rolebinding
     wva-metrics-reader-rolebinding
     wva-prometheus-cluster-monitoring-view
+    # Created only under WVA_ADMIN_GRANTS=true. Listed unconditionally anyway:
+    # the rename patch is a no-op when the object is absent, and leaving it out
+    # meant two admin-granted installs shared one binding — the second apply
+    # replaced its subject list, so the first controller lost node access and its
+    # readiness gate turned that into a NotReady pod.
+    wva-node-reader-rolebinding
 )
 
 # wva_ns_suffix echoes the per-namespace suffix appended to those names.
