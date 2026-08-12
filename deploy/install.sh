@@ -123,6 +123,9 @@ UNDEPLOY=${UNDEPLOY:-false}
 # takes, so "make check-prereqs" passing and the install then failing on a
 # prerequisite is not a state these two can reach.
 CHECK_ONLY=${CHECK_ONLY:-false}
+# Which half of the install to run: prereqs (cluster admin) | wva (namespace
+# admin) | all. The default keeps the single-command install unchanged.
+INSTALL_PHASE=${INSTALL_PHASE:-all}
 # Allow a second WVA alongside an existing one. Refused by default because both
 # would allocate from the same pool of free GPUs without seeing each other's
 # claims. See deploy/lib/single_install.sh.

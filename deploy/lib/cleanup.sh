@@ -44,23 +44,27 @@ EOF
     # uninstalling side by side on kind.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
-    # Render and FILTER, rather than `kubectl delete -k`. Two kinds in the rendered
-    # set do not belong to this install and must survive it:
+    # Render and FILTER, rather than `kubectl delete -k`. One kind in the rendered
+    # set does not belong to this install and must survive it:
     #
     #   Namespace    the overlay carries one, renamed to $WVA_NS. Deleting it
     #                cascades to everything inside — and a namespace-scoped install
     #                is deliberately placed IN the namespace holding the model
     #                servers, so `delete -k` took the tenant's workloads with it
     #                while the summary said "Namespaces preserved".
-    #   ClusterRole  the four are shared under fixed names (only the BINDINGS are
-    #                suffixed per install). Deleting them leaves every other WVA's
-    #                binding pointing at nothing: no error, no restart, no event,
-    #                just every API call denied.
     #
-    # The suffixed ClusterRoleBindings, ServiceAccounts, ConfigMaps, Services,
-    # Deployment and ServiceMonitor are this install's own and do go.
+    # ClusterRoles used to be filtered out too, because they were shared under
+    # fixed names and deleting them left every other WVA's binding pointing at
+    # nothing. They are now suffixed per install (WVA_OWNED_CLUSTER_ROLES), so each
+    # install owns its own and can take them with it. An install made before that
+    # change has unsuffixed roles: the render names only suffixed ones, so this
+    # leaves those alone rather than deleting something another install may bind —
+    # a leak, which is the safe direction.
+    #
+    # The suffixed ClusterRoles and ClusterRoleBindings, ServiceAccounts,
+    # ConfigMaps, Services, Deployment and ServiceMonitor are this install's own.
     if kubectl kustomize "$tmp_overlay" 2>/dev/null \
-        | yq 'select(.kind != "Namespace" and .kind != "ClusterRole")' \
+        | yq 'select(.kind != "Namespace")' \
         | kubectl delete -f - --ignore-not-found 2>/dev/null; then
         :
     else
@@ -68,7 +72,7 @@ EOF
     fi
     rm -rf "$tmp_overlay"
 
-    log_info "Left in place: namespace $WVA_NS, and the shared WVA ClusterRoles (other installs may bind them). Delete the namespace yourself if you want it gone."
+    log_info "Left in place: namespace $WVA_NS. Delete it yourself if you want it gone."
 
     # ScaledObjects outlive the controller, and that is a trap rather than a
     # convenience: their trigger points at wva-external-scaler.$WVA_NS, which no
@@ -153,7 +157,7 @@ cleanup() {
     # Prometheus, the scaler backend and EPP in place", the summary claimed it had
     # removed them.
     echo "Removed components:"
-    [ "$DEPLOY_WVA" = "true" ] && echo "✓ WVA Controller (its namespaced objects and its own ClusterRoleBindings)"
+    [ "$DEPLOY_WVA" = "true" ] && echo "✓ WVA Controller (its namespaced objects, and the ClusterRoles and ClusterRoleBindings suffixed for $WVA_NS)"
     if [ "${UNDEPLOY_SHARED:-false}" = "true" ]; then
         [ "$SCALER_BACKEND" = "keda" ] && echo "✓ KEDA"
         [ "$DEPLOY_PROMETHEUS" = "true" ] && echo "✓ Prometheus Stack"
@@ -162,18 +166,25 @@ cleanup() {
         echo ""
         echo "Left in place (shared; pass UNDEPLOY_SHARED=true to remove):"
         echo "  - Prometheus, the scaler backend (KEDA), EPP"
-        echo "  - the WVA ClusterRoles, which other installs may bind"
     fi
 
     if [ "$DELETE_NAMESPACES" = "true" ]; then
         echo "✓ Namespaces"
     else
-        echo ""
-        echo "Namespaces preserved:"
-        echo "  - $LLMD_NS"
-        echo "  - $WVA_NS"
-        echo "  - $MONITORING_NAMESPACE"
-        [ "$SCALER_BACKEND" = "keda" ] && echo "  - $KEDA_NAMESPACE"
+        # Only the ones that are actually there. This used to print a fixed list,
+        # so an uninstall claimed to have "preserved" namespaces that had never
+        # existed on that cluster — which reads as "I found these and left them".
+        local ns preserved=()
+        for ns in "$LLMD_NS" "$WVA_NS" "$MONITORING_NAMESPACE" \
+            $([ "$SCALER_BACKEND" = "keda" ] && echo "$KEDA_NAMESPACE"); do
+            [ -n "$ns" ] || continue
+            kubectl get namespace "$ns" >/dev/null 2>&1 && preserved+=("$ns")
+        done
+        if [ ${#preserved[@]} -ne 0 ]; then
+            echo ""
+            echo "Namespaces preserved:"
+            printf '  - %s\n' "${preserved[@]}"
+        fi
     fi
     echo ""
     echo "=========================================="

@@ -101,10 +101,28 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 
 #### If you are a namespace admin, not a cluster admin
 
-**You can install it yourself.** One command:
+**Have an admin run the prerequisites once, then it is yours.** This is the
+supported shape on both platforms, and it is what makes the OpenShift case work
+at all:
 
 ```bash
-make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace>
+# your cluster admin, once for your namespace:
+make setup-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
+
+# you, now and for every later upgrade — no cluster-scoped rights needed:
+make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace> IMG=<image>
+```
+
+The admin phase creates what you cannot: the namespace, the cluster-scoped RBAC,
+and the ServiceMonitor — the stock `admin` ClusterRole does not grant
+`monitoring.coreos.com`, which is the one denial that otherwise stops a
+"self-service" install on a real cluster. The controller phase refuses, naming
+every missing object, if that has not happened.
+
+**Without the admin phase, on Kubernetes only**, one command still works:
+
+```bash
+make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace> WVA_ADMIN_GRANTS=false
 ```
 
 On Kubernetes, namespace scope creates **no cluster-scoped object** — only Roles

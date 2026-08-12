@@ -77,8 +77,12 @@ deploy_wva_controller() {
     # WVA_ADMIN_GRANTS matters most on OpenShift, where namespace scope is the
     # DEFAULT: without it, every OpenShift install would silently drop metrics
     # authentication.
-    if [ "$(wva_install_scope)" = "namespace" ] && [ "${WVA_ADMIN_GRANTS:-false}" = "true" ]; then
-        log_info "WVA_ADMIN_GRANTS=true: keeping authenticated metrics and cluster-scoped reads for this namespace-scoped install"
+    if [ "$(wva_install_scope)" = "namespace" ]; then
+        if [ "$(wva_admin_grants)" = "true" ]; then
+            log_info "Keeping authenticated metrics and cluster-scoped reads for this namespace-scoped install${WVA_ADMIN_GRANTS:+ (WVA_ADMIN_GRANTS=$WVA_ADMIN_GRANTS)}${WVA_ADMIN_GRANTS:-: this installer can create cluster-scoped RBAC. Pass WVA_ADMIN_GRANTS=false for the self-service shape}"
+        else
+            log_info "Self-service shape for this namespace-scoped install${WVA_ADMIN_GRANTS:+ (WVA_ADMIN_GRANTS=$WVA_ADMIN_GRANTS)}${WVA_ADMIN_GRANTS:-: this installer cannot create cluster-scoped RBAC, so metrics are served over plain HTTP and the gpu-inventory limiter is unavailable}"
+        fi
     fi
     wva_prepare_overlay_base "$tmp_overlay"
 
@@ -192,8 +196,47 @@ EOF
     fi
 
 
-    log_info "Applying Kustomize overlay: $kustomize_overlay"
-    kubectl apply -k "$tmp_overlay"
+    # WVA_APPLY_SCOPE splits one overlay across the two install phases:
+    #
+    #   prereqs     only the admin-owned kinds (see WVA_PREREQ_KINDS)
+    #   controller  everything else — what a namespace admin may create once the
+    #               prereqs exist
+    #   all         both, which is the single-command install and the default
+    #
+    # Rendering once and filtering, rather than maintaining two overlays, is what
+    # keeps the phases from drifting apart: a resource added to the base lands in
+    # exactly one phase, decided by its kind, with nothing to keep in sync.
+    # Before the apply, and only for the phases that carry the bindings.
+    case "${WVA_APPLY_SCOPE:-all}" in
+        all|prereqs) wva_repair_immutable_rolerefs ;;
+    esac
+
+    log_info "Applying Kustomize overlay: $kustomize_overlay (scope: ${WVA_APPLY_SCOPE:-all})"
+    case "${WVA_APPLY_SCOPE:-all}" in
+        all)
+            kubectl apply -k "$tmp_overlay"
+            ;;
+        prereqs)
+            kubectl kustomize "$tmp_overlay" \
+                | yq "$(wva_prereq_kind_filter select)" \
+                | kubectl apply -f -
+            ;;
+        controller)
+            kubectl kustomize "$tmp_overlay" \
+                | yq "$(wva_prereq_kind_filter exclude)" \
+                | kubectl apply -f -
+            ;;
+        *)
+            log_error "WVA_APPLY_SCOPE must be all, prereqs or controller (got '${WVA_APPLY_SCOPE}')"
+            ;;
+    esac
+
+    # Everything below this point patches namespaced ConfigMaps that the
+    # controller phase owns and the prereqs phase has not created yet.
+    if [ "${WVA_APPLY_SCOPE:-all}" = "prereqs" ]; then
+        log_success "Admin-owned resources applied for $WVA_NS: $(printf '%s ' "${WVA_PREREQ_KINDS[@]}")"
+        return 0
+    fi
 
     # Clean up a previously-deployed PrometheusRule when alerting rules are disabled.
     # The `get` guard keeps the common path quiet (only logs/acts when a rule actually

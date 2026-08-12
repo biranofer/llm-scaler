@@ -175,6 +175,97 @@ destroy-kind-cluster:
         deploy/kind-emulator/teardown.sh
 
 
+##@ Install, in three phases (scope and platform in the target name)
+#
+# The phases split where the PERMISSIONS split, so a namespace admin can own the
+# controller without holding cluster-scoped rights:
+#
+#   1. check-prereqs-<scope>-on-<platform>   read-only. Renders the overlay this
+#                                            install would apply and asks whether
+#                                            you may create each kind in it.
+#   2. setup-prereqs-<scope>-on-<platform>   CLUSTER ADMIN, once per namespace:
+#                                            the namespace, cluster-scoped RBAC,
+#                                            the ServiceMonitor, and Prometheus /
+#                                            KEDA if the cluster has none.
+#   3. deploy-wva-<scope>-on-<platform>      the controller. After phase 2 this
+#                                            needs no cluster-scoped rights, and
+#                                            neither does any later upgrade.
+#
+# <scope> is cluster (manages every namespace) or namespace (manages one).
+# <platform> is k8s or openshift.
+#
+# deploy-wva-on-k8s / deploy-wva-on-openshift still do all three at once, which
+# is the right thing when you are a cluster admin installing for yourself.
+#
+# wva_phase: $(1)=phase $(2)=scope $(3)=ENVIRONMENT
+define wva_phase
+	@echo "Phase '$(1)', $(2)-scoped, on $(3). Namespace: $(WVA_NS)"
+	$(if $(filter wva all,$(1)),@echo "Image: $(IMG)",)
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
+		INSTALL_PHASE=$(1) ENVIRONMENT=$(3) \
+		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+		$(if $(WVA_ADMIN_GRANTS),WVA_ADMIN_GRANTS=$(WVA_ADMIN_GRANTS),) \
+		$(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) \
+		./deploy/install.sh
+endef
+
+# wva_check: $(1)=scope $(2)=ENVIRONMENT
+define wva_check
+	WVA_NS=$(WVA_NS) WVA_SCOPE=$(1) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=$(2) \
+		$(if $(WVA_ADMIN_GRANTS),WVA_ADMIN_GRANTS=$(WVA_ADMIN_GRANTS),) \
+		./deploy/install.sh --check
+endef
+
+.PHONY: check-prereqs-cluster-on-k8s
+check-prereqs-cluster-on-k8s: ## Phase 1, read-only: can you install a cluster-scoped WVA on Kubernetes?
+	$(call wva_check,cluster,kubernetes)
+
+.PHONY: check-prereqs-namespace-on-k8s
+check-prereqs-namespace-on-k8s: ## Phase 1, read-only: can you install a namespace-scoped WVA on Kubernetes?
+	$(call wva_check,namespace,kubernetes)
+
+.PHONY: check-prereqs-cluster-on-openshift
+check-prereqs-cluster-on-openshift: ## Phase 1, read-only: can you install a cluster-scoped WVA on OpenShift?
+	$(call wva_check,cluster,openshift)
+
+.PHONY: check-prereqs-namespace-on-openshift
+check-prereqs-namespace-on-openshift: ## Phase 1, read-only: can you install a namespace-scoped WVA on OpenShift?
+	$(call wva_check,namespace,openshift)
+
+.PHONY: setup-prereqs-cluster-on-k8s
+setup-prereqs-cluster-on-k8s: manifests kustomize ## Phase 2 (CLUSTER ADMIN): cluster-scoped prerequisites on Kubernetes.
+	$(call wva_phase,prereqs,cluster,kubernetes)
+
+.PHONY: setup-prereqs-namespace-on-k8s
+setup-prereqs-namespace-on-k8s: manifests kustomize ## Phase 2 (CLUSTER ADMIN): prerequisites for a namespace-scoped WVA in WVA_NS, on Kubernetes.
+	$(call wva_phase,prereqs,namespace,kubernetes)
+
+.PHONY: setup-prereqs-cluster-on-openshift
+setup-prereqs-cluster-on-openshift: manifests kustomize ## Phase 2 (CLUSTER ADMIN): cluster-scoped prerequisites on OpenShift.
+	$(call wva_phase,prereqs,cluster,openshift)
+
+.PHONY: setup-prereqs-namespace-on-openshift
+setup-prereqs-namespace-on-openshift: manifests kustomize ## Phase 2 (CLUSTER ADMIN): prerequisites for a namespace-scoped WVA in WVA_NS, on OpenShift.
+	$(call wva_phase,prereqs,namespace,openshift)
+
+.PHONY: deploy-wva-cluster-on-k8s
+deploy-wva-cluster-on-k8s: manifests kustomize ## Phase 3: install the cluster-scoped controller on Kubernetes. Set IMG=<your build>.
+	$(call wva_phase,wva,cluster,kubernetes)
+
+.PHONY: deploy-wva-namespace-on-k8s
+deploy-wva-namespace-on-k8s: manifests kustomize ## Phase 3: install the controller into WVA_NS on Kubernetes (no cluster rights needed after phase 2).
+	$(call wva_phase,wva,namespace,kubernetes)
+
+.PHONY: deploy-wva-cluster-on-openshift
+deploy-wva-cluster-on-openshift: manifests kustomize ## Phase 3: install the cluster-scoped controller on OpenShift. Set IMG=<your build>.
+	$(call wva_phase,wva,cluster,openshift)
+
+.PHONY: deploy-wva-namespace-on-openshift
+deploy-wva-namespace-on-openshift: manifests kustomize ## Phase 3: install the controller into WVA_NS on OpenShift (no cluster rights needed after phase 2).
+	$(call wva_phase,wva,namespace,openshift)
+
+##@ Install, all phases at once (cluster admin installing for themselves)
+
 ## Deploy WVA to OpenShift cluster with specified image.
 ## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift

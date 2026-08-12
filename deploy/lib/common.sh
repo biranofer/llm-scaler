@@ -101,6 +101,33 @@ WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
     wva-node-reader-rolebinding
 )
 
+# WVA_OWNED_CLUSTER_ROLES are the ClusterRoles this project defines, mapped to the
+# binding that references each. They are renamed per install for the same reason
+# the bindings are, and it took a shared cluster to make the reason concrete:
+# pokprod001 had ten WVA installs sharing four ClusterRoles under fixed names.
+# Identical rules make an apply a no-op, so nothing had gone wrong yet — but an
+# install carrying different rules would have rewritten the permissions of ten
+# other controllers, cluster-wide, with no error and no restart to notice.
+#
+# Only OUR roles. `cluster-monitoring-view` is OpenShift's own: its bindings are
+# renamed, its roleRef must not be.
+#
+# Kustomize's name-reference transformer would repoint roleRefs automatically for
+# a nameSuffix, but nameSuffix renames every resource — including the
+# external-scaler Service that every ScaledObject trigger addresses by name. So
+# the roleRef is repointed explicitly, alongside the rename.
+WVA_OWNED_CLUSTER_ROLES=(
+    "wva-manager-role:wva-manager-rolebinding"
+    "wva-metrics-auth-role:wva-metrics-auth-rolebinding"
+    "wva-metrics-reader:wva-metrics-reader-rolebinding"
+    "wva-epp-metrics-reader-role:wva-epp-metrics-reader-role-binding"
+    # WVA_ADMIN_GRANTS only; the patches are no-ops when the objects are absent.
+    # The role is node-reader-ROLE — the binding drops the suffix, the role does
+    # not, and getting that wrong leaves the role unrenamed and the binding
+    # pointing at a name nothing creates.
+    "wva-node-reader-role:wva-node-reader-rolebinding"
+)
+
 # wva_ns_suffix echoes the per-namespace suffix appended to those names.
 # sha256sum is GNU; macOS ships shasum. The suffix must be IDENTICAL on whatever
 # host installs and whatever host uninstalls — a different suffix means the
@@ -122,7 +149,7 @@ wva_ns_suffix() {
 # an uninstall of one WVA stripping a different, healthy one of its permissions —
 # while leaking its own suffixed bindings. One definition, used by both.
 wva_append_crb_name_patches() {
-    local kustomization="$1" ns="$2" suffix crb
+    local kustomization="$1" ns="$2" suffix crb pair role binding
     suffix="$(wva_ns_suffix "$ns")"
     printf 'patches:\n' >> "$kustomization"
     for crb in "${WVA_SHARED_CLUSTER_ROLE_BINDINGS[@]}"; do
@@ -134,6 +161,28 @@ wva_append_crb_name_patches() {
   target:
     kind: ClusterRoleBinding
     name: ${crb}
+EOF
+    done
+    # The roles, and the roleRef of the binding that names each. Both, or the
+    # binding points at a ClusterRole that no longer exists under that name and
+    # the controller silently has no permissions at all.
+    for pair in "${WVA_OWNED_CLUSTER_ROLES[@]}"; do
+        role="${pair%%:*}"; binding="${pair#*:}"
+        cat >> "$kustomization" <<EOF
+- patch: |-
+    - op: replace
+      path: /metadata/name
+      value: ${role}-${suffix}
+  target:
+    kind: ClusterRole
+    name: ${role}
+- patch: |-
+    - op: replace
+      path: /roleRef/name
+      value: ${role}-${suffix}
+  target:
+    kind: ClusterRoleBinding
+    name: ${binding}
 EOF
     done
 }
@@ -152,6 +201,65 @@ wva_overlay_dir() {
     local dir="$WVA_PROJECT/config/overlays/${scope}-scoped/${platform}"
     [ -d "$dir" ] || log_error "No overlay for scope '${scope}' on '${platform}' (looked in $dir)"
     (cd "$dir" && pwd)
+}
+
+# The kinds a CLUSTER ADMIN owns, and the phase split built on them.
+#
+# Everything here either is cluster-scoped or needs a permission a namespace admin
+# does not have with the stock `admin` ClusterRole. Splitting the install on this
+# line is what makes a tenant install real rather than aspirational: an admin runs
+# the prereqs phase once for a namespace, and whoever owns that namespace can then
+# install and upgrade the controller without holding any cluster-scoped right.
+#
+#   Namespace           cluster-scoped to create.
+#   ClusterRole/Binding cluster-scoped, obviously.
+#   ServiceMonitor      namespaced, but the stock `admin` ClusterRole does NOT
+#                       grant monitoring.coreos.com — verified on a real cluster,
+#                       where it was the single denial standing between a
+#                       namespace admin and a working "self-service" install.
+WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor)
+
+# wva_prereq_kind_filter echoes a yq expression selecting (or with $1=exclude,
+# rejecting) the admin-owned kinds. One definition, so the prereqs phase and the
+# controller phase cannot disagree about where the line is and leave a kind that
+# neither applies.
+wva_prereq_kind_filter() {
+    local mode="${1:-select}" k expr=""
+    for k in "${WVA_PREREQ_KINDS[@]}"; do
+        [ -n "$expr" ] && expr="$expr or "
+        expr="${expr}.kind == \"$k\""
+    done
+    if [ "$mode" = "exclude" ]; then
+        echo "select(($expr) | not)"
+    else
+        echo "select($expr)"
+    fi
+}
+
+# wva_admin_grants answers whether this namespace-scoped install keeps the
+# cluster-scoped pieces: authenticated metrics (TokenReview) and the node read the
+# gpu-inventory limiter needs.
+#
+# Unset means DETECT, because the question is not what the operator meant, it is
+# what this installer can actually create. It defaulted to false, so a cluster
+# admin running the ordinary command on Kubernetes silently got the self-service
+# shape — metrics served over plain HTTP — and nothing said so. Detecting instead
+# means the flag is only needed to turn the capability OFF.
+#
+# The detection is one-directional and cannot loosen anything: it can only enable
+# the extra objects for someone who may create them anyway. A tenant is answered
+# "no" and gets the shape that installs.
+wva_admin_grants() {
+    case "${WVA_ADMIN_GRANTS:-}" in
+        true)  echo true;  return ;;
+        false) echo false; return ;;
+    esac
+    if kubectl auth can-i create clusterroles >/dev/null 2>&1 \
+        && kubectl auth can-i create clusterrolebindings >/dev/null 2>&1; then
+        echo true
+    else
+        echo false
+    fi
 }
 
 # wva_prepare_overlay_base populates $1/base with the overlay this install will
@@ -181,7 +289,7 @@ wva_prepare_overlay_base() {
     # APIs. An admin installing the very same overlay has both and should not
     # lose them.
     [ "$(wva_install_scope)" = "namespace" ] || return 0
-    [ "${WVA_ADMIN_GRANTS:-false}" = "true" ] || return 0
+    [ "$(wva_admin_grants)" = "true" ] || return 0
 
     # Re-render the overlay without the unauthenticated-metrics component. The
     # overlay lists it, so it is dropped here rather than added there — the
@@ -202,23 +310,70 @@ wva_prepare_overlay_base() {
     ln -s "$rendered" "$tmp_overlay/base"
 }
 
-# wva_rendered_kinds echoes, one per line, each distinct Kind this install would
-# create. Empty output means the overlay could not be rendered — the caller must
-# treat that as "unknown", not as "nothing".
-wva_rendered_kinds() {
-    local tmp
+# wva_repair_immutable_rolerefs deletes this install's ClusterRoleBindings whose
+# roleRef no longer matches what will be applied, so the apply can recreate them.
+#
+# `roleRef` is IMMUTABLE. An upgrade that changes which ClusterRole a binding
+# points at therefore fails with
+#
+#   ClusterRoleBinding ... is invalid: roleRef: ... cannot change roleRef
+#
+# and the install stops halfway — which is exactly what happened the first time
+# the ClusterRoles were given per-namespace names, on a cluster with an install
+# already on it. Found by running the upgrade, not by reading it.
+#
+# It only ever deletes a binding whose name matches what THIS install renders,
+# i.e. one already carrying this namespace's suffix. Another install's binding
+# has a different suffix and cannot be selected here. The controller is without
+# that binding for the moment between the delete and the apply below.
+wva_repair_immutable_rolerefs() {
+    local name want have
+    while read -r name want; do
+        [ -n "$name" ] && [ -n "$want" ] || continue
+        have="$(kubectl get clusterrolebinding "$name" -o jsonpath='{.roleRef.name}' 2>/dev/null || true)"
+        [ -n "$have" ] || continue          # absent: the apply just creates it
+        [ "$have" = "$want" ] && continue   # already right
+        log_info "Recreating ClusterRoleBinding $name — roleRef is immutable and must change ($have -> $want)"
+        kubectl delete clusterrolebinding "$name" --ignore-not-found >/dev/null 2>&1 || true
+    done < <(wva_render_manifests \
+        | yq 'select(.kind == "ClusterRoleBinding") | .metadata.name + " " + .roleRef.name' 2>/dev/null \
+        | grep -v '^null' || true)
+}
+
+# wva_render_manifests prints the manifests this install would apply, with the
+# namespace transform and the per-namespace ClusterRoleBinding renames applied —
+# so the NAMES it prints are the names that will exist on the cluster. The image
+# pin is not applied: no caller of this asks about the image.
+#
+# Empty output means the overlay could not be rendered. Callers must treat that as
+# "unknown", never as "nothing".
+wva_render_manifests() {
+    local tmp ns="${WVA_NS:-wva-system}"
     tmp="$(mktemp -d)" || return 0
     if wva_prepare_overlay_base "$tmp" >/dev/null 2>&1; then
-        # The namespace transform and the image pin change no Kind, so neither is
-        # applied here. The CRB rename patches do not either.
-        printf 'resources:\n- ./base\n' > "$tmp/kustomization.yaml"
-        # Only column 0 — `kind:` also appears indented under roleRef, and with a
-        # leading dash under subjects.
-        #
+        printf 'namespace: %s\nresources:\n- ./base\n' "$ns" > "$tmp/kustomization.yaml"
+        wva_append_crb_name_patches "$tmp/kustomization.yaml" "$ns"
         # `|| true` because the callers run under `set -e` with pipefail, and a
         # render that fails is the case they exist to handle: it must reach them
         # as empty output, not as the whole install script exiting.
-        kubectl kustomize "$tmp" 2>/dev/null | awk '/^kind: /{print $2}' | sort -u || true
+        kubectl kustomize "$tmp" 2>/dev/null || true
     fi
     rm -rf "$tmp"
+}
+
+# wva_rendered_kinds echoes, one per line, each distinct Kind this install would
+# create.
+wva_rendered_kinds() {
+    # Only column 0 — `kind:` also appears indented under roleRef, and with a
+    # leading dash under subjects.
+    wva_render_manifests | awk '/^kind: /{print $2}' | sort -u || true
+}
+
+# wva_rendered_prereq_objects echoes "<Kind> <name>" for every admin-owned object
+# this install needs, at the names it will really have.
+wva_rendered_prereq_objects() {
+    # yq writes a `---` between documents even when each renders to one scalar.
+    wva_render_manifests \
+        | yq "$(wva_prereq_kind_filter select) | .kind + \" \" + .metadata.name" 2>/dev/null \
+        | grep -Ev '^(---|null)' || true
 }

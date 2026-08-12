@@ -15,6 +15,14 @@ For llm-d (gateway, EPP, ModelService), see the llm-d project's installation gui
 Options:
   -i, --wva-image IMAGE        Container image for WVA (default: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG)
   -c, --check                  Run the prerequisite check and exit without deploying
+  -p, --phase PHASE            prereqs | wva | all (default: all)
+                                 prereqs  what a CLUSTER ADMIN does once per namespace:
+                                          the namespace, the cluster-scoped RBAC, the
+                                          ServiceMonitor, and the shared infrastructure
+                                          (Prometheus, KEDA) if the cluster has none
+                                 wva      the controller only — no cluster-scoped rights
+                                          needed once prereqs are in place
+                                 all      both, in order
   -u, --undeploy               Undeploy WVA, monitoring, and scaler backend
   -e, --environment            kubernetes | openshift | kind-emulator (default: kubernetes)
   -h, --help                   Show this help and exit
@@ -119,6 +127,13 @@ parse_args() {
         shift 2
         ;;
       -c|--check)             CHECK_ONLY=true; shift ;;
+      -p|--phase)
+        INSTALL_PHASE="$2" ; shift 2
+        case "$INSTALL_PHASE" in
+          prereqs|wva|all) ;;
+          *) log_error "Invalid --phase: $INSTALL_PHASE. Valid options are: prereqs, wva, all" ;;
+        esac
+        ;;
       -u|--undeploy)          UNDEPLOY=true; shift ;;
       -e|--environment)
         ENVIRONMENT="$2" ; shift 2

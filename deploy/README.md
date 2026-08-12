@@ -30,6 +30,38 @@ make check-prereqs        # tools, versions, cluster reachability - read-only
 make deploy-wva-on-k8s    # cluster-scoped, default namespace, no GPU limiter
 ```
 
+## Three phases, split where the permissions split
+
+One command works when you are a cluster admin installing for yourself. When the
+person who owns the namespace is not the person who holds cluster rights, install
+in phases — the middle one is the only part that needs an admin:
+
+| phase | who | command |
+| --- | --- | --- |
+| 1. check | anyone | `make check-prereqs-<scope>-on-<platform>` |
+| 2. set up prerequisites | **cluster admin**, once per namespace | `make setup-prereqs-<scope>-on-<platform> WVA_NS=<ns>` |
+| 3. install the controller | namespace owner | `make deploy-wva-<scope>-on-<platform> WVA_NS=<ns> IMG=<image>` |
+
+`<scope>` is `cluster` or `namespace`; `<platform>` is `k8s` or `openshift`.
+
+Phase 2 creates the things a namespace admin cannot: the namespace, the
+cluster-scoped RBAC, the ServiceMonitor (the stock `admin` ClusterRole does not
+grant `monitoring.coreos.com`), and Prometheus/KEDA if the cluster has none.
+Phase 3 then needs **no** cluster-scoped rights — and neither does any later
+upgrade of the controller. Re-run phase 2 only when a new WVA version changes
+what it needs cluster-wide.
+
+Phase 3 refuses, naming every missing object, if phase 2 has not run. Each
+install's cluster-scoped objects are suffixed with a hash of its namespace, so
+two installs on one cluster can never take each other's.
+
+```bash
+# cluster admin, once:
+make setup-prereqs-namespace-on-openshift WVA_NS=team-a
+# team-a's owner, now and for every upgrade:
+make deploy-wva-namespace-on-openshift WVA_NS=team-a IMG=<image>
+```
+
 ## Every deployment option, as one command
 
 Each row is a complete install. Pick the row that matches who you are and what the
@@ -40,7 +72,7 @@ cluster already has; the rest of this guide explains the pieces.
 | a cluster admin, one WVA for everything | `make deploy-wva-on-k8s` | manages **every** namespace. Creates cluster-scoped RBAC. The usual choice. |
 | a cluster admin, one WVA per team | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a WVA_ADMIN_GRANTS=true` | manages **one** namespace. Separate failure domains per team; keeps authenticated metrics and node access. |
 | a cluster admin, keeping the controller out of the team's reach | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a WVA_ADMIN_GRANTS=true` | controller **runs in** `wva-team-a`, **manages** `team-a`. The team cannot edit the controller, so limits placed on them hold. |
-| a **namespace admin**, no cluster rights | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a` | **Kubernetes only.** Creates **no cluster-scoped object**, so you can run it yourself. No `gpu-inventory` limiter, no authenticated metrics, no EPP metrics. |
+| a **namespace admin**, no cluster rights | `make deploy-wva-namespace-on-k8s WVA_NS=team-a` after an admin ran `setup-prereqs-namespace-on-k8s` | the supported shape on either platform — see [Three phases](#three-phases-split-where-the-permissions-split). Without phase 2 it works on Kubernetes only, creating **no cluster-scoped object**, and gives up the `gpu-inventory` limiter, authenticated metrics and EPP metrics. |
 | adding WVA to a cluster that already has llm-d | `make deploy-wva-on-k8s PROMETHEUS_URL=https://prom.monitoring.svc:9090` | controller only. The cluster's Prometheus, KEDA and CRDs are used as they are. |
 | bounding scaling by real GPUs | add `WVA_LIMITER=gpu-inventory` | allocates from per-accelerator pools. Needs node read; the install fails without it. |
 | bounding scaling by declared caps | add `WVA_LIMITER=quota` | bounds from config. Needs no cluster-scoped access. |
