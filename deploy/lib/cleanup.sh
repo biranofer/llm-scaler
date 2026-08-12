@@ -30,7 +30,13 @@ undeploy_wva_controller() {
 
     local tmp_overlay
     tmp_overlay=$(mktemp -d)
-    ln -s "$kustomize_overlay" "$tmp_overlay/base"
+    # The SAME base the install built, not a bare symlink to the overlay. A bare
+    # symlink skips the WVA_ADMIN_GRANTS re-render, so the undeploy did not know
+    # about the node-reader ClusterRole and Binding the install had created and
+    # left both behind — found on a real cluster, by counting what survived.
+    # Third time this file has paid for deploy and undeploy building the overlay
+    # differently; there is now one function and both call it.
+    wva_prepare_overlay_base "$tmp_overlay"
     cat > "$tmp_overlay/kustomization.yaml" <<EOF
 namespace: $WVA_NS
 resources:
