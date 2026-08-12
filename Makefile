@@ -74,6 +74,22 @@ BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
 BENCHMARK_KEDA_SCALE_UP_PERIOD ?= 0
 BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 300
+# WVA under benchmark is installed from THIS repo, after standup, into the
+# benchmark namespace at namespace scope. It used to come from the published
+# Helm chart named in the scenario — a released binary, not the code under test,
+# and a chart this repo no longer has. BENCHMARK_WVA_DEPLOY=false runs the
+# scenario with no autoscaler; direct-KEDA mode skips it on its own.
+BENCHMARK_WVA_DEPLOY ?= true
+# Never install prometheus-adapter: it and KEDA both register the
+# external.metrics.k8s.io APIService, of which a cluster has exactly one, so it
+# would take that group away from the metrics server every ScaledObject's HPA
+# queries. It was there for the HPA path the external scaler replaced.
+BENCHMARK_SKIP_PROMETHEUS_ADAPTER ?= true
+BENCHMARK_WVA_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),deploy-wva-on-openshift,deploy-wva-on-k8s)
+BENCHMARK_WVA_UNDEPLOY_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),undeploy-wva-on-openshift,undeploy-wva-on-k8s)
+# Where the installed WVA reads metrics. Empty lets deploy/install.sh detect the
+# cluster's existing Prometheus, which is the usual case for a benchmark cluster.
+BENCHMARK_PROMETHEUS_URL ?= $(PROMETHEUS_URL)
 
 # Flags for deploy/install.sh (e2e / CI-style cluster infra; no chart VA/HPA).
 CREATE_CLUSTER    ?= false
@@ -414,7 +430,7 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@helm plugin install https://github.com/databus23/helm-diff --version v3.15.10 --verify=false 2>&1
 
 .PHONY: benchmark-standup
-benchmark-standup: ## Stand up the benchmark environment (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
+benchmark-standup: ## Stand up the benchmark environment, then install WVA from this repo (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, IMG=<your build>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
 	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-standup BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
@@ -446,6 +462,8 @@ benchmark-standup: ## Stand up the benchmark environment (set BENCHMARK_NAMESPAC
 		   "$(BENCHMARK_REPO_DIR)/config/specification/$(BENCHMARK_SPEC).yaml.j2"; \
 	fi
 	@if [ "$(BENCHMARK_SKIP_PROMETHEUS_ADAPTER)" = "true" ]; then \
+		echo "Not installing prometheus-adapter: it and KEDA both register the"; \
+		echo "external.metrics.k8s.io APIService, and a cluster has exactly one."; \
 		echo "Stubbing prometheus-adapter-resource-reader ClusterRole so standup's existing-PA probe passes..."; \
 		kubectl create clusterrole prometheus-adapter-resource-reader \
 			--verb=get,list,watch --resource=pods,nodes 2>/dev/null || true; \
@@ -485,6 +503,62 @@ benchmark-standup: ## Stand up the benchmark environment (set BENCHMARK_NAMESPAC
 		echo "✅ Monitoring label applied. Prometheus will begin scraping ServiceMonitors in this namespace."; \
 	fi; \
 	exit $$rc
+	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ]; then \
+		echo "Direct-KEDA mode: not installing WVA (that is the point of this mode)."; \
+	elif [ "$(BENCHMARK_WVA_DEPLOY)" != "true" ]; then \
+		echo "BENCHMARK_WVA_DEPLOY=$(BENCHMARK_WVA_DEPLOY): not installing WVA. The model servers will not be autoscaled."; \
+	else \
+		$(MAKE) benchmark-deploy-wva BENCHMARK_NAMESPACE=$(BENCHMARK_NAMESPACE); \
+	fi
+
+## Install WVA from THIS repo into the benchmark namespace and register the model
+## servers with it. Split out of benchmark-standup so a run whose stack is already
+## up can (re)install the autoscaler without redeploying the model servers.
+##
+## IMG decides what is measured. It defaults to $(IMAGE_TAG_BASE)/...:$(IMG_TAG),
+## which is a REGISTRY image — pass IMG=<a build of this tree> to benchmark the
+## working copy. Benchmarking a published tag is what this target exists to stop
+## happening silently, so it says which image it is installing.
+.PHONY: benchmark-deploy-wva
+benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (namespace scope) and create its ScaledObjects. Set IMG=<your build>.
+	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
+		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-deploy-wva BENCHMARK_NAMESPACE=<namespace>"; \
+		exit 1; \
+	fi
+	@# A scenario that still installs WVA itself (the upstream ones do) would leave
+	@# two controllers optimizing the same namespace and writing the same replica
+	@# counts. Refuse rather than produce a benchmark of the two of them fighting.
+	@existing=$$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) \
+		-l app.kubernetes.io/name=workload-variant-autoscaler \
+		-o name 2>/dev/null | grep -v '/wva-controller-manager$$' || true); \
+	if [ -n "$$existing" ]; then \
+		echo "ERROR: a WVA controller is already running in $(BENCHMARK_NAMESPACE):"; \
+		echo "  $$existing"; \
+		echo "It is not this install. Two controllers on one namespace both decide the"; \
+		echo "same replica counts. Either remove it, or re-run with"; \
+		echo "BENCHMARK_WVA_DEPLOY=false to benchmark that one instead."; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Installing WVA from this repo into namespace $(BENCHMARK_NAMESPACE) (scope: namespace)"
+	@echo "  image:  $(IMG)"
+	@echo "  target: $(BENCHMARK_WVA_TARGET)  (ENVIRONMENT=$(ENVIRONMENT))"
+	@echo ""
+	$(MAKE) $(BENCHMARK_WVA_TARGET) \
+		WVA_NS=$(BENCHMARK_NAMESPACE) \
+		WVA_SCOPE=namespace \
+		IMG=$(IMG) \
+		$(if $(BENCHMARK_PROMETHEUS_URL),PROMETHEUS_URL=$(BENCHMARK_PROMETHEUS_URL),)
+	@# The ScaledObject is the registration: WVA has no watch and no listing, so
+	@# without one it is never called and scales nothing. Applied as a second step
+	@# rather than via the install's WVA_DEFAULT_SO so the benchmark's replica
+	@# bounds reach so_discover.
+	WVA_DEFAULT_SO_MIN=$(BENCHMARK_KEDA_MIN_REPLICAS) \
+	WVA_DEFAULT_SO_MAX=$(BENCHMARK_KEDA_MAX_REPLICAS) \
+	$(MAKE) scaledobjects-apply \
+		WVA_NS=$(BENCHMARK_NAMESPACE) \
+		WVA_SCOPE=namespace \
+		WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE)
 
 .PHONY: benchmark-run
 benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, BENCHMARK_HARNESS=guidellm|inference-perf)
@@ -575,7 +649,10 @@ benchmark-plot-two-variant: ## Plot two-variant replica/latency/throughput graph
 
 VARIANT_CONFIG ?= $(CURDIR)/hack/benchmark/scenarios/guides/variants/v2-tp1-cheaper.yaml
 WVA_V2_SATURATION_CONFIGMAP ?= $(CURDIR)/hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml
-WVA_CONTROLLER_DEPLOY ?= deploy/workload-variant-autoscaler-controller-manager
+# The name deploy/ installs: config/base names it controller-manager and every
+# overlay applies namePrefix: wva-. The old value here was the deleted Helm
+# chart's name, so every restart-controller call failed with NotFound.
+WVA_CONTROLLER_DEPLOY ?= deploy/wva-controller-manager
 WVA_ROLLOUT_TIMEOUT ?= 120s
 WVA_MONITORING_NAMESPACE ?= workload-variant-autoscaler-monitoring
 
@@ -684,6 +761,13 @@ benchmark-teardown: ## Tear down the benchmark environment (set BENCHMARK_NAMESP
 	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-teardown BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
+	fi
+	@# Before the namespace goes: a namespace-scoped install still creates
+	@# cluster-scoped RBAC, which deleting the namespace would leave behind.
+	@if [ "$(BENCHMARK_DIRECT_KEDA)" != "true" ] && [ "$(BENCHMARK_WVA_DEPLOY)" = "true" ]; then \
+		$(MAKE) $(BENCHMARK_WVA_UNDEPLOY_TARGET) \
+			WVA_NS=$(BENCHMARK_NAMESPACE) WVA_SCOPE=namespace || \
+		echo "WARNING: WVA undeploy reported a failure; check for leftovers with 'kubectl get clusterrole,clusterrolebinding | grep wva'"; \
 	fi
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) teardown \
 		-p $(BENCHMARK_NAMESPACE)

@@ -19,11 +19,26 @@
 #     +---------+--------+       +------------+-----+
 #     | vLLM decode      |       | vLLM decode      |
 #     | primary (cost 10)|       | secondary (cost 5)|
-#     | VA + HPA         |       | VA + HPA          |
+#     | ScaledObject     |       | ScaledObject     |
 #     +------------------+       +------------------+
 #                   ^                       ^
-#                   +------- WVA (1) -------+
-#                              controller
+#                   +--- KEDA --- WVA (1) --+
+#                                external scaler
+#
+# WVA is NOT installed by this scenario
+# -------------------------------------
+# It used to be: this file carried a `wva:` block that had llm-d-benchmark
+# install the published Helm chart at v0.8.0-rc5. That chart was deleted from
+# this repo, so every run measured a released binary pulled from a registry
+# rather than the code under test. `make benchmark-standup` now installs WVA
+# from this repo's deploy/ into the benchmark namespace at namespace scope, and
+# creates one ScaledObject per model server.
+#
+# The ScaledObject is not decoration, it is the REGISTRATION: WVA has no watch
+# and no listing, and learns which workloads it manages from the KEDA calls its
+# triggers cause. Identity rides in the trigger metadata — `modelID` groups the
+# two variants, `variantCost` prices them (omitted = 10.0, which is the
+# primary's price here).
 #
 # How the two variants share one InferencePool
 # --------------------------------------------
@@ -43,19 +58,24 @@
 #   - The secondary Deployment uses wva.llmd.ai/variant=v2 as a unique
 #     discriminator in its own pod selector.
 #
-# Both VAs share spec.modelID = "unsloth/Meta-Llama-3.1-8B-Instruct" so the WVA
-# solver groups them and applies cost-weighted scaling.
+# Both ScaledObjects carry modelID = "unsloth/Meta-Llama-3.1-8B-Instruct" so the
+# WVA solver groups them and applies cost-weighted scaling.
 #
 # Running (two-step workflow):
 #
-#   # Step 1: stand up primary variant (cost 10.0)
-#   make benchmark-standup BENCHMARK_NAMESPACE=<ns> BENCHMARK_SPEC=guides/two-variant-wva
+#   # Step 1: stand up the primary variant (cost 10.0) and install WVA.
+#   # IMG decides WHAT IS MEASURED — without it you benchmark the published
+#   # :latest, not your build.
+#   make benchmark-standup BENCHMARK_NAMESPACE=<ns> BENCHMARK_SPEC=guides/two-variant-wva \
+#        IMG=<your build> ENVIRONMENT=openshift
 #
 #   # Step 2: add secondary variant (cost 5.0, default)
 #   make benchmark-add-variant BENCHMARK_NAMESPACE=<ns>
 #
-#   # Optional: override cost or suffix
-#   make benchmark-add-variant BENCHMARK_NAMESPACE=<ns> VARIANT_COST=3.0 VARIANT_SUFFIX=v2
+#   # Optional: a different cost/suffix/shape — all of it lives in the variant
+#   # config, so point at another one:
+#   make benchmark-add-variant BENCHMARK_NAMESPACE=<ns> \
+#        VARIANT_CONFIG=hack/benchmark/scenarios/guides/variants/<name>.yaml
 #
 #   # Run the benchmark (both variants are in the same pool)
 #   make benchmark-run BENCHMARK_NAMESPACE=<ns>
@@ -76,54 +96,21 @@ shared:
     enabled: false
 
   # --------------------------------------------------------------------------
-  # WVA CONTROLLER — installed once per namespace; per-stack scaling intent
-  # (variantAutoscaling, hpa) lives in each stack's wva: block below.
+  # WVA CONTROLLER — deliberately NOT installed here.
+  #
+  # llm-d-benchmark would install the published Helm chart, which is a released
+  # binary and not the code in this repo (the chart was deleted from it). The
+  # standup target installs WVA from deploy/ afterwards instead; see the header.
+  # Set BENCHMARK_WVA_DEPLOY=false to run this scenario with no autoscaler at all.
+  #
+  # No prometheus-adapter either, and not merely because it is unused: it and
+  # KEDA both register the external.metrics.k8s.io APIService, of which a cluster
+  # has exactly one. Installing it alongside KEDA takes the group away from the
+  # metrics server every ScaledObject's HPA queries. It existed here for the HPA
+  # path, which the KEDA external scaler replaced.
   # --------------------------------------------------------------------------
   wva:
-    enabled: true
-    wellLitPath: inference-scheduling
-    namespace: ""
-    image:
-      repository: ghcr.io/llm-d/llm-d-workload-variant-autoscaler
-      tag: v0.8.0-rc5
-    replicaCount: 1
-    controller:
-      enabled: true
-    namespaceScoped: true
-    metrics:
-      enabled: true
-      port: 8443
-      secure: true
-    prometheus:
-      baseUrl: https://thanos-querier.openshift-monitoring.svc.cluster.local
-      port: 9091
-    # Enable the WVA-side ServiceMonitor that propagates the `llm-d.ai/variant`
-    # pod label into scraped metrics as `llm_d_ai_variant`. Required by PR #1145
-    # for the V2 main path: without this relabeling, vllm:cache_config_info
-    # arrives in Prometheus with no variant label, the WVA collector can't map
-    # the row to a VariantAutoscaling, TotalKvCapacityTokens stays 0, and the
-    # analyzer falls into computeReplicaCapacityFallback (which uses the
-    # per-step batch budget — wrong dimension, ~50× under-states real KV).
-    vllmService:
-      enabled: true
-
-  # Per PR #1145 requirement: tag every scrape target with its VariantAutoscaling
-  # name so the WVA collector can directly map metric rows to variants.
-  # The primary VA name = `<model_id_label>-decode`. add_variant.py overrides
-  # this on the secondary Deployment to point at the v2 VA.
-  modelArtifacts:
-    extraLabels:
-      # NOTE: this is a model-derived value (the literal = <model_id_label>-decode
-      # for the default model above). It is NOT consumed by the saturation-V2
-      # collector (verified: a run with a different -m carried this stale value
-      # and V2 still mapped/scaled correctly), so it is metadata only. Keep it in
-      # sync with the default model, or template/drop it when the scenario config
-      # gains jinja support.
-      "llm-d.ai/variant": "unsloth--6b24a594-instruct-decode"
-
-  chartVersions:
-    wva: 0.8.0-rc5
-    prometheusAdapter: 5.2.0
+    enabled: false
 
   # --------------------------------------------------------------------------
   # IMAGE OVERRIDES — pin vllm-openai to v0.14.0 (newer than the v0.9.2
@@ -290,36 +277,9 @@ scenario:
       blockSize: 64
       gpuMemoryUtilization: 0.85
 
-    wva:
-      variantAutoscaling:
-        enabled: true
-        minReplicas: 1
-        maxReplicas: 10
-        variantCost: "10.0"
-        slo:
-          tpot: 10
-          ttft: 1000
-      hpa:
-        enabled: true
-        minReplicas: 1
-        maxReplicas: 10
-        targetAvgValue: 1
-        behavior:
-          scaleUp:
-            # Match the canonical WVA install samples: scaleUp is immediate so
-            # the HPA follows WVA's optimizer decisions without damping;
-            # scaleDown stays windowed to avoid flapping on brief lulls.
-            stabilizationWindowSeconds: 0
-            policies:
-              - type: Percent
-                value: 100
-                periodSeconds: 15
-          scaleDown:
-            stabilizationWindowSeconds: 120
-            policies:
-              - type: Percent
-                value: 100
-                periodSeconds: 15
+    # No wva: block. The primary's ScaledObject is created by benchmark-standup
+    # (deploy/lib/scaledobject.sh), bounded by BENCHMARK_KEDA_MIN_REPLICAS /
+    # BENCHMARK_KEDA_MAX_REPLICAS, at the default variantCost of 10.0.
 
     decode:
       replicas: 1

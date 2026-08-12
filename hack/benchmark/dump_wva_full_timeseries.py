@@ -35,7 +35,10 @@ from pathlib import Path
 
 # Filenames from the patched harness: <wva-pod>_<unixts>_metrics.log
 FILE_RE = re.compile(r"^(?P<pod>.+?)_(?P<ts>\d{10})_metrics\.log$")
-WVA_POD_PATTERN = re.compile(r"workload-variant-autoscaler-controller-manager")
+# The deploy/ install names the Deployment wva-controller-manager (the overlays
+# apply namePrefix: wva-). The first alternative is the name the deleted Helm
+# chart used — kept so results captured before the chart went still parse.
+WVA_POD_PATTERN = re.compile(r"(workload-variant-autoscaler|wva)-controller-manager")
 
 # Capture: name, label-set, value
 LINE_RE = re.compile(
