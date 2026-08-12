@@ -356,8 +356,16 @@ create_namespaces_shared_loop() {
     # place — and an empty llm-d namespace is worse than absent: it looks like the
     # place to deploy models, and WVA is not watching it.
     local wanted="$WVA_NS"
-    [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] && wanted="$wanted $MONITORING_NAMESPACE"
-    [ "${DEPLOY_LLMD_NS:-true}" = "true" ] && wanted="$wanted $LLMD_NS"
+    # Ask the same question the monitoring step will ask, rather than reading the
+    # flag: DEPLOY_PROMETHEUS=true only MEANS "deploy one" when the cluster has no
+    # Prometheus of its own. Reading the flag alone created an empty monitoring
+    # namespace on every existing-llm-d install — the exact litter the comment
+    # above is about — and made DEPLOY_PROMETHEUS=false something users had to
+    # pass by hand to avoid it.
+    if [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] && [ -z "$(foreign_prometheus)" ]; then
+        wanted="$wanted $MONITORING_NAMESPACE"
+    fi
+    [ "${DEPLOY_LLMD_NS:-false}" = "true" ] && wanted="$wanted $LLMD_NS"
 
     for ns in $wanted; do
         local ns_exists=false

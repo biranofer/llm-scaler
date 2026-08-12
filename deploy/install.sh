@@ -49,7 +49,12 @@ DEPLOY_PROMETHEUS=${DEPLOY_PROMETHEUS:-true}
 # Create the llm-d namespace. Set false when llm-d already runs somewhere else:
 # an empty llm-d namespace looks like the place to deploy models, and WVA would
 # not be watching it.
-DEPLOY_LLMD_NS=${DEPLOY_LLMD_NS:-true}
+# Creating an llm-d namespace is OFF by default. It only ever produced an EMPTY
+# one — deploy/install-epp.sh creates its own when it deploys EPP — and an empty
+# llm-d namespace is worse than none: it looks like the place to deploy models,
+# and WVA is not watching it. Turning it on is for the demo path that wants the
+# namespace to exist before anything is put in it.
+DEPLOY_LLMD_NS=${DEPLOY_LLMD_NS:-false}
 DEPLOY_OPERATIONAL_DASHBOARD=${DEPLOY_OPERATIONAL_DASHBOARD:-true}
 DEPLOY_ALERTING_RULES=${DEPLOY_ALERTING_RULES:-false}
 DEPLOY_WVA=${DEPLOY_WVA:-true}
