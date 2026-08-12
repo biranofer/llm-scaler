@@ -45,7 +45,7 @@ workload-variant-autoscaler/
 │   ├── base/             # Base manifests (crd/, manager/, monitoring/, rbac/)
 │   ├── components/       # Reusable kustomize components (namespace-scoped/)
 │   ├── overlays/         # Environment overlays (cluster-scoped/, namespace-scoped/)
-│   └── samples/          # Example resources (hpa/, keda/, simulator/)
+│   └── samples/          # Example resources (analyzers/, keda/, simulator/)
 ├── deploy/                # Deployment scripts
 │   ├── kind-emulator/    # Local Kind cluster with GPU emulation
 ├── docs/                  # Documentation
@@ -112,7 +112,16 @@ kubectl apply -k config/samples/simulator/nodeSelector/prefill/
 kubectl apply -k config/samples/simulator/nodeSelector/disaggregated/
 ```
 
-Each configuration creates a Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, and an HPA in the `llm-d-sim` namespace. The HPAs carry `llm-d.ai/managed: "true"` annotations so WVA discovers them without a VariantAutoscaling CRD and begins emitting `wva_desired_replicas` metrics.
+Each configuration creates a Deployment (using `llm-d-inference-sim:v0.9.0`), a Service, a ServiceMonitor, and a KEDA `ScaledObject` in the `llm-d-sim` namespace.
+
+The `ScaledObject` is what makes the workload WVA's to manage: WVA has no watch and no listing, and learns a variant exists from the KEDA call its trigger causes. Its `modelID` must match what the container serves (`--model test-model` here) — that is the grouping key for every multi-variant decision. KEDA creates the HPA that actuates; nothing here writes one by hand.
+
+Confirm the chain is live:
+
+```bash
+kubectl -n llm-d-sim get scaledobject,hpa
+kubectl -n workload-variant-autoscaler-system logs deploy/wva-controller-manager | grep dev-model-decode
+```
 
 To clean up the simulator, use the same path you applied:
 

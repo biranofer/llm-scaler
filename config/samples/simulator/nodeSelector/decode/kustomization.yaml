@@ -2,4 +2,4 @@ resources:
   - deployment.yaml
   - service.yaml
   - servicemonitor.yaml
-  - hpa.yaml
+  - scaledobject.yaml

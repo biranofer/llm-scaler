@@ -281,7 +281,7 @@ check_permissions() {
     log_info "Checking permissions..."
 
     local ns="${WVA_NS}" denied=() sa="system:serviceaccount:${WVA_NS}:wva-controller-manager"
-    local kinds kind resource namespaced cluster_denied=""
+    local kinds kind resource namespaced cluster_denied="" unknown=()
 
     # What this install creates, read from the RENDERED overlay rather than
     # inferred from the scope name. The scope does not decide it: the
@@ -306,9 +306,12 @@ check_permissions() {
         set -- $(wva_api_resource "$kind")
         resource="${1:-}"; namespaced="${2:-}"
         if [ -z "$resource" ]; then
-            # A CRD that is not installed. Not a permission problem, and not this
-            # check's to report — the apply would fail on the missing kind, which
-            # says so plainly.
+            # A kind this cluster does not define. NOT a failure: this check runs
+            # before the install deploys anything, and the install itself may
+            # create the CRD later in the same run — ServiceMonitor when
+            # DEPLOY_PROMETHEUS=true is exactly that. Unanswerable, so it is
+            # reported rather than either failed or hidden.
+            unknown+=("$kind")
             continue
         fi
         if [ "$namespaced" = "true" ]; then
@@ -329,6 +332,10 @@ check_permissions() {
             cluster_denied=1
         fi
     done
+
+    if [ ${#unknown[@]} -ne 0 ]; then
+        log_info "Not checked, because this cluster has no such resource yet: ${unknown[*]}. The install may create it (a ServiceMonitor needs the Prometheus Operator CRDs, which DEPLOY_PROMETHEUS=true installs). If it does not, the apply fails on the missing kind."
+    fi
 
     if [ ${#denied[@]} -ne 0 ]; then
         local advice="Ask for the objects above, or have an admin run the install."

@@ -51,6 +51,10 @@ kubectl apply -k config/samples/simulator/nodeSelector/prefill/
 kubectl apply -k config/samples/simulator/nodeSelector/decode-lws/
 ```
 
+Each sample includes its own KEDA `ScaledObject`. That object is the
+registration — without it WVA is never called about the workload and scales
+nothing, quietly.
+
 ## Configuration Options
 
 For a complete list of environment variables and configuration options, see the [Configuration Reference](../../docs/deployment/configuration.md) in the main deployment guide.
