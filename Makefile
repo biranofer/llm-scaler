@@ -162,7 +162,7 @@ destroy-kind-cluster:
 ## Deploy WVA to OpenShift cluster with specified image.
 ## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift (new cluster). Existing llm-d? add DEPLOY_PROMETHEUS=false DEPLOY_LLMD_NS=false PROMETHEUS_URL=<url>. Also: WVA_NS, WVA_SCOPE, WVA_LIMITER.
+deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE, WVA_LIMITER, WVA_ADMIN_GRANTS.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
@@ -207,7 +207,7 @@ scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes (new cluster). Existing llm-d? add DEPLOY_PROMETHEUS=false DEPLOY_LLMD_NS=false PROMETHEUS_URL=<url>. Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
+deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_ADMIN_GRANTS.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"

@@ -9,10 +9,46 @@ when you are building a cluster up from nothing, or standing up a test environme
 > llm-d namespace you do not want. See
 > [Adding WVA to a cluster that already runs llm-d](existing-cluster.md).
 
+## Install
+
+```bash
+make check-prereqs        # tools, versions, cluster reachability — read-only
+make deploy-wva-on-k8s    # controller, Prometheus, KEDA
+```
+
+Then register your workloads — until a ScaledObject exists, WVA is running and
+idle, because it learns of a workload only when KEDA calls it about one:
+
+```bash
+make scaledobjects-plan   # lists your model servers; applies nothing
+make scaledobjects-apply
+```
+
+## Verify
+
+```bash
+kubectl get pods -n workload-variant-autoscaler-system   # controller Running
+kubectl get scaledobject -A                              # your registered workloads
+kubectl get hpa -A                                       # KEDA creates one each
+```
+
+An HPA whose `CurrentMetrics` is populated means the whole chain works: WVA was
+called, decided, and KEDA received the answer.
+
+## Uninstall
+
+```bash
+make undeploy-wva-on-k8s                     # WVA only
+make undeploy-wva-on-k8s UNDEPLOY_SHARED=true  # also Prometheus, KEDA and EPP
+```
+
+Namespaces are kept unless you add `DELETE_NAMESPACES=true`.
+
 ## Choosing your install
 
-Four decisions, all made at install time and all changeable afterwards. Defaults
-are in **bold**.
+The commands above install one cluster-scoped WVA with no GPU limiter. Four
+decisions change that, all made at install time and all changeable afterwards.
+Defaults are in **bold**.
 
 | decision | variable | values | what it changes |
 | --- | --- | --- | --- |

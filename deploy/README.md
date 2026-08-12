@@ -35,10 +35,10 @@ cluster already has; the rest of this guide explains the pieces.
 | a cluster admin, one WVA per team | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a WVA_ADMIN_GRANTS=true` | manages **one** namespace. Separate failure domains per team; keeps authenticated metrics and node access. |
 | a cluster admin, keeping the controller out of the team's reach | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a WVA_ADMIN_GRANTS=true` | controller **runs in** `wva-team-a`, **manages** `team-a`. The team cannot edit the controller, so limits placed on them hold. |
 | a **namespace admin**, no cluster rights | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a` | creates **no cluster-scoped object**, so you can run it yourself. No `gpu-inventory` limiter, no authenticated metrics, no EPP metrics. |
-| adding WVA to a cluster that already has llm-d | `PROMETHEUS_URL=https://prom.monitoring.svc:9090 DEPLOY_PROMETHEUS=false CRD_INSTALL=never make deploy-wva-on-k8s` | controller only. Touches neither the cluster's Prometheus nor its CRDs. |
+| adding WVA to a cluster that already has llm-d | `make deploy-wva-on-k8s PROMETHEUS_URL=https://prom.monitoring.svc:9090` | controller only. The cluster's Prometheus, KEDA and CRDs are used as they are. |
 | bounding scaling by real GPUs | add `WVA_LIMITER=gpu-inventory` | allocates from per-accelerator pools. Needs node read; the install fails without it. |
 | bounding scaling by declared caps | add `WVA_LIMITER=quota` | bounds from config. Needs no cluster-scoped access. |
-| removing it | `make undeploy-wva-on-k8s` | removes WVA. Leaves Prometheus, KEDA, EPP and the namespace — see [Uninstalling](#uninstalling). |
+| removing it | `make undeploy-wva-on-k8s` | removes WVA's own objects. Prometheus, KEDA, EPP and the namespace stay — they are shared, and this install may not have created them. Add `UNDEPLOY_SHARED=true` to remove them too. |
 
 Two things every row has in common:
 

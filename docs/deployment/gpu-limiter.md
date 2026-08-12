@@ -113,37 +113,23 @@ from an idle cluster.
 Grant the node read (`WVA_ADMIN_GRANTS=true` at install, or a node-reader
 ClusterRole by hand), or remove the limiter from cluster policy.
 
-### Read this before relying on it
+### What this does and does not bound
 
-**This is a guardrail, not an enforcement boundary.**
+**A guardrail, not an enforcement boundary.** Whoever owns the controller's
+Deployment owns its args, env and image, so a tenant running WVA inside their own
+namespace can change what bounds them. What this does guarantee is that the GPU
+budget is authoritative for every controller actually running WVA — which covers
+misconfiguration and drift.
 
-If the tenant owns the controller's Deployment — which they do whenever the
-controller runs *inside* the namespace it manages — then they own its args, its
-env, its ServiceAccount and its image. No rule evaluated inside that process can
-bind them. An earlier design here tried to refuse to start in that situation; it
-was withdrawn because it did not work (the condition it keyed on came from a flag
-on the Deployment the tenant controls) and because it broke every namespace-scoped
-install, which is the default on OpenShift.
+WVA's limiter also bounds only what *WVA* asks for. The ScaledObject belongs to
+the workload's owner: raising `maxReplicaCount` or adding a second KEDA trigger
+bypasses it entirely, because the HPA takes the maximum across triggers.
 
-What this mechanism honestly buys you:
-
-- the GPU budget is authoritative for every controller *actually running WVA* —
-  covering misconfiguration, drift, and copied manifests, which is most real
-  incidents;
-- an admin can direct a controller they did not deploy, via a label on a
-  cluster-scoped object.
-
-**For a tenant you do not trust, enforce at admission instead.** A `ResourceQuota`
-on the GPU resource cannot be argued with by anything inside the namespace, and it
-bounds every path — not just WVA:
+**For a tenant you do not trust, bound the namespace at admission instead:**
 
 ```bash
 kubectl -n team-a create quota gpus --hard=requests.nvidia.com/gpu=8
 ```
-
-Note also that WVA's limiter bounds what *WVA* asks for. The ScaledObject is the
-tenant's: they can raise `maxReplicaCount` or add a second KEDA trigger, and the
-HPA takes the maximum across triggers. The quota is what stops that.
 
 ### The arrangement where the bound does hold
 

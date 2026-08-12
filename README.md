@@ -24,16 +24,29 @@ Use cases include:
 
 ## Installing
 
-| You have | Start here |
+```bash
+make check-prereqs                    # tools, versions, cluster reachability — read-only
+make deploy-wva-on-k8s                # the controller, Prometheus and KEDA
+make scaledobjects-plan               # list your model servers; nothing is applied
+make scaledobjects-apply              # register them — this is what makes WVA scale
+```
+
+On a cluster that already runs llm-d, one flag replaces the second line — the
+cluster's Prometheus, KEDA and CRDs are used as they are:
+
+```bash
+make deploy-wva-on-k8s PROMETHEUS_URL=https://<prometheus>.<ns>.svc.cluster.local:9090
+```
+
+The last two steps are not optional. A **KEDA ScaledObject** is how a workload
+registers with WVA: the controller has no watch and no listing, so until one exists
+it is running and idle.
+
+| Then | |
 | --- | --- |
-| A cluster with llm-d already running | [Existing llm-d cluster](docs/deployment/existing-cluster.md) |
-| An empty cluster, or you want a demo | [New cluster](docs/deployment/new-cluster.md) |
-| It is installed and you want to run it | [After the install](docs/deployment/operations.md) |
-
-Full options and the flag reference: **[deployment guide](deploy/README.md)**.
-
-Nothing scales until a **KEDA ScaledObject** names WVA's external scaler — the
-install can generate them for what is already running (`make scaledobjects-plan`).
+| Full install guide | [deploy/README.md](deploy/README.md) |
+| Adding WVA to a running llm-d | [existing-cluster.md](docs/deployment/existing-cluster.md) |
+| Running it day to day | [operations.md](docs/deployment/operations.md) |
 
 ## Documentation
 

@@ -19,63 +19,37 @@ Three things, and the installer cannot guess any of them:
 
 ## How many WVAs a cluster has
 
-WVA installs at one of two scopes, and a cluster uses one shape or the other:
-
-| shape | what you get |
-| --- | --- |
-| **one cluster-scoped WVA** | a single controller managing model servers in every namespace |
-| **one namespace-scoped WVA per namespace** | a controller per team, each managing only the namespace it is installed in |
-
-They do not mix. A cluster-scoped controller already covers every namespace, so a
-namespace-scoped one beside it would be a second controller for the same workloads;
-and a cluster-scoped one added later covers the namespaces the others were handling.
-The install checks for this and stops, naming what it found:
-
-```
-[ERROR] A cluster-scoped WVA is already installed: workload-variant-autoscaler-system/wva-controller-manager.
-```
-
-`make check-prereqs` runs the same check, so you can ask before installing.
-Installing into a namespace that already has one is an upgrade, and is allowed.
-
-### What keeps two namespace-scoped controllers apart
-
-Three things, none of which you configure:
-
-- **Workloads.** Each install has its own `wva-external-scaler.<namespace>` Service,
-  and a workload registers with the WVA whose address its trigger names. Two
-  controllers never see the same workload.
-- **Permissions.** Each install's ClusterRoleBindings are suffixed with a hash of
-  its namespace, so they cannot take each other's.
-- **Reach.** A namespace-scoped controller restricts its cache to its own namespace
-  and cannot read a workload outside it.
-
-The namespace is the identity; there is nothing else to name.
-
-### What they do share: GPUs
-
-Each controller computes free GPU capacity from the same nodes and allocates against
-it without seeing the others' claims, so several can oversubscribe one pool — which
-surfaces as pods that will not schedule. If your tenants share GPUs, bound each
-install with a quota limiter; if they do not, give each its own GPU nodes.
+One cluster-scoped controller, or one per namespace — never both, and the install
+refuses a combination that would leave two controllers deciding for the same
+workloads. See
+[How many WVAs a cluster has](new-cluster.md#how-many-wvas-a-cluster-has).
 
 ## Install
 
 ```bash
 make deploy-wva-on-k8s \
-  DEPLOY_PROMETHEUS=false \
-  DEPLOY_LLMD_NS=false \
-  LLMD_NS=<where your model servers run> \
   PROMETHEUS_URL=https://<your-prometheus>.<ns>.svc.cluster.local:9090
 ```
 
-- `DEPLOY_PROMETHEUS=false` — keep the Prometheus you have.
-- `DEPLOY_LLMD_NS=false` — do not create an llm-d namespace. Without this you get
-  an empty one, which is worse than none: it looks like the place to deploy models,
-  and WVA is not watching it.
-- `PROMETHEUS_URL` — **this one is not optional.** It is written into the
-  controller's config. Get it wrong and the pod CrashLoopBackOffs with
-  `CRITICAL: Failed to connect to Prometheus`.
+That is the whole command. `PROMETHEUS_URL` is the one thing the installer cannot
+work out for itself: it is written into the controller's config, and a wrong value
+shows up as a pod in CrashLoopBackOff with `CRITICAL: Failed to connect to
+Prometheus`.
+
+Everything else is decided by looking at the cluster:
+
+| the install finds | it does |
+| --- | --- |
+| a Prometheus outside its own monitoring namespace | uses it — no second stack, no monitoring namespace |
+| Gateway API / GAIE CRDs already present | keeps their versions; only missing CRDs are installed |
+| KEDA already installed | leaves it alone |
+
+It creates exactly one namespace: the controller's own.
+
+**There is no setting for "the namespace my models run in"**, and that is not an
+omission. WVA has no watch and no listing — it learns of a workload only when KEDA
+calls it about one, so a namespace name would tell it nothing. The ScaledObject is
+what puts a workload in scope.
 
 If your Prometheus serves TLS with a certificate WVA cannot verify, either point at
 the secret holding its CA:

@@ -35,17 +35,18 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | Namespace to create when `DEPLOY_LLMD_NS=true`, and where `deploy/install-epp.sh` installs EPP. The controller is not told it, and ScaledObject discovery does not use it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `LLMD_NS` | Where `deploy/install-epp.sh` installs EPP, and the namespace `DEPLOY_LLMD_NS=true` creates. It does **not** tell the controller anything: WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
 
 ## Deployment flags
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DEPLOY_PROMETHEUS` | Deploy Prometheus stack | `true` |
+| `DEPLOY_PROMETHEUS` | Deploy the Prometheus stack **when the cluster has none of its own**. A Prometheus outside `MONITORING_NAMESPACE` is used as it is, and no monitoring namespace is created. Set `PROMETHEUS_FORCE_INSTALL=true` to deploy alongside one (two operators then contend over the same CRs) | `true` |
 | `DEPLOY_OPERATIONAL_DASHBOARD` | Deploy Grafana and operational dashboard | `true` |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet (needed only for full e2e suite; skip for smoke, benchmarks, or pre-installed clusters) | `false` |
 | `DEPLOY_ALERTING_RULES` | Install the PrometheusRule alerts | `false` |
+| `DEPLOY_LLMD_NS` | Create an empty llm-d namespace up front. Useful only for a demo that wants it to exist before anything is deployed into it; `deploy/install-epp.sh` creates its own when it deploys EPP. WVA does not watch namespaces, so this creates a namespace nothing is looking at | `false` |
 | `ENABLE_SCALE_TO_ZERO` | Allow a model to be parked at zero replicas, and enable the EPP `flowControl` gate that makes waking it possible | `true` |
 | `SKIP_CHECKS` | Skip prerequisite checks | `false` |
 | `SCALER_BACKEND` | `keda` or `none` (use a pre-installed backend) | `keda` |
@@ -53,7 +54,9 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `KEDA_HELM_INSTALL` | Install KEDA with Helm rather than assuming it is present | `false` |
 | `KEDA_CHART_VERSION` | KEDA Helm chart version | `2.19.0` |
 | `UNDEPLOY` | Remove instead of install (`install.sh` doubles as the uninstaller) | `false` |
-| `DELETE_NAMESPACES` | With `UNDEPLOY=true`, also delete the namespaces | `false` |
+| `DELETE_NAMESPACES` | With `UNDEPLOY=true`, also delete the WVA and monitoring namespaces | `false` |
+| `DELETE_LLMD_NS` | With `DELETE_NAMESPACES=true`, also delete `LLMD_NS`. Separate because that namespace holds the model servers: deleting it takes the workloads with it | `false` |
+| `CHECK_ONLY` | Run the prerequisite and permission checks, then exit without deploying. Set by `--check` / `make check-prereqs` | `false` |
 | `WVA_REPLICAS` | Controller replicas. The manifest already elects a leader, so extra replicas are **warm standbys, not extra throughput** — only the leader runs the optimization loops. Two turns a node drain from "no decisions until rescheduled" into a lease timeout | `1` |
 | `UNDEPLOY_SHARED` | With `UNDEPLOY=true`, also remove Prometheus, the scaler backend and EPP. **Off by default**: they are shared, this install may not have created them, and removing them takes out everything else on the cluster that uses them | `false` |
 
@@ -153,8 +156,7 @@ shipped default and **exits at startup** if nothing answers there
 |----------|-------------|---------|
 | `PROMETHEUS_URL` | Full base URL, e.g. `https://prom.monitoring.svc.cluster.local:9090` | the kube-prometheus-stack this install deploys |
 | `PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` | Connect without verifying the server certificate | `true` in the shipped config |
-| `DEPLOY_PROMETHEUS` | Deploy a Prometheus stack. `false` to use yours | `true` |
-| `DEPLOY_LLMD_NS` | Create the llm-d namespace. `false` when llm-d runs elsewhere — an empty one looks like the place to deploy models, and WVA would not be watching it | `true` |
+| `DEPLOY_PROMETHEUS` | Deploy a Prometheus stack when the cluster has none of its own — see [Deployment flags](#deployment-flags) | `true` |
 
 ## Which namespace is which
 
