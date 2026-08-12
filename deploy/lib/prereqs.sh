@@ -322,16 +322,36 @@ check_permissions() {
         # The namespace itself, only when it does not exist yet — requiring
         # namespace creation from someone installing into a namespace an admin
         # already made for them would refuse a perfectly good install.
-        local why="cluster-scoped"
-        if [ "$kind" = "Namespace" ]; then
-            kubectl get namespace "$ns" >/dev/null 2>&1 && continue
-            why="cluster-scoped; $ns does not exist yet"
-        fi
+        # The Namespace is handled after this loop: the installer creates WVA_NS
+        # imperatively whatever the overlay contains, so the render is not the
+        # authority on it.
+        [ "$kind" = "Namespace" ] && continue
         if ! kubectl auth can-i create "$resource" >/dev/null 2>&1; then
-            denied+=("create $resource ($why)")
+            denied+=("create $resource (cluster-scoped)")
             cluster_denied=1
         fi
     done
+
+    # WVA_NS, asked separately from the render and at BOTH scopes.
+    #
+    # create_namespaces materializes WVA_NS imperatively whenever it is missing,
+    # so the namespace-scoped overlay not containing a Namespace object means
+    # nothing here — components/tenant-installable deletes it precisely because a
+    # tenant installs into a namespace that already exists. Reading only the
+    # render therefore passed a preflight that the install then failed on its
+    # first write, which is what this whole check exists to prevent.
+    #
+    # Only when it is missing: requiring namespace creation from someone
+    # installing into a namespace an admin already made for them would refuse a
+    # perfectly good install. On OpenShift a self-provisioner creates namespaces
+    # through projectrequests rather than namespaces, and either is enough.
+    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
+        if ! kubectl auth can-i create namespaces >/dev/null 2>&1 \
+            && ! kubectl auth can-i create projectrequests >/dev/null 2>&1; then
+            denied+=("create namespace $ns (it does not exist yet)")
+            cluster_denied=1
+        fi
+    fi
 
     if [ ${#unknown[@]} -ne 0 ]; then
         log_info "Not checked, because this cluster has no such resource yet: ${unknown[*]}. The install may create it (a ServiceMonitor needs the Prometheus Operator CRDs, which DEPLOY_PROMETHEUS=true installs). If it does not, the apply fails on the missing kind."

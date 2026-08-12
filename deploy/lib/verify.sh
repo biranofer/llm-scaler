@@ -33,8 +33,31 @@ verify_deployment() {
         all_good=false
         log_warning "WVA controller did NOT become ready within ${WVA_VERIFY_TIMEOUT:-180s}."
         kubectl get pods -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" >&2 2>/dev/null || true
-        log_warning "  Logs:   kubectl -n $WVA_NS logs -l $WVA_CONTROLLER_LABEL_SELECTOR --tail=50"
-        log_warning "  Events: kubectl -n $WVA_NS get events --sort-by=.lastTimestamp | tail -20"
+
+        # Say WHY, here, rather than printing two commands to run. The container's
+        # own last words are almost always the answer and they are one API call
+        # away — a released image rejecting a flag this branch's manifests pass
+        # ("unknown flag: --external-scaler-bind-address") looks identical to a
+        # network problem until you read them.
+        local reason
+        reason=$(kubectl get pods -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+            -o jsonpath='{range .items[*].status.containerStatuses[*]}{.state.waiting.reason}{" "}{.state.waiting.message}{.lastState.terminated.reason}{"\n"}{end}' 2>/dev/null \
+            | grep -v '^[[:space:]]*$' | head -3)
+        [ -n "$reason" ] && log_warning "  Container state: $(printf '%s' "$reason" | tr '\n' ';')"
+
+        local logs
+        logs=$(kubectl logs -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+            --tail=8 --all-containers 2>/dev/null \
+            || kubectl logs -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+                --tail=8 --previous 2>/dev/null)
+        if [ -n "$logs" ]; then
+            log_warning "  Last lines from the container:"
+            printf '%s\n' "$logs" | sed 's/^/      /' >&2
+        fi
+
+        log_warning "  Full logs: kubectl -n $WVA_NS logs -l $WVA_CONTROLLER_LABEL_SELECTOR --tail=50 --previous"
+        log_warning "  Events:    kubectl -n $WVA_NS get events --sort-by=.lastTimestamp | tail -20"
+        log_warning "  If it is rejecting a flag, IMG and these manifests are different versions: build and push this tree (make docker-build docker-push IMG=<ref>) and re-run with that IMG."
     fi
 
     # --- Monitoring
