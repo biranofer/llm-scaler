@@ -3,7 +3,7 @@ set -euo pipefail
 
  echo "Deploying WVA and llm-d infrastructure..."
 echo "  ACCELERATOR_TYPE: $ACCELERATOR_TYPE"
-echo "  LLMD_NS: $LLMD_NS"
+echo "  NAMESPACE: $NAMESPACE"
 echo "  WVA_NS: $WVA_NS"
 echo "  WVA_IMAGE_TAG: $WVA_IMAGE_TAG"
 echo "  CONTROLLER_INSTANCE: $CONTROLLER_INSTANCE"
@@ -23,7 +23,7 @@ kubectl apply -k "https://github.com/kubernetes-sigs/gateway-api-inference-exten
 # EPP / scheduler via install-epp.sh (handles llm-d-router-standalone chart +
 # flowControl feature gate + tokenreview RBAC).
 WVA_PROJECT="$GITHUB_WORKSPACE" \
-LLMD_NS="$LLMD_NAMESPACE" \
+NAMESPACE="$LLMD_NAMESPACE" \
 GAIE_VERSION="$GAIE_VERSION" \
 LLM_D_ROUTER_VERSION="$LLM_D_ROUTER_VERSION" \
 ENVIRONMENT=openshift \

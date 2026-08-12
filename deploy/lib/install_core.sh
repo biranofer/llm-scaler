@@ -170,7 +170,7 @@ main() {
     echo "    Deployed on:          $ENVIRONMENT"
     echo "    WVA Image:            $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
     echo "    WVA Namespace:        $WVA_NS"
-    echo "    llm-d Namespace:      $LLMD_NS"
+    echo "    llm-d Namespace:      $NAMESPACE"
     echo "    Monitoring Namespace: $MONITORING_NAMESPACE"
     echo "    Scaler Backend:       $SCALER_BACKEND"
     echo ""

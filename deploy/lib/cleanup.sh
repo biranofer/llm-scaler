@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Undeploy and cleanup helpers for deploy/install.sh.
-# Requires vars: KEDA_NAMESPACE, MONITORING_NAMESPACE, LLMD_NS, WVA_NS, WVA_PROJECT.
+# Requires vars: KEDA_NAMESPACE, MONITORING_NAMESPACE, NAMESPACE, WVA_NS, WVA_PROJECT.
 # Requires funcs: containsElement(),
 # undeploy_prometheus_stack(), delete_namespaces(), undeploy_epp(), log_*().
 #
@@ -181,7 +181,7 @@ cleanup() {
         # so an uninstall claimed to have "preserved" namespaces that had never
         # existed on that cluster — which reads as "I found these and left them".
         local ns preserved=()
-        for ns in "$LLMD_NS" "$WVA_NS" "$MONITORING_NAMESPACE" \
+        for ns in "$NAMESPACE" "$WVA_NS" "$MONITORING_NAMESPACE" \
             $([ "$SCALER_BACKEND" = "keda" ] && echo "$KEDA_NAMESPACE"); do
             [ -n "$ns" ] || continue
             kubectl get namespace "$ns" >/dev/null 2>&1 && preserved+=("$ns")

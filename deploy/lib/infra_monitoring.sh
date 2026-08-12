@@ -116,7 +116,7 @@ wva_detect_prometheus_url() {
     # install already knows about. Deliberately NOT `get svc -A`: on a large
     # shared cluster that is slow enough to look hung, and a tenant cannot list
     # services cluster-wide anyway, so it would be a long wait for a denial.
-    for ns in "${MONITORING_NAMESPACE:-}" "${WVA_NS:-}" "${LLMD_NS:-}" monitoring prometheus; do
+    for ns in "${MONITORING_NAMESPACE:-}" "${WVA_NS:-}" "${NAMESPACE:-}" monitoring prometheus; do
         [ -n "$ns" ] || continue
         while read -r name port; do
             [ -n "$name" ] || continue

@@ -83,10 +83,10 @@ Environment Variables:
   UNDEPLOY_SHARED              Also remove Prometheus, KEDA and EPP (default: false — they are shared
                                and this install may not have created them)
   DELETE_NAMESPACES            Delete WVA and monitoring namespaces afterwards (default: false)
-  DELETE_LLMD_NS               Also delete LLMD_NS — it holds the model servers (default: false)
+  DELETE_LLMD_NS               Also delete NAMESPACE — it holds the model servers (default: false)
 
  Other
-  LLMD_NS                      Namespace used for EPP/model-server setup by the e2e and sample paths.
+  NAMESPACE                      Namespace used for EPP/model-server setup by the e2e and sample paths.
                                It does NOT scope what WVA manages: WVA has no watch and no listing, and
                                learns of a workload only when KEDA calls it about one.
 

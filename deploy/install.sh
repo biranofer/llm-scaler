@@ -25,7 +25,16 @@ NC='\033[0m' # No Color
 WVA_PROJECT=${WVA_PROJECT:-$PWD}
 
 # Namespaces
-LLMD_NS=${LLMD_NS:-"llm-d-optimized-baseline"}
+#
+# NAMESPACE is llm-d's own variable: its guides say `export NAMESPACE=…` and pass
+# `-n ${NAMESPACE}` to every command. This repo used to call the same thing
+# LLMD_NS — a second name it invented for a namespace llm-d already named — which
+# is accepted here for one release so nobody's scripts break on the rename.
+if [ -n "${LLMD_NS:-}" ] && [ -z "${NAMESPACE:-}" ]; then
+    NAMESPACE="$LLMD_NS"
+    echo -e "\033[1;33m[WARNING]\033[0m LLMD_NS is deprecated and will be removed; use NAMESPACE (llm-d's own variable). Using NAMESPACE=$NAMESPACE" >&2
+fi
+NAMESPACE=${NAMESPACE:-"llm-d-optimized-baseline"}
 MONITORING_NAMESPACE=${MONITORING_NAMESPACE:-"workload-variant-autoscaler-monitoring"}
 WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 PROMETHEUS_SECRET_NS=${PROMETHEUS_SECRET_NS:-$MONITORING_NAMESPACE}
@@ -141,12 +150,12 @@ INSTALL_PHASE=${INSTALL_PHASE:-all}
 # about workloads KEDA calls it about — so an install with none anywhere is a
 # controller that never scales anything and looks healthy doing it.
 # WVA_DEFAULT_SO_NS: a namespace, "wva", or "all" for every namespace holding llm-d model
-# servers (cluster-scoped installs only). Defaults to LLMD_NS.
+# servers (cluster-scoped installs only). Defaults to NAMESPACE.
 # false | plan (list and stop) | edit (list, $EDITOR, confirm) | true (apply all)
 WVA_DEFAULT_SO=${WVA_DEFAULT_SO:-false}
 # Unset means "what this install can reach": every namespace holding model servers
 # when cluster-scoped, its own namespace when namespace-scoped. Defaulting it to
-# LLMD_NS here would defeat that, and did — the scope-derived default then applied
+# NAMESPACE here would defeat that, and did — the scope-derived default then applied
 # only to the make targets, so the same variable behaved differently depending on
 # how you invoked it.
 WVA_DEFAULT_SO_NS=${WVA_DEFAULT_SO_NS:-}

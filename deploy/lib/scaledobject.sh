@@ -129,7 +129,7 @@ so_pool() {
 #                     manage nothing else, so scanning anywhere else would only
 #                     produce ScaledObjects it will be called about and cannot read
 #
-# It used to default to LLMD_NS, which was wrong in both directions: it scanned one
+# It used to default to NAMESPACE, which was wrong in both directions: it scanned one
 # namespace on a cluster-scoped install that could have managed them all, and it
 # scanned a namespace a namespace-scoped install cannot see.
 so_target_namespaces() {

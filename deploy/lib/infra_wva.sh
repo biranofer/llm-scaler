@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Shared WVA-specific deployment helpers.
-# Requires vars: WVA_NS, LLMD_NS, MONITORING_NAMESPACE, WVA_PROJECT,
+# Requires vars: WVA_NS, NAMESPACE, MONITORING_NAMESPACE, WVA_PROJECT,
 # chart/image values, env mode lists.
 # Requires funcs: log_info/log_warning/log_success/log_error, containsElement().
 #
@@ -393,7 +393,7 @@ create_namespaces_shared_loop() {
         && [ -z "$(foreign_prometheus)" ]; then
         wanted="$wanted $MONITORING_NAMESPACE"
     fi
-    [ "${DEPLOY_LLMD_NS:-false}" = "true" ] && wanted="$wanted $LLMD_NS"
+    [ "${DEPLOY_LLMD_NS:-false}" = "true" ] && wanted="$wanted $NAMESPACE"
 
     for ns in $wanted; do
         local ns_exists=false
@@ -429,14 +429,14 @@ delete_namespaces_kube_like() {
 
     # Only namespaces THIS install created.
     #
-    # LLMD_NS needs its own opt-in rather than mirroring DEPLOY_LLMD_NS, because
+    # NAMESPACE needs its own opt-in rather than mirroring DEPLOY_LLMD_NS, because
     # that flag describes the INSTALL and an uninstall never restates it —
     # `make undeploy-wva-on-k8s` forwards only WVA_NS and WVA_SCOPE, so the flag
     # would read as its default (true) and delete anyway. It holds the model
     # servers; deleting it is never something to infer.
-    for ns in $LLMD_NS $WVA_NS $MONITORING_NAMESPACE; do
+    for ns in $NAMESPACE $WVA_NS $MONITORING_NAMESPACE; do
         if kubectl get namespace $ns &> /dev/null; then
-            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$LLMD_NS" && "${DELETE_LLMD_NS:-false}" != "true" ]]; then
+            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$NAMESPACE" && "${DELETE_LLMD_NS:-false}" != "true" ]]; then
                 log_info "Skipping deletion of namespace $ns as it was not deployed"
             else
                 log_info "Deleting namespace $ns..."

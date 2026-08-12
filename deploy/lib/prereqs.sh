@@ -286,7 +286,7 @@ wva_api_resource() {
 # nothing, and has no error to go on.
 #
 # It only ever acts when NOTHING was chosen: WVA_NS_SOURCE=default means the
-# caller set neither WVA_NS nor LLMD_NS. Anything explicit is left alone.
+# caller set neither WVA_NS nor NAMESPACE. Anything explicit is left alone.
 #
 # With several llm-d namespaces it REFUSES rather than picking. A namespace-scoped
 # controller manages exactly one, and choosing someone's namespace for them is not
@@ -341,7 +341,7 @@ wva_report_namespace() {
         discovered)
             log_success "Namespace: $ns  (found: it is the only namespace running llm-d model servers)"
             log_info "  Override with WVA_NS=<ns> if you meant a different one." ;;
-        llmd-ns)  log_info "Namespace: $ns  (from LLMD_NS)" ;;
+        llmd-ns)  log_info "Namespace: $ns  (from NAMESPACE)" ;;
         namespace-env)
             log_info "Namespace: $ns  (from NAMESPACE — the variable llm-d's own guides export)" ;;
         explicit) log_info "Namespace: $ns  (you set WVA_NS)" ;;
@@ -362,7 +362,7 @@ wva_report_namespace() {
     # Does the managed namespace actually contain model servers?
     if ! kubectl get namespace "$managed" >/dev/null 2>&1; then
         log_info "  $managed does not exist yet; the install creates it."
-        log_info "  Wrong namespace? Set WVA_NS=<ns> (or LLMD_NS=<ns>) to install where your model servers are."
+        log_info "  Wrong namespace? Set WVA_NS=<ns> (or NAMESPACE=<ns>) to install where your model servers are."
         return 0
     fi
     count="$(wva_model_server_count "$managed")"
@@ -382,9 +382,17 @@ wva_report_namespace() {
         elsewhere="$(wva_namespaces_with_model_servers)"
         if [ -n "$elsewhere" ]; then
             log_warning "    They are in: $(printf '%s ' $elsewhere)"
+        else
+            # Nowhere on the cluster. WVA scales llm-d; it does not install it,
+            # and should not — which model, which accelerator, which well-lit
+            # path and whose HuggingFace token are the deployment decision, not
+            # an autoscaler's. Point at the people whose decision it is.
+            log_warning "    There are none anywhere on this cluster. WVA scales llm-d model servers; deploy one first:"
+            log_warning "      https://github.com/llm-d/llm-d/tree/main/guides"
+            log_warning "    For a GPU-free local cluster to try WVA against: make deploy-llm-d-wva-emulated-on-kind"
         fi
         log_warning "    A namespace-scoped controller manages only the namespace it runs in, so this one would install cleanly, report healthy, and scale nothing."
-        log_warning "    Install where your models are:  WVA_NS=<their namespace>   (or LLMD_NS=<their namespace>)"
+        log_warning "    Install where your models are:  WVA_NS=<their namespace>   (or NAMESPACE=<their namespace>)"
         log_warning "    Or keep the controller here and manage theirs:  WVA_WATCH_NS=<their namespace>"
     fi
 }

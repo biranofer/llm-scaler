@@ -3,7 +3,7 @@
 # EPP and InferencePool setup for all environments (kind-emulator, kubernetes, openshift).
 # Installs Gateway API CRDs, GAIE CRDs, and the llm-d-router-standalone chart (EPP + InferencePool).
 #
-# Required vars: LLM_D_ROUTER_VERSION, GAIE_VERSION, LLMD_NS
+# Required vars: LLM_D_ROUTER_VERSION, GAIE_VERSION, NAMESPACE
 #   LLM_D_ROUTER_VERSION  — chart + EPP image tag from llm-d/llm-d-router (e.g. v0.9.0)
 #   GAIE_VERSION          — kubernetes-sigs GAIE CRDs ref (e.g. v1.5.0)
 # Required funcs: log_info, log_success, log_warning
@@ -80,17 +80,17 @@ deploy_epp() {
     install_inference_crds
 
     # llm-d namespace and dummy HF token secret for emulated environments.
-    log_info "Creating llm-d namespace ($LLMD_NS)..."
-    kubectl create namespace "$LLMD_NS" --dry-run=client -o yaml | kubectl apply -f -
+    log_info "Creating llm-d namespace ($NAMESPACE)..."
+    kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
     # Create HF token secret only if it does not already exist (preserves real token on OpenShift CI).
-    if ! kubectl get secret llm-d-hf-token -n "$LLMD_NS" &>/dev/null; then
+    if ! kubectl get secret llm-d-hf-token -n "$NAMESPACE" &>/dev/null; then
         local hf_token="${HF_TOKEN:-dummy-token}"
         kubectl create secret generic llm-d-hf-token \
             --from-literal="HF_TOKEN=${hf_token}" \
-            -n "$LLMD_NS"
-        log_info "Created llm-d-hf-token secret in $LLMD_NS"
+            -n "$NAMESPACE"
+        log_info "Created llm-d-hf-token secret in $NAMESPACE"
     else
-        log_info "llm-d-hf-token secret already exists in $LLMD_NS — skipping"
+        log_info "llm-d-hf-token secret already exists in $NAMESPACE — skipping"
     fi
 
     # llm-d-router-standalone chart — bundles EPP + Envoy proxy; no external
@@ -120,7 +120,7 @@ deploy_epp() {
         --set router.proxy.resources.requests.memory=128Mi \
         --set router.proxy.resources.limits.cpu=500m \
         --set router.proxy.resources.limits.memory=256Mi \
-        -n "$LLMD_NS" --version "$LLM_D_ROUTER_VERSION" --create-namespace
+        -n "$NAMESPACE" --version "$LLM_D_ROUTER_VERSION" --create-namespace
 
     # Grant EPP SA permission to create tokenreviews/subjectaccessreviews so its
     # metrics endpoint authentication works (otherwise /metrics returns 500).
@@ -128,22 +128,22 @@ deploy_epp() {
     kubectl apply -f "$_lib_dir/epp-tokenreview-rbac.yaml"
     kubectl create clusterrolebinding optimized-baseline-epp-tokenreview \
         --clusterrole=optimized-baseline-epp-tokenreview \
-        --serviceaccount="$LLMD_NS:optimized-baseline-epp" \
+        --serviceaccount="$NAMESPACE:optimized-baseline-epp" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     # Wait for EPP to be available.
-    log_info "Waiting for EPP deployment (optimized-baseline-epp) in $LLMD_NS..."
+    log_info "Waiting for EPP deployment (optimized-baseline-epp) in $NAMESPACE..."
     kubectl wait --for=condition=Available deployment/optimized-baseline-epp \
-        -n "$LLMD_NS" --timeout=120s || \
-        log_warning "EPP not ready yet — check 'kubectl get pods -n $LLMD_NS'"
+        -n "$NAMESPACE" --timeout=120s || \
+        log_warning "EPP not ready yet — check 'kubectl get pods -n $NAMESPACE'"
 
     log_success "EPP infrastructure deployed (llm-d-router-standalone ${LLM_D_ROUTER_VERSION})"
 }
 
 undeploy_epp() {
     log_info "Removing EPP infrastructure..."
-    helm uninstall optimized-baseline -n "$LLMD_NS" --ignore-not-found 2>/dev/null || true
-    kubectl delete secret llm-d-hf-token -n "$LLMD_NS" --ignore-not-found 2>/dev/null || true
+    helm uninstall optimized-baseline -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
+    kubectl delete secret llm-d-hf-token -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
     kubectl delete clusterrolebinding optimized-baseline-epp-tokenreview --ignore-not-found 2>/dev/null || true
     kubectl delete clusterrole optimized-baseline-epp-tokenreview --ignore-not-found 2>/dev/null || true
     log_success "EPP infrastructure removed"

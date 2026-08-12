@@ -20,12 +20,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration (Kind emulator). EPP deploy is via deploy/install-epp.sh — set LLM_D_ROUTER_VERSION / GAIE_VERSION / LLMD_NS there or in Makefile.
+# Configuration (Kind emulator). EPP deploy is via deploy/install-epp.sh — set LLM_D_ROUTER_VERSION / GAIE_VERSION / NAMESPACE there or in Makefile.
 WVA_PROJECT=${WVA_PROJECT:-$PWD}
 NAMESPACE_SUFFIX="sim"
 
 # Namespaces
-LLMD_NS="llm-d-$NAMESPACE_SUFFIX"
+NAMESPACE="llm-d-$NAMESPACE_SUFFIX"
 MONITORING_NAMESPACE="workload-variant-autoscaler-monitoring"
 WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 

@@ -6,7 +6,7 @@
 # deploy/lib/epp-optimized-baseline.values.yaml — no network fetch required.
 #
 # Usage:
-#   LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 LLMD_NS=llm-d-sim ./deploy/install-epp.sh
+#   LLM_D_ROUTER_VERSION=v0.9.0 GAIE_VERSION=v1.5.0 NAMESPACE=llm-d-sim ./deploy/install-epp.sh
 #
 
 set -e
@@ -15,7 +15,7 @@ set -o pipefail
 WVA_PROJECT=${WVA_PROJECT:-$PWD}
 LLM_D_ROUTER_VERSION=${LLM_D_ROUTER_VERSION:-v0.9.0}
 GAIE_VERSION=${GAIE_VERSION:-v1.5.0}
-LLMD_NS=${LLMD_NS:-llm-d-sim}
+NAMESPACE=${NAMESPACE:-llm-d-sim}
 ENVIRONMENT=${ENVIRONMENT:-kind-emulator}
 UNDEPLOY=${UNDEPLOY:-false}
 ENABLE_SCALE_TO_ZERO=${ENABLE_SCALE_TO_ZERO:-false}

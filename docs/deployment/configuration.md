@@ -15,7 +15,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](install-cluster-wide.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
 | `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you by the `setup-prereqs-*` and `deploy-wva-*` targets — see [deploy/README.md](../../deploy/README.md) | `all` |
@@ -35,7 +35,8 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | Where llm-d runs: `deploy/install-epp.sh` installs EPP there, `DEPLOY_LLMD_NS=true` creates it, and setting it **defaults `WVA_NS` for the `*-namespace-on-*` targets** (an explicit `WVA_NS` wins; cluster-scoped targets are unaffected). It is still never passed to the controller — WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `NAMESPACE` | Where llm-d runs — **llm-d's own variable**, exported by its guides. `deploy/install-epp.sh` installs EPP there, `DEPLOY_LLMD_NS=true` creates it, and setting it **defaults `WVA_NS` for the `*-namespace-on-*` targets** (an explicit `WVA_NS` wins; cluster-scoped targets are unaffected). It is never passed to the controller — WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `LLMD_NS` | **Deprecated** alias for `NAMESPACE`, this repo's own former name for it. Still honoured, with a warning | — |
 
 ## Deployment flags
 
@@ -165,15 +166,15 @@ Three namespaces appear in these options and they do different jobs:
 | variable | what lives there | who reads it |
 | --- | --- | --- |
 | `WVA_NS` | the controller, its ConfigMaps and its external-scaler Service | the installer, and the controller (as `POD_NAMESPACE`) |
-| `LLMD_NS` | your model servers | **the installer only** — never passed to the controller |
+| `NAMESPACE` | your model servers | **the installer only** — never passed to the controller |
 | `MONITORING_NAMESPACE` | Prometheus and Grafana, if this install deploys them | the installer |
 
-**Which namespaces get ScaledObjects follows the scope, not `LLMD_NS`.** A
+**Which namespaces get ScaledObjects follows the scope, not `NAMESPACE`.** A
 cluster-scoped install scans every namespace holding model servers, because it can
 manage them all; a namespace-scoped install scans its own, because that is the only
 namespace it can read. `WVA_DEFAULT_SO_NS` narrows it if you want less.
 
-`LLMD_NS` not reaching the controller is not an oversight. WVA has no watch and no
+`NAMESPACE` not reaching the controller is not an oversight. WVA has no watch and no
 listing: it learns about a workload when KEDA calls its external scaler about it,
 from any namespace. It never goes looking in a namespace, so it has no use for the
 name of one.
@@ -239,14 +240,14 @@ job; removing what WVA was pointed at is a separate decision, and an explicit on
 **A second WVA is refused.** Their workloads would be separate — a workload
 registers with the scaler address its trigger names — but their GPU budgets would
 not. See
-[One WVA per cluster](existing-cluster.md#how-many-wvas-a-cluster-has).
+[One WVA per cluster](../guides/existing-llm-d/README.md#how-many-wvas-a-cluster-has).
 
 ## Adding a model later
 
 Deploy the model server, then re-run:
 
 ```bash
-make scaledobjects-apply LLMD_NS=<your namespace>
+make scaledobjects-apply NAMESPACE=<your namespace>
 ```
 
 It creates a ScaledObject for the **new** workload and leaves every existing one

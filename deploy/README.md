@@ -23,7 +23,7 @@ make check-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
 It answers the three things you would otherwise guess at:
 
 ```
-[INFO]    Namespace: my-llmd  (from LLMD_NS)
+[INFO]    Namespace: my-llmd  (from NAMESPACE)
 [INFO]      It runs in my-llmd and manages that same namespace — nothing outside it.
 [SUCCESS]   my-llmd holds 3 llm-d model server(s) for it to manage.
 [SUCCESS] Prometheus: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
@@ -45,10 +45,12 @@ The single most common confusion, so plainly:
 | `WVA_NS` | where the **controller runs** | `workload-variant-autoscaler-system` |
 | `WVA_WATCH_NS` | which namespace it **manages** | the one it runs in |
 | `WVA_DEFAULT_SO_NS` | where `scaledobjects-plan` **looks for model servers** | what this install can reach |
-| `LLMD_NS` | where llm-d runs. Setting it **defaults `WVA_NS` for the namespace-scoped targets**, so you name the namespace once. It is never passed to the controller | `llm-d-optimized-baseline` |
-| `NAMESPACE` | llm-d's own variable — its well-lit path guides have you `export NAMESPACE=…`. Honoured for the same reason, so a guide's namespace carries over | — |
+| `NAMESPACE` | where llm-d runs. **llm-d's own variable** — its guides have you `export NAMESPACE=…` — so a guide's namespace carries straight over. Setting it **defaults `WVA_NS` for the namespace-scoped targets**. It is never passed to the controller | `llm-d-optimized-baseline` |
 
-Precedence, most specific first: `WVA_NS` → `LLMD_NS` → `NAMESPACE` → discovery.
+Precedence, most specific first: `WVA_NS` → `NAMESPACE` → discovery.
+
+(`LLMD_NS` was this repo's own name for the same thing. It still works, with a
+deprecation warning, and will be removed.)
 
 **Usually you need none of them.** A namespace-scoped install with nothing
 specified **finds** the namespace running llm-d — the model servers are labelled,
@@ -66,8 +68,9 @@ someone's namespace for them. Name one, or install cluster-wide.
 controller runs alongside the models it manages. Name it once, either way:
 
 ```bash
-make deploy-wva-namespace-on-k8s LLMD_NS=my-llmd     # WVA_NS follows LLMD_NS
-make deploy-wva-namespace-on-k8s WVA_NS=my-llmd      # or say it directly
+export NAMESPACE=my-llmd                            # llm-d's own variable
+make deploy-wva-namespace-on-k8s                    # WVA_NS follows it
+make deploy-wva-namespace-on-k8s WVA_NS=my-llmd     # or say it directly
 ```
 
 `WVA_NS` wins if you set both, and this only applies to the **namespace-scoped**
@@ -79,21 +82,24 @@ one, so pick one of:
 
 - **one WVA per namespace** — repeat the namespace path for each. They are
   independent: separate failure domains, separate policy, separate upgrades.
-- **one cluster-scoped WVA** — [installs once](../docs/deployment/install-cluster-wide.md)
+- **one cluster-scoped WVA** — [installs once](../docs/guides/install-cluster-wide/README.md)
   and manages every namespace.
 
 They do share the GPUs, whichever you choose. Bounding that is
-[an admin's job](../docs/deployment/admin-gpu-bounding.md).
+[an admin's job](../docs/guides/admin-gpu-bounding/README.md).
 
 ## Pick your path
+
+All of these live in [docs/guides/](../docs/guides/README.md), one directory per
+guide, in the shape of llm-d's well-lit paths.
 
 Each path is complete on its own — start at one and follow it to the end.
 
 | I want to… | path | who runs it |
 | --- | --- | --- |
-| **autoscale the models in my namespace** | [Install WVA in your namespace](../docs/deployment/install-in-namespace.md) | you, after one command from an admin |
-| run one WVA for every namespace | [Install one WVA for the whole cluster](../docs/deployment/install-cluster-wide.md) | cluster admin |
-| add WVA to a cluster already running llm-d | [Adding WVA to a running llm-d](../docs/deployment/existing-cluster.md) | whoever owns that install |
+| **autoscale the models in my namespace** | [Install WVA in your namespace](../docs/guides/install-in-namespace/README.md) | you, after one command from an admin |
+| run one WVA for every namespace | [Install one WVA for the whole cluster](../docs/guides/install-cluster-wide/README.md) | cluster admin |
+| add WVA to a cluster already running llm-d | [Adding WVA to a running llm-d](../docs/guides/existing-llm-d/README.md) | whoever owns that install |
 
 **Most people want the first.** It is the shape a multi-tenant cluster actually
 has, and it needs an admin for exactly one command, once per namespace.
@@ -102,8 +108,8 @@ For cluster admins:
 
 | I want to… | path |
 | --- | --- |
-| let a namespace's owner install WVA themselves | [Cluster-admin setup](../docs/deployment/admin-cluster-setup.md) |
-| make every WVA respect a real GPU budget | [Bounding GPU usage](../docs/deployment/admin-gpu-bounding.md) |
+| let a namespace's owner install WVA themselves | [Cluster-admin setup](../docs/guides/admin-cluster-setup/README.md) |
+| make every WVA respect a real GPU budget | [Bounding GPU usage](../docs/guides/admin-gpu-bounding/README.md) |
 
 ## Two things every path shares
 
@@ -123,7 +129,7 @@ model, change the bounds, then apply exactly what you left in it with
 
 **2. Without a limiter, scaling is unbounded.** A fresh install scales to each
 workload's `maxReplicaCount`, with no check against real GPUs. That default is
-deliberate — see [Bounding GPU usage](../docs/deployment/admin-gpu-bounding.md)
+deliberate — see [Bounding GPU usage](../docs/guides/admin-gpu-bounding/README.md)
 for the one command that changes it, and why it is an admin's to run.
 
 ## How the install is split

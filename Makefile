@@ -14,9 +14,12 @@ K8S_VERSION ?= v1.32.0
 # POD_NAMESPACE, so ClusterRoleBinding subjects and the system-namespace lookups
 # follow.
 WVA_NS              ?= workload-variant-autoscaler-system
-# Namespace the llm-d model servers live in. Matches install.sh's default, so
-# the scaledobjects-* targets scan the same place a deploy would.
-LLMD_NS             ?= llm-d-optimized-baseline
+# Where llm-d runs. NAMESPACE is llm-d's OWN variable — its well-lit path guides
+# say `export NAMESPACE=…` and pass `-n ${NAMESPACE}` to every command — so a
+# reader arriving from one already has it set, and this repo no longer invents a
+# second name for it. It used to: LLMD_NS, ours alone, now a deprecated alias
+# accepted by deploy/install.sh.
+NAMESPACE           ?= llm-d-optimized-baseline
 # Install scope: cluster | namespace. Empty means the historical default —
 # namespace on OpenShift, cluster elsewhere. See deploy/lib/common.sh.
 WVA_SCOPE           ?=
@@ -175,6 +178,16 @@ destroy-kind-cluster:
         deploy/kind-emulator/teardown.sh
 
 
+##@ Guides
+
+.PHONY: guides-render
+guides-render: ## Regenerate the command blocks in docs/guides/*/README.md from their guide.yaml.
+	python3 hack/render-guides.py
+
+.PHONY: guides-check
+guides-check: ## Fail if any guide README is out of date with its guide.yaml (CI).
+	python3 hack/render-guides.py --check
+
 ##@ Cluster-admin actions (advanced; they affect every WVA on the cluster)
 
 # Where cluster policy is published. The default is the name the controller looks
@@ -228,7 +241,7 @@ disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster poli
 #
 # Only for namespace scope: a cluster-scoped controller manages everything and
 # belongs in its own system namespace, not inside a tenant's.
-# Only when YOU set LLMD_NS (`origin` distinguishes that from this file's own
+# Only when YOU set NAMESPACE (`origin` distinguishes that from this file's own
 # default), and an explicit WVA_NS always wins.
 # NAMESPACE is in the chain because it is llm-d's OWN variable: its well-lit path
 # guides say `export NAMESPACE=llm-d-optimized-baseline` and pass `-n $(NAMESPACE)`
@@ -237,21 +250,19 @@ disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster poli
 # exactly the duplication this chain exists to remove.
 wva_ns = $(strip $(if $(filter namespace,$(1)),\
     $(if $(filter command line environment,$(origin WVA_NS)),$(WVA_NS),\
-      $(if $(filter command line environment,$(origin LLMD_NS)),$(LLMD_NS),\
-        $(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$(WVA_NS)))),\
+      $(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$(WVA_NS))),\
     $(WVA_NS)))
 
 # How WVA_NS was arrived at, so the preflight can explain it rather than just
 # print it. $(1)=scope
 wva_ns_source = $(strip $(if $(filter command line environment,$(origin WVA_NS)),explicit,\
     $(if $(filter namespace,$(1)),\
-      $(if $(filter command line environment,$(origin LLMD_NS)),llmd-ns,\
-        $(if $(filter command line environment,$(origin NAMESPACE)),namespace-env,default)),default)))
+      $(if $(filter command line environment,$(origin NAMESPACE)),namespace-env,default),default)))
 
 # wva_phase: $(1)=phase $(2)=scope $(3)=ENVIRONMENT
 define wva_phase
 	@echo "Phase '$(1)', $(2)-scoped, on $(3). Namespace: $(call wva_ns,$(2))"
-	$(if $(filter namespace,$(2)),$(if $(filter command line environment,$(origin WVA_NS)),,$(if $(filter command line environment,$(origin LLMD_NS)),@echo "  (from LLMD_NS — a namespace-scoped WVA manages the namespace it runs in)",)),)
+	$(if $(filter namespace,$(2)),$(if $(filter command line environment,$(origin WVA_NS)),,$(if $(filter command line environment,$(origin NAMESPACE)),@echo "  (from NAMESPACE — a namespace-scoped WVA manages the namespace it runs in)",)),)
 	$(if $(filter wva all,$(1)),@echo "Image: $(IMG)",)
 	WVA_NS=$(call wva_ns,$(2)) WVA_NS_SOURCE=$(call wva_ns_source,$(2)) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
 		INSTALL_PHASE=$(1) ENVIRONMENT=$(3) \
@@ -347,20 +358,20 @@ check-prereqs: ## Verify deploy prerequisites (tools, versions, cluster reachabi
 ## REGISTERS with WVA, so this is the step between "installed" and "scaling".
 .PHONY: scaledobjects-plan
 scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObject plan. WVA_DEFAULT_SO_NS=<ns>|wva|all, WVA_DEFAULT_SO_PLAN=<file>.
-	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Apply a ScaledObject plan. With WVA_DEFAULT_SO_PLAN=<file> it applies exactly
 ## that file, edits included, and needs no terminal. Without one it re-discovers
 ## and applies everything found.
 .PHONY: scaledobjects-apply
 scaledobjects-apply: ## Create default ScaledObjects (this is what makes WVA scale anything). WVA_DEFAULT_SO_PLAN=<edited file>, WVA_DEFAULT_SO_ADOPT=true, WVA_DEFAULT_SO_TEMPLATE=<file>.
-	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=true $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Review the list in $EDITOR, then apply what you confirm. Needs a terminal;
 ## use scaledobjects-plan + scaledobjects-apply where there is none.
 .PHONY: scaledobjects-edit
 scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply what you confirm.
-	@WVA_NS=$(WVA_NS) LLMD_NS=$(LLMD_NS) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
+	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
@@ -394,7 +405,7 @@ undeploy-wva-on-k8s: ## Remove WVA from Kubernetes. Pass the SAME WVA_NS and WVA
 
 # Deploys WVA + monitoring + scaler (install.sh), then EPP (install-epp.sh). No model server or VA/HPA.
 # Works for all environments: kind-emulator (default), openshift, kubernetes.
-# For OpenShift/Kubernetes: ENVIRONMENT=openshift LLMD_NS=<your-ns> make deploy-e2e-infra
+# For OpenShift/Kubernetes: ENVIRONMENT=openshift NAMESPACE=<your-ns> make deploy-e2e-infra
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
@@ -435,7 +446,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 	@ENVIRONMENT=$(ENVIRONMENT) \
 		LLM_D_ROUTER_VERSION=$(LLM_D_ROUTER_VERSION) \
 		GAIE_VERSION=$(GAIE_VERSION) \
-		LLMD_NS=$${LLMD_NS:-$(E2E_EMULATED_LLMD_NAMESPACE)} \
+		NAMESPACE=$${NAMESPACE:-$(E2E_EMULATED_LLMD_NAMESPACE)} \
 		WVA_PROJECT=$(CURDIR) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		./deploy/install-epp.sh
