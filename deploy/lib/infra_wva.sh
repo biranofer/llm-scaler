@@ -362,7 +362,15 @@ create_namespaces_shared_loop() {
     # namespace on every existing-llm-d install — the exact litter the comment
     # above is about — and made DEPLOY_PROMETHEUS=false something users had to
     # pass by hand to avoid it.
-    if [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] && [ -z "$(foreign_prometheus)" ]; then
+    # A namespace-scoped install creates nothing outside its own namespace, so it
+    # must not try. The monitoring namespace is cluster-scoped to create, and the
+    # detection below cannot help: a namespace admin is Forbidden from reading the
+    # Prometheus CRD, foreign_prometheus() reports "none found", and the install
+    # then died trying to create a namespace it was never allowed to create — after
+    # `--check` had said permissions were sufficient.
+    if [ "$(wva_install_scope)" != "namespace" ] \
+        && [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] \
+        && [ -z "$(foreign_prometheus)" ]; then
         wanted="$wanted $MONITORING_NAMESPACE"
     fi
     [ "${DEPLOY_LLMD_NS:-false}" = "true" ] && wanted="$wanted $LLMD_NS"

@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -736,11 +737,23 @@ func main() {
 	// becomes true and the pod goes NotReady, which is visible, alertable, and
 	// nothing like the alternative: every variant quietly charged to no accelerator
 	// pool, given no budget, and never scaling up again.
-	if err := mgr.AddReadyzCheck("gpu-policy", func(_ *http.Request) error {
-		if cfg.EffectiveLimiterMode() == config.LimiterTypeInventory && metrics.IsNodeAccessDenied() {
-			return errors.New("cluster policy declares a gpu-inventory limiter but this controller may not list nodes. " +
-				"Every variant would be charged to no accelerator pool, receive no GPU budget and never scale up. " +
-				"Grant its ServiceAccount get/list/watch on nodes, or remove the limiter from cluster policy")
+	if err := mgr.AddReadyzCheck("gpu-policy", func(req *http.Request) error {
+		if cfg.EffectiveLimiterMode() != config.LimiterTypeInventory {
+			return nil
+		}
+		// Ask the API server, rather than reading the flag the optimization loop
+		// sets. Reading the flag made this a ONE-WAY LATCH, and the loop that would
+		// have cleared it runs downstream of the very thing going NotReady breaks:
+		// no endpoints on the external-scaler Service, so KEDA stops calling, so the
+		// registry empties on its TTL, so the optimizer returns early every cycle
+		// and never retries node discovery. Granting the RBAC — which is exactly
+		// what the error below tells an admin to do — would not have recovered it.
+		// Only deleting the pod would, and a transient Forbidden during RBAC
+		// propagation would have parked the controller permanently.
+		if err := nodeReadProbe(req.Context(), policyProbe); err != nil {
+			return fmt.Errorf("cluster policy declares a gpu-inventory limiter but this controller may not list nodes: %w. "+
+				"Every variant would be charged to no accelerator pool, receive no GPU budget and never scale up. "+
+				"Grant its ServiceAccount get/list/watch on nodes, or remove the limiter from cluster policy", err)
 		}
 		return nil
 	}); err != nil {
@@ -781,4 +794,33 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// nodeReadProbeCache rate-limits the readiness gate's node check. A readiness
+// probe fires every few seconds on every replica; an unlimited List of nodes on
+// that schedule is load the API server does not need to carry.
+var (
+	nodeReadProbeMu   sync.Mutex
+	nodeReadProbeAt   time.Time
+	nodeReadProbeErr  error
+	nodeReadProbeTTL  = 30 * time.Second
+	nodeReadProbeOnce bool
+)
+
+// nodeReadProbe reports whether this controller can currently list nodes.
+//
+// It asks the API server rather than trusting a cached verdict from elsewhere in
+// the process, so that granting the RBAC recovers readiness on its own. `Limit: 1`
+// keeps it cheap: the question is whether the request is authorized, not what the
+// nodes contain.
+func nodeReadProbe(ctx context.Context, c client.Reader) error {
+	nodeReadProbeMu.Lock()
+	defer nodeReadProbeMu.Unlock()
+	if nodeReadProbeOnce && time.Since(nodeReadProbeAt) < nodeReadProbeTTL {
+		return nodeReadProbeErr
+	}
+	nodes := &corev1.NodeList{}
+	err := c.List(ctx, nodes, client.Limit(1))
+	nodeReadProbeAt, nodeReadProbeErr, nodeReadProbeOnce = time.Now(), err, true
+	return err
 }
