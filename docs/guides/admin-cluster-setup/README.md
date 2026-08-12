@@ -8,16 +8,15 @@ namespace's owner installs and upgrades the controller with no cluster-scoped
 rights, and you are not in the loop again unless a WVA release changes what it
 needs cluster-wide.
 
-## Configuration
-
-| Parameter | Default | Example |
-| --- | --- | --- |
-| `NAMESPACE` | the namespace running llm-d, discovered | `team-a` |
-| `WVA_WATCH_NS` | the namespace it runs in | `team-a` |
-
 ## Prerequisites
 
-Cluster-admin rights.
+Cluster-admin rights, and the namespace you are preparing:
+
+<!-- guide:env.static.namespace start -->
+```bash
+export NAMESPACE=team-a
+```
+<!-- guide:env.static.namespace end -->
 
 <!-- guide:prerequisites.check start -->
 ```bash
@@ -25,7 +24,7 @@ make check-prereqs
 ```
 <!-- guide:prerequisites.check end -->
 
-## Installation
+## Installation Instructions
 
 <!-- guide:deploy.prereqs start -->
 ```bash
@@ -73,6 +72,19 @@ admin's act by definition — so `setup-prereqs` creates that Role and RoleBindi
 and the uninstall removes them. Without it the controller starts, cannot read the
 namespace it was pointed at, and crash-loops on its first ConfigMap read.
 
+## Verification
+
+<!-- guide:verify.objects start -->
+```bash
+kubectl get servicemonitor -n ${NAMESPACE}
+kubectl get clusterrole,clusterrolebinding | grep wva-
+```
+<!-- guide:verify.objects end -->
+
+The cluster-scoped names carry a hash of the namespace, so what you see here is
+this namespace's set and no other's. Hand over once they exist — the namespace's
+owner can then run `make deploy-wva INSTALL_PHASE=wva` without you.
+
 ## Cleanup
 
 <!-- guide:cleanup.undo start -->
@@ -82,6 +94,13 @@ make undeploy-wva
 <!-- guide:cleanup.undo end -->
 
 The namespace, Prometheus, KEDA and EPP stay.
+
+## Configuration
+
+| Parameter | Default | Example |
+| --- | --- | --- |
+| `NAMESPACE` | the namespace running llm-d, discovered | `team-a` |
+| `WVA_WATCH_NS` | the namespace it runs in | `team-a` |
 
 ## Next
 

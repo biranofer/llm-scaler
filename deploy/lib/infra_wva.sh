@@ -545,23 +545,52 @@ create_namespaces_shared_loop() {
 delete_namespaces_kube_like() {
     log_info "Deleting namespaces..."
 
-    # Only namespaces THIS install created.
+    # Only namespaces THIS install created, and only ones nothing else lives in.
     #
     # NAMESPACE needs its own opt-in rather than mirroring DEPLOY_LLMD_NS, because
     # that flag describes the INSTALL and an uninstall never restates it —
-    # `make undeploy-wva-on-k8s` forwards only WVA_NS and WVA_SCOPE, so the flag
-    # would read as its default (true) and delete anyway. It holds the model
-    # servers; deleting it is never something to infer.
+    # `make undeploy-wva` forwards only WVA_NS and WVA_SCOPE, so the flag would
+    # read as its default (true) and delete anyway. It holds the model servers;
+    # deleting it is never something to infer.
+    #
+    # The same protection has to cover WVA_NS, because in the documented tenant
+    # install they are the SAME namespace: a namespace-scoped controller is
+    # deliberately placed in the namespace holding the model servers, so
+    # `WVA_NS = NAMESPACE`. Reached through the WVA_NS slot that namespace was
+    # deleted outright — every Deployment, Secret and PVC in it — while the
+    # NAMESPACE slot right beside it refused to. One uninstall flag, two paths to
+    # the same namespace, and only one of them guarded.
+    #
+    # MONITORING_NAMESPACE is shared by every WVA on the cluster and carries a
+    # fixed, unsuffixed name, so it takes UNDEPLOY_SHARED — the same gate the rest
+    # of the uninstall uses for shared things. DEPLOY_PROMETHEUS says what a fresh
+    # install WOULD deploy, never whether this one created what is there.
+    local ns seen=""
     for ns in $NAMESPACE $WVA_NS $MONITORING_NAMESPACE; do
-        if kubectl get namespace $ns &> /dev/null; then
-            if [[ "$ns" == "$WVA_NS" && "$DEPLOY_WVA" == "false" ]] ||                [[ "$ns" == "$MONITORING_NAMESPACE" && "$DEPLOY_PROMETHEUS" == "false" ]] ||                [[ "$ns" == "$NAMESPACE" && "${DELETE_LLMD_NS:-false}" != "true" ]]; then
-                log_info "Skipping deletion of namespace $ns as it was not deployed"
-            else
-                log_info "Deleting namespace $ns..."
-                kubectl delete namespace $ns 2>/dev/null || \
-                    log_warning "Failed to delete namespace $ns"
+        [ -n "$ns" ] || continue
+        case " $seen " in *" $ns "*) continue ;; esac
+        seen="$seen $ns"
+        kubectl get namespace "$ns" &> /dev/null || continue
+
+        local skip=""
+        if [ "$ns" = "$WVA_NS" ] && [ "$DEPLOY_WVA" = "false" ]; then
+            skip="this install did not create it"
+        elif [ "$ns" = "$NAMESPACE" ] || [ "$ns" = "${WVA_WATCH_NS:-}" ]; then
+            [ "${DELETE_LLMD_NS:-false}" = "true" ] ||                 skip="it holds the model servers (DELETE_LLMD_NS=true to remove it anyway)"
+        elif [ "$ns" = "$MONITORING_NAMESPACE" ]; then
+            if [ "$DEPLOY_PROMETHEUS" = "false" ]; then
+                skip="this install did not create it"
+            elif [ "${UNDEPLOY_SHARED:-false}" != "true" ]; then
+                skip="it is shared with every other WVA on this cluster (UNDEPLOY_SHARED=true to remove it anyway)"
             fi
         fi
+
+        if [ -n "$skip" ]; then
+            log_info "Keeping namespace $ns — $skip"
+            continue
+        fi
+        log_info "Deleting namespace $ns..."
+        kubectl delete namespace "$ns" 2>/dev/null ||             log_warning "Failed to delete namespace $ns"
     done
 
     log_success "Namespaces deleted"

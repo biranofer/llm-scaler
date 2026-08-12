@@ -44,6 +44,10 @@ So WVA does not accept its limits from anything that person can write.
 
 ### What an admin sets, and where
 
+`make enable-physical-limiter` does everything in this section — policy,
+namespace, RBAC and the node read — in one command. What follows is the same
+outcome by hand, for a cluster where those objects are managed by something else.
+
 Everything authoritative is a **cluster-scoped object**: a namespace admin holds
 RBAC *inside* their namespace and can neither create a `Namespace` nor edit one's
 annotations.

@@ -101,7 +101,13 @@ check_prerequisites() {
 
     # A reachable cluster is as much a prerequisite as a binary, and finding out
     # here beats finding out after the first namespace has been created.
-    if ! kubectl cluster-info &> /dev/null; then
+    # `kubectl get --raw /version`, not `kubectl cluster-info`: cluster-info LISTS
+    # SERVICES IN kube-system, which a namespace tenant may not do. So the very
+    # first check in the tenant path failed for every real tenant, and told them
+    # their kubeconfig was wrong when it was correct and working. /version is
+    # served to any authenticated caller and needs no RBAC, which is exactly the
+    # question being asked here: can this kubeconfig reach a cluster at all.
+    if ! kubectl get --raw /version > /dev/null 2>&1; then
         log_error "Cannot reach a Kubernetes cluster with the current context ($(kubectl config current-context 2>/dev/null || echo 'none set')). Check your kubeconfig, or set SKIP_CHECKS=true to bypass this check."
     fi
 
@@ -228,6 +234,14 @@ check_tenant_install() {
     limiter="$(wva_cluster_policy_limiter "$policy_ns")"
     log_info "Cluster policy: ${policy_ns} (limiter: ${limiter:-none})"
 
+    if [ "$limiter" = "unknown" ]; then
+        # Forbidden, not absent. Reporting it as a limiter named "unknown" said
+        # the install was bounded when nobody had established that it was — and
+        # skipped the node-access check that a gpu-inventory policy makes
+        # load-bearing, so a variant that can never scale up would look healthy.
+        log_warning "Could not read the cluster policy, so whether a limiter bounds this install is unknown. If it declares the gpu-inventory limiter, this controller also needs node read access, or every variant it manages stays at its current size."
+        return 0
+    fi
     if [ "$limiter" != "gpu-inventory" ]; then
         if [ -z "$limiter" ]; then
             log_warning "Cluster policy declares no limiter, so scaling is UNBOUNDED. A ResourceQuota on ${WVA_NS} is the only thing that will bound it."
@@ -448,7 +462,22 @@ check_permissions() {
     # preflight exists to prevent. It also under-checked BOTH scopes: neither
     # branch asked about Secrets or ServiceMonitors, and the cluster branch never
     # asked about Roles or RoleBindings.
+    # Only the kinds THIS PHASE creates.
+    #
+    # INSTALL_PHASE=wva is the tenant's half, and every cluster-scoped object in
+    # the overlay belongs to the admin's half — already created, by someone else,
+    # before the tenant runs anything. Checking "can you create a ClusterRole"
+    # there asks the one question whose answer is no by design, and this check
+    # exits on a no. So the documented tenant path failed for exactly the person
+    # it was written for, with advice telling them to run the command that had
+    # just failed. Existence of those objects is checked separately, by
+    # require_prereqs_present, which is the right question for this phase.
     kinds="$(wva_rendered_kinds || true)"
+    if [ "${INSTALL_PHASE:-all}" = "wva" ] && [ -n "$kinds" ]; then
+        kinds="$(printf '%s
+' "$kinds" | grep -vxF -f <(printf '%s
+' "${WVA_PREREQ_KINDS[@]}") || true)"
+    fi
     if [ -z "$kinds" ]; then
         log_warning "Could not render the install overlay, so this check falls back to the kinds each scope is expected to create. It may miss something the overlay adds; the install itself renders the same overlay and will fail if it is broken."
         kinds=$'ConfigMap\nDeployment\nRole\nRoleBinding\nSecret\nService\nServiceAccount\nServiceMonitor'

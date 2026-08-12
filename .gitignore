@@ -45,3 +45,7 @@ hack/tls-certs/
 
 # AI
 .claude/worktrees/
+
+# ScaledObject plan written by `make benchmark-deploy-wva`
+benchmark-scaledobject-plan.yaml
+wva-plan.yaml

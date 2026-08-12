@@ -591,7 +591,13 @@ install_default_scaledobjects() {
     # An existing plan file is authoritative: this is the "edit the list and
     # continue" path, and it works with no terminal, which is what makes the
     # interactive capability available to scripts and CI as well.
-    if [ -n "$plan" ] && [ -f "$plan" ]; then
+    #
+    # Except in `plan` mode, which promises to apply nothing. Without that
+    # exception, running `make scaledobjects-plan WVA_DEFAULT_SO_PLAN=<file>` a
+    # second time — the obvious thing to do after editing the file, and what a
+    # scripted caller does on every run — APPLIED it. A command whose entire
+    # contract is "look, do not touch" created autoscaling objects instead.
+    if [ "$mode" != "plan" ] && [ -n "$plan" ] && [ -f "$plan" ]; then
         log_info "Applying the ScaledObject plan from $plan"
         so_show_plan "$plan"
         so_apply_plan "$plan"

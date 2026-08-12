@@ -15,7 +15,17 @@
 # create them, so the useful output is the list to hand to an admin — not a
 # Forbidden on one object with the rest unknown.
 require_prereqs_present() {
-    local missing=() kind name
+    local missing=() kind name expected
+    # An empty render is "could not look", never "nothing to check" — the same
+    # rule wva_rendered_prereq_objects states about its own output. Without this,
+    # a kustomize build that failed for any reason produced an empty list, an
+    # empty missing[], and a cheerful "Prerequisites are in place" for a check
+    # that never ran.
+    expected="$(wva_rendered_prereq_objects)"
+    if [ -z "$expected" ]; then
+        log_error "Could not render the install overlay, so whether the cluster-admin prerequisites exist could not be checked. Fix the overlay (try 'kubectl kustomize $(wva_overlay_dir)') and re-run; nothing has been applied."
+    fi
+
     while read -r kind name; do
         [ -n "$kind" ] && [ -n "$name" ] || continue
         case "$kind" in
@@ -25,7 +35,7 @@ require_prereqs_present() {
             *)
                 kubectl get "$kind" "$name" >/dev/null 2>&1 || missing+=("$kind/$name") ;;
         esac
-    done < <(wva_rendered_prereq_objects)
+    done <<< "$expected"
 
     if [ ${#missing[@]} -eq 0 ]; then
         log_success "Prerequisites are in place for $WVA_NS"
@@ -62,7 +72,7 @@ print_prereqs_summary() {
     echo "  NOT created: the controller itself. Whoever owns $WVA_NS installs it,"
     echo "  and every later upgrade, with no cluster-scoped rights:"
     echo ""
-    echo "      make deploy-wva-${scope}-on-${platform} WVA_NS=${WVA_NS}"
+    echo "      NAMESPACE=${WVA_NS} make deploy-wva INSTALL_PHASE=wva$([ "$scope" = cluster ] && echo ' SCOPE=cluster')"
     echo ""
     echo "  Re-run this phase only when the WVA version changes what it needs"
     echo "  cluster-wide (new RBAC rules), not for an ordinary controller upgrade."

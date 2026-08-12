@@ -18,7 +18,11 @@ export REPO_ROOT
 # the default is a published image, and a released image does not accept flags a
 # newer branch's manifests pass. That mismatch presents as CrashLoopBackOff,
 # which reads like a broken image rather than a version skew.
-export WVA_IMAGE="${WVA_IMAGE:-ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest}"
+# The variable is IMG, because that is what the make targets read. It was
+# exported here as WVA_IMAGE, which nothing anywhere reads: a reader testing an
+# unmerged branch set it, saw no effect, and got the CrashLoopBackOff described
+# above from the published image they thought they had replaced.
+export IMG="${IMG:-ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest}"
 
 # The namespace WVA installs into.
 #

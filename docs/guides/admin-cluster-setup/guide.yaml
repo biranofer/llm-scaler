@@ -17,6 +17,12 @@ deploy:
       make setup-prereqs   WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE}
       make deploy-wva      WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE} INSTALL_PHASE=wva
 
+verify:
+  objects:
+    run: |
+      kubectl get servicemonitor -n ${NAMESPACE}
+      kubectl get clusterrole,clusterrolebinding | grep wva-
+
 cleanup:
   undo:
     run: make undeploy-wva

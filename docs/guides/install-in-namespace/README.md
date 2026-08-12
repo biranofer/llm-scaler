@@ -18,6 +18,21 @@ namespace's owner installs and upgrades the controller themselves.
 - KEDA, installed for you if the cluster has none
 - a Prometheus scraping those model servers
 
+Two things about the model servers are worth checking, because both are silent
+when wrong:
+
+- **The `llm-d.ai/inferenceServing=true` label is on the pod template**, which is
+  where llm-d puts it and where WVA looks. `kubectl get deploy -l
+  llm-d.ai/inferenceServing=true` reads the Deployment's own labels and returns
+  nothing even when everything is correct — use `make scaledobjects-plan`, which
+  reads the pod template.
+- **Waking a model from zero needs your EPP, not WVA.** It must run with the
+  `flowControl` feature gate — which is what publishes the queue depth WVA reads
+  — and its ServiceAccount needs TokenReview rights so it can authenticate WVA's
+  scrape. WVA wires both only for an EPP it installed itself. If your EPP came
+  from an llm-d guide, scaling works and scale-from-zero silently never fires;
+  see [Troubleshooting](../../developer-guide/troubleshooting.md).
+
 <!-- guide:env.static.namespace start -->
 ```bash
 export NAMESPACE=<your-namespace>

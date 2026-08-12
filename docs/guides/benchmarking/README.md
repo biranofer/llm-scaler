@@ -12,7 +12,14 @@ see [Test WVA against a full llm-d stack](../testing-with-llm-d/README.md).
 
 ## Prerequisites
 
-A GPU cluster, and the benchmark CLI:
+A GPU cluster, the namespace and image to measure, and the benchmark CLI:
+
+<!-- guide:env.static.target start -->
+```bash
+export BENCHMARK_NAMESPACE=<namespace>
+export IMG=<your build>
+```
+<!-- guide:env.static.target end -->
 
 <!-- guide:prerequisites.cli start -->
 ```bash

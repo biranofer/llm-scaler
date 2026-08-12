@@ -11,14 +11,6 @@ tenant cannot edit it, every controller must be able to read it, and every
 controller must be able to list nodes — and a controller that cannot resolve a
 variant's accelerator gives it no budget and never scales it up.
 
-## Configuration
-
-| Parameter | Default | Example |
-| --- | --- | --- |
-| `WVA_LIMITER_TYPE` | `gpu-inventory` | `quota` |
-| `WVA_POLICY_NS` | `wva-policy` | `platform-policy` |
-| `WVA_LIMITER_TARGETS` | every controller found | `team-a team-b` |
-
 ## Prerequisites
 
 Cluster-admin rights, and **accelerators that resolve**. Check first — this is
@@ -35,7 +27,7 @@ kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i Accelera
 WVA resolves a variant's accelerator from a GPU key in its `nodeSelector`, or
 from the nodes its running pods are on. A workload with neither gets no budget.
 
-## Installation
+## Installation Instructions
 
 <!-- guide:deploy.enable start -->
 ```bash
@@ -61,8 +53,6 @@ for a self-managed controller, its own ConfigMap for an admin-owned one.
 kubectl get pods -A -l app.kubernetes.io/name=workload-variant-autoscaler
 ```
 <!-- guide:verify.controllers end -->
-
-A controller that is not Ready is one this did not reach.
 
 <!-- guide:verify.budget start -->
 ```bash
@@ -93,6 +83,18 @@ a second KEDA trigger bypasses it.
 a quota entry wins — declaring `quota` alongside `gpu-inventory` gives the caps
 and no physical limiter at all. WVA names what it dropped rather than doing it
 silently.
+
+## Configuration
+
+| Parameter | Default | Example |
+| --- | --- | --- |
+| `WVA_LIMITER_TYPE` | `gpu-inventory` | `quota` |
+| `WVA_POLICY_NS` | `wva-policy` | `platform-policy` |
+| `WVA_LIMITER_TARGETS` | every controller found | `team-a team-b` |
+
+`WVA_LIMITER_TYPE` is not `WVA_LIMITER`. This one writes the **cluster** policy
+every controller reads; `WVA_LIMITER` writes a single install's own policy, which
+that install's owner can then edit.
 
 ## Next
 

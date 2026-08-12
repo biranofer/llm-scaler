@@ -108,12 +108,26 @@ EOF
     #
     # The suffixed ClusterRoles and ClusterRoleBindings, ServiceAccounts,
     # ConfigMaps, Services, Deployment and ServiceMonitor are this install's own.
-    if kubectl kustomize "$tmp_overlay" 2>/dev/null \
+    # Forbidden is not "already gone". A namespace owner can delete the controller
+    # and everything beside it, and cannot delete the cluster-scoped RBAC an admin
+    # created for them — so this delete partially fails for exactly the person the
+    # tenant install is written for. Reporting that as "not found or already
+    # removed" told them the uninstall was complete while cluster-scoped objects
+    # carrying their namespace's name stayed on the cluster, with nothing said and
+    # no admin command offered.
+    local delete_err
+    delete_err="$(kubectl kustomize "$tmp_overlay" 2>/dev/null \
         | yq 'select(.kind != "Namespace")' \
-        | kubectl delete -f - --ignore-not-found 2>/dev/null; then
-        :
-    else
-        log_warning "Workload-Variant-Autoscaler resources not found or already removed"
+        | kubectl delete -f - --ignore-not-found 2>&1 >/dev/null)" && delete_err=""
+    if [ -n "$delete_err" ]; then
+        if printf '%s' "$delete_err" | grep -qi 'forbidden'; then
+            log_warning "Some objects could not be removed because you are not allowed to delete them:"
+            printf '%s\n' "$delete_err" | grep -i forbidden | sed 's/^/    /'
+            log_warning "  Everything you CAN delete was deleted. The rest are the admin-owned ones — ask a cluster admin to run this uninstall for $WVA_NS."
+        else
+            log_warning "Some Workload-Variant-Autoscaler resources were not removed:"
+            printf '%s\n' "$delete_err" | sed 's/^/    /'
+        fi
     fi
     rm -rf "$tmp_overlay"
 

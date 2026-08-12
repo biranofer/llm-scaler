@@ -25,18 +25,21 @@ Use cases include:
 ## Installing
 
 ```bash
-make check-prereqs                    # tools, versions, cluster reachability — read-only
-make deploy-wva-on-k8s                # the controller, Prometheus and KEDA
+export NAMESPACE=<the namespace running llm-d>
+
+make check-prereqs                    # read-only: tools, namespace, Prometheus
+make setup-prereqs                    # ONCE per namespace, by a cluster admin
+make deploy-wva INSTALL_PHASE=wva     # the controller — no cluster-scoped rights
 make scaledobjects-plan               # list your model servers; nothing is applied
 make scaledobjects-apply              # register them — this is what makes WVA scale
 ```
 
-On a cluster that already runs llm-d, one flag replaces the second line — the
-cluster's Prometheus, KEDA and CRDs are used as they are:
+The install is split across two people, because it is split across two levels of
+permission: a cluster admin runs `setup-prereqs` once for the namespace, and the
+namespace's owner does everything after it, including every later upgrade. If you
+are both, `make deploy-wva` does the two in one command.
 
-```bash
-make deploy-wva-on-k8s PROMETHEUS_URL=https://<prometheus>.<ns>.svc.cluster.local:9090
-```
+Prometheus and KEDA are found on the cluster, or installed if it has neither.
 
 The last two steps are not optional. A **KEDA ScaledObject** is how a workload
 registers with WVA: the controller has no watch and no listing, so until one exists
@@ -100,7 +103,12 @@ spec:
 
 `modelID` is the one required field. The accelerator, the role, GPUs per replica
 and the InferencePool are all **derived** from the workload itself, so they cannot
-drift from reality. See
+drift from reality.
+
+You do not have to write this by hand: `make scaledobjects-plan` reads `modelID`
+off each container's `--served-model-name`, which is the one field nothing else
+can check for you — a `modelID` that does not match what the container serves
+groups the workload with a model it does not run, and mis-scales both. See
 [the guides](docs/guides/README.md).
 
 More examples in [config/samples/keda/](config/samples/keda/).

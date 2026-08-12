@@ -88,6 +88,9 @@ BENCHMARK_WVA_DEPLOY ?= true
 # would take that group away from the metrics server every ScaledObject's HPA
 # queries. It was there for the HPA path the external scaler replaced.
 BENCHMARK_SKIP_PROMETHEUS_ADAPTER ?= true
+# Where benchmark-deploy-wva writes its ScaledObject plan. A named file, not a
+# temp path, so a run that scaled something unexpected can be explained after it.
+BENCHMARK_SO_PLAN ?= $(CURDIR)/benchmark-scaledobject-plan.yaml
 BENCHMARK_WVA_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),deploy-wva-on-openshift,deploy-wva-on-k8s)
 BENCHMARK_WVA_UNDEPLOY_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),undeploy-wva-on-openshift,undeploy-wva-on-k8s)
 # Where the installed WVA reads metrics. Empty lets deploy/install.sh detect the
@@ -647,12 +650,24 @@ benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (name
 	@# without one it is never called and scales nothing. Applied as a second step
 	@# rather than via the install's WVA_DEFAULT_SO so the benchmark's replica
 	@# bounds reach so_discover.
+	@# Plan, then adopt, then apply. A benchmark scenario may bring its own
+	@# ScaledObjects, and the plan marks those "no" by default — which would leave
+	@# them pointed at whatever scaled them before, silently benchmarking something
+	@# other than WVA. Adopting repoints them rather than adding a second object on
+	@# the same target. Entries whose model could not be read keep "no": adopting
+	@# one would register a variant of a model nobody runs.
 	WVA_DEFAULT_SO_MIN=$(BENCHMARK_KEDA_MIN_REPLICAS) \
 	WVA_DEFAULT_SO_MAX=$(BENCHMARK_KEDA_MAX_REPLICAS) \
+	$(MAKE) scaledobjects-plan \
+		WVA_NS=$(BENCHMARK_NAMESPACE) \
+		WVA_SCOPE=namespace \
+		WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE) \
+		WVA_DEFAULT_SO_PLAN=$(BENCHMARK_SO_PLAN)
+	@yq -i '(.plan[] | select(.apply == "no" and .modelID != "") | .apply) = "adopt"' $(BENCHMARK_SO_PLAN)
 	$(MAKE) scaledobjects-apply \
 		WVA_NS=$(BENCHMARK_NAMESPACE) \
 		WVA_SCOPE=namespace \
-		WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE)
+		WVA_DEFAULT_SO_PLAN=$(BENCHMARK_SO_PLAN)
 
 .PHONY: benchmark-run
 benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, BENCHMARK_HARNESS=guidellm|inference-perf)

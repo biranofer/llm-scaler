@@ -15,7 +15,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md) | `namespace` on OpenShift, `cluster` elsewhere |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md). Every `make` target sets this from `SCOPE`, which is `namespace` on both platforms; the platform-derived default below applies only when `deploy/install.sh` is run directly | `namespace` (`SCOPE=cluster` to change it) |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
 | `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you: `make setup-prereqs` is the `prereqs` phase and `make deploy-wva INSTALL_PHASE=wva` the other — see [deploy/README.md](../../deploy/README.md) | `all` |
@@ -167,10 +167,10 @@ do is also reachable through plan-then-apply, which does not.
 | `WVA_DEFAULT_SO_PLAN` | An existing file is applied as-is, edits included. Otherwise, where the generated plan is written | a temp file |
 | `WVA_DEFAULT_SO_MIN` | `minReplicaCount` on generated objects. Not `0` even with scale-to-zero on: parking a model costs its next request a cold start, which is a decision about that workload's users | `1` |
 | `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
-
-Both are only the value the plan is *written* with. What gets applied is what the
-file says when you apply it, per entry.
 | `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}` `{{VARIANT_COST}}` `{{SCALING_POLICY}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
+
+`WVA_DEFAULT_SO_MIN` and `_MAX` are only the values the plan is *written* with.
+What gets applied is what the file says when you apply it, per entry.
 
 Set them on a deploy to do this during install:
 
