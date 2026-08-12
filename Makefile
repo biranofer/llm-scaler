@@ -175,6 +175,28 @@ destroy-kind-cluster:
         deploy/kind-emulator/teardown.sh
 
 
+##@ Cluster-admin actions (advanced; they affect every WVA on the cluster)
+
+# Where cluster policy is published. The default is the name the controller looks
+# for, and a tenant cannot point their WVA at a more permissive one.
+WVA_POLICY_NS       ?= wva-policy
+# gpu-inventory (bounded by GPUs actually free) or quota (bounded by declared caps).
+WVA_LIMITER_TYPE    ?= gpu-inventory
+# Namespaces whose controllers to grant. Empty = every controller on the cluster,
+# which is what you want: the hazard is the install you forgot.
+WVA_LIMITER_TARGETS ?=
+
+.PHONY: enable-physical-limiter
+enable-physical-limiter: ## CLUSTER ADMIN: bound every WVA by real GPUs. Publishes cluster policy and grants each controller the node read it then requires. WVA_LIMITER_TYPE=gpu-inventory|quota, WVA_POLICY_NS, WVA_LIMITER_TARGETS.
+	@WVA_POLICY_NS=$(WVA_POLICY_NS) WVA_LIMITER_TYPE=$(WVA_LIMITER_TYPE) \
+		WVA_LIMITER_TARGETS="$(WVA_LIMITER_TARGETS)" \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/physical_limiter.sh; enable_physical_limiter'
+
+.PHONY: disable-physical-limiter
+disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster policy. Scaling becomes unbounded for every WVA that reads it.
+	@WVA_POLICY_NS=$(WVA_POLICY_NS) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/physical_limiter.sh; disable_physical_limiter'
+
 ##@ Install, in three phases (scope and platform in the target name)
 #
 # The phases split where the PERMISSIONS split, so a namespace admin can own the
