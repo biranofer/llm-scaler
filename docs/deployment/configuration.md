@@ -18,7 +18,6 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
-| `WVA_ADMIN_GRANTS` | For a **namespace-scoped** install: keep authenticated metrics and the node read the `gpu-inventory` limiter requires. Left unset it is **detected** — on if this installer may create cluster-scoped RBAC, off if not — so it is only needed to turn the capability *off*. It used to default to `false`, which silently gave a cluster admin the self-service shape with metrics over plain HTTP. With it off, a namespace-scoped install **on Kubernetes** creates no cluster-scoped object at all; on OpenShift the platform's monitoring wiring is cluster-scoped either way | detected |
 | `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you by the `setup-prereqs-*` and `deploy-wva-*` targets — see [deploy/README.md](../../deploy/README.md) | `all` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
@@ -197,8 +196,13 @@ own namespace — so a namespace admin can install it themselves.
 creates 3 ClusterRoles and 5 ClusterRoleBindings: the platform's monitoring
 wiring is cluster-scoped (`cluster-monitoring-view`, so the controller can query
 Thanos and user-workload Prometheus can scrape it), and without it the controller
-cannot reach Prometheus at all. `WVA_ADMIN_GRANTS=true` adds cluster-scoped
-objects on either platform.
+cannot reach Prometheus at all. A namespace-scoped install on Kubernetes carries
+cluster-scoped RBAC too, for the metrics authn filter, EPP metrics and the node
+read `gpu-inventory` needs.
+
+None of that stops a namespace admin owning the controller: an admin creates
+those once with `INSTALL_PHASE=prereqs`, and the controller phase needs none of
+them.
 
 Whichever combination you have, `./deploy/install.sh --check` answers it for your
 install specifically: it renders the overlay this install would apply and asks
@@ -207,7 +211,8 @@ whether you may create each kind in it, rather than assuming from the scope name
 Either way the grant is read-only: WVA never writes to the cluster, because KEDA
 performs the actuation. The one genuinely cluster-scoped read is **nodes**, used to
 resolve each variant's accelerator, which is why the `gpu-inventory` limiter needs
-`WVA_ADMIN_GRANTS=true` — see [GPU limiter](gpu-limiter.md#permission-nodes).
+the node-reader ClusterRole the prereqs phase creates — see
+[GPU limiter](gpu-limiter.md#permission-nodes).
 
 > **The constraint that follows, and it is easy to get wrong:** a namespace-scoped
 > WVA can only manage model servers **in its own namespace**. Installing one into

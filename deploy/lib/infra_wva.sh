@@ -71,19 +71,8 @@ deploy_wva_controller() {
     tmp_overlay=$(mktemp -d)
     trap 'rm -rf "$tmp_overlay"' EXIT
 
-    # Shared with the preflight, which renders the SAME shape to decide what
-    # permissions this install actually needs. See wva_prepare_overlay_base.
-    #
-    # WVA_ADMIN_GRANTS matters most on OpenShift, where namespace scope is the
-    # DEFAULT: without it, every OpenShift install would silently drop metrics
-    # authentication.
-    if [ "$(wva_install_scope)" = "namespace" ]; then
-        if [ "$(wva_admin_grants)" = "true" ]; then
-            log_info "Keeping authenticated metrics and cluster-scoped reads for this namespace-scoped install${WVA_ADMIN_GRANTS:+ (WVA_ADMIN_GRANTS=$WVA_ADMIN_GRANTS)}${WVA_ADMIN_GRANTS:-: this installer can create cluster-scoped RBAC. Pass WVA_ADMIN_GRANTS=false for the self-service shape}"
-        else
-            log_info "Self-service shape for this namespace-scoped install${WVA_ADMIN_GRANTS:+ (WVA_ADMIN_GRANTS=$WVA_ADMIN_GRANTS)}${WVA_ADMIN_GRANTS:-: this installer cannot create cluster-scoped RBAC, so metrics are served over plain HTTP and the gpu-inventory limiter is unavailable}"
-        fi
-    fi
+    # Shared with the preflight and the undeploy, which render the SAME shape.
+    # See wva_prepare_overlay_base.
     wva_prepare_overlay_base "$tmp_overlay"
 
     # Symlink prometheus-alerts component if needed

@@ -6,6 +6,24 @@ kind: Kustomization
 #   - namespace (e.g. workload-variant-autoscaler-system-dual)
 #   - images: (controller image repo + tag)
 #   - optional --controller-instance arg patch
-
+#
+# It composes the components directly instead of consuming
+# config/overlays/namespace-scoped/kubernetes, and the difference is deliberate:
+# that overlay now carries cluster-scoped RBAC, which a real install creates in
+# its prereqs phase under names suffixed per namespace. This overlay is applied
+# by the test with plain `kubectl apply -k` and no such renaming, so those objects
+# would land under FIXED names — the second controller taking the first one's
+# ClusterRoleBindings, which is precisely the collision the suffixing exists to
+# prevent, and it would strip the primary controller of its permissions mid-suite.
+#
+# unauthenticated-metrics is what removes them. A second controller in a test does
+# not need authenticated metrics; it needs to leave no cluster-wide trace.
 resources:
-- ../../../../config/overlays/namespace-scoped/kubernetes
+- ../../../../config/base/
+
+components:
+- ../../../../config/components/namespace-scoped/
+- ../../../../config/components/tenant-installable/
+- ../../../../config/components/unauthenticated-metrics/
+
+namePrefix: wva-

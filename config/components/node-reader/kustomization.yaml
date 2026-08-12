@@ -10,8 +10,10 @@ kind: Component
 # workloads never scale up — which is why the controller's readiness gate now
 # refuses to serve that combination rather than running blind.
 #
-# Included only under WVA_ADMIN_GRANTS=true, i.e. when a cluster admin is doing
-# the install or has agreed to grant this to one particular WVA.
+# Part of the namespace-scoped overlays, and created by the PREREQS phase — it is
+# cluster-scoped RBAC, so it is an admin's to grant, once, for one namespace's
+# controller. A cluster-scoped install does not need it: its manager ClusterRole
+# already reads nodes.
 resources:
 - node-reader-clusterrole.yaml
 - node-reader-clusterrolebinding.yaml

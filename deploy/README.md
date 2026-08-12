@@ -70,8 +70,8 @@ cluster already has; the rest of this guide explains the pieces.
 | I am… | command | what it does |
 | --- | --- | --- |
 | a cluster admin, one WVA for everything | `make deploy-wva-on-k8s` | manages **every** namespace. Creates cluster-scoped RBAC. The usual choice. |
-| a cluster admin, one WVA per team | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a WVA_ADMIN_GRANTS=true` | manages **one** namespace. Separate failure domains per team; keeps authenticated metrics and node access. |
-| a cluster admin, keeping the controller out of the team's reach | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a WVA_ADMIN_GRANTS=true` | controller **runs in** `wva-team-a`, **manages** `team-a`. The team cannot edit the controller, so limits placed on them hold. |
+| a cluster admin, one WVA per team | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=team-a` | manages **one** namespace. Separate failure domains per team; keeps authenticated metrics and node access. |
+| a cluster admin, keeping the controller out of the team's reach | `make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=wva-team-a WVA_WATCH_NS=team-a` | controller **runs in** `wva-team-a`, **manages** `team-a`. The team cannot edit the controller, so limits placed on them hold. |
 | a **namespace admin**, no cluster rights | `make deploy-wva-namespace-on-k8s WVA_NS=team-a` after an admin ran `setup-prereqs-namespace-on-k8s` | the supported shape on either platform — see [Three phases](#three-phases-split-where-the-permissions-split). Without phase 2 it works on Kubernetes only, creating **no cluster-scoped object**, and gives up the `gpu-inventory` limiter, authenticated metrics and EPP metrics. |
 | adding WVA to a cluster that already has llm-d | `make deploy-wva-on-k8s PROMETHEUS_URL=https://prom.monitoring.svc:9090` | controller only. The cluster's Prometheus, KEDA and CRDs are used as they are. |
 | bounding scaling by real GPUs | add `WVA_LIMITER=gpu-inventory` | allocates from per-accelerator pools. Needs node read; the install fails without it. |

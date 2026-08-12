@@ -368,9 +368,13 @@ objects:
 
 On OpenShift that is by design — the Thanos and user-workload-monitoring wiring
 is cluster-scoped, and without it the controller cannot reach Prometheus at all.
-WVA_ADMIN_GRANTS=true adds cluster-scoped objects on any platform.
 
-Have an admin run the install, or ask for the objects above."
+You do not need those rights to run the controller. Have an admin create them
+once for this namespace:
+
+    make setup-prereqs-$(wva_install_scope)-on-$([ "${ENVIRONMENT:-}" = openshift ] && echo openshift || echo k8s) WVA_NS=$ns
+
+then install with 'make deploy-wva-$(wva_install_scope)-on-$([ "${ENVIRONMENT:-}" = openshift ] && echo openshift || echo k8s) WVA_NS=$ns', which needs none of them."
         fi
         log_error "You cannot create everything this install produces. Denied:
 $(printf '  - %s\n' "${denied[@]}")

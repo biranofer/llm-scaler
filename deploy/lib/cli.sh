@@ -39,13 +39,11 @@ Environment Variables:
   WVA_SCOPE                    cluster | namespace (default: cluster, or namespace on openshift)
                                  cluster   — manages every namespace, creates cluster-scoped RBAC,
                                              needs a cluster admin
-                                 namespace — manages ONE namespace and creates NO cluster-scoped
-                                             object, so a namespace admin can install it. Gives up
-                                             the gpu-inventory limiter, authenticated metrics and
-                                             EPP metrics, which all require cluster-scoped APIs.
-  WVA_ADMIN_GRANTS             For a namespace-scoped install made BY a cluster admin (or granted the
-                               cluster-scoped pieces): keeps authenticated metrics and adds the node
-                               read gpu-inventory needs (default: false)
+                                 namespace — manages ONE namespace. Its cluster-scoped RBAC (metrics
+                                             authn, EPP metrics, the node read gpu-inventory needs)
+                                             is created once by an admin with --phase prereqs; the
+                                             namespace's owner then installs the controller, and
+                                             every later upgrade, with no cluster rights.
   WVA_WATCH_NS                 Namespace a namespace-scoped controller MANAGES, when that differs from
                                the one it runs in (default: its own)
   WVA_REPLICAS                 Controller replicas. >1 is leader-election failover, NOT more throughput (default: 1)

@@ -121,8 +121,9 @@ The alternative is the failure this guards against: every variant charged to no
 accelerator pool, given no GPU budget, and never scaling up again — indistinguishable
 from an idle cluster.
 
-Grant the node read (`WVA_ADMIN_GRANTS=true` at install, or a node-reader
-ClusterRole by hand), or remove the limiter from cluster policy.
+Grant the node read — `make setup-prereqs-<scope>-on-<platform>` creates the
+node-reader ClusterRole and its binding — or remove the limiter from cluster
+policy.
 
 ### What this does and does not bound
 

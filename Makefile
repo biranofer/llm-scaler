@@ -204,7 +204,6 @@ define wva_phase
 	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
 		INSTALL_PHASE=$(1) ENVIRONMENT=$(3) \
 		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
-		$(if $(WVA_ADMIN_GRANTS),WVA_ADMIN_GRANTS=$(WVA_ADMIN_GRANTS),) \
 		$(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) \
 		./deploy/install.sh
 endef
@@ -212,7 +211,6 @@ endef
 # wva_check: $(1)=scope $(2)=ENVIRONMENT
 define wva_check
 	WVA_NS=$(WVA_NS) WVA_SCOPE=$(1) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=$(2) \
-		$(if $(WVA_ADMIN_GRANTS),WVA_ADMIN_GRANTS=$(WVA_ADMIN_GRANTS),) \
 		./deploy/install.sh --check
 endef
 
@@ -269,7 +267,7 @@ deploy-wva-namespace-on-openshift: manifests kustomize ## Phase 3: install the c
 ## Deploy WVA to OpenShift cluster with specified image.
 ## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE, WVA_LIMITER, WVA_ADMIN_GRANTS.
+deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE, WVA_LIMITER.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
@@ -314,7 +312,7 @@ scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply
 
 ## Deploy WVA on Kubernetes with the specified image.
 .PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota, WVA_ADMIN_GRANTS.
+deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"

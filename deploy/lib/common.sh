@@ -43,17 +43,18 @@ containsElement() {
 #
 # The two differ in WHO CAN INSTALL as much as in what the controller reads:
 #
-#   cluster     manages every namespace. Creates ClusterRoles and
-#               ClusterRoleBindings, so it needs a cluster admin.
-#   namespace   manages ONE namespace and creates NO cluster-scoped object, so a
-#               NAMESPACE ADMIN can install it themselves. It gives up what
-#               genuinely requires cluster scope: the gpu-inventory limiter
-#               (reads nodes), authenticated metrics (TokenReview), and EPP
+#   cluster     manages every namespace. Its manager ClusterRole reads every
+#               namespace, and nodes.
+#   namespace   manages ONE namespace. Its manager role is a namespaced Role, so
+#               it reads nothing outside — but it still carries cluster-scoped
+#               RBAC for the things no Role can express: the gpu-inventory
+#               limiter (nodes), authenticated metrics (TokenReview) and EPP
 #               metrics (nonResourceURLs).
 #
-# Namespace scope used to create the same cluster-scoped RBAC as cluster scope,
-# which made it blast-radius reduction and nothing more — a tenant still could not
-# run it. Now the name means what it says.
+# Neither scope is installable by a namespace admin in one command, and pretending
+# otherwise was the bug: the PHASE split is what makes a tenant install real. An
+# admin runs the prereqs phase once for a namespace; its owner installs and
+# upgrades the controller from then on.
 #
 # WVA_SCOPE selects it; the default preserves the historical inference.
 wva_install_scope() {
@@ -73,12 +74,10 @@ wva_install_scope() {
 
 # wva_scope_is_tenant reports whether this install manages ONE namespace.
 #
-# It says nothing about whether a namespace admin can install it. That is a
-# question about the RENDERED overlay, and the answer differs by platform: on
-# Kubernetes the namespace-scoped overlay creates no cluster-scoped object, but
-# on OpenShift it creates eight — the platform's monitoring wiring is
-# cluster-scoped, and components/tenant-installable does not subtract it.
-# Ask wva_rendered_kinds, never this.
+# It says nothing about what the install creates. That is a question about the
+# RENDERED overlay — ask wva_rendered_kinds, never this. Both scopes carry
+# cluster-scoped RBAC; what makes a namespace-scoped install a tenant's is that
+# an admin created that RBAC in the prereqs phase, not the scope name.
 wva_scope_is_tenant() {
     [ "$(wva_install_scope)" = "namespace" ]
 }
@@ -93,11 +92,11 @@ WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
     wva-metrics-auth-rolebinding
     wva-metrics-reader-rolebinding
     wva-prometheus-cluster-monitoring-view
-    # Created only under WVA_ADMIN_GRANTS=true. Listed unconditionally anyway:
-    # the rename patch is a no-op when the object is absent, and leaving it out
-    # meant two admin-granted installs shared one binding — the second apply
-    # replaced its subject list, so the first controller lost node access and its
-    # readiness gate turned that into a NotReady pod.
+    # Namespace scope only (the cluster-scoped manager role already reads nodes).
+    # Listed unconditionally anyway: the rename patch is a no-op when the object
+    # is absent, and leaving it out meant two installs shared one binding — the
+    # second apply replaced its subject list, so the first controller lost node
+    # access and its readiness gate turned that into a NotReady pod.
     wva-node-reader-rolebinding
 )
 
@@ -121,7 +120,7 @@ WVA_OWNED_CLUSTER_ROLES=(
     "wva-metrics-auth-role:wva-metrics-auth-rolebinding"
     "wva-metrics-reader:wva-metrics-reader-rolebinding"
     "wva-epp-metrics-reader-role:wva-epp-metrics-reader-role-binding"
-    # WVA_ADMIN_GRANTS only; the patches are no-ops when the objects are absent.
+    # Namespace scope only; the patches are no-ops when the object is absent.
     # The role is node-reader-ROLE — the binding drops the suffix, the role does
     # not, and getting that wrong leaves the role unrenamed and the binding
     # pointing at a name nothing creates.
@@ -236,78 +235,27 @@ wva_prereq_kind_filter() {
     fi
 }
 
-# wva_admin_grants answers whether this namespace-scoped install keeps the
-# cluster-scoped pieces: authenticated metrics (TokenReview) and the node read the
-# gpu-inventory limiter needs.
-#
-# Unset means DETECT, because the question is not what the operator meant, it is
-# what this installer can actually create. It defaulted to false, so a cluster
-# admin running the ordinary command on Kubernetes silently got the self-service
-# shape — metrics served over plain HTTP — and nothing said so. Detecting instead
-# means the flag is only needed to turn the capability OFF.
-#
-# The detection is one-directional and cannot loosen anything: it can only enable
-# the extra objects for someone who may create them anyway. A tenant is answered
-# "no" and gets the shape that installs.
-wva_admin_grants() {
-    case "${WVA_ADMIN_GRANTS:-}" in
-        true)  echo true;  return ;;
-        false) echo false; return ;;
-    esac
-    if kubectl auth can-i create clusterroles >/dev/null 2>&1 \
-        && kubectl auth can-i create clusterrolebindings >/dev/null 2>&1; then
-        echo true
-    else
-        echo false
-    fi
-}
-
 # wva_prepare_overlay_base populates $1/base with the overlay this install will
-# apply, WVA_ADMIN_GRANTS included.
+# apply.
 #
-# The preflight and the deploy both go through here. They must, for the same
-# reason wva_append_crb_name_patches is shared: a preflight that infers the shape
-# instead of reading it is how a namespace-scoped OpenShift install passed
-# `--check` and then failed partway through `kubectl apply -k`, after the
-# namespace, the RBAC and the ServiceAccount already existed.
+# The preflight, the deploy and the undeploy all go through here. They must: a
+# preflight that infers the shape instead of reading it is how a namespace-scoped
+# OpenShift install passed `--check` and then failed partway through
+# `kubectl apply -k`, and an undeploy that built the base differently left
+# cluster-scoped objects behind after reporting a clean removal.
+#
+# It used to re-render the overlay under WVA_ADMIN_GRANTS, dropping the
+# unauthenticated-metrics component and adding node-reader, so that one command
+# could serve both a cluster admin and a tenant. The phase split removed the
+# question: everything cluster-scoped belongs to the prereqs phase, which is the
+# admin's by definition, so the overlay is now the same for both and this is a
+# symlink.
 wva_prepare_overlay_base() {
     local tmp_overlay="$1" kustomize_overlay
     kustomize_overlay="$(wva_overlay_dir)"
-
-    # Symlink the base overlay so kustomization.yaml can reference it with a
-    # relative path — Kustomize rejects absolute paths in resources.
+    # Symlinked so kustomization.yaml can reference it with a relative path —
+    # Kustomize rejects absolute paths in resources.
     ln -s "$kustomize_overlay" "$tmp_overlay/base"
-
-    # WVA_ADMIN_GRANTS: this namespace-scoped install is being made BY a cluster
-    # admin, or by someone an admin has granted the cluster-scoped pieces to.
-    #
-    # Namespace scope defaults to the self-service shape on Kubernetes — no
-    # cluster-scoped object at all — because that is what makes it installable by
-    # a namespace admin. But the two limitations that shape carries are
-    # limitations of the INSTALLER, not of the scope: authenticated metrics need
-    # TokenReview and the gpu-inventory limiter needs nodes, both cluster-scoped
-    # APIs. An admin installing the very same overlay has both and should not
-    # lose them.
-    [ "$(wva_install_scope)" = "namespace" ] || return 0
-    [ "$(wva_admin_grants)" = "true" ] || return 0
-
-    # Re-render the overlay without the unauthenticated-metrics component. The
-    # overlay lists it, so it is dropped here rather than added there — the
-    # default has to be the shape a tenant can actually install.
-    local rendered="$tmp_overlay/admin-base"
-    mkdir -p "$rendered"
-    # Kustomize rejects ABSOLUTE paths in resources and components, so the copied
-    # overlay's `../../../` references are rehomed onto a relative symlink rather
-    # than expanded to a real path.
-    ln -s "$WVA_PROJECT/config" "$rendered/config"
-    grep -v 'components/unauthenticated-metrics' "$kustomize_overlay/kustomization.yaml" \
-        | sed 's#\.\./\.\./\.\./#./config/#g' > "$rendered/kustomization.yaml"
-    # And the node read, which no Role can provide — a Node is cluster-scoped.
-    # Without it a gpu-inventory limiter resolves no accelerator, and the
-    # controller's readiness gate now refuses to serve that state at all.
-    printf -- '- ./config/components/node-reader/\n' >> "$rendered/kustomization.yaml"
-    rm -f "$tmp_overlay/base"
-    ln -s "$rendered" "$tmp_overlay/base"
 }
 
 # wva_repair_immutable_rolerefs deletes this install's ClusterRoleBindings whose

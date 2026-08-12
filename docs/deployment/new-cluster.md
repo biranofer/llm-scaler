@@ -83,21 +83,20 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 
 > **The scopes differ in who can install them, not only in what is read.**
 >
-> `cluster` creates 4 ClusterRoles and 4 ClusterRoleBindings, so it needs a
-> cluster admin. `namespace` **on Kubernetes** creates none — only Roles and
-> RoleBindings inside its own namespace — so a namespace admin can install it
-> themselves. **On OpenShift it still creates cluster-scoped bindings**, because
-> reading the platform's Thanos requires `cluster-monitoring-view`; there,
-> namespace scope is blast-radius reduction rather than self-service.
+> Both scopes create cluster-scoped RBAC, so both need a cluster admin **for the
+> prereqs phase** — `cluster` for its manager ClusterRole, `namespace` for the
+> metrics authn filter, EPP metrics and the node read. What differs afterwards is
+> what matters: the controller phase needs no cluster rights at either scope, so
+> a namespace's owner installs and upgrades their own controller.
 >
 > Either way the grant is read-only. WVA never writes to the cluster, because KEDA
 > performs the actuation; its only write is Events.
 >
-> A namespace-scoped install gives up the three things that genuinely require
-> cluster-scoped APIs: the `gpu-inventory` limiter (Nodes), authenticated metrics
-> (TokenReview), and EPP metrics (`nonResourceURLs`). A cluster admin installing the
-> same scope keeps all three with `WVA_ADMIN_GRANTS=true` — those limits belong to
-> the *installer*, not to the scope.
+> Three capabilities genuinely require cluster-scoped APIs: the `gpu-inventory`
+> limiter (Nodes), authenticated metrics (TokenReview), and EPP metrics
+> (`nonResourceURLs`). A namespace-scoped install keeps all three — an admin
+> creates that RBAC once in the prereqs phase. Those limits belong to the
+> *installer*, not to the scope.
 
 #### If you are a namespace admin, not a cluster admin
 
@@ -119,25 +118,17 @@ and the ServiceMonitor — the stock `admin` ClusterRole does not grant
 "self-service" install on a real cluster. The controller phase refuses, naming
 every missing object, if that has not happened.
 
-**Without the admin phase, on Kubernetes only**, one command still works:
+**If no admin is available at all**, add
+`config/components/unauthenticated-metrics` to the namespace-scoped Kubernetes
+overlay and apply it by hand. That renders an overlay with no cluster-scoped
+object in it, and gives up the three capabilities below. There is no such shape
+on OpenShift: reading the platform's Thanos requires a cluster-scoped binding.
 
-```bash
-make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace> WVA_ADMIN_GRANTS=false
-```
+Run `./deploy/install.sh --check` first either way. It renders the overlay your
+install would apply and asks whether you may create each kind in it, rather than
+assuming from the scope name.
 
-On Kubernetes, namespace scope creates **no cluster-scoped object** — only Roles
-and RoleBindings inside your namespace — so full rights in one namespace is
-enough. (On OpenShift this shape needs a cluster admin: reading the platform's
-Thanos requires a cluster-scoped binding.)
-
-Run `./deploy/install.sh --check` first. It renders the overlay your install
-would apply and asks whether you may create each kind in it, so it answers this
-for your platform and flags rather than for the scope name — including the
-OpenShift case above, and `WVA_ADMIN_GRANTS=true`, which adds cluster-scoped
-objects on either platform.
-
-Three capabilities need cluster-scoped APIs and are therefore not available to a
-self-service install:
+Three capabilities need cluster-scoped APIs, and are what that trade gives up:
 
 | not available | why |
 | --- | --- |
@@ -160,12 +151,15 @@ controller that silently never scales anything up.
 limiter and authenticated metrics back:
 
 ```bash
-# they install it for you, in your namespace
-make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace> WVA_ADMIN_GRANTS=true
+# the prereqs for your namespace, after which the controller is yours to
+# install and upgrade
+make setup-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
 
-# or they run it outside your namespace and point it at yours
-make deploy-wva-on-k8s WVA_SCOPE=namespace \
-  WVA_NS=wva-<your-namespace> WVA_WATCH_NS=<your-namespace> WVA_ADMIN_GRANTS=true
+# or they run the controller outside your namespace and point it at yours, so
+# the Deployment that bounds you is not one you can edit
+make setup-prereqs-namespace-on-k8s WVA_NS=wva-<your-namespace>
+make deploy-wva-namespace-on-k8s \
+  WVA_NS=wva-<your-namespace> WVA_WATCH_NS=<your-namespace>
 ```
 
 Also required either way, and not yours to install: **KEDA**, **Prometheus**, and
