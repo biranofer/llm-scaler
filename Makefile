@@ -230,14 +230,23 @@ disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster poli
 # belongs in its own system namespace, not inside a tenant's.
 # Only when YOU set LLMD_NS (`origin` distinguishes that from this file's own
 # default), and an explicit WVA_NS always wins.
+# NAMESPACE is in the chain because it is llm-d's OWN variable: its well-lit path
+# guides say `export NAMESPACE=llm-d-optimized-baseline` and pass `-n $(NAMESPACE)`
+# to every command. Someone arriving from one of those guides already has it
+# exported, and making them restate the same namespace under a third name is
+# exactly the duplication this chain exists to remove.
 wva_ns = $(strip $(if $(filter namespace,$(1)),\
     $(if $(filter command line environment,$(origin WVA_NS)),$(WVA_NS),\
-      $(if $(filter command line environment,$(origin LLMD_NS)),$(LLMD_NS),$(WVA_NS))),\
+      $(if $(filter command line environment,$(origin LLMD_NS)),$(LLMD_NS),\
+        $(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$(WVA_NS)))),\
     $(WVA_NS)))
 
 # How WVA_NS was arrived at, so the preflight can explain it rather than just
 # print it. $(1)=scope
-wva_ns_source = $(strip $(if $(filter command line environment,$(origin WVA_NS)),explicit,    $(if $(filter namespace,$(1)),$(if $(filter command line environment,$(origin LLMD_NS)),llmd-ns,default),default)))
+wva_ns_source = $(strip $(if $(filter command line environment,$(origin WVA_NS)),explicit,\
+    $(if $(filter namespace,$(1)),\
+      $(if $(filter command line environment,$(origin LLMD_NS)),llmd-ns,\
+        $(if $(filter command line environment,$(origin NAMESPACE)),namespace-env,default)),default)))
 
 # wva_phase: $(1)=phase $(2)=scope $(3)=ENVIRONMENT
 define wva_phase

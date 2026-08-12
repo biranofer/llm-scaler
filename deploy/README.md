@@ -46,6 +46,9 @@ The single most common confusion, so plainly:
 | `WVA_WATCH_NS` | which namespace it **manages** | the one it runs in |
 | `WVA_DEFAULT_SO_NS` | where `scaledobjects-plan` **looks for model servers** | what this install can reach |
 | `LLMD_NS` | where llm-d runs. Setting it **defaults `WVA_NS` for the namespace-scoped targets**, so you name the namespace once. It is never passed to the controller | `llm-d-optimized-baseline` |
+| `NAMESPACE` | llm-d's own variable — its well-lit path guides have you `export NAMESPACE=…`. Honoured for the same reason, so a guide's namespace carries over | — |
+
+Precedence, most specific first: `WVA_NS` → `LLMD_NS` → `NAMESPACE` → discovery.
 
 **Usually you need none of them.** A namespace-scoped install with nothing
 specified **finds** the namespace running llm-d — the model servers are labelled,

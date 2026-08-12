@@ -342,6 +342,8 @@ wva_report_namespace() {
             log_success "Namespace: $ns  (found: it is the only namespace running llm-d model servers)"
             log_info "  Override with WVA_NS=<ns> if you meant a different one." ;;
         llmd-ns)  log_info "Namespace: $ns  (from LLMD_NS)" ;;
+        namespace-env)
+            log_info "Namespace: $ns  (from NAMESPACE — the variable llm-d's own guides export)" ;;
         explicit) log_info "Namespace: $ns  (you set WVA_NS)" ;;
         *)        log_info "Namespace: $ns$([ "$ns" = "workload-variant-autoscaler-system" ] && echo '  (the default)')" ;;
     esac
