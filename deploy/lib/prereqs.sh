@@ -277,6 +277,71 @@ wva_api_resource() {
         | awk -v k="$kind" '$NF == k { print $1, $(NF-1); exit }' || true
 }
 
+# wva_report_namespace says which namespace this install will use, how that was
+# decided, and whether it holds anything to scale.
+#
+# The last part is the one worth running: a namespace-scoped controller manages
+# exactly the namespace it runs in, so pointing it at the wrong one produces a
+# controller that installs cleanly, reports healthy, and manages nothing. There is
+# no error anywhere in that sequence — the only symptom is that nothing ever
+# scales, which is indistinguishable from an idle cluster.
+wva_report_namespace() {
+    local ns="${WVA_NS}" scope managed count
+    scope="$(wva_install_scope)"
+    managed="${WVA_WATCH_NS:-$ns}"
+
+    case "${WVA_NS_SOURCE:-}" in
+        llmd-ns)  log_info "Namespace: $ns  (from LLMD_NS)" ;;
+        explicit) log_info "Namespace: $ns  (you set WVA_NS)" ;;
+        *)        log_info "Namespace: $ns$([ "$ns" = "workload-variant-autoscaler-system" ] && echo '  (the default)')" ;;
+    esac
+
+    if [ "$scope" = "cluster" ]; then
+        log_info "  The controller runs there and manages EVERY namespace."
+        return 0
+    fi
+
+    if [ "$managed" != "$ns" ]; then
+        log_info "  It runs in $ns and manages $managed (WVA_WATCH_NS)."
+    else
+        log_info "  It runs in $ns and manages that same namespace — nothing outside it."
+    fi
+
+    # Does the managed namespace actually contain model servers?
+    if ! kubectl get namespace "$managed" >/dev/null 2>&1; then
+        log_info "  $managed does not exist yet; the install creates it."
+        log_info "  Wrong namespace? Set WVA_NS=<ns> (or LLMD_NS=<ns>) to install where your model servers are."
+        return 0
+    fi
+    count="$(wva_model_server_count "$managed")"
+    if [ "$count" -gt 0 ] 2>/dev/null; then
+        log_success "  $managed holds $count llm-d model server(s) for it to manage."
+    else
+        log_warning "  $managed holds NO llm-d model servers (nothing labelled ${SO_SERVING_MARKER})."
+        log_warning "    A namespace-scoped controller manages only the namespace it runs in, so this one would install cleanly, report healthy, and scale nothing."
+        log_warning "    Install where your models are:  WVA_NS=<their namespace>   (or LLMD_NS=<their namespace>)"
+        log_warning "    Or keep the controller here and manage theirs:  WVA_WATCH_NS=<their namespace>"
+    fi
+}
+
+# wva_model_server_count counts llm-d model servers in one namespace, by the same
+# marker and on the same pod-template basis the ScaledObject scan uses — `-l` on
+# the object matches nothing, because llm-d labels the pod template.
+wva_model_server_count() {
+    local ns="$1" total=0 resource pod n
+    for resource in deployments:"$SO_POD_PATH_DEPLOYMENT" leaderworkersets:"$SO_POD_PATH_LWS"; do
+        pod="${resource#*:}"; resource="${resource%%:*}"
+        n="$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+            | jq --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
+                [ .items[]
+                  | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
+                  | select(to_entries | any(.key + "=" + (.value|tostring) == $marker))
+                ] | length' 2>/dev/null || echo 0)"
+        total=$((total + ${n:-0}))
+    done
+    echo "$total"
+}
+
 check_permissions() {
     log_info "Checking permissions..."
 

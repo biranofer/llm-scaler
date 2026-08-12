@@ -62,6 +62,8 @@ Yours to run, now and for every future upgrade, with no cluster-scoped rights:
 
 ```bash
 make deploy-wva-namespace-on-k8s WVA_NS=<your-namespace>
+# or, if you already name your llm-d namespace that way:
+make deploy-wva-namespace-on-k8s LLMD_NS=<your-namespace>
 ```
 
 That is the whole command. The Prometheus is detected — on OpenShift it is the

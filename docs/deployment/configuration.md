@@ -35,7 +35,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `LLMD_NS` | Where `deploy/install-epp.sh` installs EPP, and the namespace `DEPLOY_LLMD_NS=true` creates. It does **not** tell the controller anything: WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `LLMD_NS` | Where llm-d runs: `deploy/install-epp.sh` installs EPP there, `DEPLOY_LLMD_NS=true` creates it, and setting it **defaults `WVA_NS` for the `*-namespace-on-*` targets** (an explicit `WVA_NS` wins; cluster-scoped targets are unaffected). It is still never passed to the controller — WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
 
 ## Deployment flags
 

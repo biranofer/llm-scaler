@@ -20,8 +20,21 @@ Check all of it, read-only, before you commit to anything:
 make check-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
 ```
 
-It renders the manifests this install would apply, asks the API server whether you
-may create each kind, and prints the Prometheus it found.
+It answers the three things you would otherwise guess at:
+
+```
+[INFO]    Namespace: my-llmd  (from LLMD_NS)
+[INFO]      It runs in my-llmd and manages that same namespace — nothing outside it.
+[SUCCESS]   my-llmd holds 3 llm-d model server(s) for it to manage.
+[SUCCESS] Prometheus: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+[INFO]      You do not need to pass PROMETHEUS_URL. Set it only to override this.
+```
+
+— which namespace it resolved to and why, whether that namespace actually holds
+anything to scale, and the Prometheus it found. If the namespace is empty it says
+so loudly: a namespace-scoped controller pointed at the wrong namespace installs
+cleanly, reports healthy, and scales nothing, and there is no error anywhere in
+that sequence.
 
 ### Which namespace is which
 
@@ -32,11 +45,19 @@ The single most common confusion, so plainly:
 | `WVA_NS` | where the **controller runs** | `workload-variant-autoscaler-system` |
 | `WVA_WATCH_NS` | which namespace it **manages** | the one it runs in |
 | `WVA_DEFAULT_SO_NS` | where `scaledobjects-plan` **looks for model servers** | what this install can reach |
-| `LLMD_NS` | only for `install-epp.sh` and the sample paths. **It does not tell WVA anything** | `llm-d-optimized-baseline` |
+| `LLMD_NS` | where llm-d runs. Setting it **defaults `WVA_NS` for the namespace-scoped targets**, so you name the namespace once. It is never passed to the controller | `llm-d-optimized-baseline` |
 
 **Yes, `WVA_NS` can be your llm-d namespace** — that is the normal shape: the
-controller runs alongside the models it manages. Set `WVA_NS=<your-llm-d-namespace>`
-and you are done.
+controller runs alongside the models it manages. Name it once, either way:
+
+```bash
+make deploy-wva-namespace-on-k8s LLMD_NS=my-llmd     # WVA_NS follows LLMD_NS
+make deploy-wva-namespace-on-k8s WVA_NS=my-llmd      # or say it directly
+```
+
+`WVA_NS` wins if you set both, and this only applies to the **namespace-scoped**
+targets: a cluster-scoped controller manages everything and belongs in its own
+system namespace, not inside a tenant's.
 
 **Several namespaces running llm-d?** A namespace-scoped controller manages exactly
 one, so pick one of:

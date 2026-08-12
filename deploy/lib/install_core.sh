@@ -90,10 +90,11 @@ main() {
                 check_specific_prerequisites
             fi
         fi
+        # The two questions a reader actually arrives with — which namespace, and
+        # what do I pass for PROMETHEUS_URL — both answerable from here.
+        wva_report_namespace
         check_permissions
         check_single_installation
-        # "What do I pass for PROMETHEUS_URL?" is the question a reader actually
-        # arrives with, and the answer is knowable from here.
         wva_report_prometheus
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0

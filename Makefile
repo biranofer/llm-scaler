@@ -219,11 +219,32 @@ disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster poli
 # deploy-wva-on-k8s / deploy-wva-on-openshift still do all three at once, which
 # is the right thing when you are a cluster admin installing for yourself.
 #
+# wva_ns: the namespace a target of scope $(1) installs into.
+#
+# A namespace-scoped controller manages exactly the namespace it runs in, so if
+# you have already said where llm-d is, that is where it belongs — asking for the
+# same namespace twice, under two names, is how people end up with a controller
+# managing an empty namespace and no idea why nothing scales.
+#
+# Only for namespace scope: a cluster-scoped controller manages everything and
+# belongs in its own system namespace, not inside a tenant's.
+# Only when YOU set LLMD_NS (`origin` distinguishes that from this file's own
+# default), and an explicit WVA_NS always wins.
+wva_ns = $(strip $(if $(filter namespace,$(1)),\
+    $(if $(filter command line environment,$(origin WVA_NS)),$(WVA_NS),\
+      $(if $(filter command line environment,$(origin LLMD_NS)),$(LLMD_NS),$(WVA_NS))),\
+    $(WVA_NS)))
+
+# How WVA_NS was arrived at, so the preflight can explain it rather than just
+# print it. $(1)=scope
+wva_ns_source = $(strip $(if $(filter command line environment,$(origin WVA_NS)),explicit,    $(if $(filter namespace,$(1)),$(if $(filter command line environment,$(origin LLMD_NS)),llmd-ns,default),default)))
+
 # wva_phase: $(1)=phase $(2)=scope $(3)=ENVIRONMENT
 define wva_phase
-	@echo "Phase '$(1)', $(2)-scoped, on $(3). Namespace: $(WVA_NS)"
+	@echo "Phase '$(1)', $(2)-scoped, on $(3). Namespace: $(call wva_ns,$(2))"
+	$(if $(filter namespace,$(2)),$(if $(filter command line environment,$(origin WVA_NS)),,$(if $(filter command line environment,$(origin LLMD_NS)),@echo "  (from LLMD_NS — a namespace-scoped WVA manages the namespace it runs in)",)),)
 	$(if $(filter wva all,$(1)),@echo "Image: $(IMG)",)
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
+	WVA_NS=$(call wva_ns,$(2)) WVA_NS_SOURCE=$(call wva_ns_source,$(2)) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
 		INSTALL_PHASE=$(1) ENVIRONMENT=$(3) \
 		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
 		$(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) \
@@ -232,7 +253,7 @@ endef
 
 # wva_check: $(1)=scope $(2)=ENVIRONMENT
 define wva_check
-	WVA_NS=$(WVA_NS) WVA_SCOPE=$(1) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=$(2) \
+	WVA_NS=$(call wva_ns,$(1)) WVA_NS_SOURCE=$(call wva_ns_source,$(1)) WVA_SCOPE=$(1) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=$(2) \
 		./deploy/install.sh --check
 endef
 
