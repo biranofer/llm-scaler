@@ -3,8 +3,16 @@
 add_variant.py — Add a secondary WVA variant to an existing single-stack benchmark.
 
 Implements Topology B: one shared InferencePool/EPP fed by two Deployments,
-each with its own VariantAutoscaling (VA) at a different variantCost. The WVA
+each with its own KEDA ScaledObject at a different variantCost. The WVA
 saturation solver uses variantCost to decide which variant to scale first.
+
+The ScaledObject is what makes the variant exist as far as WVA is concerned:
+WVA has no watch and no listing, and discovers a workload from the KEDA calls
+its triggers cause. Identity rides in the trigger metadata — `modelID` (which
+groups the two variants) and `variantCost` (which prices them). This script
+therefore clones the primary's ScaledObject rather than creating one from
+scratch, so the secondary inherits the scaler address, polling and behaviour
+the standup chose, and differs only where it must.
 
 Label strategy
 --------------
@@ -20,7 +28,7 @@ The secondary Deployment this script creates:
   - OMITS  llm-d.ai/inference-serving (kebab)           → not claimed by primary
   - ADDS   wva.llmd.ai/variant: <suffix>                → unique selector
 
-Both VAs share the same spec.modelID so the WVA solver groups them.
+Both ScaledObjects carry the same modelID so the WVA solver groups them.
 
 Usage
 -----
@@ -171,26 +179,48 @@ def find_primary_deployment(namespace):
     return primaries[0]
 
 
-def find_primary_va(namespace, deployment_name):
-    out = kubectl("get", "variantautoscaling", "-n", namespace, "-o", "json")
-    vas = json.loads(out)["items"]
-    for va in vas:
-        if va["spec"]["scaleTargetRef"]["name"] == deployment_name:
-            return va
-    print(f"ERROR: No VariantAutoscaling found targeting deployment '{deployment_name}'",
-          file=sys.stderr)
-    sys.exit(1)
+# Trigger types that call WVA. A ScaledObject scaled by anything else (a
+# prometheus trigger, say) never contacts WVA at all, so cloning it would
+# produce a secondary that is never discovered — silently, since nothing errors.
+WVA_TRIGGER_TYPES = ("external", "external-push")
 
 
-def find_primary_hpa(namespace, deployment_name):
-    out = kubectl("get", "hpa", "-n", namespace, "-o", "json")
-    hpas = json.loads(out)["items"]
-    for hpa in hpas:
-        if hpa["spec"]["scaleTargetRef"]["name"] == deployment_name:
-            return hpa
-    print(f"ERROR: No HPA found targeting deployment '{deployment_name}'",
-          file=sys.stderr)
-    sys.exit(1)
+def find_primary_scaledobject(namespace, deployment_name):
+    out = kubectl("get", "scaledobject", "-n", namespace, "-o", "json")
+    sos = json.loads(out)["items"]
+    matching = [so for so in sos
+                if so["spec"].get("scaleTargetRef", {}).get("name") == deployment_name]
+    if not matching:
+        print(f"ERROR: No ScaledObject found targeting deployment "
+              f"'{deployment_name}' in namespace '{namespace}'.\n"
+              f"       A ScaledObject is how a workload registers with WVA — "
+              f"create the primary's first:\n"
+              f"       make scaledobjects-apply WVA_NS={namespace} "
+              f"WVA_DEFAULT_SO_NS={namespace}",
+              file=sys.stderr)
+        sys.exit(1)
+    if len(matching) > 1:
+        names = [so["metadata"]["name"] for so in matching]
+        print(f"ERROR: Multiple ScaledObjects target '{deployment_name}': {names}. "
+              f"Two ScaledObjects on one target is two HPAs writing the same "
+              f"replica count; remove one before adding a variant.", file=sys.stderr)
+        sys.exit(1)
+    return matching[0]
+
+
+def wva_triggers(scaledobject):
+    """The triggers on a ScaledObject that call WVA."""
+    return [t for t in scaledobject["spec"].get("triggers", [])
+            if t.get("type") in WVA_TRIGGER_TYPES]
+
+
+def scaledobject_model_id(scaledobject):
+    """The modelID the primary registers under, or None if it has no WVA trigger."""
+    for t in wva_triggers(scaledobject):
+        model = (t.get("metadata") or {}).get("modelID")
+        if model:
+            return model
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +382,11 @@ def make_secondary_deployment(primary, cfg, namespace):
     tmpl_labels.pop("llm-d.ai/inference-serving", None)
     # Add variant discriminator
     tmpl_labels["wva.llmd.ai/variant"] = suffix
-    # Override the WVA variant label inherited from the primary pod template so
-    # this deployment's metrics map to the v2 VariantAutoscaling, not primary.
-    # Required by PR #1145 (Prometheus relabeling -> llm_d_ai_variant).
-    tmpl_labels["llm-d.ai/variant"] = sec_name
+    # The primary may still carry an llm-d.ai/variant label naming ITSELF. Nothing
+    # reads it (the collector keys metrics on model_name, not on a variant label),
+    # but left inherited it would name the primary on the secondary's pods, so
+    # drop it rather than propagate a wrong value.
+    tmpl_labels.pop("llm-d.ai/variant", None)
 
     # --- Deployment selector ------------------------------------------------
     # Must match the pod template labels (minus kebab, plus variant).
@@ -363,9 +394,7 @@ def make_secondary_deployment(primary, cfg, namespace):
     sel = spec["selector"]["matchLabels"]
     sel.pop("llm-d.ai/inference-serving", None)
     sel["wva.llmd.ai/variant"] = suffix
-    # Override inherited primary's llm-d.ai/variant value so this selector
-    # matches the secondary's pod-template labels (PR #1145 alignment).
-    sel["llm-d.ai/variant"] = sec_name
+    sel.pop("llm-d.ai/variant", None)
 
     # --- shape overrides ----------------------------------------------------
     pod_spec = spec["template"]["spec"]
@@ -382,47 +411,51 @@ def make_secondary_deployment(primary, cfg, namespace):
     return sec
 
 
-def make_secondary_va(primary_va, sec_dep_name, cfg, namespace):
-    primary_name = primary_va["metadata"]["name"]
-    sec = copy.deepcopy(primary_va)
+def make_secondary_scaledobject(primary_so, sec_dep_name, cfg, namespace):
+    """Clone the primary's ScaledObject onto the secondary Deployment.
+
+    Everything the standup chose — scaler address, polling interval, cooldown,
+    fallback, advanced behaviour — is inherited. Only four things change:
+    the name, what it scales, its replica bounds, and its price.
+
+    The name keeps the `-<suffix>` ending because the ScaledObject NAMES the
+    variant (WVA synthesizes its internal record from the registry entry, whose
+    name is the ScaledObject's), and `dump_wva_full_timeseries.py` buckets
+    per-variant metrics by `variant_name.endswith("-v2")`.
+    """
+    primary_name = primary_so["metadata"]["name"]
+    sec = copy.deepcopy(primary_so)
     _strip_managed(sec)
+    # KEDA stamps these on the object it reconciles; they must not be cloned.
+    for field in ("finalizers",):
+        sec["metadata"].pop(field, None)
+    ann = sec["metadata"].get("annotations", {})
+    for field in ("scaledobject.keda.sh/transfer-hpa-ownership",
+                  "autoscaling.keda.sh/paused-replicas",
+                  "autoscaling.keda.sh/paused"):
+        ann.pop(field, None)
+    if not ann:
+        sec["metadata"].pop("annotations", None)
 
     sec["metadata"]["name"] = f"{primary_name}-{cfg['suffix']}"
     sec["metadata"]["namespace"] = namespace
-    # Inherit controller-instance label so the namespace-scoped controller sees it
+    # Inherit controller-instance label so a namespace-scoped controller with an
+    # instance configured still counts this variant as part of its fleet.
     sec["metadata"].setdefault("labels", {})
     sec["metadata"]["labels"]["wva.llmd.ai/controller-instance"] = namespace
 
-    sec["spec"] = {
-        "scaleTargetRef": {
-            "kind": "Deployment",
-            "name": sec_dep_name,
-        },
-        "modelID": primary_va["spec"]["modelID"],
-        "variantCost": cfg["variantCost"],
-        "minReplicas": cfg["minReplicas"],
-        "maxReplicas": cfg["maxReplicas"],
-    }
-    return sec
+    spec = sec["spec"]
+    spec["scaleTargetRef"]["name"] = sec_dep_name
+    spec["minReplicaCount"] = cfg["minReplicas"]
+    spec["maxReplicaCount"] = cfg["maxReplicas"]
 
-
-def make_secondary_hpa(primary_hpa, sec_dep_name, cfg, namespace):
-    primary_name = primary_hpa["metadata"]["name"]
-    sec = copy.deepcopy(primary_hpa)
-    _strip_managed(sec)
-
-    sec["metadata"]["name"] = f"{primary_name}-{cfg['suffix']}"
-    sec["metadata"]["namespace"] = namespace
-
-    sec["spec"]["scaleTargetRef"]["name"] = sec_dep_name
-    sec["spec"]["minReplicas"] = cfg["minReplicas"]
-    sec["spec"]["maxReplicas"] = cfg["maxReplicas"]
-
-    for m in sec["spec"].get("metrics", []):
-        if m.get("type") == "External":
-            sel = m["external"]["metric"]["selector"]["matchLabels"]
-            if "variant_name" in sel:
-                sel["variant_name"] = sec_dep_name
+    for t in wva_triggers(sec):
+        meta = t.setdefault("metadata", {})
+        meta["variantCost"] = cfg["variantCost"]
+        # variantName names the scale target directly. Inherited, it would point
+        # the secondary's registry entry at the PRIMARY's Deployment: two
+        # entries scaling one workload, and the secondary never scaled at all.
+        meta.pop("variantName", None)
 
     return sec
 
@@ -447,7 +480,7 @@ def main():
     cfg = load_variant_config(args.config)
     suffix = cfg["suffix"]
 
-    print(f"[1/3] Finding primary decode Deployment in namespace '{ns}'...")
+    print(f"[1/2] Finding primary decode Deployment in namespace '{ns}'...")
     primary_dep = find_primary_deployment(ns)
     dep_name = primary_dep["metadata"]["name"]
     model_hash = (primary_dep.get("spec", {}).get("selector", {})
@@ -457,16 +490,33 @@ def main():
     primary_gpu = _read_gpu_per_pod(primary_containers) or "1"
     print(f"      {dep_name}  (llm-d.ai/model={model_hash})")
 
-    print(f"[2/3] Finding primary VariantAutoscaling...")
-    primary_va = find_primary_va(ns, dep_name)
-    model_id = primary_va["spec"]["modelID"]
-    primary_cost = primary_va["spec"].get("variantCost", "?")
-    print(f"      {primary_va['metadata']['name']}  "
+    print(f"[2/2] Finding the primary's ScaledObject...")
+    primary_so = find_primary_scaledobject(ns, dep_name)
+    if not wva_triggers(primary_so):
+        types = [t.get("type") for t in primary_so["spec"].get("triggers", [])]
+        print(f"ERROR: ScaledObject '{primary_so['metadata']['name']}' has no WVA "
+              f"trigger (found: {types or 'none'}).\n"
+              f"       Only {'/'.join(WVA_TRIGGER_TYPES)} triggers call WVA. A "
+              f"secondary cloned from this one would never be discovered, and "
+              f"nothing would report that — it would simply sit at its replica "
+              f"count. Point the primary at WVA first:\n"
+              f"       make scaledobjects-apply WVA_NS={ns} WVA_DEFAULT_SO_NS={ns} "
+              f"WVA_DEFAULT_SO_ADOPT=true", file=sys.stderr)
+        sys.exit(1)
+    model_id = scaledobject_model_id(primary_so)
+    if not model_id:
+        print(f"ERROR: ScaledObject '{primary_so['metadata']['name']}' declares no "
+              f"modelID in its trigger metadata. modelID is what groups the two "
+              f"variants; without it there is nothing for the solver to compare "
+              f"them under.", file=sys.stderr)
+        sys.exit(1)
+    primary_cost = next(
+        ((t.get("metadata") or {}).get("variantCost") for t in wva_triggers(primary_so)
+         if (t.get("metadata") or {}).get("variantCost")),
+        "10.0 (default)",
+    )
+    print(f"      {primary_so['metadata']['name']}  "
           f"(modelID={model_id}, variantCost={primary_cost})")
-
-    print(f"[3/3] Finding primary HPA...")
-    primary_hpa = find_primary_hpa(ns, dep_name)
-    print(f"      {primary_hpa['metadata']['name']}")
 
     sec_dep_name = f"{dep_name}-{suffix}"
 
@@ -474,16 +524,16 @@ def main():
           f"variantCost={cfg['variantCost']}  modelID={model_id}\n")
 
     sec_dep = make_secondary_deployment(primary_dep, cfg, ns)
-    sec_va = make_secondary_va(primary_va, sec_dep_name, cfg, ns)
-    sec_hpa = make_secondary_hpa(primary_hpa, sec_dep_name, cfg, ns)
+    sec_so = make_secondary_scaledobject(primary_so, sec_dep_name, cfg, ns)
 
     print(f"  Applying Deployment: {sec_dep_name}")
     kubectl_apply(sec_dep, dry_run=args.dry_run)
 
-    # Owner refs on VA + HPA point to the secondary Deployment so
+    # The owner ref on the ScaledObject points at the secondary Deployment so
     # `make benchmark-teardown` (which deletes the Deployment via the helm
-    # release's cascade) also garbage-collects the VA and HPA. Without this,
-    # the VA + HPA orphan in the namespace after teardown.
+    # release's cascade) garbage-collects it too. Without this it orphans in the
+    # namespace, and an orphaned ScaledObject keeps registering a workload that
+    # no longer exists.
     if not args.dry_run:
         sec_dep_uid = json.loads(kubectl(
             "get", "deployment", sec_dep_name, "-n", ns, "-o", "json",
@@ -496,13 +546,10 @@ def main():
             "blockOwnerDeletion": True,
             "controller": False,
         }
-        sec_va.setdefault("metadata", {}).setdefault("ownerReferences", []).append(owner_ref)
-        sec_hpa.setdefault("metadata", {}).setdefault("ownerReferences", []).append(owner_ref)
+        sec_so.setdefault("metadata", {}).setdefault("ownerReferences", []).append(owner_ref)
 
-    for kind, obj in [("VariantAutoscaling", sec_va), ("HPA", sec_hpa)]:
-        name = obj["metadata"]["name"]
-        print(f"  Applying {kind}: {name}")
-        kubectl_apply(obj, dry_run=args.dry_run)
+    print(f"  Applying ScaledObject: {sec_so['metadata']['name']}")
+    kubectl_apply(sec_so, dry_run=args.dry_run)
 
     if args.dry_run:
         return
@@ -518,14 +565,19 @@ def main():
     print(f"  Secondary (cost {cfg['variantCost']:>5}, TP={sec_tp}, "
           f"{sec_gpu} GPU/pod): {sec_dep_name}")
     print()
-    print("Both VAs share modelID=" + repr(model_id) + ".")
+    print("Both ScaledObjects carry modelID=" + repr(model_id) + ".")
     print("WVA will scale the more efficient variant first (most served load")
     print("per unit cost), spilling over to the other only once it saturates.")
     print()
     print("Verify:")
-    print(f"  kubectl get va,hpa -n {ns}")
+    print(f"  kubectl get scaledobject,hpa -n {ns}")
     print(f"  kubectl get pods -n {ns} "
           f"-l 'llm-d.ai/inferenceServing=true,llm-d.ai/model={model_hash}'")
+    print()
+    print("The secondary is not a variant until KEDA has called WVA about it.")
+    print("Until then it is a Deployment WVA has never heard of:")
+    print(f"  kubectl get scaledobject {sec_so['metadata']['name']} -n {ns} "
+          f"-o jsonpath='{{.status.conditions}}'")
 
 
 if __name__ == "__main__":
