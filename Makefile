@@ -165,7 +165,9 @@ destroy-kind-cluster:
 deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift (new cluster). Existing llm-d? add DEPLOY_PROMETHEUS=false DEPLOY_LLMD_NS=false PROMETHEUS_URL=<url>. Also: WVA_NS, WVA_SCOPE, WVA_LIMITER.
 	@echo "Deploying WVA to OpenShift with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \n		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \n		ENVIRONMENT=openshift ./deploy/install.sh
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
+		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+		ENVIRONMENT=openshift ./deploy/install.sh
 
 ## Undeploy WVA from OpenShift.
 .PHONY: undeploy-wva-on-openshift
@@ -209,7 +211,9 @@ deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes (new cluster)
 	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
 	@echo "Target namespace: $(WVA_NS)"
 	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \n		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \n		ENVIRONMENT=kubernetes ./deploy/install.sh
+	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
+		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+		ENVIRONMENT=kubernetes ./deploy/install.sh
 
 ## Undeploy WVA from Kubernetes.
 .PHONY: undeploy-wva-on-k8s
