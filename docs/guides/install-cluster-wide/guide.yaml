@@ -2,23 +2,17 @@ name: install-cluster-wide
 
 env:
   static:
-    namespace:
-      note: Where the controller runs. It manages every namespace regardless.
-      run: export WVA_NS=workload-variant-autoscaler-system
+    scope:
+      run: export SCOPE=cluster
 
 prerequisites:
   check:
-    note: Read-only. Reports what it would create, and the Prometheus it found.
     run: make check-prereqs SCOPE=cluster
 
 deploy:
   all:
-    note: |
-      One command, all three phases. The right thing when you are a cluster admin
-      installing for yourself. Add IMG=<your build> for an unmerged branch.
-    run: make deploy-wva-on-k8s
+    run: make deploy-wva SCOPE=cluster
   register:
-    note: Nothing scales until a ScaledObject exists.
     run: |
       make scaledobjects-plan
       make scaledobjects-apply
@@ -29,4 +23,4 @@ verify:
 
 cleanup:
   uninstall:
-    run: make undeploy-wva-on-k8s
+    run: make undeploy-wva SCOPE=cluster

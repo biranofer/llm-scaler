@@ -3,24 +3,16 @@ name: existing-llm-d
 env:
   static:
     namespace:
-      note: |
-        Where llm-d already runs. NAMESPACE is llm-d's own variable, so if you
-        followed one of its guides this is already exported.
       run: export NAMESPACE=llm-d-optimized-baseline
 
 prerequisites:
   check:
-    note: |
-      Reports the namespace it resolved, whether it holds model servers, and the
-      Prometheus it found — you should not need to pass a URL.
     run: make check-prereqs
 
 deploy:
   controller:
-    note: Controller only. The cluster's Prometheus, KEDA and CRDs are used as they are.
     run: make deploy-wva INSTALL_PHASE=wva
   register:
-    note: Connect the workloads that already exist.
     run: |
       make scaledobjects-plan
       make scaledobjects-apply WVA_DEFAULT_SO_PLAN=/tmp/wva-scaledobject-plan.XXXX

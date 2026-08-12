@@ -15,7 +15,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
 | `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, cluster-scoped RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller, needing no cluster-scoped rights) \| `all`. Usually set for you by the `setup-prereqs-*` and `deploy-wva-*` targets — see [deploy/README.md](../../deploy/README.md) | `all` |
@@ -240,7 +240,7 @@ job; removing what WVA was pointed at is a separate decision, and an explicit on
 **A second WVA is refused.** Their workloads would be separate — a workload
 registers with the scaler address its trigger names — but their GPU budgets would
 not. See
-[One WVA per cluster](../guides/existing-llm-d/README.md#how-many-wvas-a-cluster-has).
+[One WVA per cluster](../guides/install-cluster-wide/README.md).
 
 ## Adding a model later
 

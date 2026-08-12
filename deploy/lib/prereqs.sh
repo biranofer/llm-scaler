@@ -400,7 +400,7 @@ wva_report_namespace() {
             # an autoscaler's. Point at the people whose decision it is.
             log_warning "    There are none anywhere on this cluster. WVA scales llm-d model servers; deploy one first:"
             log_warning "      https://github.com/llm-d/llm-d/tree/main/guides"
-            log_warning "    For a GPU-free local cluster to try WVA against: make deploy-llm-d-wva-emulated-on-kind"
+            log_warning "    For a GPU-free local cluster to try WVA against: make create-kind-cluster && make deploy-e2e-infra"
         fi
         log_warning "    A namespace-scoped controller manages only the namespace it runs in, so this one would install cleanly, report healthy, and scale nothing."
         log_warning "    Install where your models are:  WVA_NS=<their namespace>   (or NAMESPACE=<their namespace>)"

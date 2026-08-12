@@ -1,12 +1,7 @@
 # WVA guides
 
-Well-lit paths for installing and operating the Workload-Variant-Autoscaler, in
-the shape of [llm-d's own guides](https://github.com/llm-d/llm-d/tree/main/guides):
-each guide is two files — a machine-readable `guide.yaml` and a human-readable
-`README.md` — and each is complete on its own.
-
-Source the shared environment before running guide commands. It carries versions
-and image references; the namespace belongs to the guide you are following:
+Each guide takes one reader from nothing to a working install. Follow one; they
+do not need to be combined.
 
 ```bash
 source docs/guides/env.sh
@@ -14,50 +9,44 @@ source docs/guides/env.sh
 
 ## Installing
 
-| guide | for | who runs it |
-| --- | --- | --- |
-| [Install WVA in your namespace](install-in-namespace/README.md) | **the common path** — you own a namespace and want your models autoscaled | you, after one command from an admin |
-| [Install one WVA for the whole cluster](install-cluster-wide/README.md) | one controller managing every namespace | cluster admin |
-| [Add WVA to a running llm-d](existing-llm-d/README.md) | llm-d is already up; add the autoscaler to it | whoever owns that install |
+| guide | for |
+| --- | --- |
+| [Install WVA in a namespace](install-in-namespace/README.md) | **start here.** One team, one namespace |
+| [Install WVA for the whole cluster](install-cluster-wide/README.md) | one controller for every namespace |
+| [Add WVA to a running llm-d](existing-llm-d/README.md) | llm-d is already serving |
 
-## Operating (cluster admin)
+## Cluster administration
 
 | guide | for |
 | --- | --- |
-| [Cluster-admin setup](admin-cluster-setup/README.md) | let a namespace's owner install and upgrade WVA themselves |
-| [Bounding GPU usage](admin-gpu-bounding/README.md) | make every WVA on the cluster respect a real GPU budget |
+| [Cluster-admin setup for a namespace](admin-cluster-setup/README.md) | let a namespace's owner install WVA themselves |
+| [Bound every WVA by real GPUs](admin-gpu-bounding/README.md) | scaling is otherwise bounded only by `maxReplicaCount` |
 
-## Two things every guide shares
+## Advanced
 
-**Nothing scales until a ScaledObject exists.** WVA has no watch and no listing —
-it learns a workload exists only when KEDA calls it about one. Until then the
-controller runs, reports healthy, and scales nothing.
-
-**Without a limiter, scaling is unbounded.** A fresh install scales to each
-workload's `maxReplicaCount` with no check against real GPUs. That default is
-deliberate; [Bounding GPU usage](admin-gpu-bounding/README.md) is the one command
-that changes it.
+| guide | for |
+| --- | --- |
+| [Test against a full llm-d stack](testing-with-llm-d/README.md) | llm-d + WVA on kind, emulated GPUs, no hardware |
+| [Benchmark WVA](benchmarking/README.md) | drive load through a real stack and compare runs |
 
 ## Reference
 
 | page | covers |
 | --- | --- |
-| [Configuration](../deployment/configuration.md) | every environment variable `install.sh` reads |
-| [After the install](../deployment/operations.md) | what to watch, and first-line troubleshooting |
-| [The GPU limiter](../deployment/gpu-limiter.md) | why policy lives where it does, and the accelerator precondition |
+| [Configuration](../deployment/configuration.md) | every variable the installer reads |
+| [After the install](../deployment/operations.md) | what to watch, first-line troubleshooting |
+| [Install methods](../deployment/install-methods.md) | GitOps, direct Kustomize, what the script does |
+| [The GPU limiter](../deployment/gpu-limiter.md) | where policy lives, and the accelerator precondition |
 
 ## Editing a guide
 
-The bash blocks between `<!-- guide:… start -->` and `<!-- guide:… end -->` are
-**generated from `guide.yaml`** — edit the YAML, then:
+Bash blocks between `<!-- guide:… start -->` markers are generated from
+`guide.yaml`. Edit the YAML, then:
 
 ```bash
-make guides-render     # rewrite the README blocks
-make guides-check      # CI: fail if a README is out of date
+make guides-render     # rewrite the blocks
+make guides-check      # CI: fail if a README has drifted
 ```
 
-Prose outside the markers is preserved byte for byte. The point is that the
-commands a reader copies and the commands a tool would run are the same strings:
-this repo has twice shipped documentation that drifted from what it described —
-a benchmark that installed a different binary than it claimed, and a guide that
-told people to apply a CRD that does not exist.
+Prose outside the markers is preserved. The commands a reader copies are the
+commands the YAML declares, so a guide cannot drift from what it documents.

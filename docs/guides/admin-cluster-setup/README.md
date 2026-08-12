@@ -1,89 +1,84 @@
-# Cluster-admin setup: prerequisites for a namespace
+# Cluster-admin setup for a namespace
 
-**For a cluster admin.** Someone owns a namespace, runs model servers in it, and
-wants WVA. This is the one command you run for them, and what it creates.
+## Overview
 
-> Part of the [WVA deployment guide](../../../deploy/README.md).
-> Their side of it: [Install WVA in your namespace](../install-in-namespace/README.md).
+Creates, for one namespace, the things a namespace admin cannot: the namespace
+itself, the cluster-scoped RBAC, and the ServiceMonitor. After this, that
+namespace's owner installs and upgrades the controller with no cluster-scoped
+rights, and you are not in the loop again unless a WVA release changes what it
+needs cluster-wide.
 
-## The command
+## Configuration
 
-```bash
-make setup-prereqs
-# on OpenShift:
-make setup-prereqs ENVIRONMENT=openshift
-```
+| Parameter | Default | Example |
+| --- | --- | --- |
+| `NAMESPACE` | the namespace running llm-d, discovered | `team-a` |
+| `WVA_WATCH_NS` | the namespace it runs in | `team-a` |
 
-Once per namespace. Not once per upgrade — after this, that namespace's owner
-installs and upgrades their own controller with no cluster-scoped rights, and you
-are not in the loop again unless a WVA release changes what it needs cluster-wide.
+## Prerequisites
 
-## What it creates, and why each piece needs you
+Cluster-admin rights.
 
-| object | why a namespace admin cannot create it |
-| --- | --- |
-| the namespace | cluster-scoped to create |
-| `wva-metrics-auth-role` + binding | the metrics filter issues **TokenReview** and **SubjectAccessReview** |
-| `wva-metrics-reader` + binding | lets your Prometheus scrape the controller |
-| `wva-epp-metrics-reader-role` + binding | needs `nonResourceURLs: /metrics`, which a Role cannot express |
-| `wva-node-reader-role` + binding | resolving a variant's accelerator reads **Nodes** |
-| the ServiceMonitor | the stock `admin` ClusterRole does not grant `monitoring.coreos.com` |
-| Prometheus / KEDA | only if the cluster has none; an existing one is used as it is |
-
-That last row is worth knowing about: the ServiceMonitor is namespaced, so it
-*looks* like something a namespace admin could create. On a real cluster they
-usually cannot — the built-in `admin` role covers core and apps resources, not
-Prometheus Operator CRDs. It was the single denial standing between a namespace
-admin and a working install.
-
-**Every cluster-scoped object is named with a hash of the namespace** —
-`wva-metrics-auth-role-1d8cfc15` and so on. Two installs on one cluster therefore
-cannot take each other's, and an uninstall removes only its own. On a shared
-cluster this matters: ten WVA installs sharing four fixed-name ClusterRoles means
-whichever installs last silently rewrites everyone's permissions.
-
-## Checking before you run it
-
+<!-- guide:prerequisites.check start -->
 ```bash
 make check-prereqs
 ```
+<!-- guide:prerequisites.check end -->
 
-Read-only. It renders the manifests this install would apply and asks the API
-server whether the caller may create each kind, rather than inferring from the
-scope name.
+## Installation
 
-## Keeping the controller out of the tenant's reach
-
-By default the controller runs *in* the namespace it manages, which means whoever
-administers that namespace administers the controller — its Deployment, args, env
-and image. **Nothing carried on the controller can bound the person who can edit
-the controller.**
-
-Where the bound must actually hold, run it in a namespace you own and point it at
-theirs:
-
+<!-- guide:deploy.prereqs start -->
 ```bash
-# WVA_NS is yours — where the controller runs.
-# WVA_WATCH_NS is theirs — what it manages.
 make setup-prereqs
-make deploy-wva INSTALL_PHASE=wva WVA_WATCH_NS=team-a
 ```
+<!-- guide:deploy.prereqs end -->
 
-This is the recommended multi-tenant shape. The tenant keeps their workloads and
-their ScaledObjects; they do not get to edit what bounds them.
+Once per namespace, not once per upgrade.
 
-## Undoing it
+### What it creates, and why it needs you
 
+| object | why a namespace admin cannot create it |
+| --- | --- |
+| the namespace | cluster-scoped |
+| `wva-metrics-auth-role` + binding | the metrics filter issues **TokenReview** |
+| `wva-metrics-reader` + binding | lets Prometheus scrape the controller |
+| `wva-epp-metrics-reader-role` + binding | needs `nonResourceURLs: /metrics` |
+| `wva-node-reader-role` + binding | resolving a variant's accelerator reads **Nodes** |
+| the ServiceMonitor | the stock `admin` ClusterRole does not grant `monitoring.coreos.com` |
+| Prometheus / KEDA | only if the cluster has none |
+
+Every cluster-scoped object is named with a hash of the namespace, so two
+installs cannot take each other's and an uninstall removes only its own.
+
+### Keeping the controller out of the tenant's reach
+
+By default the controller runs *in* the namespace it manages, so whoever
+administers that namespace can edit its Deployment — and **nothing carried on the
+controller can bound the person who can edit the controller**. Where the bound
+must hold, run it in a namespace you own:
+
+<!-- guide:deploy.out_of_reach start -->
 ```bash
-make undeploy-wva-on-k8s WVA_NS=team-a WVA_SCOPE=namespace
+make setup-prereqs   WVA_NS=wva-${NAMESPACE}
+make deploy-wva      WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE} INSTALL_PHASE=wva
 ```
+<!-- guide:deploy.out_of_reach end -->
 
-Removes the controller and this namespace's own cluster-scoped objects. The
-namespace, Prometheus, KEDA and EPP stay — they are shared, and this install may
-not have created them.
+with `WVA_NS` yours and `WVA_WATCH_NS` theirs. This is the recommended
+multi-tenant shape.
+
+## Cleanup
+
+<!-- guide:cleanup.undo start -->
+```bash
+make undeploy-wva
+```
+<!-- guide:cleanup.undo end -->
+
+The namespace, Prometheus, KEDA and EPP stay.
 
 ## Next
 
-- [Bounding GPU usage](../admin-gpu-bounding/README.md) — one command to make every WVA on
-  the cluster respect a real GPU budget
-- [Configuration reference](../../deployment/configuration.md)
+- [Bounding GPU usage](../admin-gpu-bounding/README.md)
+- [Install WVA in a namespace](../install-in-namespace/README.md) — what you are
+  enabling someone else to do
