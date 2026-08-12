@@ -84,8 +84,11 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 > **The scopes differ in who can install them, not only in what is read.**
 >
 > `cluster` creates 4 ClusterRoles and 4 ClusterRoleBindings, so it needs a
-> cluster admin. `namespace` creates **none** — only Roles and RoleBindings inside
-> its own namespace — so a namespace admin can install it themselves.
+> cluster admin. `namespace` **on Kubernetes** creates none — only Roles and
+> RoleBindings inside its own namespace — so a namespace admin can install it
+> themselves. **On OpenShift it still creates cluster-scoped bindings**, because
+> reading the platform's Thanos requires `cluster-monitoring-view`; there,
+> namespace scope is blast-radius reduction rather than self-service.
 >
 > Either way the grant is read-only. WVA never writes to the cluster, because KEDA
 > performs the actuation; its only write is Events.
@@ -104,9 +107,11 @@ The default is `namespace` on OpenShift and `cluster` elsewhere.
 make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace>
 ```
 
-Namespace scope creates **no cluster-scoped object** — only Roles and RoleBindings
-inside your namespace — so full rights in one namespace is enough. Run
-`./deploy/install.sh --check` first; it verifies that before creating anything.
+On Kubernetes, namespace scope creates **no cluster-scoped object** — only Roles
+and RoleBindings inside your namespace — so full rights in one namespace is
+enough. Run `./deploy/install.sh --check` first; it verifies that before creating
+anything. (On OpenShift this shape needs a cluster admin: reading the platform's
+Thanos requires a cluster-scoped binding.)
 
 Three capabilities need cluster-scoped APIs and are therefore not available to a
 self-service install:

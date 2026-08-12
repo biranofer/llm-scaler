@@ -25,8 +25,17 @@ deploy_keda() {
     # Kubernetes (e.g. CKS, shared clusters): assume cluster-managed KEDA; never Helm unless opted in.
     if [ "$ENVIRONMENT" = "kubernetes" ] && [ "${KEDA_HELM_INSTALL:-false}" != "true" ]; then
         log_info "Kubernetes: assuming cluster-managed KEDA — skipping Helm (set KEDA_HELM_INSTALL=true to install via Helm)"
-        if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+        # Distinguish "absent" from "not allowed to look". A namespace admin cannot
+        # read cluster-scoped CRDs, and treating that Forbidden as NotFound aborted
+        # their install — for a KEDA that was present all along, and only AFTER the
+        # controller had been applied, leaving it half-installed.
+        local keda_probe keda_rc
+        keda_probe=$(kubectl get crd scaledobjects.keda.sh 2>&1); keda_rc=$?
+        if [ $keda_rc -eq 0 ]; then
             log_success "KEDA ScaledObject CRD is available on the cluster"
+        elif printf '%s' "$keda_probe" | grep -qi 'forbidden'; then
+            log_warning "Cannot check for the KEDA CRD (reading cluster-scoped CRDs is not permitted for you), so this install assumes KEDA is present."
+            log_warning "  If it is not, ScaledObjects will stay unready and nothing will scale. Confirm with whoever administers the cluster."
         else
             log_error "Kubernetes: scaledobjects.keda.sh CRD not found — install KEDA on the cluster or set KEDA_HELM_INSTALL=true"
         fi

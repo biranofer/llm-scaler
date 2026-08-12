@@ -347,17 +347,25 @@ func main() {
 		namespaces := map[string]cache.Config{
 			watchNS: {},
 		}
-		// The policy namespace must be cached too, or the bound never arrives.
-		// A namespace-scoped install is exactly the case where cluster policy is
-		// held OUTSIDE the watched namespace — that separation is the point — so
-		// restricting the cache to watchNS alone would make every read of the
-		// limiter ConfigMap fail, and the controller would run the tenant
-		// unbounded while an admin believed a quota was in force.
-		if cfg.PolicyNamespaceIsSeparate() {
-			policyNS := cfg.PolicyNamespace()
-			namespaces[policyNS] = cache.Config{}
-			setupLog.Info("Also caching the cluster policy namespace", "policyNamespace", policyNS)
-		}
+		// The policy namespace is deliberately NOT added to the cache.
+		//
+		// Adding it starts an informer, and an informer that cannot list its
+		// namespace never syncs — so WaitForCacheSync blocks forever and the
+		// controller never becomes ready. That is the normal case here, not an edge
+		// one: a namespace-scoped install holds RBAC in its own namespace only, and
+		// the whole point of the policy namespace is that it belongs to someone
+		// else. An admin applying the documented policy-namespace label would have
+		// bricked the very controller they were trying to bound.
+		//
+		// Cluster policy is read through the direct API reader instead (the
+		// ConfigMapReconciler holds mgr.GetAPIReader()), which fails as a plain
+		// error we can report rather than as a hang.
+		//
+		// The cost is that a policy edit in that namespace is no longer watched, so
+		// it takes effect on restart rather than live. That is the right trade: a
+		// bound that updates slowly beats a controller that never starts, and a
+		// namespace-scoped install cannot watch that namespace anyway without RBAC
+		// it does not have.
 		mgrOptions.Cache = cache.Options{
 			DefaultNamespaces: namespaces,
 		}

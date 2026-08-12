@@ -14,15 +14,18 @@ import (
 )
 
 // ResolvePolicyNamespace decides where this controller reads limiters and quotas
-// from, and records the decision on cfg. It runs once, before the manager starts,
-// because the manager's cache is built from the answer.
+// from, and records the decision on cfg. It runs once, before the manager starts.
 //
 // Order:
 //
-//  1. the wva.llmd.ai/policy-namespace annotation on the managed Namespace
-//  2. WVA_POLICY_NS / WVA_POLICY_NAMESPACE
-//  3. the well-known namespace, config.WellKnownPolicyNamespace — self-managed only
-//  4. the controller's own namespace
+//  1. the wva.llmd.ai/policy-namespace LABEL on the managed Namespace
+//  2. the well-known namespace, config.WellKnownPolicyNamespace — self-managed only
+//  3. the controller's own namespace
+//
+// Reading step 1 needs `get namespaces`, which a namespace-scoped install does not
+// have. That read is best-effort and a denial is logged, not fatal — but it means
+// an admin who labels a tenant namespace must also grant that read, or the label
+// is silently not seen and the tenant keeps its own configuration.
 //
 // Rule 1 is an annotation on a NAMESPACE because that object is cluster-scoped: a
 // namespace admin holds RBAC inside their namespace and cannot edit it. So an
@@ -110,7 +113,12 @@ func ResolvePolicyNamespace(ctx context.Context, c client.Reader, cfg *config.Co
 		if !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err) {
 			return fmt.Errorf("failed reading namespace %s to resolve cluster policy: %w", managedNS, err)
 		}
-		logger.V(1).Info("Could not read the managed Namespace to check for a policy annotation; continuing",
+		// Info, not V(1): this is the difference between "no policy applies" and
+		// "policy may apply and I cannot see it", and an admin who labelled this
+		// namespace has no other way to find out the label was never read.
+		logger.Info("Could not read the managed Namespace, so any wva.llmd.ai/policy-namespace label on it "+
+			"has NOT been applied. Grant this ServiceAccount get on namespaces if a cluster admin "+
+			"directs policy that way.",
 			"namespace", managedNS, "reason", err.Error())
 	}
 
