@@ -10,19 +10,6 @@ Use it to compare scaling behaviour across configurations — thresholds, limite
 one variant against two. It needs real GPUs; for correctness work without them,
 see [Test WVA against a full llm-d stack](../testing-with-llm-d/README.md).
 
-## Configuration
-
-| Parameter | Default | Example |
-| --- | --- | --- |
-| `BENCHMARK_NAMESPACE` | — (required) | `my-bench` |
-| `IMG` | the published image | `ghcr.io/you/wva:dev` |
-| `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
-| `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
-
-**`IMG` decides what is measured.** It defaults to a published image, so a run
-that does not set it benchmarks a release rather than your branch — and nothing
-in the results afterwards says which binary produced them.
-
 ## Prerequisites
 
 A GPU cluster, and the benchmark CLI:
@@ -33,7 +20,9 @@ make benchmark-install
 ```
 <!-- guide:prerequisites.cli end -->
 
-## Installation
+## Installation Instructions
+
+### 1. Stand up the stack
 
 <!-- guide:deploy.standup start -->
 ```bash
@@ -46,7 +35,7 @@ repo and registers the workloads. prometheus-adapter is deliberately not
 installed: it and KEDA both claim the `external.metrics.k8s.io` APIService, of
 which a cluster has one.
 
-## Running
+### 2. Run a workload
 
 <!-- guide:verify.run start -->
 ```bash
@@ -73,6 +62,21 @@ make benchmark-teardown BENCHMARK_NAMESPACE=${BENCHMARK_NAMESPACE}
 
 Removes WVA first, then the llm-d releases: a namespace-scoped install still
 creates cluster-scoped RBAC, which deleting the namespace would leave behind.
+
+## Configuration
+
+Optional, except `BENCHMARK_NAMESPACE`.
+
+| Parameter | Default | Example |
+| --- | --- | --- |
+| `BENCHMARK_NAMESPACE` | — (required) | `my-bench` |
+| `IMG` | the published image | `ghcr.io/you/wva:dev` |
+| `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
+| `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
+
+**`IMG` decides what is measured.** It defaults to a published image, so a run
+that does not set it benchmarks a release rather than your branch — and nothing
+in the results afterwards says which binary produced them.
 
 ## Two variants
 

@@ -185,8 +185,9 @@ guides-render: ## Regenerate the command blocks in docs/guides/*/README.md from 
 	python3 hack/render-guides.py
 
 .PHONY: guides-check
-guides-check: ## Fail if any guide README is out of date with its guide.yaml (CI).
+guides-check: ## Fail if any guide README is out of date with its guide.yaml, or a doc link is broken (CI).
 	python3 hack/render-guides.py --check
+	python3 hack/check-doc-links.py
 
 ##@ Cluster-admin actions (advanced; they affect every WVA on the cluster)
 

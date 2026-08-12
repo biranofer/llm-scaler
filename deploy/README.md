@@ -7,9 +7,8 @@ needs and hands that to KEDA, which owns the HPA and does the scaling.
 
 | | |
 | --- | --- |
-| [Install WVA in a namespace](../docs/guides/install-in-namespace/README.md) | the common case |
+| [Install WVA in a namespace](../docs/guides/install-in-namespace/README.md) | the common case, new or existing llm-d |
 | [Install WVA for the whole cluster](../docs/guides/install-cluster-wide/README.md) | one controller for everything |
-| [Add WVA to a running llm-d](../docs/guides/existing-llm-d/README.md) | llm-d already serving |
 | [Cluster-admin setup](../docs/guides/admin-cluster-setup/README.md) | enabling a namespace's owner |
 | [Bound every WVA by real GPUs](../docs/guides/admin-gpu-bounding/README.md) | the GPU budget |
 | [Test against a full llm-d stack](../docs/guides/testing-with-llm-d/README.md) | kind, emulated GPUs |

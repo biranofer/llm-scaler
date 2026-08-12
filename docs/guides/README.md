@@ -11,9 +11,8 @@ source docs/guides/env.sh
 
 | guide | for |
 | --- | --- |
-| [Install WVA in a namespace](install-in-namespace/README.md) | **start here.** One team, one namespace |
+| [Install WVA in a namespace](install-in-namespace/README.md) | **start here.** One team, one namespace — whether or not llm-d is already serving |
 | [Install WVA for the whole cluster](install-cluster-wide/README.md) | one controller for every namespace |
-| [Add WVA to a running llm-d](existing-llm-d/README.md) | llm-d is already serving |
 
 ## Cluster administration
 

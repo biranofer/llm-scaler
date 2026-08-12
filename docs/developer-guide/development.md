@@ -402,7 +402,7 @@ make create-kind-cluster
 
 ## Next Steps
 
-- Review [Code Style Guidelines](../../CONTRIBUTING.md#coding-guidelines)
+- Review [Code Style Guidelines](../../CONTRIBUTING.md#general-contributing-guidelines)
 - Check out [Good First Issues](https://github.com/llm-d/llm-d-workload-variant-autoscaler/labels/good%20first%20issue)
 
 ---
