@@ -7,6 +7,21 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**.md'
+  # Build any branch on demand. A cluster can only run what a registry can serve,
+  # so testing an unmerged branch on a REMOTE cluster needs a published image —
+  # there is no `kind load` for one. Without this the only images that exist are
+  # of main, and an OpenShift install of a branch dies on the flags its own
+  # manifests pass ("unknown flag: --external-scaler-bind-address").
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (default: the branch name, sanitised)'
+        required: false
+        default: ''
+      platforms:
+        description: 'Buildx platforms'
+        required: false
+        default: 'linux/amd64'
 
 permissions:
   contents: read
@@ -29,23 +44,54 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # GHCR_TOKEN where it is configured (upstream), otherwise the built-in
+      # token, which `permissions: packages: write` above already scopes to this
+      # repository's own packages. A fork has no GHCR_TOKEN, and failing to log
+      # in is not a useful thing for it to do.
       - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Build and push :main image
+      - name: Resolve image and tag
+        id: img
         run: |
-          IMAGE=ghcr.io/llm-d/${GITHUB_REPOSITORY##*/}
-          echo "Building $IMAGE:main for linux/amd64 and linux/arm64"
+          # Owner-derived, so this is unchanged upstream (owner IS llm-d) and a
+          # fork pushes to its own namespace instead of being denied by it.
+          IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${GITHUB_REPOSITORY##*/}
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG=main
+            PLATFORMS=linux/amd64,linux/arm64
+          else
+            TAG='${{ inputs.tag }}'
+            # A branch name is not a legal tag: refs/heads/feat/x has slashes.
+            [ -n "$TAG" ] || TAG=$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c1-100)
+            PLATFORMS='${{ inputs.platforms }}'
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "platforms=$PLATFORMS" >> "$GITHUB_OUTPUT"
+          echo "Building $IMAGE:$TAG for $PLATFORMS"
+
+      - name: Build and push image
+        run: |
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform ${{ steps.img.outputs.platforms }} \
             --push \
             --annotation "index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --annotation "index:org.opencontainers.image.description=Workload Variant Autoscaler (WVA) - GPU-aware autoscaler for LLM inference workloads" \
             --annotation "index:org.opencontainers.image.licenses=Apache-2.0" \
             --annotation "index:org.opencontainers.image.revision=${{ github.sha }}" \
-            -t $IMAGE:main .
+            -t ${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }} .
+
+      - name: Summarise
+        run: |
+          echo "Pushed \`${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with it:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "make deploy-wva-namespace-on-openshift WVA_NS=<ns> IMG=${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Run Trivy scan
         uses: ./.github/actions/trivy-scan
         with:
-          image: ghcr.io/llm-d/${{ github.event.repository.name }}:main
+          image: ${{ steps.img.outputs.image }}:${{ steps.img.outputs.tag }}
