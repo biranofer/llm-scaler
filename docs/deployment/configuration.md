@@ -18,7 +18,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](new-cluster.md#scope-what-the-controller-may-manage) | `namespace` on OpenShift, `cluster` elsewhere |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
-| `WVA_ADMIN_GRANTS` | For a **namespace-scoped** install made by a cluster admin, or by someone an admin granted the cluster-scoped pieces to. Keeps authenticated metrics and adds the node read the `gpu-inventory` limiter requires. Without it the install creates no cluster-scoped object at all, which is what makes it self-service | `false` |
+| `WVA_ADMIN_GRANTS` | For a **namespace-scoped** install made by a cluster admin, or by someone an admin granted the cluster-scoped pieces to. Keeps authenticated metrics and adds the node read the `gpu-inventory` limiter requires. Without it, a namespace-scoped install **on Kubernetes** creates no cluster-scoped object at all, which is what makes it self-service there; on OpenShift the platform's monitoring wiring is cluster-scoped either way | `false` |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
 ## Image
@@ -189,8 +189,19 @@ name of one.
 
 The scopes differ in who can install them as well as in what is read. `cluster`
 creates 4 ClusterRoles and 4 ClusterRoleBindings and needs a cluster admin;
-`namespace` creates **none** — only Roles and RoleBindings in its own namespace —
-so a namespace admin can install it themselves.
+`namespace` **on Kubernetes** creates none — only Roles and RoleBindings in its
+own namespace — so a namespace admin can install it themselves.
+
+**On OpenShift, namespace scope still needs a cluster admin.** The overlay there
+creates 3 ClusterRoles and 5 ClusterRoleBindings: the platform's monitoring
+wiring is cluster-scoped (`cluster-monitoring-view`, so the controller can query
+Thanos and user-workload Prometheus can scrape it), and without it the controller
+cannot reach Prometheus at all. `WVA_ADMIN_GRANTS=true` adds cluster-scoped
+objects on either platform.
+
+Whichever combination you have, `./deploy/install.sh --check` answers it for your
+install specifically: it renders the overlay this install would apply and asks
+whether you may create each kind in it, rather than assuming from the scope name.
 
 Either way the grant is read-only: WVA never writes to the cluster, because KEDA
 performs the actuation. The one genuinely cluster-scoped read is **nodes**, used to

@@ -29,6 +29,12 @@ kind: Component
 #   components:
 #   - ../../../components/namespace-scoped/
 #   - ../../../components/tenant-installable/
+#
+# It does NOT make every overlay tenant-installable. It subtracts what the BASE
+# creates; a component listed before it can add cluster-scoped objects back, and
+# components/openshift does exactly that with the monitoring bindings — which is
+# why namespace scope on OpenShift still needs a cluster admin. What an overlay
+# actually renders is the only answer; `deploy/install.sh --check` reads it.
 resources:
 - manager-role.yaml
 - manager-rolebinding.yaml

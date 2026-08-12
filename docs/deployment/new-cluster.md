@@ -109,9 +109,14 @@ make deploy-wva-on-k8s WVA_SCOPE=namespace WVA_NS=<your-namespace>
 
 On Kubernetes, namespace scope creates **no cluster-scoped object** — only Roles
 and RoleBindings inside your namespace — so full rights in one namespace is
-enough. Run `./deploy/install.sh --check` first; it verifies that before creating
-anything. (On OpenShift this shape needs a cluster admin: reading the platform's
+enough. (On OpenShift this shape needs a cluster admin: reading the platform's
 Thanos requires a cluster-scoped binding.)
+
+Run `./deploy/install.sh --check` first. It renders the overlay your install
+would apply and asks whether you may create each kind in it, so it answers this
+for your platform and flags rather than for the scope name — including the
+OpenShift case above, and `WVA_ADMIN_GRANTS=true`, which adds cluster-scoped
+objects on either platform.
 
 Three capabilities need cluster-scoped APIs and are therefore not available to a
 self-service install:

@@ -17,6 +17,13 @@ resources:
 # Kubernetes default Prometheus URL, cannot reach anything at it, and exits at
 # startup. It is listed FIRST so the tenant components below can still subtract
 # from what it adds.
+#
+# What tenant-installable subtracts is the manager ClusterRole/Binding and the
+# Namespace — NOT the monitoring bindings, which are the whole reason this
+# component exists. So THIS OVERLAY IS NOT TENANT-INSTALLABLE: it renders 3
+# ClusterRoles and 5 ClusterRoleBindings, including cluster-monitoring-view, and
+# needs a cluster admin. Namespace scope here is blast-radius reduction, not
+# self-service. `deploy/install.sh --check` renders this overlay and says so.
 components:
 - ../../../components/namespace-scoped/
 - ../../../components/openshift/

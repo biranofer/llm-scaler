@@ -71,8 +71,14 @@ wva_install_scope() {
     esac
 }
 
-# wva_scope_is_tenant reports whether this install creates NO cluster-scoped
-# objects — i.e. whether a namespace admin could have run it themselves.
+# wva_scope_is_tenant reports whether this install manages ONE namespace.
+#
+# It says nothing about whether a namespace admin can install it. That is a
+# question about the RENDERED overlay, and the answer differs by platform: on
+# Kubernetes the namespace-scoped overlay creates no cluster-scoped object, but
+# on OpenShift it creates eight — the platform's monitoring wiring is
+# cluster-scoped, and components/tenant-installable does not subtract it.
+# Ask wva_rendered_kinds, never this.
 wva_scope_is_tenant() {
     [ "$(wva_install_scope)" = "namespace" ]
 }
@@ -146,4 +152,73 @@ wva_overlay_dir() {
     local dir="$WVA_PROJECT/config/overlays/${scope}-scoped/${platform}"
     [ -d "$dir" ] || log_error "No overlay for scope '${scope}' on '${platform}' (looked in $dir)"
     (cd "$dir" && pwd)
+}
+
+# wva_prepare_overlay_base populates $1/base with the overlay this install will
+# apply, WVA_ADMIN_GRANTS included.
+#
+# The preflight and the deploy both go through here. They must, for the same
+# reason wva_append_crb_name_patches is shared: a preflight that infers the shape
+# instead of reading it is how a namespace-scoped OpenShift install passed
+# `--check` and then failed partway through `kubectl apply -k`, after the
+# namespace, the RBAC and the ServiceAccount already existed.
+wva_prepare_overlay_base() {
+    local tmp_overlay="$1" kustomize_overlay
+    kustomize_overlay="$(wva_overlay_dir)"
+
+    # Symlink the base overlay so kustomization.yaml can reference it with a
+    # relative path — Kustomize rejects absolute paths in resources.
+    ln -s "$kustomize_overlay" "$tmp_overlay/base"
+
+    # WVA_ADMIN_GRANTS: this namespace-scoped install is being made BY a cluster
+    # admin, or by someone an admin has granted the cluster-scoped pieces to.
+    #
+    # Namespace scope defaults to the self-service shape on Kubernetes — no
+    # cluster-scoped object at all — because that is what makes it installable by
+    # a namespace admin. But the two limitations that shape carries are
+    # limitations of the INSTALLER, not of the scope: authenticated metrics need
+    # TokenReview and the gpu-inventory limiter needs nodes, both cluster-scoped
+    # APIs. An admin installing the very same overlay has both and should not
+    # lose them.
+    [ "$(wva_install_scope)" = "namespace" ] || return 0
+    [ "${WVA_ADMIN_GRANTS:-false}" = "true" ] || return 0
+
+    # Re-render the overlay without the unauthenticated-metrics component. The
+    # overlay lists it, so it is dropped here rather than added there — the
+    # default has to be the shape a tenant can actually install.
+    local rendered="$tmp_overlay/admin-base"
+    mkdir -p "$rendered"
+    # Kustomize rejects ABSOLUTE paths in resources and components, so the copied
+    # overlay's `../../../` references are rehomed onto a relative symlink rather
+    # than expanded to a real path.
+    ln -s "$WVA_PROJECT/config" "$rendered/config"
+    grep -v 'components/unauthenticated-metrics' "$kustomize_overlay/kustomization.yaml" \
+        | sed 's#\.\./\.\./\.\./#./config/#g' > "$rendered/kustomization.yaml"
+    # And the node read, which no Role can provide — a Node is cluster-scoped.
+    # Without it a gpu-inventory limiter resolves no accelerator, and the
+    # controller's readiness gate now refuses to serve that state at all.
+    printf -- '- ./config/components/node-reader/\n' >> "$rendered/kustomization.yaml"
+    rm -f "$tmp_overlay/base"
+    ln -s "$rendered" "$tmp_overlay/base"
+}
+
+# wva_rendered_kinds echoes, one per line, each distinct Kind this install would
+# create. Empty output means the overlay could not be rendered — the caller must
+# treat that as "unknown", not as "nothing".
+wva_rendered_kinds() {
+    local tmp
+    tmp="$(mktemp -d)" || return 0
+    if wva_prepare_overlay_base "$tmp" >/dev/null 2>&1; then
+        # The namespace transform and the image pin change no Kind, so neither is
+        # applied here. The CRB rename patches do not either.
+        printf 'resources:\n- ./base\n' > "$tmp/kustomization.yaml"
+        # Only column 0 — `kind:` also appears indented under roleRef, and with a
+        # leading dash under subjects.
+        #
+        # `|| true` because the callers run under `set -e` with pipefail, and a
+        # render that fails is the case they exist to handle: it must reach them
+        # as empty output, not as the whole install script exiting.
+        kubectl kustomize "$tmp" 2>/dev/null | awk '/^kind: /{print $2}' | sort -u || true
+    fi
+    rm -rf "$tmp"
 }

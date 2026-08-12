@@ -67,47 +67,20 @@ deploy_wva_controller() {
     kustomize_overlay="$(wva_overlay_dir)"
 
     # Build a throw-away overlay that pins the image without modifying tracked files.
-    # Symlink the base overlay so kustomization.yaml can reference it with a relative
-    # path — Kustomize rejects absolute paths in resources.
     local tmp_overlay
     tmp_overlay=$(mktemp -d)
     trap 'rm -rf "$tmp_overlay"' EXIT
 
-    ln -s "$kustomize_overlay" "$tmp_overlay/base"
-
-    # WVA_ADMIN_GRANTS: this namespace-scoped install is being made BY a cluster
-    # admin, or by someone an admin has granted the cluster-scoped pieces to.
+    # Shared with the preflight, which renders the SAME shape to decide what
+    # permissions this install actually needs. See wva_prepare_overlay_base.
     #
-    # Namespace scope defaults to the self-service shape — no cluster-scoped object
-    # at all — because that is what makes it installable by a namespace admin. But
-    # the two limitations that shape carries are limitations of the INSTALLER, not
-    # of the scope: authenticated metrics need TokenReview and the gpu-inventory
-    # limiter needs nodes, both cluster-scoped APIs. An admin installing the very
-    # same overlay has both and should not lose them.
-    #
-    # This matters most on OpenShift, where namespace scope is the DEFAULT: without
-    # it, every OpenShift install would silently drop metrics authentication.
-    local admin_grants="${WVA_ADMIN_GRANTS:-false}"
-    if [ "$(wva_install_scope)" = "namespace" ] && [ "$admin_grants" = "true" ]; then
+    # WVA_ADMIN_GRANTS matters most on OpenShift, where namespace scope is the
+    # DEFAULT: without it, every OpenShift install would silently drop metrics
+    # authentication.
+    if [ "$(wva_install_scope)" = "namespace" ] && [ "${WVA_ADMIN_GRANTS:-false}" = "true" ]; then
         log_info "WVA_ADMIN_GRANTS=true: keeping authenticated metrics and cluster-scoped reads for this namespace-scoped install"
-        # Re-render the overlay without the unauthenticated-metrics component. The
-        # overlay lists it, so it is dropped here rather than added there — the
-        # default has to be the shape a tenant can actually install.
-        local rendered="$tmp_overlay/admin-base"
-        mkdir -p "$rendered"
-        # Kustomize rejects ABSOLUTE paths in resources and components, so the
-        # copied overlay's `../../../` references are rehomed onto a relative
-        # symlink rather than expanded to a real path.
-        ln -s "$WVA_PROJECT/config" "$rendered/config"
-        grep -v 'components/unauthenticated-metrics' "$kustomize_overlay/kustomization.yaml" \
-            | sed 's#\.\./\.\./\.\./#./config/#g' > "$rendered/kustomization.yaml"
-        # And the node read, which no Role can provide — a Node is cluster-scoped.
-        # Without it a gpu-inventory limiter resolves no accelerator, and the
-        # controller's readiness gate now refuses to serve that state at all.
-        printf -- '- ./config/components/node-reader/\n' >> "$rendered/kustomization.yaml"
-        rm -f "$tmp_overlay/base"
-        ln -s "$rendered" "$tmp_overlay/base"
     fi
+    wva_prepare_overlay_base "$tmp_overlay"
 
     # Symlink prometheus-alerts component if needed
     if [ "${DEPLOY_ALERTING_RULES:-false}" = "true" ]; then

@@ -261,64 +261,103 @@ Or ask them to install WVA for you (WVA_SCOPE=namespace), which grants it."
     esac
 }
 
+# wva_api_resource echoes "<resource> <namespaced>" for a Kind, as THIS cluster
+# defines it. Empty when the cluster has no such kind.
+#
+# The mapping is asked for rather than derived, because deriving it is wrong in
+# ways that are silent: `kubectl auth can-i create networkpolicys` is not a
+# denial, it is a question about a resource that does not exist, and it answers
+# "no". A false denial refuses a legitimate install.
+#
+# Columns are NAME SHORTNAMES APIVERSION NAMESPACED KIND, and SHORTNAMES is often
+# empty — so the ends are read, never a fixed column index.
+wva_api_resource() {
+    local kind="$1"
+    kubectl api-resources --no-headers 2>/dev/null \
+        | awk -v k="$kind" '$NF == k { print $1, $(NF-1); exit }' || true
+}
+
 check_permissions() {
     log_info "Checking permissions..."
 
     local ns="${WVA_NS}" denied=() sa="system:serviceaccount:${WVA_NS}:wva-controller-manager"
+    local kinds kind resource namespaced cluster_denied=""
 
-    # The tenant scope creates no cluster-scoped object, so the cluster-scoped
-    # create checks below would refuse an install that is entirely legitimate.
-    # It has its own contract to satisfy instead.
-    if wva_scope_is_tenant; then
-        local kind
-        for kind in deployments configmaps serviceaccounts services roles rolebindings; do
-            kubectl auth can-i create "$kind" -n "$ns" >/dev/null 2>&1 || denied+=("create $kind in $ns")
-        done
-        if [ ${#denied[@]} -ne 0 ]; then
-            log_error "You cannot create everything a tenant-scoped install produces in $ns. Denied:
-$(printf '  - %s\n' "${denied[@]}")
+    # What this install creates, read from the RENDERED overlay rather than
+    # inferred from the scope name. The scope does not decide it: the
+    # namespace-scoped overlay creates no cluster-scoped object on Kubernetes and
+    # eight of them on OpenShift, where the platform's monitoring wiring —
+    # cluster-monitoring-view for Thanos, among others — is cluster-scoped and
+    # components/tenant-installable does not subtract it.
+    #
+    # Inferring it meant a non-admin passed `--check` on OpenShift and then failed
+    # partway through `kubectl apply -k`, in exactly the half-installed state this
+    # preflight exists to prevent. It also under-checked BOTH scopes: neither
+    # branch asked about Secrets or ServiceMonitors, and the cluster branch never
+    # asked about Roles or RoleBindings.
+    kinds="$(wva_rendered_kinds || true)"
+    if [ -z "$kinds" ]; then
+        log_warning "Could not render the install overlay, so this check falls back to the kinds each scope is expected to create. It may miss something the overlay adds; the install itself renders the same overlay and will fail if it is broken."
+        kinds=$'ConfigMap\nDeployment\nRole\nRoleBinding\nSecret\nService\nServiceAccount\nServiceMonitor'
+        wva_scope_is_tenant || kinds="$kinds"$'\nClusterRole\nClusterRoleBinding\nNamespace'
+    fi
 
-This scope creates no cluster-scoped objects, so namespace admin is enough — but
-it does need full write access inside $ns."
+    for kind in $kinds; do
+        set -- $(wva_api_resource "$kind")
+        resource="${1:-}"; namespaced="${2:-}"
+        if [ -z "$resource" ]; then
+            # A CRD that is not installed. Not a permission problem, and not this
+            # check's to report — the apply would fail on the missing kind, which
+            # says so plainly.
+            continue
         fi
-        check_tenant_install
-        log_success "Permissions look sufficient"
-        return 0
-    fi
-
-    # What the INSTALLER must be able to create. Cluster-scoped objects are in the
-    # base at both scopes, so both scopes need them.
-    local -a cluster_checks=(
-        "create clusterroles"
-        "create clusterrolebindings"
-    )
-    local check verb res
-    for check in "${cluster_checks[@]}"; do
-        verb="${check%% *}"; res="${check#* }"
-        kubectl auth can-i "$verb" "$res" >/dev/null 2>&1 || denied+=("$verb $res (cluster-scoped)")
+        if [ "$namespaced" = "true" ]; then
+            kubectl auth can-i create "$resource" -n "$ns" >/dev/null 2>&1 \
+                || denied+=("create $resource in $ns")
+            continue
+        fi
+        # The namespace itself, only when it does not exist yet — requiring
+        # namespace creation from someone installing into a namespace an admin
+        # already made for them would refuse a perfectly good install.
+        local why="cluster-scoped"
+        if [ "$kind" = "Namespace" ]; then
+            kubectl get namespace "$ns" >/dev/null 2>&1 && continue
+            why="cluster-scoped; $ns does not exist yet"
+        fi
+        if ! kubectl auth can-i create "$resource" >/dev/null 2>&1; then
+            denied+=("create $resource ($why)")
+            cluster_denied=1
+        fi
     done
-    # Every namespaced kind the overlay creates. Checking a subset let an install
-    # pass preflight and then die partway through — after the namespace, the RBAC
-    # and the ServiceAccount already existed, which is the state that is annoying
-    # to clean up by hand.
-    local -a ns_kinds=(deployments configmaps serviceaccounts services)
-    for res in "${ns_kinds[@]}"; do
-        kubectl auth can-i create "$res" -n "$ns" >/dev/null 2>&1 || denied+=("create $res in $ns")
-    done
-    # The namespace itself, only when it does not exist yet — requiring namespace
-    # creation from someone installing into a namespace an admin already made for
-    # them would refuse a perfectly good install.
-    if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
-        kubectl auth can-i create namespaces >/dev/null 2>&1 || denied+=("create namespace $ns (it does not exist yet)")
-    fi
 
     if [ ${#denied[@]} -ne 0 ]; then
+        local advice="Ask for the objects above, or have an admin run the install."
+        if [ -n "$cluster_denied" ] && wva_scope_is_tenant; then
+            advice="WVA_SCOPE=namespace narrows what the CONTROLLER reads. It does not make the
+install self-service on every platform, and this overlay creates cluster-scoped
+objects:
+
+  $(wva_overlay_dir)
+
+On OpenShift that is by design — the Thanos and user-workload-monitoring wiring
+is cluster-scoped, and without it the controller cannot reach Prometheus at all.
+WVA_ADMIN_GRANTS=true adds cluster-scoped objects on any platform.
+
+Have an admin run the install, or ask for the objects above."
+        fi
         log_error "You cannot create everything this install produces. Denied:
 $(printf '  - %s\n' "${denied[@]}")
 
-Both install scopes create cluster-scoped RBAC — WVA_SCOPE=namespace narrows what
-the CONTROLLER reads, not what it is granted — so both need a cluster admin.
-Ask for the objects above, or have an admin run the install."
+$advice"
+    fi
+
+    # A tenant install has its own contract for what the CONTROLLER will need, and
+    # it is not the WVA_LIMITER question below: limiters and quotas are
+    # CLUSTER-defined, and a tenant reads them rather than declaring them.
+    if wva_scope_is_tenant; then
+        check_tenant_install
+        log_success "Permissions look sufficient"
+        return 0
     fi
 
     # What the CONTROLLER will need once it is running.
