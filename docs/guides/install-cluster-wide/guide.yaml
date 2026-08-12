@@ -9,7 +9,7 @@ env:
 prerequisites:
   check:
     note: Read-only. Reports what it would create, and the Prometheus it found.
-    run: make check-prereqs-cluster-on-k8s
+    run: make check-prereqs SCOPE=cluster
 
 deploy:
   all:

@@ -72,6 +72,11 @@ print_prereqs_summary() {
 main() {
     parse_args "$@"
 
+    # Before anything reads WVA_NS — the check, the undeploy and the install all
+    # need the same answer, or `export NAMESPACE=…` works for one and silently
+    # not the others.
+    wva_resolve_namespace
+
     # Preflight-only mode: the same check the install runs, run on its own so it
     # can be answered before committing to an install that creates namespaces and
     # RBAC before it discovers a missing tool.

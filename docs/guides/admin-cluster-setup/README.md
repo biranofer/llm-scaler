@@ -9,9 +9,9 @@ wants WVA. This is the one command you run for them, and what it creates.
 ## The command
 
 ```bash
-make setup-prereqs-namespace-on-k8s WVA_NS=team-a
+make setup-prereqs
 # on OpenShift:
-make setup-prereqs-namespace-on-openshift WVA_NS=team-a
+make setup-prereqs ENVIRONMENT=openshift
 ```
 
 Once per namespace. Not once per upgrade — after this, that namespace's owner
@@ -45,7 +45,7 @@ whichever installs last silently rewrites everyone's permissions.
 ## Checking before you run it
 
 ```bash
-make check-prereqs-namespace-on-k8s WVA_NS=team-a
+make check-prereqs
 ```
 
 Read-only. It renders the manifests this install would apply and asks the API
@@ -65,8 +65,8 @@ theirs:
 ```bash
 # WVA_NS is yours — where the controller runs.
 # WVA_WATCH_NS is theirs — what it manages.
-make setup-prereqs-namespace-on-k8s  WVA_NS=wva-team-a
-make deploy-wva-namespace-on-k8s     WVA_NS=wva-team-a WVA_WATCH_NS=team-a
+make setup-prereqs
+make deploy-wva INSTALL_PHASE=wva WVA_WATCH_NS=team-a
 ```
 
 This is the recommended multi-tenant shape. The tenant keeps their workloads and

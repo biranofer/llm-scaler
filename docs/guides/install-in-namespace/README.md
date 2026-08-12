@@ -52,7 +52,7 @@ Check all of it, read-only, before committing to anything:
 # Read-only. Renders the manifests this install would apply, asks the API
 # server whether you may create each kind, and reports the namespace it
 # resolved and the Prometheus it found.
-make check-prereqs-namespace-on-k8s
+make check-prereqs
 ```
 <!-- guide:prerequisites.check end -->
 
@@ -83,7 +83,7 @@ Send your admin this. It is **once per namespace**, not once per upgrade:
 # Run by a CLUSTER ADMIN, once per namespace. Creates the cluster-scoped RBAC
 # and the ServiceMonitor that a namespace admin cannot create for themselves.
 # See ../admin-cluster-setup/README.md.
-make setup-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
+make setup-prereqs
 ```
 <!-- guide:prerequisites.admin end -->
 
@@ -93,11 +93,11 @@ make setup-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
 ```bash
 # Yours to run, now and for every upgrade, with no cluster-scoped rights.
 # Add IMG=<your build> to install an unmerged branch.
-make deploy-wva-namespace-on-k8s
+make deploy-wva INSTALL_PHASE=wva
 ```
 <!-- guide:deploy.controller end -->
 
-On OpenShift use `deploy-wva-namespace-on-openshift`. If the admin step has not
+The platform is detected; pass `ENVIRONMENT=openshift` to force it. If the admin step has not
 happened, this stops and names every missing object, so you have a list to hand
 back rather than a permissions error.
 
@@ -162,7 +162,7 @@ called out in release notes.
 # points at a scaler that no longer exists, so KEDA keeps the HPA and keeps
 # calling nothing, and a workload parked at zero can never be woken.
 kubectl delete scaledobject --all -n ${NAMESPACE}
-make undeploy-wva-on-k8s WVA_NS=${NAMESPACE} WVA_SCOPE=namespace
+make undeploy-wva
 ```
 <!-- guide:cleanup.uninstall end -->
 

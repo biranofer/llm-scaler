@@ -121,7 +121,7 @@ The alternative is the failure this guards against: every variant charged to no
 accelerator pool, given no GPU budget, and never scaling up again — indistinguishable
 from an idle cluster.
 
-Grant the node read — `make setup-prereqs-<scope>-on-<platform>` creates the
+Grant the node read — `make setup-prereqs` creates the
 node-reader ClusterRole and its binding — or remove the limiter from cluster
 policy.
 

@@ -9,22 +9,22 @@ env:
 prerequisites:
   check:
     note: Read-only — what this would create, and whether you may create it.
-    run: make check-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
+    run: make check-prereqs
 
 deploy:
   prereqs:
     note: |
       Once per namespace, not once per upgrade. Creates the namespace, the
       cluster-scoped RBAC, the ServiceMonitor, and Prometheus/KEDA if absent.
-    run: make setup-prereqs-namespace-on-k8s WVA_NS=${NAMESPACE}
+    run: make setup-prereqs
   out_of_reach:
     note: |
       Where the bound must actually hold, run the controller in a namespace you
       own and point it at theirs — a tenant who owns the Deployment owns its args.
     run: |
-      make setup-prereqs-namespace-on-k8s WVA_NS=wva-${NAMESPACE}
-      make deploy-wva-namespace-on-k8s   WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE}
+      make setup-prereqs
+      make deploy-wva INSTALL_PHASE=wva WVA_WATCH_NS=${NAMESPACE}
 
 cleanup:
   undo:
-    run: make undeploy-wva-on-k8s WVA_NS=${NAMESPACE} WVA_SCOPE=namespace
+    run: make undeploy-wva

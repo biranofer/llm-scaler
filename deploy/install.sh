@@ -34,6 +34,15 @@ if [ -n "${LLMD_NS:-}" ] && [ -z "${NAMESPACE:-}" ]; then
     NAMESPACE="$LLMD_NS"
     echo -e "\033[1;33m[WARNING]\033[0m LLMD_NS is deprecated and will be removed; use NAMESPACE (llm-d's own variable). Using NAMESPACE=$NAMESPACE" >&2
 fi
+# What the CALLER actually set, captured before the defaults below make that
+# unknowable. wva_resolve_namespace uses these: `export NAMESPACE=…` has to reach
+# every entry point — install, undeploy and check alike — and it cannot do that
+# from the make targets, which is where this resolution used to live. It was in
+# only 12 of them, so `NAMESPACE=x make undeploy-wva-on-k8s` uninstalled from the
+# DEFAULT namespace while the install had gone to x.
+WVA_NS_EXPLICIT=${WVA_NS:-}
+NAMESPACE_EXPLICIT=${NAMESPACE:-}
+export WVA_NS_EXPLICIT NAMESPACE_EXPLICIT
 NAMESPACE=${NAMESPACE:-"llm-d-optimized-baseline"}
 MONITORING_NAMESPACE=${MONITORING_NAMESPACE:-"workload-variant-autoscaler-monitoring"}
 WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
@@ -87,6 +96,14 @@ LWS_CHART_VERSION=${LWS_CHART_VERSION:-"0.8.0"}
 
 # Environment-related variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Detected when unset. OpenShift changes the monitoring wiring and the default
+# scope, and getting it wrong is not subtle — the controller keeps the Kubernetes
+# Prometheus URL and exits on a Prometheus it cannot reach. API discovery answers
+# it, and any authenticated user may read that (unlike the platform namespaces a
+# tenant cannot see).
+if [ -z "${ENVIRONMENT:-}" ]     && [ -n "$(kubectl api-resources --api-group=route.openshift.io -o name 2>/dev/null)" ]; then
+    ENVIRONMENT=openshift
+fi
 ENVIRONMENT=${ENVIRONMENT:-"kubernetes"}
 COMPATIBLE_ENV_LIST=("kubernetes" "openshift" "kind-emulator")
 NON_EMULATED_ENV_LIST=("kubernetes" "openshift")

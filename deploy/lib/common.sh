@@ -235,6 +235,29 @@ wva_prereq_kind_filter() {
     fi
 }
 
+# wva_resolve_namespace points a namespace-scoped install at NAMESPACE when the
+# caller named no WVA_NS.
+#
+# Here rather than in the Makefile because every entry point needs it — install,
+# undeploy and check — and `wva_install_scope` is the only thing that knows the
+# scope once WVA_SCOPE is empty and the platform default applies. The make-side
+# version reached only the 12 phase targets, so `NAMESPACE=x make
+# undeploy-wva-on-k8s` resolved to the DEFAULT namespace while the install it was
+# meant to undo had gone to x.
+#
+# Cluster scope is untouched: that controller manages every namespace and belongs
+# in its own, not inside whichever one runs llm-d.
+wva_resolve_namespace() {
+    WVA_NS_SOURCE=default
+    export WVA_NS_SOURCE
+    [ -z "${WVA_NS_EXPLICIT:-}" ] || { WVA_NS_SOURCE=explicit; return 0; }
+    [ -n "${NAMESPACE_EXPLICIT:-}" ] || return 0   # stays "default": discovery may still fill it
+    [ "$(wva_install_scope)" = "namespace" ] || return 0
+    WVA_NS="$NAMESPACE_EXPLICIT"
+    WVA_NS_SOURCE=namespace-env
+    export WVA_NS WVA_NS_SOURCE
+}
+
 # wva_prepare_overlay_base populates $1/base with the overlay this install will
 # apply.
 #

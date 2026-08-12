@@ -210,148 +210,105 @@ disable-physical-limiter: ## CLUSTER ADMIN: remove the limiter from cluster poli
 	@WVA_POLICY_NS=$(WVA_POLICY_NS) \
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/physical_limiter.sh; disable_physical_limiter'
 
-##@ Install, in three phases (scope and platform in the target name)
+##@ Install, in three phases
+
+# SCOPE picks what the controller manages. NAMESPACE scope is the default because
+# it is the common case — one team, one namespace, and the only shape a namespace
+# admin can own. `SCOPE=cluster` gives one controller for every namespace.
 #
+# Only the make targets default this way; deploy/install.sh keeps its historical
+# platform default for anything calling it directly (the e2e does).
+SCOPE ?= $(if $(WVA_SCOPE),$(WVA_SCOPE),namespace)
+
 # The phases split where the PERMISSIONS split, so a namespace admin can own the
 # controller without holding cluster-scoped rights:
 #
-#   1. check-prereqs-<scope>-on-<platform>   read-only. Renders the overlay this
-#                                            install would apply and asks whether
-#                                            you may create each kind in it.
-#   2. setup-prereqs-<scope>-on-<platform>   CLUSTER ADMIN, once per namespace:
-#                                            the namespace, cluster-scoped RBAC,
-#                                            the ServiceMonitor, and Prometheus /
-#                                            KEDA if the cluster has none.
-#   3. deploy-wva-<scope>-on-<platform>      the controller. After phase 2 this
-#                                            needs no cluster-scoped rights, and
-#                                            neither does any later upgrade.
+#   1. check-prereqs-on-<platform>   read-only. Renders the overlay this install
+#                                    would apply, asks whether you may create each
+#                                    kind in it, and reports the namespace and
+#                                    Prometheus it resolved.
+#   2. setup-prereqs-on-<platform>   CLUSTER ADMIN, once per namespace: the
+#                                    namespace, cluster-scoped RBAC, the
+#                                    ServiceMonitor, and Prometheus / KEDA if the
+#                                    cluster has none.
+#   3. deploy-wva-on-<platform>      everything (the default). Set
+#                                    INSTALL_PHASE=wva for the controller alone,
+#                                    which is what a namespace owner runs once an
+#                                    admin has done phase 2.
 #
-# <scope> is cluster (manages every namespace) or namespace (manages one).
-# <platform> is k8s or openshift.
+# The namespace comes from NAMESPACE — llm-d's own variable — or is found on the
+# cluster. See deploy/README.md.
 #
-# deploy-wva-on-k8s / deploy-wva-on-openshift still do all three at once, which
-# is the right thing when you are a cluster admin installing for yourself.
-#
-# wva_ns: the namespace a target of scope $(1) installs into.
-#
-# A namespace-scoped controller manages exactly the namespace it runs in, so if
-# you have already said where llm-d is, that is where it belongs — asking for the
-# same namespace twice, under two names, is how people end up with a controller
-# managing an empty namespace and no idea why nothing scales.
-#
-# Only for namespace scope: a cluster-scoped controller manages everything and
-# belongs in its own system namespace, not inside a tenant's.
-# Only when YOU set NAMESPACE (`origin` distinguishes that from this file's own
-# default), and an explicit WVA_NS always wins.
-# NAMESPACE is in the chain because it is llm-d's OWN variable: its well-lit path
-# guides say `export NAMESPACE=llm-d-optimized-baseline` and pass `-n $(NAMESPACE)`
-# to every command. Someone arriving from one of those guides already has it
-# exported, and making them restate the same namespace under a third name is
-# exactly the duplication this chain exists to remove.
-wva_ns = $(strip $(if $(filter namespace,$(1)),\
-    $(if $(filter command line environment,$(origin WVA_NS)),$(WVA_NS),\
-      $(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$(WVA_NS))),\
-    $(WVA_NS)))
-
-# How WVA_NS was arrived at, so the preflight can explain it rather than just
-# print it. $(1)=scope
-wva_ns_source = $(strip $(if $(filter command line environment,$(origin WVA_NS)),explicit,\
-    $(if $(filter namespace,$(1)),\
-      $(if $(filter command line environment,$(origin NAMESPACE)),namespace-env,default),default)))
-
-# wva_phase: $(1)=phase $(2)=scope $(3)=ENVIRONMENT
+# wva_phase: $(1)=phase $(2)=ENVIRONMENT
 define wva_phase
-	@echo "Phase '$(1)', $(2)-scoped, on $(3). Namespace: $(call wva_ns,$(2))"
-	$(if $(filter namespace,$(2)),$(if $(filter command line environment,$(origin WVA_NS)),,$(if $(filter command line environment,$(origin NAMESPACE)),@echo "  (from NAMESPACE — a namespace-scoped WVA manages the namespace it runs in)",)),)
+	@echo "Phase '$(1)', $(SCOPE)-scoped$(if $(2), on $(2),)"
 	$(if $(filter wva all,$(1)),@echo "Image: $(IMG)",)
-	WVA_NS=$(call wva_ns,$(2)) WVA_NS_SOURCE=$(call wva_ns_source,$(2)) IMG=$(IMG) WVA_SCOPE=$(2) WVA_LIMITER=$(WVA_LIMITER) \
-		INSTALL_PHASE=$(1) ENVIRONMENT=$(3) \
-		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
-		$(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) \
-		./deploy/install.sh
+	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) IMG=$(IMG) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) INSTALL_PHASE=$(1) $(if $(2),ENVIRONMENT=$(2),) WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) $(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) ./deploy/install.sh
 endef
 
-# wva_check: $(1)=scope $(2)=ENVIRONMENT
+# wva_check: $(1)=ENVIRONMENT
 define wva_check
-	WVA_NS=$(call wva_ns,$(1)) WVA_NS_SOURCE=$(call wva_ns_source,$(1)) WVA_SCOPE=$(1) WVA_LIMITER=$(WVA_LIMITER) ENVIRONMENT=$(2) \
-		./deploy/install.sh --check
+	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),ENVIRONMENT=$(1),) ./deploy/install.sh --check
 endef
 
-.PHONY: check-prereqs-cluster-on-k8s
-check-prereqs-cluster-on-k8s: ## Phase 1, read-only: can you install a cluster-scoped WVA on Kubernetes?
-	$(call wva_check,cluster,kubernetes)
+##@ Install and remove
 
-.PHONY: check-prereqs-namespace-on-k8s
-check-prereqs-namespace-on-k8s: ## Phase 1, read-only: can you install a namespace-scoped WVA on Kubernetes?
-	$(call wva_check,namespace,kubernetes)
+# INSTALL_PHASE=all is the default: one command does prerequisites and controller,
+# which is right when you are a cluster admin installing for yourself. A namespace
+# owner whose admin has already run setup-prereqs uses INSTALL_PHASE=wva, which
+# needs no cluster-scoped rights.
+INSTALL_PHASE ?= all
 
-.PHONY: check-prereqs-cluster-on-openshift
-check-prereqs-cluster-on-openshift: ## Phase 1, read-only: can you install a cluster-scoped WVA on OpenShift?
-	$(call wva_check,cluster,openshift)
+# ENVIRONMENT picks the platform, the way llm-d's guides do it: a variable with
+# declared values feeding the path, rather than a target per platform
+# (INFRA_PROVIDER: {default: base, values: [base, gke]} is their equivalent).
+# The -on-k8s / -on-openshift targets below are thin aliases kept because CI, the
+# benchmark and existing docs name them.
+# Only when YOU set it. This Makefile's own ENVIRONMENT default is kind-emulator,
+# for the e2e config — leaking that into an install would point a real cluster's
+# deploy at the emulator. Unset, install.sh DETECTS OpenShift (API discovery,
+# which any authenticated user may read) and uses kubernetes otherwise.
+ENVIRONMENT_INSTALL = $(if $(filter command line environment,$(origin ENVIRONMENT)),$(ENVIRONMENT),)
 
-.PHONY: check-prereqs-namespace-on-openshift
-check-prereqs-namespace-on-openshift: ## Phase 1, read-only: can you install a namespace-scoped WVA on OpenShift?
-	$(call wva_check,namespace,openshift)
+.PHONY: setup-prereqs
+setup-prereqs: manifests kustomize ## Phase 2 (CLUSTER ADMIN). ENVIRONMENT=kubernetes|openshift, SCOPE=namespace|cluster.
+	$(call wva_phase,prereqs,$(ENVIRONMENT_INSTALL))
 
-.PHONY: setup-prereqs-cluster-on-k8s
-setup-prereqs-cluster-on-k8s: manifests kustomize ## Phase 2 (CLUSTER ADMIN): cluster-scoped prerequisites on Kubernetes.
-	$(call wva_phase,prereqs,cluster,kubernetes)
+.PHONY: deploy-wva
+deploy-wva: manifests kustomize ## Install WVA. ENVIRONMENT=kubernetes|openshift, SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>.
+	$(call wva_phase,$(INSTALL_PHASE),$(ENVIRONMENT_INSTALL))
 
-.PHONY: setup-prereqs-namespace-on-k8s
-setup-prereqs-namespace-on-k8s: manifests kustomize ## Phase 2 (CLUSTER ADMIN): prerequisites for a namespace-scoped WVA in WVA_NS, on Kubernetes.
-	$(call wva_phase,prereqs,namespace,kubernetes)
+.PHONY: undeploy-wva
+undeploy-wva: ## Remove WVA. Pass the same ENVIRONMENT, SCOPE and namespace you installed with.
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) $(if $(ENVIRONMENT_INSTALL),ENVIRONMENT=$(ENVIRONMENT_INSTALL),) WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
 
-.PHONY: setup-prereqs-cluster-on-openshift
-setup-prereqs-cluster-on-openshift: manifests kustomize ## Phase 2 (CLUSTER ADMIN): cluster-scoped prerequisites on OpenShift.
-	$(call wva_phase,prereqs,cluster,openshift)
+.PHONY: deploy-wva-on-k8s
+deploy-wva-on-k8s: manifests kustomize ## Install WVA on Kubernetes. SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>. Prometheus and the namespace are detected.
+	$(call wva_phase,$(INSTALL_PHASE),kubernetes)
 
-.PHONY: setup-prereqs-namespace-on-openshift
-setup-prereqs-namespace-on-openshift: manifests kustomize ## Phase 2 (CLUSTER ADMIN): prerequisites for a namespace-scoped WVA in WVA_NS, on OpenShift.
-	$(call wva_phase,prereqs,namespace,openshift)
-
-.PHONY: deploy-wva-cluster-on-k8s
-deploy-wva-cluster-on-k8s: manifests kustomize ## Phase 3: install the cluster-scoped controller on Kubernetes. Set IMG=<your build>.
-	$(call wva_phase,wva,cluster,kubernetes)
-
-.PHONY: deploy-wva-namespace-on-k8s
-deploy-wva-namespace-on-k8s: manifests kustomize ## Phase 3: install the controller into WVA_NS on Kubernetes (no cluster rights needed after phase 2).
-	$(call wva_phase,wva,namespace,kubernetes)
-
-.PHONY: deploy-wva-cluster-on-openshift
-deploy-wva-cluster-on-openshift: manifests kustomize ## Phase 3: install the cluster-scoped controller on OpenShift. Set IMG=<your build>.
-	$(call wva_phase,wva,cluster,openshift)
-
-.PHONY: deploy-wva-namespace-on-openshift
-deploy-wva-namespace-on-openshift: manifests kustomize ## Phase 3: install the controller into WVA_NS on OpenShift (no cluster rights needed after phase 2).
-	$(call wva_phase,wva,namespace,openshift)
-
-##@ Install, all phases at once (cluster admin installing for themselves)
-
-## Deploy WVA to OpenShift cluster with specified image.
-## Scope: WVA_SCOPE=cluster|namespace (default: namespace on OpenShift).
 .PHONY: deploy-wva-on-openshift
-deploy-wva-on-openshift: manifests kustomize ## Deploy WVA to OpenShift. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE, WVA_LIMITER.
-	@echo "Deploying WVA to OpenShift with image: $(IMG)"
-	@echo "Target namespace: $(WVA_NS)"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
-		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
-		ENVIRONMENT=openshift ./deploy/install.sh
+deploy-wva-on-openshift: manifests kustomize ## Install WVA on OpenShift. SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>.
+	$(call wva_phase,$(INSTALL_PHASE),openshift)
 
-## Undeploy WVA from OpenShift.
+## Removing. Pass the SAME SCOPE and namespace you installed with — an uninstall
+## resolves the overlay exactly as the install did, so a mismatch leaves behind
+## precisely the resources the other overlay owns.
+.PHONY: undeploy-wva-on-k8s
+undeploy-wva-on-k8s: ## Remove WVA from Kubernetes. Pass the same SCOPE and NAMESPACE/WVA_NS you installed with.
+	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
+
 .PHONY: undeploy-wva-on-openshift
-undeploy-wva-on-openshift: ## Remove WVA from OpenShift. Pass the SAME WVA_NS and WVA_SCOPE you installed with.
+undeploy-wva-on-openshift: ## Remove WVA from OpenShift. Pass the same SCOPE and NAMESPACE/WVA_NS you installed with.
 	@echo ">>> Undeploying workload-variant-autoscaler from OpenShift"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
-		deploy/install.sh --undeploy
+	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=openshift WVA_NS=$(WVA_NS) WVA_SCOPE=$(SCOPE) && 		deploy/install.sh --undeploy
 
 ## Check that everything a deploy needs is present, without deploying anything.
 ## Runs the SAME check the install runs (deploy/lib/prereqs.sh), so a pass here
-## and a prerequisite failure mid-install is not a reachable state. Honours the
-## options that change what is required: WVA_LIMITER and ENABLE_SCALE_TO_ZERO
-## pull in yq, ENVIRONMENT=openshift pulls in oc.
+## and a prerequisite failure mid-install is not a reachable state.
 .PHONY: check-prereqs
-check-prereqs: ## Verify deploy prerequisites (tools, versions, cluster reachability) without installing. ENVIRONMENT=kubernetes|openshift|kind-emulator.
-	WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) 		ENVIRONMENT=$(if $(ENVIRONMENT),$(ENVIRONMENT),kubernetes) ./deploy/install.sh --check
+check-prereqs: ## Phase 1, read-only: tools, permissions, the namespace and the Prometheus it found. ENVIRONMENT=kubernetes|openshift, SCOPE=namespace|cluster.
+	$(call wva_check,$(ENVIRONMENT_INSTALL))
 
 ## List the llm-d model servers WVA would create ScaledObjects for, and stop.
 ## Writes an editable plan; nothing is applied. A ScaledObject is how a workload
@@ -372,23 +329,6 @@ scaledobjects-apply: ## Create default ScaledObjects (this is what makes WVA sca
 .PHONY: scaledobjects-edit
 scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply what you confirm.
 	@WVA_NS=$(WVA_NS) NAMESPACE=$(NAMESPACE) WVA_SCOPE=$(WVA_SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; install_default_scaledobjects'
-
-## Deploy WVA on Kubernetes with the specified image.
-.PHONY: deploy-wva-on-k8s
-deploy-wva-on-k8s: manifests kustomize ## Deploy WVA on Kubernetes. Existing llm-d? add PROMETHEUS_URL=<url> (the rest is detected). Also: WVA_NS, WVA_SCOPE=cluster|namespace, WVA_LIMITER=none|gpu-inventory|quota.
-	@echo "Deploying WVA on Kubernetes with image: $(IMG)"
-	@echo "Target namespace: $(WVA_NS)"
-	@echo "Install scope: $(if $(WVA_SCOPE),$(WVA_SCOPE),cluster (default))"
-	WVA_NS=$(WVA_NS) IMG=$(IMG) WVA_SCOPE=$(WVA_SCOPE) WVA_LIMITER=$(WVA_LIMITER) \
-		WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
-		ENVIRONMENT=kubernetes ./deploy/install.sh
-
-## Undeploy WVA from Kubernetes.
-.PHONY: undeploy-wva-on-k8s
-undeploy-wva-on-k8s: ## Remove WVA from Kubernetes. Pass the SAME WVA_NS and WVA_SCOPE you installed with.
-	@echo ">>> Undeploying workload-variant-autoscaler from Kubernetes"
-	export KIND=$(KIND) KUBECTL=$(KUBECTL) ENVIRONMENT=kubernetes WVA_NS=$(WVA_NS) WVA_SCOPE=$(WVA_SCOPE) && \
-		deploy/install.sh --undeploy
 
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

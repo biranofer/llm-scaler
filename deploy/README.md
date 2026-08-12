@@ -26,7 +26,7 @@ export NAMESPACE=<your-namespace>
 Check all of it, read-only, before you commit to anything:
 
 ```bash
-make check-prereqs-namespace-on-k8s WVA_NS=<your-namespace>
+make check-prereqs
 ```
 
 It answers the three things you would otherwise guess at:
@@ -78,8 +78,8 @@ controller runs alongside the models it manages. Name it once, either way:
 
 ```bash
 export NAMESPACE=my-llmd                            # llm-d's own variable
-make deploy-wva-namespace-on-k8s                    # WVA_NS follows it
-make deploy-wva-namespace-on-k8s WVA_NS=my-llmd     # or say it directly
+make deploy-wva INSTALL_PHASE=wva                    # WVA_NS follows it
+make deploy-wva INSTALL_PHASE=wva     # or say it directly
 ```
 
 `WVA_NS` wins if you set both, and this only applies to the **namespace-scoped**
@@ -148,9 +148,9 @@ the last one forever without ever holding cluster-scoped rights:
 
 | phase | who | command |
 | --- | --- | --- |
-| 1. check | anyone | `make check-prereqs-<scope>-on-<platform>` |
-| 2. prerequisites | **cluster admin**, once per namespace | `make setup-prereqs-<scope>-on-<platform> WVA_NS=<ns>` |
-| 3. the controller | namespace owner | `make deploy-wva-<scope>-on-<platform> WVA_NS=<ns>` |
+| 1. check | anyone | `make check-prereqs` |
+| 2. prerequisites | **cluster admin**, once per namespace | `make setup-prereqs WVA_NS=<ns>` |
+| 3. the controller | namespace owner | `make deploy-wva WVA_NS=<ns>` |
 
 `<scope>` is `cluster` or `namespace`; `<platform>` is `k8s` or `openshift`.
 
