@@ -47,8 +47,28 @@ wva_installations() {
             *)                   scope=cluster ;;
         esac
         echo "$ns $name $scope"
-    done < <(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler \
-        -o go-template="$WVA_INSTALLS_TEMPLATE" 2>/dev/null || true)
+    done < <(wva_installations_raw)
+}
+
+# wva_installations_raw lists WVA Deployments cluster-wide, and reports the
+# difference between "none found" and "not allowed to look".
+#
+# Listing across namespaces needs cluster-wide read, which a namespace admin does
+# not have. Swallowing that Forbidden made the guard silently PASS for exactly the
+# installer it exists to protect: a tenant could add a second controller to a
+# cluster that already had one and be told nothing.
+wva_installations_raw() {
+    local out rc
+    out=$(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler         -o go-template="$WVA_INSTALLS_TEMPLATE" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then
+        if printf '%s' "$out" | grep -qi 'forbidden'; then
+            log_warning "Cannot check whether another WVA is already installed (listing Deployments cluster-wide is not permitted for you)."
+            log_warning "  Two controllers managing the same workloads each allocate from the same free GPUs without seeing the other's claims. Confirm with whoever administers the cluster."
+        fi
+        return 0
+    fi
+    printf '%s
+' "$out"
 }
 
 check_single_installation() {

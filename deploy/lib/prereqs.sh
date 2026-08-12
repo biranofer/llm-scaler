@@ -173,11 +173,21 @@ wva_cluster_policy_ns() {
 # wva_cluster_policy_limiter echoes the limiter type cluster policy declares, or
 # nothing. Reads the same ConfigMap and the same `default` entry the controller
 # does.
+# Echoes the limiter cluster policy declares, or nothing.
+#
+# Echoes the literal "unknown" when the ConfigMap cannot be READ, which is not
+# the same as no limiter being declared. Reporting Forbidden as "none" told a
+# tenant "scaling is UNBOUNDED" while a gpu-inventory limiter was in force — the
+# opposite of the truth, and in the direction that sounds harmless.
 wva_cluster_policy_limiter() {
-    local policy_ns="$1" cm=""
+    local policy_ns="$1" cm="" listing rc
     [ -n "$policy_ns" ] || return 0
-    cm="$(kubectl get configmap -n "$policy_ns" -o name 2>/dev/null \
-        | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2 || true)"
+    listing=$(kubectl get configmap -n "$policy_ns" -o name 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then
+        printf '%s' "$listing" | grep -qi 'forbidden' && echo "unknown"
+        return 0
+    fi
+    cm="$(printf '%s\n' "$listing" | grep -E "configmap/(wva-)?scaling-policy-config$" | head -1 | cut -d/ -f2 || true)"
     [ -n "$cm" ] || return 0
     kubectl get configmap "$cm" -n "$policy_ns" -o jsonpath='{.data.default}' 2>/dev/null \
         | yq -r '.limiters[0].type // ""' 2>/dev/null || true

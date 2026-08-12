@@ -104,7 +104,10 @@ print_summary() {
         echo "  KEDA:         skipped (SCALER_BACKEND=$SCALER_BACKEND) — WVA needs KEDA to actuate"
     fi
     [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ] && echo "  Grafana:      deployed in $MONITORING_NAMESPACE"
-    [ -n "${CONTROLLER_INSTANCE:-}" ] &&         echo "  Instance:     $CONTROLLER_INSTANCE (manages ONLY workloads labelled wva.llmd.ai/controller-instance=$CONTROLLER_INSTANCE)"
+    # CONTROLLER_INSTANCE is deliberately NOT reported here. No install path puts
+    # it on the Deployment, so this line read the installer's shell environment and
+    # then asserted a scoping rule the running controller was not applying — the
+    # most misleading kind of summary, because it is specific and confident.
     echo ""
 
     # The step everyone misses. WVA has no watch and no listing: it is asked about
