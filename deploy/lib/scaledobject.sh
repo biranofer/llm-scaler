@@ -450,8 +450,14 @@ so_discover() {
                          | map(.key + "=" + (.value|tostring)) | join(" ")),
                         (($o.metadata.labels // {}) | to_entries
                          | map(.key + "=" + (.value|tostring)) | join(" ")),
+                        # Newlines collapsed to spaces: read below takes one
+                        # record per line, and the llm-d modelservice chart
+                        # wraps vllm serve as a single multi-line args string (a
+                        # bash -c script), which would otherwise split one
+                        # record across many lines and hide its
+                        # --served-model-name past the first line.
                         (($t.spec.containers[0].args // [])
-                         | map(tostring) | join(" "))
+                         | map(tostring | gsub("\n"; " ")) | join(" "))
                       ] | join("|")')
         done
     done
