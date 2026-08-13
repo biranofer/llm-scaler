@@ -455,9 +455,13 @@ so_discover() {
                         # wraps vllm serve as a single multi-line args string (a
                         # bash -c script), which would otherwise split one
                         # record across many lines and hide its
-                        # --served-model-name past the first line.
+                        # --served-model-name past the first line. \r goes with
+                        # it: a chart authored on Windows carries CRLF inside
+                        # the block scalar, and CR is not in bash IFS, so the
+                        # modelID would keep an invisible trailing character and
+                        # match no metric series.
                         (($t.spec.containers[0].args // [])
-                         | map(tostring | gsub("\n"; " ")) | join(" "))
+                         | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                       ] | join("|")')
         done
     done
