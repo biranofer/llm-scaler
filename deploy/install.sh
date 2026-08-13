@@ -158,6 +158,11 @@ UNDEPLOY=${UNDEPLOY:-false}
 CHECK_ONLY=${CHECK_ONLY:-false}
 # Which half of the install to run: prereqs (cluster admin) | wva (namespace
 # admin) | all. The default keeps the single-command install unchanged.
+# Captured before the default, like WVA_NS above: "the caller asked for all
+# phases" and "the caller said nothing" are different, and only the second one
+# may be resolved by looking at the cluster.
+INSTALL_PHASE_EXPLICIT=${INSTALL_PHASE:-}
+export INSTALL_PHASE_EXPLICIT
 INSTALL_PHASE=${INSTALL_PHASE:-all}
 # Allow a second WVA alongside an existing one. Refused by default because both
 # would allocate from the same pool of free GPUs without seeing each other's

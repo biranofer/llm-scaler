@@ -214,9 +214,21 @@ wva_overlay_dir() {
 #   ClusterRole/Binding cluster-scoped, obviously.
 #   ServiceMonitor      namespaced, but the stock `admin` ClusterRole does NOT
 #                       grant monitoring.coreos.com — verified on a real cluster,
-#                       where it was the single denial standing between a
+#                       where it was one of two denials standing between a
 #                       namespace admin and a working "self-service" install.
-WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor)
+#   Role/RoleBinding    namespaced, and still not the tenant's to create: RBAC
+#                       forbids granting permissions you do not hold yourself
+#                       (privilege-escalation prevention), and the controller's
+#                       Role names resources the stock `admin` ClusterRole does
+#                       not carry. A tenant applying it gets "attempting to grant
+#                       RBAC permissions not currently held", the Role is skipped,
+#                       its RoleBinding then fails with "not found", and the
+#                       controller comes up unable to read a ConfigMap in its own
+#                       namespace — a CrashLoopBackOff two removes from its cause.
+#                       Verified with a token-scoped kubeconfig; it cannot be
+#                       fixed by granting more to the tenant without granting them
+#                       everything the controller has.
+WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor Role RoleBinding)
 
 # wva_prereq_kind_filter echoes a yq expression selecting (or with $1=exclude,
 # rejecting) the admin-owned kinds. One definition, so the prereqs phase and the

@@ -1,10 +1,5 @@
 name: install-cluster-wide
 
-env:
-  static:
-    scope:
-      run: export SCOPE=cluster
-
 prerequisites:
   check:
     run: make check-prereqs SCOPE=cluster

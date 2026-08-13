@@ -38,6 +38,19 @@ deploy_prometheus_kube_stack() {
     log_info "Installing kube-prometheus-stack with TLS configuration"
     install_operational_dashboard
 
+    # kube-prometheus-stack is one release in one namespace shared by every WVA on
+    # the cluster, and "is there one already" is checked before this runs — which
+    # is not atomic. Two first-time installs starting together both see no stack
+    # and both write the same release. Helm marks an in-flight release
+    # pending-install/upgrade, so refuse on that rather than racing it.
+    local phelm_status
+    phelm_status="$(helm status kube-prometheus-stack -n "$MONITORING_NAMESPACE" -o json 2>/dev/null | jq -r '.info.status // ""' 2>/dev/null || true)"
+    case "$phelm_status" in
+        pending-*)
+            log_error "Another install is deploying kube-prometheus-stack in $MONITORING_NAMESPACE right now (helm reports it $phelm_status). It is shared by every WVA on this cluster, so this install would race it. Wait for it to finish and re-run, or pass PROMETHEUS_URL=<url> to use a Prometheus this install does not deploy."
+            ;;
+    esac
+
     helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
         -n "$MONITORING_NAMESPACE" \
         --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \

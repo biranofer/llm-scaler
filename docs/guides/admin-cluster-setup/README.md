@@ -44,6 +44,7 @@ Once per namespace, not once per upgrade.
 | `wva-epp-metrics-reader-role` + binding | needs `nonResourceURLs: /metrics` |
 | `wva-node-reader-role` + binding | resolving a variant's accelerator reads **Nodes** |
 | the ServiceMonitor | the stock `admin` ClusterRole does not grant `monitoring.coreos.com` |
+| the controller's `Role` + `RoleBinding` | namespaced, but RBAC forbids granting permissions you do not hold yourself, and the controller's Role names resources a namespace admin does not have |
 | Prometheus / KEDA | only if the cluster has none |
 
 Every cluster-scoped object is named with a hash of the namespace, so two
@@ -59,7 +60,7 @@ must hold, run it in a namespace you own:
 <!-- guide:deploy.out_of_reach start -->
 ```bash
 make setup-prereqs   WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE}
-make deploy-wva      WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE} INSTALL_PHASE=wva
+make deploy-wva      WVA_NS=wva-${NAMESPACE} WVA_WATCH_NS=${NAMESPACE}
 ```
 <!-- guide:deploy.out_of_reach end -->
 
@@ -83,7 +84,7 @@ kubectl get clusterrole,clusterrolebinding | grep wva-
 
 The cluster-scoped names carry a hash of the namespace, so what you see here is
 this namespace's set and no other's. Hand over once they exist — the namespace's
-owner can then run `make deploy-wva INSTALL_PHASE=wva` without you.
+owner can then run `make deploy-wva` without you.
 
 ## Cleanup
 

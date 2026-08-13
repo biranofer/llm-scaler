@@ -1,11 +1,5 @@
 name: admin-gpu-bounding
 
-env:
-  static:
-    limiter:
-      note: gpu-inventory bounds by GPUs actually free; quota by declared caps.
-      run: export WVA_LIMITER_TYPE=gpu-inventory
-
 prerequisites:
   accelerators:
     note: |

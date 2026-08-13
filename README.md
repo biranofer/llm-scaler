@@ -29,7 +29,7 @@ export NAMESPACE=<the namespace running llm-d>
 
 make check-prereqs                    # read-only: tools, namespace, Prometheus
 make setup-prereqs                    # ONCE per namespace, by a cluster admin
-make deploy-wva INSTALL_PHASE=wva     # the controller — no cluster-scoped rights
+make deploy-wva                       # the controller — no cluster-scoped rights
 make scaledobjects-plan               # list your model servers; nothing is applied
 make scaledobjects-apply              # register them — this is what makes WVA scale
 ```

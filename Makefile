@@ -245,9 +245,9 @@ SCOPE ?= $(if $(WVA_SCOPE),$(WVA_SCOPE),namespace)
 #
 # wva_phase: $(1)=phase $(2)=ENVIRONMENT
 define wva_phase
-	@echo "Phase '$(1)', $(SCOPE)-scoped$(if $(2), on $(2),)"
-	$(if $(filter wva all,$(1)),@echo "Image: $(IMG)",)
-	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) IMG=$(IMG) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) INSTALL_PHASE=$(1) $(if $(2),ENVIRONMENT=$(2),) WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) $(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) ./deploy/install.sh
+	@echo "Phase '$(if $(1),$(1),auto)', $(SCOPE)-scoped$(if $(2), on $(2),)"
+	$(if $(filter prereqs,$(1)),,@echo "Image: $(IMG)")
+	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) IMG=$(IMG) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),INSTALL_PHASE=$(1),) $(if $(2),ENVIRONMENT=$(2),) WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) $(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) ./deploy/install.sh
 endef
 
 # wva_check: $(1)=ENVIRONMENT
@@ -262,6 +262,10 @@ endef
 # owner whose admin has already run setup-prereqs uses INSTALL_PHASE=wva, which
 # needs no cluster-scoped rights.
 INSTALL_PHASE ?= all
+# Empty unless the caller named a phase. An empty phase lets the install work out
+# which half is left to do — see wva_missing_prereqs — instead of the Makefile's
+# own default silently answering a question the cluster can answer.
+INSTALL_PHASE_ARG = $(if $(filter command line environment,$(origin INSTALL_PHASE)),$(INSTALL_PHASE),)
 
 # ENVIRONMENT picks the platform, the way llm-d's guides do it: a variable with
 # declared values feeding the path, rather than a target per platform
@@ -280,7 +284,7 @@ setup-prereqs: manifests kustomize ## Phase 2 (CLUSTER ADMIN). ENVIRONMENT=kuber
 
 .PHONY: deploy-wva
 deploy-wva: manifests kustomize ## Install WVA. ENVIRONMENT=kubernetes|openshift, SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>.
-	$(call wva_phase,$(INSTALL_PHASE),$(ENVIRONMENT_INSTALL))
+	$(call wva_phase,$(INSTALL_PHASE_ARG),$(ENVIRONMENT_INSTALL))
 
 .PHONY: undeploy-wva
 undeploy-wva: ## Remove WVA. Pass the same ENVIRONMENT, SCOPE and namespace you installed with.
@@ -288,11 +292,11 @@ undeploy-wva: ## Remove WVA. Pass the same ENVIRONMENT, SCOPE and namespace you 
 
 .PHONY: deploy-wva-on-k8s
 deploy-wva-on-k8s: manifests kustomize ## Install WVA on Kubernetes. SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>. Prometheus and the namespace are detected.
-	$(call wva_phase,$(INSTALL_PHASE),kubernetes)
+	$(call wva_phase,$(INSTALL_PHASE_ARG),kubernetes)
 
 .PHONY: deploy-wva-on-openshift
 deploy-wva-on-openshift: manifests kustomize ## Install WVA on OpenShift. SCOPE=namespace|cluster, INSTALL_PHASE=all|prereqs|wva, IMG=<your build>.
-	$(call wva_phase,$(INSTALL_PHASE),openshift)
+	$(call wva_phase,$(INSTALL_PHASE_ARG),openshift)
 
 ## Removing. Pass the SAME SCOPE and namespace you installed with — an uninstall
 ## resolves the overlay exactly as the install did, so a mismatch leaves behind

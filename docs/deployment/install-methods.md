@@ -27,7 +27,7 @@ The deployment script provides a complete, automated setup including:
 export HF_TOKEN="hf_xxxxxxxxxxxxx"
 
 # Deploy to Kubernetes
-make deploy-wva-on-k8s
+make deploy-wva
 
 # Deploy to OpenShift
 make deploy-wva-on-openshift

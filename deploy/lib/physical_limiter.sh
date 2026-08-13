@@ -205,6 +205,14 @@ pl_set_limiter() {
     else
         updated="$(printf '%s\n' "$current" | yq ".limiters = [{\"type\": \"${limiter}\"}]")"
     fi
+    # An entry that is now empty is removed, not written as "{}". A ConfigMap
+    # whose default entry is an empty object is a policy that says nothing while
+    # looking like one that says something, and the next reader has to open it to
+    # find out which.
+    if [ "$limiter" = "none" ] && [ "$(printf '%s' "$updated" | tr -d '[:space:]')" = "{}" ]; then
+        kubectl delete configmap wva-scaling-policy-config -n "$policy_ns" --ignore-not-found >/dev/null 2>&1
+        return 0
+    fi
     kubectl create configmap wva-scaling-policy-config -n "$policy_ns" \
         --from-literal=default="$updated" --dry-run=client -o yaml \
         | kubectl label --local -f - app.kubernetes.io/name=workload-variant-autoscaler -o yaml \

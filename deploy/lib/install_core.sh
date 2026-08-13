@@ -7,6 +7,67 @@
 # llm-d install: see llm-d project guides or deploy/install-epp.sh for kind EPP setup.
 #
 
+# wva_missing_prereqs echoes the admin-owned objects that do not exist yet, one
+# per line. Empty output means the cluster-admin phase has been run for this
+# namespace. Quiet: the caller decides whether that is an error or a decision.
+wva_missing_prereqs() {
+    local kind name expected out rc
+    expected="$(wva_rendered_prereq_objects)"
+    [ -n "$expected" ] || { echo "UNRENDERABLE"; return 0; }
+    while read -r kind name; do
+        [ -n "$kind" ] && [ -n "$name" ] || continue
+        case "$kind" in
+            ServiceMonitor) out=$(kubectl get servicemonitor "$name" -n "$WVA_NS" 2>&1); rc=$? ;;
+            *)              out=$(kubectl get "$kind" "$name" 2>&1); rc=$? ;;
+        esac
+        [ $rc -eq 0 ] && continue
+        # A denied read is not an absent object, and cluster-scoped RBAC is
+        # exactly what a tenant may not read. Reporting Forbidden as missing sent
+        # them to ask an admin for objects that admin had already created.
+        if printf '%s' "$out" | grep -qi 'forbidden'; then
+            echo "UNVERIFIABLE $kind/$name"
+            continue
+        fi
+        case "$kind" in
+            ServiceMonitor) echo "$kind/$name (in $WVA_NS)" ;;
+            *)              echo "$kind/$name" ;;
+        esac
+    done <<< "$expected"
+}
+
+# wva_resolve_install_phase decides which half of the install is left to do,
+# when the caller did not say.
+#
+# `all` as a fixed default made the tenant path carry INSTALL_PHASE=wva — a
+# parameter whose only job was to state that the admin had already done their
+# half, which is a question the cluster can answer. It runs BEFORE the permission
+# check, because that check asks whether the caller can create everything the
+# phase creates: a phase resolved after it would be checked against work nobody
+# was going to do, which is how a namespace owner came to be told they could not
+# install, for lacking rights to create objects that already existed.
+wva_resolve_install_phase() {
+    [ -z "${INSTALL_PHASE_EXPLICIT:-}" ] || return 0
+    [ "$(wva_install_scope)" = "namespace" ] || return 0
+
+    # Capability first, not existence: a tenant cannot READ a ClusterRole either,
+    # so an existence check answers Forbidden for the very caller this serves,
+    # which reads as "missing" and puts them back on the phase they cannot run.
+    # Whether you may CREATE one is a SelfSubjectAccessReview — allowed for
+    # everybody — and it answers the question that decides the phase: which half
+    # is yours to do.
+    if ! kubectl auth can-i create clusterroles >/dev/null 2>&1; then
+        INSTALL_PHASE=wva
+        export INSTALL_PHASE
+        log_info "Installing the controller only: creating cluster-scoped objects is not permitted for you, and that is the half a cluster admin runs once with 'make setup-prereqs'."
+        return 0
+    fi
+
+    [ -z "$(wva_missing_prereqs)" ] || return 0
+    INSTALL_PHASE=wva
+    export INSTALL_PHASE
+    log_info "The cluster-admin prerequisites for $WVA_NS are already in place — installing the controller only. (INSTALL_PHASE=all redoes them.)"
+}
+
 # require_prereqs_present refuses a controller-only install when the admin phase
 # has not run for this namespace.
 #
@@ -15,34 +76,19 @@
 # create them, so the useful output is the list to hand to an admin — not a
 # Forbidden on one object with the rest unknown.
 require_prereqs_present() {
-    local missing=() kind name expected
-    # An empty render is "could not look", never "nothing to check" — the same
-    # rule wva_rendered_prereq_objects states about its own output. Without this,
-    # a kustomize build that failed for any reason produced an empty list, an
-    # empty missing[], and a cheerful "Prerequisites are in place" for a check
-    # that never ran.
-    expected="$(wva_rendered_prereq_objects)"
-    if [ -z "$expected" ]; then
-        log_error "Could not render the install overlay, so whether the cluster-admin prerequisites exist could not be checked. Fix the overlay (try 'kubectl kustomize $(wva_overlay_dir)') and re-run; nothing has been applied."
-    fi
-
-    while read -r kind name; do
-        [ -n "$kind" ] && [ -n "$name" ] || continue
-        case "$kind" in
-            ServiceMonitor)
-                kubectl get servicemonitor "$name" -n "$WVA_NS" >/dev/null 2>&1 \
-                    || missing+=("$kind/$name (in $WVA_NS)") ;;
-            *)
-                kubectl get "$kind" "$name" >/dev/null 2>&1 || missing+=("$kind/$name") ;;
+    local line missing=() unverifiable=()
+    while read -r line; do
+        [ -n "$line" ] || continue
+        case "$line" in
+            UNRENDERABLE)
+                log_error "Could not render the install overlay, so whether the cluster-admin prerequisites exist could not be checked. Fix the overlay (try 'kubectl kustomize $(wva_overlay_dir)') and re-run; nothing has been applied." ;;
+            "UNVERIFIABLE "*) unverifiable+=("${line#UNVERIFIABLE }") ;;
+            *) missing+=("$line") ;;
         esac
-    done <<< "$expected"
+    done <<< "$(wva_missing_prereqs)"
 
-    if [ ${#missing[@]} -eq 0 ]; then
-        log_success "Prerequisites are in place for $WVA_NS"
-        return 0
-    fi
-
-    log_error "The cluster-admin prerequisites for $WVA_NS are not in place. Missing:
+    if [ ${#missing[@]} -ne 0 ]; then
+        log_error "The cluster-admin prerequisites for $WVA_NS are not in place. Missing:
 $(printf '  - %s\n' "${missing[@]}")
 
 Ask a cluster admin to run, once, for this namespace:
@@ -51,7 +97,19 @@ Ask a cluster admin to run, once, for this namespace:
 
 after which this phase needs no cluster-scoped rights and you can re-run it, and
 every later upgrade, yourself."
+    fi
+
+    if [ ${#unverifiable[@]} -ne 0 ]; then
+        # Proceed: the install itself does not need these objects to be readable,
+        # only to exist, and a controller whose RBAC is genuinely absent fails
+        # visibly at readiness rather than silently.
+        log_info "Cannot read some cluster-admin prerequisites (reading them is not permitted for you), so this cannot confirm they exist: ${unverifiable[*]}"
+        log_info "  If they are missing, the controller will install and then fail to become ready; ask an admin to run 'NAMESPACE=$WVA_NS make setup-prereqs'."
+        return 0
+    fi
+    log_success "Prerequisites are in place for $WVA_NS"
 }
+
 
 # print_prereqs_summary tells the admin what they just created and what to hand
 # over. The handover is the point of the phase, so it is stated rather than left
@@ -72,7 +130,7 @@ print_prereqs_summary() {
     echo "  NOT created: the controller itself. Whoever owns $WVA_NS installs it,"
     echo "  and every later upgrade, with no cluster-scoped rights:"
     echo ""
-    echo "      NAMESPACE=${WVA_NS} make deploy-wva INSTALL_PHASE=wva$([ "$scope" = cluster ] && echo ' SCOPE=cluster')"
+    echo "      NAMESPACE=${WVA_NS} make deploy-wva$([ "$scope" = cluster ] && echo ' SCOPE=cluster')"
     echo ""
     echo "  Re-run this phase only when the WVA version changes what it needs"
     echo "  cluster-wide (new RBAC rules), not for an ordinary controller upgrade."
@@ -109,6 +167,9 @@ main() {
         # what do I pass for PROMETHEUS_URL — both answerable from here.
         wva_autoselect_namespace
         wva_report_namespace
+        # The preflight must ask about the same phase the install will run, or it
+        # reports a problem the install would never have had.
+        wva_resolve_install_phase
         check_permissions
         check_single_installation
         wva_report_prometheus
@@ -145,6 +206,10 @@ main() {
     # on which namespace this is: point a namespace-scoped install at the
     # namespace actually running llm-d, when the caller named none.
     wva_autoselect_namespace
+
+    # Which half of the install is left, before anything asks what this caller may
+    # create. See wva_resolve_install_phase.
+    wva_resolve_install_phase
     wva_report_namespace
 
     # Before anything is created: a second install repoints the shared

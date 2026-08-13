@@ -168,9 +168,19 @@ can_i_as() {
 # definition, in Go; a bash copy would be free to drift, and the drift shows up as
 # a preflight that passes while the controller reads a different namespace.
 wva_cluster_policy_ns() {
-    local managed="${WVA_WATCH_NS:-$WVA_NS}" pointed=""
-    pointed=$(kubectl get namespace "$managed" \
-        -o jsonpath='{.metadata.labels.wva\.llmd\.ai/policy-namespace}' 2>/dev/null || true)
+    local managed="${WVA_WATCH_NS:-$WVA_NS}" pointed="" out rc
+    # Namespaces are cluster-scoped, so a tenant holding only namespaced rights
+    # cannot read the object their own namespace is. Folding that denial into "no
+    # label" answered with the built-in default policy namespace when the truth
+    # was that the question could not be asked — and the label may point
+    # somewhere else entirely. "unknown" is echoed so the caller can say so.
+    out=$(kubectl get namespace "$managed" \
+        -o jsonpath='{.metadata.labels.wva\.llmd\.ai/policy-namespace}' 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then
+        printf '%s' "$out" | grep -qi 'forbidden' && { echo unknown; return 0; }
+        return 0
+    fi
+    pointed="$out"
     [ -n "$pointed" ] || return 0
     kubectl get namespace "$pointed" >/dev/null 2>&1 || return 0
     echo "$pointed"
@@ -218,6 +228,11 @@ check_tenant_install() {
     local policy_ns limiter node_read
 
     policy_ns="$(wva_cluster_policy_ns)"
+    if [ "$policy_ns" = "unknown" ]; then
+        log_warning "Could not read the ${WVA_WATCH_NS:-$WVA_NS} namespace object, so which cluster policy governs this install is unknown — a namespace is cluster-scoped, and namespaced rights do not reach it."
+        log_warning "  If that policy declares the gpu-inventory limiter, this controller also needs node read access, and stays NotReady without it. A cluster admin can tell you, or 'make setup-prereqs' grants it either way."
+        return 0
+    fi
     if [ -z "$policy_ns" ]; then
         # No label on the managed namespace. The controller will fall back to its
         # built-in default policy namespace, whose NAME this script deliberately

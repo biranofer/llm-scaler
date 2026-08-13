@@ -18,20 +18,15 @@ namespace's owner installs and upgrades the controller themselves.
 - KEDA, installed for you if the cluster has none
 - a Prometheus scraping those model servers
 
-Two things about the model servers are worth checking, because both are silent
-when wrong:
-
-- **The `llm-d.ai/inferenceServing=true` label is on the pod template**, which is
-  where llm-d puts it and where WVA looks. `kubectl get deploy -l
-  llm-d.ai/inferenceServing=true` reads the Deployment's own labels and returns
-  nothing even when everything is correct — use `make scaledobjects-plan`, which
-  reads the pod template.
-- **Waking a model from zero needs your EPP, not WVA.** It must run with the
-  `flowControl` feature gate — which is what publishes the queue depth WVA reads
-  — and its ServiceAccount needs TokenReview rights so it can authenticate WVA's
-  scrape. WVA wires both only for an EPP it installed itself. If your EPP came
-  from an llm-d guide, scaling works and scale-from-zero silently never fires;
-  see [Troubleshooting](../../developer-guide/troubleshooting.md).
+If you want a model to scale **from zero**, its EPP must run with the
+`flowControl` feature gate: that gate is what publishes the queue depth, and at
+zero replicas there are no model-server metrics, so it is the only evidence that
+anyone is asking for the model. WVA enables it on an EPP it installs itself; an
+EPP that came from an llm-d guide has it off unless you turned it on. WVA reads
+the queue by scraping the EPP, and falls back to reading the same metric from
+Prometheus when it cannot — so a Prometheus that already scrapes your EPP covers
+it. Without the gate, neither path has anything to read, and scale-from-zero
+never fires while ordinary scaling works.
 
 <!-- guide:env.static.namespace start -->
 ```bash
@@ -74,11 +69,13 @@ missing; if it names nothing, go to step 2.
 
 <!-- guide:deploy.controller start -->
 ```bash
-make deploy-wva INSTALL_PHASE=wva
+make deploy-wva
 ```
 <!-- guide:deploy.controller end -->
 
-If step 1 has not happened, this stops and names every missing object.
+It installs the controller only, and says so: creating cluster-scoped objects is
+not something a namespace owner can do, so that half is the one step 1 covers. If
+step 1 has not happened, this stops and names what is missing.
 
 ### 3. Register the workloads
 

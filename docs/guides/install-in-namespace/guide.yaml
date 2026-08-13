@@ -16,7 +16,7 @@ deploy:
   prereqs:
     run: make setup-prereqs
   controller:
-    run: make deploy-wva INSTALL_PHASE=wva
+    run: make deploy-wva
   register:
     run: |
       make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
