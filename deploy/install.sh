@@ -52,6 +52,11 @@ PROMETHEUS_SECRET_NS=${PROMETHEUS_SECRET_NS:-$MONITORING_NAMESPACE}
 WVA_IMAGE_REPO=${WVA_IMAGE_REPO:-"ghcr.io/llm-d/llm-d-workload-variant-autoscaler"}
 WVA_IMAGE_TAG=${WVA_IMAGE_TAG:-"latest"}
 WVA_IMAGE_PULL_POLICY=${WVA_IMAGE_PULL_POLICY:-"Always"}
+# An existing docker-registry Secret in WVA_NS, for an image in a private
+# registry. Named rather than created here: a script that built the secret would
+# have to be handed a password, and this way the credential is created once by
+# whoever owns it and never passes through an install run.
+WVA_IMAGE_PULL_SECRET=${WVA_IMAGE_PULL_SECRET:-}
 SKIP_TLS_VERIFY=${SKIP_TLS_VERIFY:-"false"}
 WVA_LOG_LEVEL=${WVA_LOG_LEVEL:-"info"}
 # Optional: multi-controller isolation (sets controller_instance on metrics / selectors when non-empty).

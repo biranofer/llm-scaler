@@ -278,6 +278,24 @@ EOF
         all|prereqs) wva_apply_watch_namespace_rbac "$tmp_overlay" ;;
     esac
 
+    # A private registry needs the pull secret on the ServiceAccount, not on the
+    # Deployment: patching the SA covers the controller and anything else that
+    # runs as it, and survives a re-apply of the Deployment from the overlay.
+    # Applied before the Deployment so the first pod schedules with it rather
+    # than starting in ImagePullBackOff and recovering later.
+    # A private registry needs the pull secret on the ServiceAccount rather than
+    # the Deployment: the SA covers the controller and anything else running as
+    # it, and survives a re-apply of the Deployment from the overlay. Applied
+    # after the objects exist, below — this only validates it now, so a missing
+    # secret is an error before anything is created rather than an
+    # ImagePullBackOff afterwards.
+    if [ -n "${WVA_IMAGE_PULL_SECRET:-}" ] && [ "${WVA_APPLY_SCOPE:-all}" != "prereqs" ]; then
+        kubectl get secret "$WVA_IMAGE_PULL_SECRET" -n "$WVA_NS" >/dev/null 2>&1 || \
+            log_error "WVA_IMAGE_PULL_SECRET=$WVA_IMAGE_PULL_SECRET does not exist in $WVA_NS. Create it first:
+    kubectl create secret docker-registry $WVA_IMAGE_PULL_SECRET -n $WVA_NS \\
+        --docker-server=<registry> --docker-username=<user> --docker-password=<token>"
+    fi
+
     log_info "Applying Kustomize overlay: $kustomize_overlay (scope: ${WVA_APPLY_SCOPE:-all})"
     case "${WVA_APPLY_SCOPE:-all}" in
         all)
@@ -297,6 +315,17 @@ EOF
             log_error "WVA_APPLY_SCOPE must be all, prereqs or controller (got '${WVA_APPLY_SCOPE}')"
             ;;
     esac
+
+    # The ServiceAccount exists now, so the pull secret can go on it. The pod may
+    # already be starting; a Deployment restart makes the next pod pick it up
+    # rather than waiting out an ImagePullBackOff.
+    if [ -n "${WVA_IMAGE_PULL_SECRET:-}" ] && [ "${WVA_APPLY_SCOPE:-all}" != "prereqs" ]; then
+        log_info "Image pull secret: $WVA_IMAGE_PULL_SECRET (on ServiceAccount wva-controller-manager)"
+        kubectl patch serviceaccount wva-controller-manager -n "$WVA_NS" \
+            -p "{\"imagePullSecrets\":[{\"name\":\"${WVA_IMAGE_PULL_SECRET}\"}]}" >/dev/null || \
+            log_warning "  could not patch the ServiceAccount — the controller will not be able to pull from a private registry"
+        kubectl rollout restart deployment/wva-controller-manager -n "$WVA_NS" >/dev/null 2>&1 || true
+    fi
 
     # Everything below this point patches namespaced ConfigMaps that the
     # controller phase owns and the prereqs phase has not created yet.
