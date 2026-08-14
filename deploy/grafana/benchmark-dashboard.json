@@ -294,26 +294,26 @@
         "name": "namespace_label",
         "label": "Namespace label",
         "type": "custom",
-        "query": "exported_namespace,namespace",
+        "query": "namespace,exported_namespace",
         "current": {
-          "text": "exported_namespace",
-          "value": "exported_namespace"
+          "text": "namespace",
+          "value": "namespace"
         },
         "options": [
           {
-            "text": "exported_namespace",
-            "value": "exported_namespace",
+            "text": "namespace",
+            "value": "namespace",
             "selected": true
           },
           {
-            "text": "namespace",
-            "value": "namespace",
+            "text": "exported_namespace",
+            "value": "exported_namespace",
             "selected": false
           }
         ],
         "includeAll": false,
         "multi": false,
-        "description": "Which label carries the namespace. Metrics relabelled on the way into Prometheus arrive as exported_namespace."
+        "description": "Which label carries the namespace. vLLM metrics carry only `namespace`. wva_* metrics carry both, and there `exported_namespace` is the WORKLOAD's namespace while `namespace` is the controller's -- the same value for a namespace-scoped install, different for a cluster-scoped one."
       },
       {
         "name": "namespace",
