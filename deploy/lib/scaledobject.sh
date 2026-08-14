@@ -600,7 +600,8 @@ so_discover() {
                             -l app.kubernetes.io/component=launcher \
                             --no-headers 2>/dev/null | wc -l | tr -d ' ')
                         log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name: it is the workload Prometheus scrapes, so it is the one WVA can measure."
-                        log_warning "FMA launcher pods (${fma_launchers:-?} in $ns) run vLLM and serve traffic, but they are owned by a LauncherConfig, so WVA attributes their metrics to no scale target and drops them. Demand for '$model_label' will be under-measured by whatever share of traffic EPP sends to launchers. See docs/deployment/operations.md, 'FMA launcher pods'."
+                        log_warning "FMA launcher pods (${fma_launchers:-?} in $ns) run vLLM and serve traffic. WVA follows the dual-pods pairing to attribute a BOUND launcher's metrics, but only if something scrapes them — launchers declare no container ports, so a port-name PodMonitor generates no target. Check with: kubectl get podmonitor -n $ns. See docs/deployment/operations.md, 'FMA launcher pods'."
+                        log_warning "GPU accounting in $ns is a LOWER BOUND: a launcher keeps its vLLM instance resident after unbinding, holding a real GPU while requesting none, and the annotations naming that GPU are stripped at unbind — so neither ResourceQuota nor the WVA limiter can see it. Subtract the warm pool by hand when planning capacity. See docs/deployment/gpu-limiter.md, 'FMA namespaces'."
                         note="${note:+$note }FMA topology: requester $fma_requester present and ${fma_launchers:-?} launcher pod(s) serving traffic WVA cannot attribute. This entry targets the decode workload, the only one WVA can both scale and measure."
                     fi
                 fi

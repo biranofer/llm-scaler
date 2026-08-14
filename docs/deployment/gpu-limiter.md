@@ -228,6 +228,49 @@ reported three ways:
 - the **`WVANodeAccessDenied`** alert (critical, fires after 2m) if you installed
   with `DEPLOY_ALERTING_RULES=true`.
 
+## FMA namespaces: the GPU picture is a lower bound
+
+If a namespace runs Fast Model Actuation, **treat every GPU number here as a
+minimum, not a measurement.**
+
+FMA's launcher pods request no `nvidia.com/gpu` at all — deliberately, since the
+requester reserves the accelerator and the launcher binds onto it, and requesting
+on both halves would double-book N launchers plus N requesters on an N-GPU node.
+While a pair is bound that is exactly right, and the GPU is charged to the
+requester, which is the scale target this limiter already accounts against.
+
+The gap opens when a pair unbinds. The launcher keeps its vLLM instance resident —
+that is what makes the next bind take seconds instead of minutes — and it goes on
+occupying a physical GPU that is now charged to nobody. Measured on a real
+cluster, with every requester at `replicas: 0`:
+
+| | |
+| --- | --- |
+| GPU requests charged in the namespace | 1 |
+| launcher pods running a vLLM instance | 9, on 9 distinct GPU UUIDs |
+
+Three consequences:
+
+- A `ResourceQuota` on `requests.nvidia.com/gpu` counts requesters only. It cannot
+  express a warm pool, so GPU quota does not bound FMA's real consumption.
+- This limiter's view of what is free is too optimistic by the size of the warm
+  pool, which is the unsafe direction — it is the input the wake-capacity check
+  and reclamation trust.
+- The scheduler sees those GPUs as allocatable and may place another workload on
+  one, which then contends with the sleeping instance when FMA wakes it.
+
+**There is no fix available from outside FMA.** The obvious one — read it off the
+pods — does not work: `dual-pods.llm-d.ai/vllm-config`, `/server-port` and
+`/accelerators` are present only *while bound*. An orphaned launcher still running
+an instance carries neither, so the API server holds no record of what it is
+using. Only the launcher's own API knows, and WVA does not call workload APIs.
+
+So: when planning capacity in an FMA namespace, subtract the warm pool by hand.
+Its ceiling is `launcherCount × maxInstances` per matching node, from the
+`LauncherPopulationPolicy` and `LauncherConfig`. `deploy/lib` warns at plan time
+when it detects launchers. The upstream request that would close this is item 1
+in [Requests to Fast Model Actuation](../proposals/fma-upstream-requests.md).
+
 ## Checking
 
 The install warns too: enabling `WVA_LIMITER=gpu-inventory` counts the distinct GPU
