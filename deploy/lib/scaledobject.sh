@@ -279,6 +279,84 @@ so_fma_requester() {
 readonly SO_POD_PATH_DEPLOYMENT='["spec","template"]'
 readonly SO_POD_PATH_LWS='["spec","leaderWorkerTemplate","leaderTemplate"]'
 
+# so_fma_isc_model echoes the model ID an FMA requester Deployment ($2 in $1)
+# serves, or nothing.
+#
+# A requester runs `/app/requester` with no args, so the container-args route that
+# works for every other workload finds nothing here. The model is one hop away:
+# the requester's POD TEMPLATE carries an annotation naming its
+# InferenceServerConfig, and the ISC's modelServerConfig.options is the vLLM
+# command line the launcher will run.
+#
+#   Deployment/fma-requester-x
+#     .spec.template.metadata.annotations["dual-pods.llm-d.ai/inference-server-config"]
+#       -> InferenceServerConfig/y
+#            .spec.modelServerConfig.options = "--model Qwen/Qwen3-0.6B --enable-sleep-mode …"
+#
+# Those options are parsed by so_model_id, the same parser used on container args,
+# so --served-model-name still wins over --model and both spellings are accepted.
+#
+# Every step degrades to empty rather than to a guess, and the caller records that
+# as `apply: no`. In particular the ISC is read with `get ... 2>/dev/null`, which
+# covers the two cases that would otherwise be indistinguishable from a real
+# answer: the CRD not being installed at all, and the annotation naming an ISC
+# that no longer exists. Note llm-d.ai/model on the pod is NOT a fallback — it is
+# a sanitized DNS-safe form (`qwen-qwe-694d2b87-en3-0-6b`, not `Qwen/Qwen3-0.6B`),
+# and a ScaledObject carrying it would group the variant under a model no metric
+# series reports.
+so_fma_isc_model() {
+    local ns="$1" deploy="$2" isc options
+    [ -n "$ns" ] && [ -n "$deploy" ] || return 0
+
+    # jq, not jsonpath. The annotation key carries dots AND a slash
+    # (dual-pods.llm-d.ai/inference-server-config), which jsonpath needs escaped
+    # in a way that is easy to get subtly wrong and that fails by returning
+    # nothing rather than by erroring — indistinguishable, here, from a workload
+    # that genuinely has no annotation. A jq index takes the key literally.
+    isc=$(kubectl get deployment -n "$ns" "$deploy" -o json 2>/dev/null \
+        | jq -r '.spec.template.metadata.annotations["dual-pods.llm-d.ai/inference-server-config"] // empty' 2>/dev/null)
+    [ -n "$isc" ] || return 0
+
+    options=$(kubectl get inferenceserverconfig -n "$ns" "$isc" -o json 2>/dev/null \
+        | jq -r '.spec.modelServerConfig.options // empty' 2>/dev/null \
+        | tr '\n\r' '  ')
+    [ -n "$options" ] || return 0
+
+    so_model_id "$options"
+}
+
+# so_serving_workload_for_model echoes the name of a modelservice workload in $1
+# serving the model LABEL $2 — the decode/prefill half — or nothing.
+#
+# Discovery uses it to tell two namespace shapes apart. When a modelservice
+# Deployment and an FMA requester both serve one model, the modelservice one is
+# the target and the requester must not produce a second entry pointed at the same
+# model. When only the requester exists, there is nothing else to scale and the
+# FMA entry is the only one that can be made.
+#
+# Matched on the serving marker AND the model label, both on the pod template,
+# which is where llm-d puts them and where the main discovery loop reads them.
+so_serving_workload_for_model() {
+    local ns="$1" model_label="$2" kind resource pod
+    [ -n "$model_label" ] || return 0
+    for kind in Deployment LeaderWorkerSet; do
+        resource='deployments'; pod="$SO_POD_PATH_DEPLOYMENT"
+        if [ "$kind" = "LeaderWorkerSet" ]; then
+            resource='leaderworkersets'; pod="$SO_POD_PATH_LWS"
+        fi
+        kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+          | jq -r --argjson p "$pod" --arg m "$model_label" --arg marker "$SO_SERVING_MARKER" '
+              ($marker | split("=")) as $mk
+              | .items[]
+              | . as $o
+              | (getpath($p) // {}) as $t
+              | (($t.metadata.labels // {}) + ($o.metadata.labels // {})) as $l
+              | select(($l[$mk[0]] | tostring) == $mk[1])
+              | select(($l["llm-d.ai/model"] // "") == $m)
+              | $o.metadata.name'
+    done | head -1
+}
+
 # so_model_id echoes the model a serving container runs: --served-model-name where
 # the workload sets one (it is the name clients and the EPP use), else --model.
 # Both "--flag value" and "--flag=value" are accepted; both appear in the wild.
@@ -571,7 +649,97 @@ so_discover() {
                          | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                       ] | join("|")')
         done
+        # FMA requesters last, and only where nothing above already covers the
+        # model. They carry no serving marker, so the loop above cannot see them.
+        so_discover_fma_requesters "$ns"
     done
+}
+
+# so_discover_fma_requesters writes plan entries for FMA requester Deployments in
+# $1 that no modelservice workload already covers.
+#
+# It handles the one namespace shape the main loop cannot see at all. Discovery
+# finds workloads by SO_SERVING_MARKER on the pod template, and a requester does
+# not carry it — it has the hyphenated llm-d.ai/inference-serving and role=requester
+# instead. So a namespace running FMA and nothing else produced an empty plan and
+# the message "no llm-d model servers found": an install that autoscales nothing
+# and says only that it found nothing to autoscale.
+#
+# Three shapes, three answers:
+#
+#   modelservice only   the main loop handles it, unchanged
+#   requester only      this function, since nothing else can be scaled
+#   both                the main loop wins and warns; this function skips, so one
+#                       model never yields two entries fighting over it
+#
+# Entries are written with apply: no when the FMA path cannot work yet — no model
+# resolvable, or nothing scraping the launchers — rather than omitted. An absent
+# entry makes a fixable monitoring problem look like discovery finding nothing,
+# which is the failure this whole function exists to remove.
+so_discover_fma_requesters() {
+    local ns="$1" name model_label model apply note pool
+    local existing existing_name existing_min existing_max existing_cost existing_policy
+    local min max cost policy sibling scrapers launchers
+
+    while IFS='|' read -r name model_label; do
+        [ -n "$name" ] || continue
+
+        # `both`: the modelservice half is the target and has already been
+        # emitted, with its own warning about unmeasured launcher traffic.
+        sibling=$(so_serving_workload_for_model "$ns" "$model_label")
+        if [ -n "$sibling" ]; then
+            continue
+        fi
+
+        apply=yes; note=""
+        min="${WVA_DEFAULT_SO_MIN:-1}"; max="${WVA_DEFAULT_SO_MAX:-10}"
+        cost="$SO_DEFAULT_VARIANT_COST"; policy=""; existing_name=""
+
+        model=$(so_fma_isc_model "$ns" "$name")
+        if [ -z "$model" ]; then
+            apply=no
+            note="FMA requester, but its model could not be read: no InferenceServerConfig annotation on the pod template, or the ISC it names is gone or has no --model in modelServerConfig.options. Fill in modelID and set apply: yes to include it."
+        fi
+
+        # The launchers must be scraped or this entry scales blind: the requester
+        # runs no engine, so every metric for this variant comes from a launcher
+        # pod. A ScaledObject that cannot measure its workload is worse than none
+        # -- it holds the workload at minReplicaCount and reports healthy.
+        launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+            --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        scrapers=$(wva_launcher_scrapers "$ns" | paste -sd, -)
+        if [ -z "$scrapers" ]; then
+            apply=no
+            note="${note:+$note }No PodMonitor generates a scrape target for the ${launchers:-0} launcher pod(s) in $ns, so this variant would have no metrics at all -- launchers declare no container ports, and a port-name endpoint resolves nothing. Fix with: kubectl apply -k config/fma-launcher-metrics -n $ns (or WVA_FMA_LAUNCHER_METRICS=true at install), then set apply: yes."
+        else
+            note="${note:+$note }FMA variant: the requester is the scale target, and its engine metrics come from launcher pods scraped by $scrapers. WVA follows the dual-pods pairing to attribute them."
+        fi
+
+        existing=$(so_existing_info "$ns" "$name")
+        if [ -n "$existing" ]; then
+            read -r existing_name existing_min existing_max existing_cost existing_policy <<< "$existing"
+            min="$existing_min"; max="$existing_max"; cost="$existing_cost"
+            policy="$existing_policy"
+            apply=no
+            note="${note:+$note }Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
+        fi
+
+        # Empty for a requester, and correctly so: an InferencePool selects the
+        # LAUNCHER, which carries the serving labels at bind time. The column is
+        # for orientation, so an honest blank beats a guess.
+        pool=$(so_pool "$ns" "")
+
+        so_plan_entry "$apply" "$ns" "Deployment" "$name" "$model" \
+            "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
+    done < <(kubectl get deployments -n "$ns" -o json 2>/dev/null \
+        | jq -r --argjson p "$SO_POD_PATH_DEPLOYMENT" --arg marker "$SO_FMA_ROLE_MARKER" '
+            ($marker | split("=")) as $mk
+            | .items[]
+            | . as $o
+            | (getpath($p) // {}) as $t
+            | ($t.metadata.labels // {}) as $l
+            | select(($l[$mk[0]] // "" | tostring) == $mk[1])
+            | [ $o.metadata.name, ($l["llm-d.ai/model"] // "") ] | join("|")')
 }
 
 # so_show_plan prints the plan as a table. The file stays the thing you edit; this

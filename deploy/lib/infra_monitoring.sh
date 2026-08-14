@@ -17,73 +17,13 @@
 # `max by` ones would not. Capacity then looks right while throughput reads 2x,
 # which is a hard failure to spot and a worse outcome than not scraping at all.
 #
-# Selecting a launcher is NOT the same as scraping one, and the difference is the
-# whole point. llm-d's own vllm-<model> PodMonitor selects a launcher the moment
-# it binds -- the serving labels are stamped on it then -- but names its endpoint
-# by port NAME, and a launcher declares no container ports, so the operator
-# resolves nothing and generates no target. A conflict test based on selectors
-# alone would therefore report a clash in precisely the situation this component
-# exists to fix, and refuse to fix it.
-#
-# So a monitor counts as scraping a launcher only if it could actually produce a
-# target for one:
-#
-#   - it sets targetPort (a number bypasses the named-port lookup), or
-#   - it rewrites __address__ in a relabeling (what the FMA-aware template does), or
-#   - it names a port that a launcher pod actually declares.
-#
-# Matching is done by asking the API server rather than by comparing selectors, so
-# a monitor that reaches launchers by any label combination is caught.
-# matchExpressions are not evaluated -- kubectl cannot take them as a selector
-# string -- so an expression-only monitor can slip through. This is a guard
-# against the realistic case, not a proof.
-#
-# With no launcher pods present there is nothing to resolve against and this
-# reports no conflict, which is the right answer: the component is inert until FMA
-# appears, and should be in place beforehand so it works when it does.
+# The distinction between selecting a launcher and being able to scrape one is
+# what makes this correct rather than merely plausible; wva_launcher_scrapers
+# carries that reasoning, and discovery asks it the same question from the other
+# direction. With no launcher pods present it reports nothing, which is right: the
+# PodMonitor is inert until FMA appears and should be in place beforehand.
 fma_launcher_scrape_conflict() {
-    local ns="$1" launchers launcher_ports pm sel rewrites ports matched
-    launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
-        -o name 2>/dev/null)
-    [ -n "$launchers" ] || return 0
-
-    # Container port NAMES declared by launcher pods. Empty on every FMA build
-    # seen so far, which is exactly why they are invisible by default.
-    launcher_ports=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
-        -o jsonpath='{range .items[*].spec.containers[*].ports[*]}{.name}{"\n"}{end}' 2>/dev/null \
-        | grep -v '^$' | sort -u)
-
-    kubectl get podmonitor -n "$ns" -o json 2>/dev/null \
-      | jq -r '.items[]
-               | select(.metadata.name != "fma-launcher-metrics")
-               | [ .metadata.name,
-                   ((.spec.selector.matchLabels // {}) | to_entries
-                     | map("\(.key)=\(.value)") | join(",")),
-                   ( [ (.spec.podMetricsEndpoints // [])[]
-                       | (.targetPort != null)
-                         or ((.relabelings // []) | any(.targetLabel == "__address__")) ]
-                     | any ),
-                   ( [ (.spec.podMetricsEndpoints // [])[] | .port // empty ] | join(" ") ) ]
-               | @tsv' 2>/dev/null \
-      | while IFS=$'\t' read -r pm sel rewrites ports; do
-            [ -n "$sel" ] || continue
-            matched=$(kubectl get pods -n "$ns" -l "$sel" -o name 2>/dev/null)
-            [ -n "$matched" ] || continue
-            printf '%s\n' "$matched" | grep -Fxq -f <(printf '%s\n' "$launchers") || continue
-
-            if [ "$rewrites" = "true" ]; then
-                printf '%s\n' "$pm"
-                continue
-            fi
-            # Named-port endpoints only conflict if a launcher declares that port.
-            local p
-            for p in $ports; do
-                if printf '%s\n' "$launcher_ports" | grep -Fxq -- "$p"; then
-                    printf '%s\n' "$pm"
-                    break
-                fi
-            done
-        done
+    wva_launcher_scrapers "$1" fma-launcher-metrics
 }
 
 # deploy_fma_launcher_podmonitor applies the launcher PodMonitor into $1, the

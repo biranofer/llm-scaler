@@ -401,6 +401,73 @@ wva_rendered_kinds() {
     wva_render_manifests | awk '/^kind: /{print $2}' | sort -u || true
 }
 
+# wva_launcher_scrapers echoes the name of every PodMonitor in $1 that would
+# actually generate a scrape target for an FMA launcher pod. $2, if given, is a
+# PodMonitor name to ignore.
+#
+# "Would generate a target" is the whole point, and it is NOT the same as
+# "selects". llm-d's own vllm-<model> PodMonitor selects a launcher the moment it
+# binds -- the serving labels are stamped on it then -- but names its endpoint by
+# port NAME, and a launcher declares no container ports, so the operator resolves
+# nothing and produces no target. A caller asking "is anything scraping these?"
+# would get the wrong answer from a selector test, in both directions: it would
+# report scraping where there is none, and refuse to add scraping where it is
+# needed.
+#
+# So a monitor counts only if it could reach the pod:
+#   - it sets targetPort (a number bypasses the named-port lookup), or
+#   - it rewrites __address__ in a relabeling, or
+#   - it names a port that a launcher pod actually declares.
+#
+# Selectors are resolved by asking the API server rather than by comparing label
+# maps, so a monitor that reaches launchers by any combination is caught.
+# matchExpressions are not evaluated -- kubectl takes no expression selector -- so
+# an expression-only monitor can slip through. This is a guard for the realistic
+# case, not a proof, and both callers treat it as advisory.
+#
+# Echoes nothing when there are no launcher pods: with nothing to resolve against,
+# "no monitor reaches them" is the only answer that can be defended.
+wva_launcher_scrapers() {
+    local ns="$1" exclude="${2:-}" launchers launcher_ports pm sel rewrites ports matched p
+    launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+        -o name 2>/dev/null)
+    [ -n "$launchers" ] || return 0
+
+    launcher_ports=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+        -o jsonpath='{range .items[*].spec.containers[*].ports[*]}{.name}{"\n"}{end}' 2>/dev/null \
+        | grep -v '^$' | sort -u)
+
+    kubectl get podmonitor -n "$ns" -o json 2>/dev/null \
+      | jq -r --arg ex "$exclude" '
+          .items[]
+          | select($ex == "" or .metadata.name != $ex)
+          | [ .metadata.name,
+              ((.spec.selector.matchLabels // {}) | to_entries
+                | map("\(.key)=\(.value)") | join(",")),
+              ( [ (.spec.podMetricsEndpoints // [])[]
+                  | (.targetPort != null)
+                    or ((.relabelings // []) | any(.targetLabel == "__address__")) ]
+                | any ),
+              ( [ (.spec.podMetricsEndpoints // [])[] | .port // empty ] | join(" ") ) ]
+          | @tsv' 2>/dev/null \
+      | while IFS=$'\t' read -r pm sel rewrites ports; do
+            [ -n "$sel" ] || continue
+            matched=$(kubectl get pods -n "$ns" -l "$sel" -o name 2>/dev/null)
+            [ -n "$matched" ] || continue
+            printf '%s\n' "$matched" | grep -Fxq -f <(printf '%s\n' "$launchers") || continue
+            if [ "$rewrites" = "true" ]; then
+                printf '%s\n' "$pm"
+                continue
+            fi
+            for p in $ports; do
+                if printf '%s\n' "$launcher_ports" | grep -Fxq -- "$p"; then
+                    printf '%s\n' "$pm"
+                    break
+                fi
+            done
+        done
+}
+
 # wva_rendered_prereq_objects echoes "<Kind> <name>" for every admin-owned object
 # this install needs, at the names it will really have.
 wva_rendered_prereq_objects() {

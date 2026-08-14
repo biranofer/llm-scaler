@@ -279,10 +279,20 @@ produces, once per cycle:
 has 1 ready pod(s) but none attributed
 ```
 
-There is no workload in an FMA variant that WVA can both scale and measure. If
-FMA and a modelservice `decode` Deployment coexist, WVA targets the decode
-Deployment — it is the half it can see — and under-measures demand by whatever
-share of traffic EPP routes to launchers. Measured on a benchmark run: at peak
+WVA follows the `dual-pods.llm-d.ai/dual` pairing to attribute a launcher's
+metrics to the requester's ScaledObject, so an FMA variant is measurable once its
+launchers are scraped (below). What discovery does depends on the namespace's
+shape:
+
+| namespace holds | plan targets | note |
+| --- | --- | --- |
+| a modelservice `decode`/`prefill` Deployment only | that Deployment | unchanged |
+| an FMA **requester** only | the requester Deployment | its model is read from the `InferenceServerConfig` the pod template names; `apply: no` with the reason if nothing scrapes the launchers yet |
+| **both** | the modelservice Deployment | one entry, not two, plus a warning that launcher traffic is unmeasured |
+
+The last row is a namespace running two guides at once rather than a supported
+topology. WVA targets the decode Deployment — the half it can see — and
+under-measures demand by whatever share of traffic EPP routes to launchers. Measured on a benchmark run: at peak
 EPP dispatched 27.4 req/s across nine launchers against 5.9 req/s to the decode
 pod — about 82% of the load — with launchers at 143 requests running and KV cache
 99.9% full. `deploy/lib` warns when it detects this at plan time.
@@ -331,6 +341,12 @@ changes, and it **skips launchers with no bound instance**, which carry no such
 annotation. Verified on a cluster: 14 unbound launchers produced 0 targets, and a
 launcher produced `up=1` with 96 distinct vLLM metric names within 30 s of
 binding. Without the skip, the unbound ones become permanently-DOWN targets.
+
+**In a namespace with no FMA it does nothing at all.** Its selector requires
+`app.kubernetes.io/component=launcher` *and* `dual-pods.llm-d.ai/launcher-config-name`,
+so it matches no pods, generates no targets and adds no series — and it stays in
+place, so it starts working by itself if FMA is installed later. Applying it
+pre-emptively is safe; leaving it applied after FMA is removed is also safe.
 
 Two things to know:
 
