@@ -44,6 +44,7 @@ var (
 	replicaScalingTotal *prometheus.CounterVec
 	desiredReplicas     *prometheus.GaugeVec
 	unattributedGPUs    *prometheus.GaugeVec
+	unmeasuredQueue     *prometheus.GaugeVec
 	currentReplicas     *prometheus.GaugeVec
 	desiredRatio        *prometheus.GaugeVec
 	errorsTotal         *prometheus.CounterVec
@@ -125,6 +126,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	satFreshnessLabels := []string{constants.LabelVariantName, constants.LabelNamespace}
 	// analyzerDemandLabels: per-analyzer demand D, per model instance and role.
 	analyzerDemandLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelRole}
+	// unmeasuredQueueLabels: model-level, since the whole point is that no
+	// variant could be attributed to carry it.
+	unmeasuredQueueLabels := []string{constants.LabelNamespace, constants.LabelModelName}
 	// analyzerTargetLabels: per-analyzer per-replica target P, per variant.
 	analyzerTargetLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 
@@ -138,6 +142,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 		satFreshnessLabels = append(satFreshnessLabels, constants.LabelControllerInstance)
 		analyzerDemandLabels = append(analyzerDemandLabels, constants.LabelControllerInstance)
 		analyzerTargetLabels = append(analyzerTargetLabels, constants.LabelControllerInstance)
+		unmeasuredQueueLabels = append(unmeasuredQueueLabels, constants.LabelControllerInstance)
 	}
 
 	replicaScalingTotal = prometheus.NewCounterVec(
@@ -254,6 +259,20 @@ func InitMetrics(registry prometheus.Registerer) error {
 			Help: "Number of models processed in the last optimization cycle",
 		},
 		modelsProcessedLabels,
+	)
+
+	unmeasuredQueue = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAUnmeasuredQueue,
+			Help: "Requests queued for a model that WVA has no attributed replica to act on. " +
+				"Zero is the normal state, including for an idle model scaled to zero. " +
+				"Non-zero means traffic is queueing while the autoscaler is blind to the " +
+				"pods serving it — most often an FMA topology whose launcher pods are not " +
+				"scraped, or a PodMonitor selecting a port the pods do not declare. " +
+				"Sourced from the EPP flow-control queue, so it is reported even when no " +
+				"engine pod is scraped at all.",
+		},
+		unmeasuredQueueLabels,
 	)
 
 	unattributedGPUs = prometheus.NewGaugeVec(
@@ -462,6 +481,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(unattributedGPUs); err != nil {
 		return err
 	}
+	if err := registry.Register(unmeasuredQueue); err != nil {
+		return fmt.Errorf("failed to register unmeasuredQueue metric: %w", err)
+	}
 	if err := registry.Register(modelsProcessedGauge); err != nil {
 		return fmt.Errorf("failed to register modelsProcessedGauge metric: %w", err)
 	}
@@ -601,6 +623,24 @@ func SetUnattributedGPUs(count int) {
 		labels[constants.LabelControllerInstance] = controllerInstance
 	}
 	unattributedGPUs.With(labels).Set(float64(count))
+}
+
+// SetUnmeasuredQueue records how many requests are queued for a model that WVA
+// has no attributed replica to act on. Call it every cycle, with 0 when the model
+// is measurable, so the gauge falls back to zero instead of pinning at the last
+// bad value until Prometheus' staleness marker expires.
+func SetUnmeasuredQueue(namespace, modelName string, queued int) {
+	if unmeasuredQueue == nil {
+		return
+	}
+	labels := prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelName,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	unmeasuredQueue.With(labels).Set(float64(queued))
 }
 
 func SetModelsProcessed(count int) {

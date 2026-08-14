@@ -1402,11 +1402,41 @@ func (e *Engine) prepareModelData(
 		"metricsCount", len(replicaMetrics))
 
 	if len(replicaMetrics) == 0 {
-		logger.Info("No saturation metrics available for model, skipping analysis",
-			"modelID", modelID,
-			"namespace", namespace)
+		// Two very different situations reach this line, and they used to produce
+		// the same message.
+		//
+		// A model scaled to zero with nothing queued is idle, and skipping is the
+		// whole point. A model with requests waiting in the scheduler is serving
+		// traffic through pods this controller cannot attribute — an FMA topology
+		// whose launchers nothing scrapes, a PodMonitor naming a port the pods do
+		// not declare, a workload whose ownerReferences reach no scale target. The
+		// second is an emergency and was indistinguishable from the first.
+		//
+		// The scheduler queue answers it, and it can be asked here precisely
+		// because it is model-level and comes from EPP: it does not depend on any
+		// engine pod being scraped, which is the thing that has gone wrong.
+		queued := 0
+		if sq := e.ReplicaMetricsCollector.CollectSchedulerQueueMetrics(ctx, modelID); sq != nil {
+			queued = int(sq.QueueSize)
+		}
+		metrics.SetUnmeasuredQueue(namespace, modelID, queued)
+
+		if queued > 0 {
+			logger.Info("Model is serving but no replica could be attributed: requests are queued and nothing will scale",
+				"modelID", modelID,
+				"namespace", namespace,
+				"queuedRequests", queued,
+				"hint", "check that the serving pods are scraped and that their ownerReferences reach a scale target; for FMA, that the launcher pods have a PodMonitor (see docs/deployment/operations.md, 'FMA launcher pods')")
+		} else {
+			logger.Info("No saturation metrics available for model, skipping analysis",
+				"modelID", modelID,
+				"namespace", namespace)
+		}
 		return nil, nil // nil modelData signals skip
 	}
+	// Measurable this cycle. Reset the gauge rather than leaving the last bad
+	// value to expire on Prometheus' staleness clock.
+	metrics.SetUnmeasuredQueue(namespace, modelID, 0)
 
 	// Discover the authoritative per-variant metadata once, then project it onto
 	// the VariantReplicaState the analyzers consume. The full metadata is also

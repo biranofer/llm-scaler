@@ -313,6 +313,25 @@ const (
 	// without reaching one. Makes the otherwise-silent skip visible.
 	// Labels: namespace, reason
 	WVAPodMappingMissTotal = "wva_pod_mapping_miss_total"
+
+	// WVAUnmeasuredQueue is a gauge carrying the number of requests queued for a
+	// model that WVA has NO attributed replica to act on.
+	//
+	// It separates two states the logs used to render identically. "No saturation
+	// metrics available, skipping analysis" is the correct and quiet answer for a
+	// model that is scaled to zero and idle. It is an emergency for a model that
+	// is serving traffic through pods WVA cannot attribute — an FMA topology
+	// whose launchers are unscraped, a PodMonitor that selects by a port the pods
+	// do not declare, a workload whose ownerReferences reach no scale target.
+	// Both produced the same line, so the second was invisible.
+	//
+	// Non-zero means: requests are queued, and the autoscaler is not going to do
+	// anything about them. Sourced from the model-level scheduler flow-control
+	// queue, which comes from EPP and is therefore independent of whether any
+	// engine pod is scraped.
+	//
+	// Labels: namespace, model_name
+	WVAUnmeasuredQueue = "wva_unmeasured_queue"
 )
 
 // Pod-mapping miss reasons (values for the `reason` label of WVAPodMappingMissTotal).

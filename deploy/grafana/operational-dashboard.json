@@ -379,7 +379,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 4
+        "y": 8
       },
       "id": 47,
       "options": {
@@ -444,7 +444,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 4
+        "y": 8
       },
       "id": 54,
       "options": {
@@ -507,7 +507,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 4
+        "y": 8
       },
       "id": 50,
       "options": {
@@ -588,7 +588,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 4
+        "y": 8
       },
       "id": 10,
       "options": {
@@ -670,7 +670,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 8
+        "y": 12
       },
       "id": 49,
       "options": {
@@ -752,7 +752,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 8
+        "y": 12
       },
       "id": 53,
       "options": {
@@ -834,7 +834,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 8
+        "y": 12
       },
       "id": 24,
       "options": {
@@ -959,7 +959,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 8
+        "y": 12
       },
       "id": 25,
       "options": {
@@ -1027,7 +1027,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 12
+        "y": 16
       },
       "id": 26,
       "options": {
@@ -1138,7 +1138,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "id": 40,
       "options": {
@@ -1215,7 +1215,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above — a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1278,7 +1278,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 36
       },
       "id": 41,
       "options": {
@@ -1392,7 +1392,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 28
       },
       "id": 42,
       "options": {
@@ -1501,7 +1501,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 51
       },
       "id": 52,
       "options": {
@@ -1618,7 +1618,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 43
       },
       "id": 43,
       "options": {
@@ -1670,7 +1670,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds \u00f7 30 seconds), then the average is 36 \u00f7 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
+      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds ÷ 30 seconds), then the average is 36 ÷ 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1727,7 +1727,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 59
       },
       "id": 51,
       "options": {
@@ -1896,7 +1896,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 67
       },
       "id": 30,
       "options": {
@@ -1967,6 +1967,120 @@
       ],
       "title": "Optimization Duration - Percentiles and Average",
       "type": "timeseries"
+    },
+    {
+      "id": 59,
+      "type": "stat",
+      "title": "Queued but unmeasured",
+      "description": "Requests queued for a model that WVA has no attributed replica to act on. Zero is normal, including for an idle model scaled to zero. Above zero means traffic is waiting while the autoscaler is blind to the pods serving it - most often FMA launcher pods that nothing scrapes, or a PodMonitor selecting a port the pods do not declare. See docs/deployment/operations.md, 'FMA launcher pods'.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "sum(wva_unmeasured_queue) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "Queued but unmeasured, by model",
+      "description": "Which model is queueing without a measurable replica, and for how long. A flat non-zero line is an autoscaler that will never react: the demand is real and no variant carries it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_unmeasured_queue{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "refresh": "",
