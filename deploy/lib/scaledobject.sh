@@ -171,9 +171,18 @@ so_plan_rows() {
     if ! json=$(yq -o=json '.' "$file" 2>&1); then
         log_error "$file is not valid YAML, so nothing was applied: $json"
     fi
-    if [ "$(printf '%s' "$json" | jq -r 'if (.plan | type) == "array" then "ok" else "bad" end' 2>/dev/null)" != "ok" ]; then
-        log_error "$file has no 'plan:' list. It must keep a top-level plan: key holding one entry per workload — see the comments at the top of the file."
-    fi
+    # An EMPTY plan is not a broken plan. so_write_plan writes `plan:` with no
+    # entries when the namespace holds no model servers yet — the ordinary state
+    # of a namespace where the controller was installed before the workloads —
+    # and yq parses that to null. Treating null as unreadable made the documented
+    # sequence print an ERROR from the read-only planning step and then fail
+    # `scaledobjects-apply` with exit 2 on the very file it had just written.
+    # Absent key: still an error, because that file is not a plan at all.
+    case "$(printf '%s' "$json" | jq -r 'if (.plan | type) == "array" then "ok" elif (has("plan") and .plan == null) then "empty" else "bad" end' 2>/dev/null)" in
+        ok)    : ;;
+        empty) return 0 ;;
+        *)     log_error "$file has no 'plan:' list. It must keep a top-level plan: key holding one entry per workload — see the comments at the top of the file." ;;
+    esac
     printf '%s' "$json" | jq -r --arg cost "$SO_DEFAULT_VARIANT_COST" '
         .plan[]
         | [ (if (.apply | type) == "boolean"
@@ -508,6 +517,14 @@ so_apply_plan() {
     # this subshell — without `|| exit 1` the loop saw no rows, applied nothing,
     # and reported a clean "0 created" for a file whose error it had just printed.
     rows=$(so_plan_rows "$file") || exit 1
+
+    # An empty plan applies nothing, and says so in those words. It reaches here
+    # whenever the namespace has no model servers yet, which is not an error and
+    # must not read like one.
+    if [ -z "$rows" ]; then
+        log_info "The plan has no entries, so nothing was applied. Deploy the model servers, re-run 'make scaledobjects-plan', and apply that."
+        return 0
+    fi
 
     while IFS=$'\037' read -r apply ns kind name model min max cost policy; do
         [ -n "$name" ] || continue
