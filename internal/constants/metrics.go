@@ -348,6 +348,13 @@ const (
 	// and declining to attribute it is correct. It is separated from
 	// "unresolved" so a pool of spares — which can be large, and is permanent —
 	// does not bury a genuine attribution bug in the same counter.
+	//
+	// Rarely seen where the shipped PodMonitor is in use, and that is by design:
+	// classification happens only for pods that were scraped, and that monitor
+	// drops launchers with no bound instance before a target is generated. This
+	// reason therefore reports the case where something ELSE scrapes launchers —
+	// a monitor with no such rule, or one inherited from another guide — which is
+	// exactly when a warm spare could otherwise be mistaken for idle capacity.
 	PodMappingMissUnboundLauncher = "unbound_launcher"
 
 	// PodMappingMissPairingUnresolved indicates a launcher that DID declare a

@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,18 +29,37 @@ import (
 // Reproducing that here needs no FMA controller and no CRDs, because the labels
 // ARE the contract:
 //
-//   - a launcher pod's controller reference names Kind "LauncherConfig", a kind
-//     the walk cannot follow. The object need not exist: walkOwnersUp stops at an
-//     unknown kind before it tries to fetch it, returning the chain so far and no
-//     error. That is exactly the production path.
+//   - a launcher pod's controller reference names a kind the owner walk cannot
+//     follow, so the walk stops without reaching a scale target and without
+//     erroring — exactly the production path.
 //   - both halves carry dual-pods.llm-d.ai/dual naming each other, which is what
 //     FMA's dual-pods controller maintains on a bound pair.
 //
 // A launcher is a plain pod, not a Deployment, which also matches production: the
 // populator creates them directly.
+//
+// # Why the owner is a ConfigMap and not a fake LauncherConfig
+//
+// The obvious fixture points the ownerReference at "LauncherConfig/fma-<name>"
+// and never creates it, on the reasoning that walkOwnersUp breaks at an unknown
+// kind before it fetches anything. That reasoning is right about the walk and
+// wrong about the cluster: Kubernetes' garbage collector resolves owners, finds
+// nothing, and deletes the pod. Measured on a real cluster, the launcher pods
+// were gone within five seconds of creation, and the e2e spec then waited five
+// minutes for the collector to attribute pods that no longer existed.
+//
+// It passed in unit tests because the fake client has no garbage collector — the
+// one difference that mattered.
+//
+// A ConfigMap is the fix: it is a real object, so the GC leaves the pod alone,
+// and scaleTargetKindSupported does not recognise it, so the walk stops exactly
+// where a LauncherConfig would stop it. The fixture is faithful in the property
+// under test and honest about not being FMA.
 const (
-	fmaLauncherConfigAPIVersion = "fma.llm-d.ai/v1alpha1"
-	fmaLauncherConfigKind       = "LauncherConfig"
+	// The stand-in owner. Any existing object of a kind the walk cannot follow
+	// would do; a ConfigMap needs no CRD and no permissions beyond the namespace.
+	fmaOwnerAPIVersion = "v1"
+	fmaOwnerKind       = "ConfigMap"
 	// The port FMA records on a bound provider pod. Read by the PodMonitor's
 	// relabeling, which is why an unbound launcher generates no target.
 	fmaServerPortAnnotation = "dual-pods.llm-d.ai/server-port"
@@ -57,6 +77,8 @@ type FMALayout struct {
 	// UnboundLauncherPod is a warm spare: a launcher with no pairing label. It
 	// must NOT be attributed, and is included so a spec can prove that.
 	UnboundLauncherPod string
+	// OwnerConfigMap stands in for the LauncherConfig — see the note above.
+	OwnerConfigMap string
 }
 
 // CreateFMALayout builds a bound FMA pair plus one unbound spare in namespace.
@@ -75,6 +97,21 @@ func CreateFMALayout(ctx context.Context, k8sClient *kubernetes.Clientset, names
 		RequesterPod:        name + "-pod",
 		LauncherPod:         "launcher-" + name,
 		UnboundLauncherPod:  "launcher-" + name + "-spare",
+		OwnerConfigMap:      "fma-" + name,
+	}
+
+	// The stand-in LauncherConfig. Created first: the launcher pods reference it,
+	// and a dependent whose owner does not exist is garbage-collected.
+	owner := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: l.OwnerConfigMap, Namespace: namespace,
+		Labels: map[string]string{"test-resource": defaultTestResourceLabelValue},
+	}}
+	if _, err := k8sClient.CoreV1().ConfigMaps(namespace).Create(ctx, owner, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
+		return nil, fmt.Errorf("create launcher owner ConfigMap: %w", err)
+	}
+	ownerUID, err := k8sClient.CoreV1().ConfigMaps(namespace).Get(ctx, l.OwnerConfigMap, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("read back launcher owner ConfigMap: %w", err)
 	}
 
 	deploy := &appsv1.Deployment{
@@ -106,9 +143,9 @@ func CreateFMALayout(ctx context.Context, k8sClient *kubernetes.Clientset, names
 	// The requester pod, owned by the Deployment via a ReplicaSet stand-in. A
 	// direct Deployment ownerReference is enough for the walk: it looks for the
 	// first ancestor of a scale-target kind, and a Deployment is one.
-	created, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, l.RequesterDeployment, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("read back requester deployment: %w", err)
+	created, derr := k8sClient.AppsV1().Deployments(namespace).Get(ctx, l.RequesterDeployment, metav1.GetOptions{})
+	if derr != nil {
+		return nil, fmt.Errorf("read back requester deployment: %w", derr)
 	}
 	requester := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -133,12 +170,12 @@ func CreateFMALayout(ctx context.Context, k8sClient *kubernetes.Clientset, names
 		return nil, fmt.Errorf("create requester pod: %w", err)
 	}
 
-	bound := fmaLauncherPod(namespace, l.LauncherPod, modelLabel, modelID, maxNumSeqs, l.RequesterPod)
+	bound := fmaLauncherPod(namespace, l.LauncherPod, modelLabel, modelID, maxNumSeqs, l.RequesterPod, l.OwnerConfigMap, ownerUID.UID)
 	if _, err := k8sClient.CoreV1().Pods(namespace).Create(ctx, bound, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
 		return nil, fmt.Errorf("create bound launcher: %w", err)
 	}
 
-	spare := fmaLauncherPod(namespace, l.UnboundLauncherPod, modelLabel, modelID, maxNumSeqs, "")
+	spare := fmaLauncherPod(namespace, l.UnboundLauncherPod, modelLabel, modelID, maxNumSeqs, "", l.OwnerConfigMap, ownerUID.UID)
 	if _, err := k8sClient.CoreV1().Pods(namespace).Create(ctx, spare, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
 		return nil, fmt.Errorf("create unbound launcher: %w", err)
 	}
@@ -156,7 +193,7 @@ func CreateFMALayout(ctx context.Context, k8sClient *kubernetes.Clientset, names
 // the property that makes a launcher invisible to a port-name endpoint and is the
 // whole reason that PodMonitor exists — a fixture that declared one would test a
 // pod FMA never creates.
-func fmaLauncherPod(namespace, name, modelLabel, modelID string, maxNumSeqs int, partner string) *corev1.Pod {
+func fmaLauncherPod(namespace, name, modelLabel, modelID string, maxNumSeqs int, partner, ownerName string, ownerUID types.UID) *corev1.Pod {
 	labels := map[string]string{
 		constants.ComponentLabelKey: constants.LauncherComponent,
 		"test-resource":             defaultTestResourceLabelValue,
@@ -179,10 +216,10 @@ func fmaLauncherPod(namespace, name, modelLabel, modelID string, maxNumSeqs int,
 			Labels:      labels,
 			Annotations: annotations,
 			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: fmaLauncherConfigAPIVersion,
-				Kind:       fmaLauncherConfigKind,
-				Name:       "fma-" + name,
-				UID:        "00000000-0000-0000-0000-0000000000fa",
+				APIVersion: fmaOwnerAPIVersion,
+				Kind:       fmaOwnerKind,
+				Name:       ownerName,
+				UID:        ownerUID,
 				Controller: ptr.To(true),
 			}},
 		},
@@ -190,6 +227,19 @@ func fmaLauncherPod(namespace, name, modelLabel, modelID string, maxNumSeqs int,
 			Name:  "inference-server",
 			Image: defaultModelServiceSimulatorImage,
 			Args:  buildModelServerBaseArgs(modelID, true, maxNumSeqs),
+			// Required by the args above, not optional decoration: the simulator
+			// refuses to start with --enable-kvcache unless POD_IP is set —
+			// "IP should be defined in the environment (POD_IP) for KV cache to
+			// work" — and then CrashLoopBackOffs. A launcher that never starts
+			// serves no metrics, so nothing is scraped and nothing is attributed,
+			// which is a confusing way to watch an attribution test time out.
+			// buildModelServiceDeployment sets the same three; borrowing its args
+			// without its environment was the whole bug.
+			Env: []corev1.EnvVar{
+				{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.name"}}},
+				{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.namespace"}}},
+				{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "status.podIP"}}},
+			},
 		}}},
 	}
 }
@@ -265,6 +315,11 @@ func DeleteFMALayout(ctx context.Context, k8sClient *kubernetes.Clientset, names
 	}
 	if err := k8sClient.AppsV1().Deployments(namespace).Delete(ctx, l.RequesterDeployment, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("delete deployment %s: %w", l.RequesterDeployment, err)
+	}
+	// Last: deleting it first would have the garbage collector remove the
+	// launcher pods out from under the spec.
+	if err := k8sClient.CoreV1().ConfigMaps(namespace).Delete(ctx, l.OwnerConfigMap, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("delete owner ConfigMap %s: %w", l.OwnerConfigMap, err)
 	}
 	return nil
 }

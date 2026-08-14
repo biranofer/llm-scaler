@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -62,6 +61,24 @@ var _ = Describe("FMA launcher attribution", Label("full"), Label("fma"), Ordere
 
 		By("scraping the launchers the way the shipped PodMonitor does")
 		Expect(fixtures.EnsureFMALauncherPodMonitor(ctx, crClient, cfg.LLMDNamespace)).To(Succeed())
+
+		// Without this the spec proves nothing. WVA is only ever asked about
+		// workloads KEDA calls it about, so with no ScaledObject there is no
+		// registered variant, the collector never runs for this model, and no pod
+		// — launcher or otherwise — is ever attributed. The first version of this
+		// spec omitted it and failed for exactly that reason: five minutes of
+		// waiting for a line the controller had no reason to write.
+		By("registering the requester, which is what makes WVA collect for this model at all")
+		scalerAddress := "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
+		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace,
+			layout.RequesterDeployment, layout.RequesterDeployment, layout.RequesterDeployment+"-wva",
+			1, 2, cfg.MonitoringNS,
+			fixtures.WithWVATriggerMetadata(modelID, "10.0"),
+			fixtures.WithExternalScalerTrigger(scalerAddress),
+		)).To(Succeed())
+		DeferCleanup(func() {
+			_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, layout.RequesterDeployment)
+		})
 	})
 
 	It("attributes a bound launcher to the requester's scale target", func() {
@@ -80,23 +97,29 @@ var _ = Describe("FMA launcher attribution", Label("full"), Label("fma"), Ordere
 	})
 
 	It("does not attribute a launcher with no bound instance", func() {
-		// The warm spare carries no pairing label, so it must be rejected — and
-		// rejected under its OWN reason, not the generic one. A pool of spares is
-		// expected and permanent; filing it as `unresolved` would bury a real
-		// attribution failure in the same counter.
-		Eventually(func() bool {
+		// A warm spare must never be counted as capacity. It carries no pairing
+		// label and no server-port annotation, so the PodMonitor's keep rule
+		// drops it before a target is generated: it is not scraped, never reaches
+		// the collector, and is therefore never attributed.
+		//
+		// The first version of this spec asserted the opposite — that the
+		// controller would file it under reason=unbound_launcher. That reason
+		// exists, but in a correctly configured namespace it is nearly
+		// unreachable: classification happens only for pods that were scraped,
+		// and the whole point of the keep rule is that a spare is not. It fires
+		// only when something ELSE scrapes launchers, which is the case it was
+		// written for. Asserting it here was asserting that our own scrape design
+		// had failed.
+		//
+		// So the assertion is the absence: the spare never turns up in an
+		// attribution line, however long we watch.
+		Consistently(func() bool {
 			ok, _, err := testutils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace,
-				fmaControllerManagerLabel,
-				fmt.Sprintf("%s\"", layout.UnboundLauncherPod), 300)
-			if err != nil || !ok {
-				return false
-			}
-			ok, _, err = testutils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace,
-				fmaControllerManagerLabel, "unbound_launcher", 300)
+				fmaControllerManagerLabel, layout.UnboundLauncherPod, 600)
 			return err == nil && ok
-		}, 5*time.Minute, 15*time.Second).Should(BeTrue(),
-			"the unbound launcher was not skipped as a warm spare; it must be counted under "+
-				"reason=unbound_launcher rather than attributed or filed as unresolved")
+		}, 90*time.Second, 30*time.Second).Should(BeFalse(),
+			"the unbound launcher appeared in the controller's logs; a warm spare must be "+
+				"neither scraped nor attributed, so it should be invisible to the collector entirely")
 	})
 
 	It("never files a bound launcher as unresolved", func() {
@@ -106,7 +129,7 @@ var _ = Describe("FMA launcher attribution", Label("full"), Label("fma"), Ordere
 		Consistently(func() bool {
 			ok, _, err := testutils.PodLogsLabelSelectorContain(ctx, k8sClient, cfg.WVANamespace,
 				fmaControllerManagerLabel,
-				fmt.Sprintf("%s\", \"instance", layout.LauncherPod), 300)
+				layout.LauncherPod+`", "instance`, 300)
 			return err == nil && ok
 		}, 60*time.Second, 20*time.Second).Should(BeFalse(),
 			"the bound launcher appeared in a skip message; the pairing hop is not resolving it")
