@@ -13,8 +13,18 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+# Plotting is optional. matplotlib is not a dependency of running a benchmark —
+# it is only needed to draw the picture afterwards — so a machine without it must
+# get one clear line, not a traceback and a failed make target. The benchmark has
+# already succeeded by the time this runs; the numbers are in the results
+# directory either way.
+try:
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+except ImportError:
+    print("Skipping the two-variant plot: matplotlib is not installed "
+          "(pip install matplotlib). The benchmark results are unaffected.")
+    raise SystemExit(0)
 
 PRIMARY_COLOR = "#1f77b4"
 V2_COLOR = "#d62728"

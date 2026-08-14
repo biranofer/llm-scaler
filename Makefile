@@ -167,10 +167,18 @@ DELETE_NAMESPACES ?= false
 
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+#
+# Guarded on go being installed. This block is evaluated for EVERY target, so
+# without the guard a machine with no Go on PATH prints
+# "make: go: No such file or directory" three times before running a target that
+# has nothing to do with Go — which is what the benchmark post-processing targets
+# did, making a plotting problem look like a broken toolchain.
+ifneq (,$(shell command -v go 2>/dev/null))
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
 else
 GOBIN=$(shell go env GOBIN)
+endif
 endif
 
 # CONTAINER_TOOL defines the container tool to be used for building images.

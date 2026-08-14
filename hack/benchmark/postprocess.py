@@ -120,6 +120,23 @@ def _extract_error_count(results_dir):
     return data["benchmarks"][0]["metrics"]["request_totals"].get("errored", 0)
 
 
+# Controller names that carry the replicas actually serving the model.
+#
+# "decode" is the modelservice layout. "fma-requester" is Fast Model Actuation,
+# where the requester Deployment is the scale target and each of its replicas
+# binds a launcher pod that runs the engine — so the requester's replica count is
+# the served capacity even though the requester itself runs no engine.
+#
+# Matching only "decode" reported "Avg primary replicas 0.00" for every FMA run,
+# which read as "nothing was serving" when four launchers were at 155, 136, 56 and
+# 44 concurrent requests.
+SERVING_CONTROLLER_MARKERS = ("decode", "fma-requester")
+
+
+def _is_serving_controller(name):
+    return any(marker in name for marker in SERVING_CONTROLLER_MARKERS)
+
+
 def _extract_replica_stats(results_dir):
     """Avg and max ready replicas from replica_status_timeseries.json."""
     path = os.path.join(results_dir, "metrics", "processed",
@@ -134,7 +151,7 @@ def _extract_replica_stats(results_dir):
     for snap in data["snapshots"]:
         ready = sum(
             (c.get("ready_replicas", 0) or 0) for c in snap["controllers"]
-            if "decode" in c.get("name", "")
+            if _is_serving_controller(c.get("name", ""))
         )
         totals.append(ready)
 
@@ -148,7 +165,8 @@ def _extract_variant_replica_stats(results_dir, secondary_suffix):
 
     Returns (primary_avg, primary_max, secondary_avg, secondary_max).
     Controllers whose name ends with '-<secondary_suffix>' are secondary;
-    all other decode controllers are primary.
+    all other SERVING controllers are primary — see SERVING_CONTROLLER_MARKERS,
+    which covers both the modelservice (decode) and FMA (requester) layouts.
     """
     path = os.path.join(results_dir, "metrics", "processed",
                         "replica_status_timeseries.json")
@@ -164,7 +182,7 @@ def _extract_variant_replica_stats(results_dir, secondary_suffix):
         for c in snap.get("controllers", []):
             name = c.get("name", "")
             ready = c.get("ready_replicas", 0) or 0
-            if "decode" not in name:
+            if not _is_serving_controller(name):
                 continue
             if f"-{secondary_suffix}" in name:
                 s += ready
