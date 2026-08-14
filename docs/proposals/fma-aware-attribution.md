@@ -451,15 +451,35 @@ under-reports supply — the safe direction.
 
 `VariantCapacity.ReplicaCount` remains in scale-target units. Nothing changes.
 
-**Unverified, and it must be verified before phase 1 lands.** The claim above
-about the divergence being safe assumes supply is derived from the attributed
-rows. If supply is instead derived from the scale target's replica count while
-demand comes from attributed rows, the sign flips and the divergence becomes
-dangerous: a requester pod is counted as supply the moment it exists, its
-launcher is not yet bound so nothing is attributed to it, and the variant reads
-as over-provisioned exactly while it is waiting for capacity — suppressing the
-scale-up that would fix it. Read the supply path in the saturation analyzer and
-settle this; do not carry the assumption into code.
+**Settled, and the earlier draft had the sign backwards.** It claimed the
+divergence "under-reports supply — the safe direction". It does not.
+`internal/engines/aggregation/aggregation.go` is explicit:
+
+```
+r.TotalSupply            == Σ_v vc.ReplicaCount × vc.PerReplicaCapacity
+r.TotalAnticipatedSupply == Σ_v (vc.ReplicaCount + vc.PendingReplicas) × vc.PerReplicaCapacity
+```
+
+with the comment: "Pending replicas count toward anticipated supply so an
+in-flight scale-up reduces the computed RC and prevents double-scaling."
+
+Supply therefore comes from **`ReplicaCount`**, which is in scale-target units,
+while demand comes from attributed rows. So the divergence **over-reports**
+supply: a requester pod counts the moment it exists, nothing is attributed to it
+until its launcher binds, and the variant reads as over-provisioned exactly while
+it waits for capacity.
+
+For a modelservice deployment that is correct and desirable — the pending pod
+really is about to serve, and counting it prevents double-scaling. **For FMA it
+is a trap**, because §7's ceiling makes "pending" a possibly permanent state: a
+requester with no bindable launcher or no free GPU stays Pending indefinitely,
+keeps counting toward anticipated supply, and permanently suppresses the
+scale-up. The system settles into "I have asked for enough" while serving
+nothing new.
+
+This does not change the design in §1 — attribution is still the fix — but it
+raises the priority of §7's bound on `maxReplicaCount`, which is what stops a
+variant from manufacturing permanently-pending supply in the first place.
 
 ### 4. Make the launchers scrapeable (the prerequisite)
 
@@ -744,6 +764,72 @@ chooses correct autoscaling over complete accounting.
    maxInstances`, or an explicit GPU count) so it can be subtracted at plan time,
    where reading `LauncherPopulationPolicy` is permitted (§8).
 
+Two details that sharpen the picture, both measured:
+
+- **The GPU request is stripped at pod creation.** `LauncherConfig`'s pod
+  template declares `nvidia.com/gpu: 1` in both requests and limits, yet all 14
+  launcher pods carry `req=0 lim=0`. So the zero is produced by FMA's own
+  populator, deliberately, matching the "would double-book" comment in the
+  deployment template. This is by design, not drift.
+- **The hazard is real but not currently realised.** Checking every node hosting
+  a resident launcher against that node's total GPU requests across all
+  namespaces: all nine have headroom (e.g. `pgqdm`'s node, 5 requested of 6
+  allocatable). So nothing is contended today. The exposure is that nothing
+  *prevents* it — the scheduler is free to fill those nodes, and it would not
+  know a sleeping instance is holding one of the GPUs it is handing out.
+
+### Could WVA size the warm pool under a GPU quota?
+
+Asked directly: can WVA decide how many warm instances to keep, as part of its
+GPU budget? Three capabilities are needed, and they are in very different states.
+
+**(a) See warm GPU usage — possible today, no FMA change.** A resident-but-asleep
+instance answers `:8000/metrics` with
+`vllm:engine_sleep_state{sleep_state="awake"} 0` and `weights_offloaded 1`,
+verified on all nine. So scraping launchers on a fixed port and classifying by
+`engine_sleep_state` yields a resident count without touching the launcher's API
+or any FMA object. Two caveats: it needs a scrape config that *does* target
+unbound launchers, which is the opposite of §4's annotation-keyed PodMonitor (so
+it is a second, separate monitor with a different purpose); and it gives a
+**count**, not GPU identity, and one instance is one GPU only at
+`--tensor-parallel-size 1`. For quota arithmetic a count is usually enough.
+
+**(b) Control the pool size — partially possible, and awkward.**
+`LauncherPopulationPolicy.spec.countForLauncher[].launcherCount` is a plain
+writable field, so it can be patched. But it is *per matching node*, not a total,
+so "keep N warm instances" has to be expressed as
+`N ≈ nodes × launcherCount × maxInstances` and re-derived whenever the node set
+changes. There is no `scale` subresource, so KEDA cannot drive it and nothing
+declarative can either. And writing FMA objects from the controller breaks the
+no-`fma.llm-d.ai`-dependency principle, so it would have to live in the installer
+or an opt-in FMA-aware component (§8).
+
+**(c) Decide the split — this part WVA is already built for.** Its optimizer
+allocates GPUs across variants under limits and costs; "warm standby" is another
+claimant on the same budget, buying actuation latency instead of throughput. That
+is an objective-function change, not new machinery.
+
+**Verdict: advisory today, enforceable only with FMA changes.** The blocker is
+not (b) or (c) — it is that *"under GPU quotas" is not currently meaningful for
+warm instances*. A `ResourceQuota` counts requester pods; it cannot see the warm
+pool at all, so no amount of WVA cleverness makes a quota bind on it. WVA can
+observe the pool via (a), report it, and recommend a `launcherCount` — which is
+exactly the shape of its existing limiter, advisory precisely because
+`ResourceQuota` is the real boundary. Here the real boundary has a hole in it,
+and it cannot be patched from outside FMA.
+
+The minimum FMA changes that would make it enforceable, in dependency order:
+
+1. **Charge the warm GPUs.** Have launchers request the accelerators their
+   resident instances hold — an extended resource if requesting the real one
+   would double-book against the requester. Without this, nothing else matters.
+2. **A total-count warm-pool knob with a `scale` subresource**, so the pool can
+   be driven declaratively by KEDA or by WVA's existing actuation path rather
+   than by bespoke per-node patching.
+3. **Report pool state in `status`** — resident, bound and free instance counts —
+   so a controller can read it instead of inferring it from metrics or polling
+   pod APIs.
+
 **And an upstream ask**, added below: make the warm pool visible. Either have
 launchers request the GPUs they hold — an extended resource would do, if the real
 one would double-book — or keep the `accelerators` / `vllm-config` annotation on
@@ -846,14 +932,16 @@ never entered while per-replica data is available. But it does mean the phasing
 has an earlier and much cheaper first step than "fix attribution", and it is the
 step that makes WVA no worse than KEDA on FMA.
 
-Worth verifying before relying on the loop above: the claim that "FMA's
-launcher-populator reconciles launcher pods to match" implies the pool grows with
-demand, whereas `LauncherPopulationPolicy.spec.countForLauncher[].launcherCount`
-reads as a fixed count per matching node (observed: `1`). If the populator only
-maintains a declared count, §8's warm-slot ceiling is real and the KEDA scenario
-is simply sized so it is never hit. If it genuinely grows, §8's first row is
-already solved upstream. These are very different worlds and the comment alone
-does not settle which one we are in.
+**Settled: the populator does not grow the pool with demand.** Measured —
+14 nodes carry `nvidia.com/gpu.present=true`, `launcherCount` is `1`, and there
+are exactly 14 launcher pods, one per node. Both `LauncherConfig.status` and
+`LauncherPopulationPolicy.status` contain only `observedGeneration`: no replica
+count, no demand signal, nothing an autoscaler could read or a controller could
+reconcile against load. The populator maintains a **declared** count.
+
+So §8's warm-slot ceiling is real, and the upstream KEDA scenario is simply sized
+so it is never hit — one warm launcher per GPU node is a generous pool for a
+demo. It is not a general answer, and nothing upstream solves §8's first row.
 
 ## Can FMA run with no loss of metric fidelity?
 
@@ -1000,12 +1088,13 @@ End-to-end, on a real FMA install: drive load, then assert
 
 ## Phases
 
-0. ~~**Bind one pair and look at it.**~~ **Done** (2026-08-14). The launcher
-   carries `dual`, the requester emits nothing, and the bind took under 5 s — see
-   the fact-check table. It also turned up the `server-port` annotation that
-   removes §4's hardcoded port, and the GPU accounting gap in §10. Still open in
-   this phase, both reads: the supply-path question in §3 and §9's
-   launcher-populator question.
+0. ~~**Bind one pair and look at it. Settle the supply path and the
+   populator.**~~ **Complete** (2026-08-14). The launcher carries `dual`, the
+   requester emits nothing, the bind took under 5 s, supply comes from
+   `ReplicaCount` and over-reports during binding (§3), and the populator holds a
+   declared count (§9). Also turned up the `server-port` annotation that removes
+   §4's hardcoded port, and the GPU accounting gap in §10. **Phase 1 is
+   unblocked.**
 0.5 **Pool-level degraded mode (§9).** Cheapest useful step: makes WVA able to
    drive an FMA variant with no attribution fix and no PodMonitor change, using
    EPP signals already collected, and brings WVA level with what plain KEDA does
@@ -1095,15 +1184,28 @@ that cites measurements should say which ones it actually took.
 | binding annotations exist **only while bound** | an orphan running an instance carries only the two hash annotations |
 | GPU accounting gap | 9 launchers holding 9 distinct GPUs, 0 bound, 0 GPU requests, 1 GPU charged in the namespace |
 
-**From FMA's source or docs, not observed live:**
+**Settled by reading our own code and the cluster (final pass):**
+
+| claim | evidence |
+| --- | --- |
+| supply comes from `ReplicaCount`, not attributed rows | `aggregation.go`: `TotalSupply = Σ ReplicaCount × PerReplicaCapacity` |
+| pending replicas count toward anticipated supply | `SumTotalAnticipatedSupply`, and its doc comment |
+| ⇒ the mid-binding divergence **over**-reports supply | the earlier draft had this backwards (§3) |
+| the populator holds a declared count, it does not grow | 14 GPU nodes × `launcherCount 1` = exactly 14 launcher pods |
+| no demand signal exists in FMA status | both CRs report only `observedGeneration` |
+| launcher GPU requests are stripped at creation | template says `1/1`, all 14 pods have `0/0` |
+| warm residency is observable without FMA changes | 9 launchers answer `:8000` with `awake=0, weights_offloaded=1` |
+| no node is currently oversubscribed | every resident launcher's node has GPU headroom |
+
+**From FMA's docs, not observed live — and no longer load-bearing:**
 
 | claim | source | risk if wrong |
 | --- | --- | --- |
-| bound ⇒ awake | `docs/dual-pods.md` | low — §2 does not rely on it, and §10 shows resident-but-unbound instances exist |
-| a launcher may host several models | `docs/launcher.md` | low — only widens §1.5 |
-| requester replicas is the scale lever | `docs/dual-pods.md` + both upstream ScaledObject templates | low — corroborated twice, and phase 0 confirmed a bind follows a scale-up |
+| bound ⇒ awake | `docs/dual-pods.md` | none — contradicted in practice (§2, §10); the design relies on `dual`, not on liveness |
+| a launcher may host several models | `docs/launcher.md` | low — only widens §1.5, which already fails closed |
 
-Nothing load-bearing remains unverified.
+**Nothing load-bearing remains unverified.** Every claim the design depends on has
+been measured, on this cluster, including the two that required binding a pair.
 
 ## Conformance: Kubernetes and Go practice
 
