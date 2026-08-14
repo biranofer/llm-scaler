@@ -109,6 +109,10 @@ BENCHMARK_KEDA_MAX_REPLICAS ?= 10
 # 5s. It cannot make scaling faster than the HPA control loop, which
 # re-evaluates on kube-controller-manager's sync period (15s by default) --
 # below that, a smaller number changes nothing.
+# The UID the benchmark harness pod runs as. 0 because its entrypoint writes to
+# /usr/local/bin; see the note beside the yq call in benchmark-standup.
+BENCHMARK_HARNESS_RUN_AS_USER ?= 0
+
 BENCHMARK_KEDA_SCALE_UP_PERIOD ?= 5
 BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 120
 
@@ -766,6 +770,25 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@yq -i '(.scenario[] | select(has("wva")) | .wva.enabled) = false' \
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml && \
 		echo "Scenario's own WVA install disabled (this repo installs it from deploy/)."
+	@# Run the harness as root, or it cannot start on OpenShift.
+	@#
+	@# Its entrypoint copies its scripts into /usr/local/bin and chmods them.
+	@# v0.7.0's pod template hardcoded runAsUser: 0 so that always worked;
+	@# v0.7.8 made it conditional on harness.runAsUser being set, and a scenario
+	@# that does not set it now gets no securityContext at all. OpenShift then
+	@# assigns a UID from the namespace range and the copy dies with
+	@#   cp: cannot create regular file '/usr/local/bin/...': Permission denied
+	@# followed by analyze_results failing on a results.json that was never
+	@# written. Observed on pokprod001 with the v0.7.8 template.
+	@#
+	@# Granting anyuid to the harness ServiceAccount does NOT fix it there:
+	@# openshift-ai-llminferenceservice-multi-node-scc has priority 11 against
+	@# anyuid's 10, so it wins for any SA that can use it and forces
+	@# MustRunAsRange. Asking for UID 0 is what makes that SCC unable to admit
+	@# the pod, so selection falls to anyuid and the harness gets root.
+	@yq -i '(.scenario[] | select(has("harness")) | .harness.runAsUser) = $(BENCHMARK_HARNESS_RUN_AS_USER)' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml && \
+		echo "Harness runAsUser=$(BENCHMARK_HARNESS_RUN_AS_USER) (v0.7.8 stopped forcing it; OpenShift needs it)."
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) standup \
 		-p $(BENCHMARK_NAMESPACE) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
