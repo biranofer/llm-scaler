@@ -240,7 +240,24 @@ var _ = Describe("PrometheusAlerts", Label("smoke"), Label("prometheus-alerts"),
 		By("Verifying PrometheusRule has correct structure")
 		Expect(prometheusRule.Spec.Groups).To(HaveLen(1), "Should have 1 rule group")
 		Expect(prometheusRule.Spec.Groups[0].Name).To(Equal("wva.rules"))
-		Expect(prometheusRule.Spec.Groups[0].Rules).To(HaveLen(5), "Should have 5 alert rules")
+
+		// The alert NAMES, not a count. This assertion asked for 5 rules against
+		// a manifest that has shipped 6 since the same commit added both, so it
+		// could never have passed — and it went unseen because it is labelled
+		// `smoke`, which `test-e2e-full` excludes (the label sets are disjoint).
+		// Naming them says which alert appeared or vanished, instead of "6 != 5".
+		alertNames := make([]string, 0, len(prometheusRule.Spec.Groups[0].Rules))
+		for _, rule := range prometheusRule.Spec.Groups[0].Rules {
+			alertNames = append(alertNames, rule.Alert)
+		}
+		Expect(alertNames).To(ConsistOf(
+			"WVAHighErrorRate",
+			"WVAOptimizationLoopStalled",
+			"WVAMetricsCollectionFailing",
+			"WVANodeAccessDenied",
+			"WVAGPUResourceExhausted",
+			"WVAReplicaScalingThrashing",
+		), "alert set must match config/components/prometheus-alerts/prometheusrule.yaml")
 		GinkgoWriter.Println("✓ PrometheusRule structure is valid")
 	})
 
