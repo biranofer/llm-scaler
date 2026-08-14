@@ -319,6 +319,27 @@ Take (1) in phase 1 — it is free. Take (2) if a real deployment ever shows a
 stale binding, or preemptively if the extra query is judged cheap. Note (2) also
 gives a direct answer to "is this replica actually serving", which no label can.
 
+**A real deployment already shows the drift.** Measured on pokprod001 while
+writing this:
+
+```
+launcher pods:      14
+  sleeping=true:     9
+  sleeping=false:    5
+requester replicas:  0
+```
+
+Five launcher pods are labelled awake with **zero** requester pods in the
+namespace to be bound to. Under the documented invariant that set should be
+empty. So the labels do drift from the state they describe, the guards above are
+not defensive programming against a hypothetical, and any future work that wants
+to read `sleeping` as truth — rather than as a veto — needs the engine's own
+`engine_sleep_state` instead.
+
+(The hop itself is unharmed here: those five pods carry no `dual` label, so they
+are rejected before `sleeping` is even consulted. The label required for
+attribution is the stronger signal, which is why it is the one the hop keys on.)
+
 It should be dropped *legibly*, though. Add a second reason to
 `wva_pod_mapping_miss_total` alongside `PodMappingMissUnresolved`:
 
@@ -478,8 +499,67 @@ one-shot admin-context operation, and which the *controller* must not, per the
 principles above. Setting it at plan time keeps the runtime free of any FMA
 dependency.
 
+The bound is a minimum of two independent things, and conflating them is how a
+sizing bug gets written:
+
+```
+ceiling = min( Σ_nodes (launcherCount × maxInstances),   # warm slots
+               Σ_nodes free GPUs )                        # actual accelerators
+```
+
+Launcher pods request no GPU (§6), so warm slots and GPUs are exhausted
+separately. Which one ran out determines what to do about it, which is §8.
+
 Until that is implemented, the plan should warn when it targets a requester
 whose `maxReplicaCount` exceeds the number of launcher pods present.
+
+### 8. When the warm pool is exhausted: a second loop, not a bigger number
+
+If demand outruns the bindable launchers, raising `maxReplicaCount` does nothing
+except manufacture Pending pods. The capacity has to come from somewhere else,
+and there are exactly two somewheres — distinguished by which term of the `min()`
+above is binding:
+
+| exhausted | meaning | remedy | timescale |
+| --- | --- | --- | --- |
+| **warm slots**, GPUs free | pool too small for the GPUs present | raise `launcherCount` in `LauncherPopulationPolicy`, or `maxInstances` | ~minutes (schedule + image + model load) |
+| **GPUs**, slots free | genuine accelerator scarcity | reclaim from a lower-priority variant, or add nodes | seconds (reclaim) / tens of minutes (nodes) |
+
+Two structural facts shape what WVA may do here.
+
+**KEDA cannot drive it.** None of `launcherconfigs`,
+`launcherpopulationpolicies` or `inferenceserverconfigs` exposes a `scale`
+subresource — verified against the CRDs, which carry `status` only. A
+`scaleTargetRef` cannot point at any of them, so the metric path is structurally
+incapable of growing the pool. Whatever does it must write the object directly.
+
+**Writing FMA objects from the controller breaks principle 2.** The runtime must
+not depend on the `fma.llm-d.ai` API group existing — no client, no RBAC, no
+informer — or FMA-installed-after-WVA stops working and FMA-never-installed
+starts costing something. So the controller must not patch these objects.
+
+That leaves a clean split, and phase 1 only needs the first half:
+
+1. **Signal, don't actuate.** When a variant's demand exceeds what its scale
+   target can absorb *and* the shortfall is warm slots rather than GPUs, say so:
+   a counter, an event on the ScaledObject, and a line in the plan. Today this
+   condition is invisible — the operator sees Pending pods and a variant that
+   will not grow, with nothing connecting the two. Most of the value is here, and
+   it costs no new API surface.
+2. **If actuation is ever wanted**, it belongs on the *managed-mode / envelope*
+   path described in `wva-keda-external-scaler.md` §5 — the same mechanism as the
+   urgent ceiling, which already writes spec fields rather than metrics — and in
+   a component that may depend on FMA, not in the topology-agnostic collector.
+   That design's own warning applies directly: never let two write paths drive
+   the same count.
+
+Note what does **not** change: FMA alters the *latency* of actuation, not the GPU
+economics. A warm launcher makes a bind take seconds instead of minutes, but the
+bound instance still consumes exactly one GPU through its requester. So WVA's
+existing scarcity machinery — limiters, priority, urgent-ceiling reclamation — is
+still the right and sufficient answer to the second row of that table. FMA adds a
+new *warm-slot* resource that can be exhausted independently of GPUs; it does not
+add a new kind of scarcity.
 
 ## Is the requester Deployment really the right `scaleTargetRef`?
 
@@ -532,12 +612,47 @@ Concretely:
 The attribution half (§1, §1.5, §2) obviously runs only inside WVA. It changes
 no cluster state and is invisible to anything else.
 
-## What does not change
+## Guarantees when FMA is absent
 
-The non-FMA path executes the identical code with the identical API calls. The
-pairing hop is unreachable without the label; the new PodMonitor is opt-in; the
-new miss reason cannot be emitted without a launcher pod. A regression here
-would have to come from the guards, which is what the tests below are for.
+"Works with FMA" is worthless if it costs anything when FMA is not there. These
+are stated as checkable properties, not as reassurance — each maps to a test.
+
+1. **No extra API call.** The hop runs only after the ownerReferences walk has
+   already failed *and* only if the pod carries `dual-pods.llm-d.ai/dual`. On the
+   ordinary path the walk succeeds and the branch is never reached. On an
+   ordinary *unmanaged* pod the walk fails, the label is absent, and the cost is
+   one map lookup on a pod object already in memory — no GET, no LIST, no watch.
+2. **No dependency on the `fma.llm-d.ai` API group.** The runtime reads pod
+   labels and nothing else: no typed client, no scheme registration, no RBAC on
+   that group, no informer, no CRD-presence check. A cluster where those CRDs
+   have never existed behaves identically to one where they have. This is also
+   what makes "FMA installed after WVA" work with no restart — there is no boot
+   time decision to get wrong.
+3. **The PodMonitor matches nothing.** It is opt-in, and it selects on
+   `dual-pods.llm-d.ai/launcher-config-name` in addition to the generic
+   component label (§4), so in a namespace without FMA it selects zero pods and
+   generates zero targets. It also cannot collide with the llm-d PodMonitor,
+   which is the failure it exists to prevent.
+4. **The new miss reasons are unreachable.** `unbound_launcher` requires a
+   launcher pod; `foreign_model_instance` requires a `dual` label. Neither can be
+   emitted in a non-FMA namespace, so existing dashboards and alerts on
+   `wva_pod_mapping_miss_total` see no new series.
+5. **Discovery is unchanged.** `so_fma_requester` returns empty when no requester
+   Deployment exists, so no warning is printed, no target rule changes, and the
+   plan is byte-identical to what it renders today.
+6. **Leftover labels degrade safely.** If FMA is uninstalled but pods keep stale
+   `dual` labels, the hop runs, the named partner does not resolve, and the pod
+   becomes an ordinary miss — the same outcome as today, reached slightly later.
+
+The corresponding negative tests are listed under Testing: an ordinary Deployment
+pod must resolve with the same call count as before, and a registry entry with no
+`modelID` must still attribute, so neither the hop nor its guards can quietly
+become load-bearing on the common path.
+
+The two halves are also independently disableable, which is the property that
+makes staged rollout safe: attribution changes no cluster state and is invisible
+outside WVA, and the PodMonitor changes no WVA behaviour and is useful without it
+(see above).
 
 ## Observability
 
@@ -564,6 +679,11 @@ Unit, in `internal/collector/locator`:
 - ordinary Deployment pod → byte-identical to today, one API call
 - registry entry with **no** `modelID` → the hop still works, because membership
   does not read it (regression guard for the field's proposed removal)
+- **no FMA anywhere**: an ordinary Deployment pod resolves with the *same call
+  count* as before the change — assert on a counting fake client, so a future
+  edit that adds a GET to the common path fails the test rather than a benchmark
+- **FMA uninstalled, stale `dual` label left on a pod** → partner does not
+  resolve → ordinary miss, no error, no panic
 
 Fixture, in `test/e2e/fixtures/model_service_builder.go`: an FMA layout — a
 requester Deployment under a ScaledObject, plus pods owned by a fake
