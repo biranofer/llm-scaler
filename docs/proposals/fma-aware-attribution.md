@@ -105,29 +105,38 @@ maintains on the server-requesting and server-providing Pods". That it lives on
 **both** halves is what makes this design a single pod GET instead of a
 namespace-wide LIST: the launcher names its requester directly.
 
-> **⚠ This is the one load-bearing claim that has NOT been observed live.**
+> **✅ VERIFIED on a live bound pair (pokprod001, 2026-08-14).**
 >
-> It comes from FMA's source, which is authoritative for intent, but no pod on
-> pokprod001 currently carries `dual-pods.llm-d.ai/dual` at all — the label
-> exists only while a pair is bound, and every requester Deployment on the
-> cluster is at `replicas: 0`. The only time it *was* observed, it was on the
-> **requester** (`dual = launcher-fma-…-pgqdm`); the launcher side has never
-> been seen carrying it.
+> Phase 0 ran: a requester Deployment was scaled `0 → 1`, the pair bound in
+> **under 5 seconds**, both pods were dumped, and the requester was scaled back
+> to `0`. The launcher carried:
 >
-> Nor does the provider carry the binding annotation the docs describe: the only
-> `dual-pods.llm-d.ai/*` annotations present on any launcher are
-> `launcher-config-hash` and `launcher-populator-template-hash`. Those are
-> populator bookkeeping, not a binding record — consistent with nothing being
-> bound, but it means the annotation path is unverified too.
+> ```
+> dual-pods.llm-d.ai/dual = fma-requester-…-875c7cbc6-zhlrl
+> ```
 >
-> **Verification, before any code:** scale one requester Deployment `0 → 1`,
-> wait for the bind, and dump the labels and annotations of *both* pods. If the
-> launcher carries `dual`, the design stands as written. If it does not, §1
-> must invert to a namespace LIST of pods carrying `dual`, indexed
-> launcher → requester — which still works, and is the same index §1.5 needs for
-> multi-instance launchers anyway, but costs a LIST per collection cycle instead
-> of one conditional GET. That is a materially different cost profile and it
-> should not be discovered during implementation.
+> pointing back at its requester, which in turn carried
+> `dual-pods.llm-d.ai/dual = launcher-…-pgqdm`. The cross-link is bidirectional
+> on live pods, exactly as `pkg/api/interface.go` says. **The one-GET hop
+> stands** and no LIST-based index is needed for the single-instance case.
+
+The same bind also revealed metadata the design had assumed was unavailable. A
+**bound** launcher pod carries, as annotations:
+
+| annotation | value observed | why it matters |
+| --- | --- | --- |
+| `dual-pods.llm-d.ai/requester` | `<uid> fma-requester-…-zhlrl` | the authoritative binding record the docs describe |
+| `dual-pods.llm-d.ai/server-port` | `8000` | **the instance's port, on the pod** — §4 no longer needs to hardcode it |
+| `dual-pods.llm-d.ai/instance-id` | `IOOesGI4Otm…` | the FMA instance ID, on the *provider* side |
+| `dual-pods.llm-d.ai/vllm-config` | full JSON incl. `gpu_uuids` | GPU cross-check without the launcher API |
+| `dual-pods.llm-d.ai/isc-label-keys` | `component llm-d.ai/guide llm-d.ai/inferenceServing llm-d.ai/model` | names exactly which labels the ISC stamped |
+
+and the ISC-derived serving labels themselves (`llm-d.ai/inferenceServing=true`,
+`llm-d.ai/model=…`, `llm-d.ai/guide=…`), which is how it enters the InferencePool.
+
+The requester carries `dual-pods.llm-d.ai/accelerators=GPU-712a7368-…` and
+`dual-pods.llm-d.ai/admin-port=8081`, and declares ports `probes:8080` and
+`spi:8081` — no inference port, consistent with it running no engine.
 
 Also observed directly: a sleeping launcher still answers `/metrics` with
 `vllm:num_requests_running 0`, `vllm:kv_cache_usage_perc 0` and
@@ -171,12 +180,15 @@ ScaledObject  <requester>-wva
      └─ Pod  launcher-fma-…-pgqdm          ← emits EVERYTHING, owned by ──────┘
              vllm:num_requests_running = 143, waiting = 61, kv = 99.9%   [measured]
              labels: llm-d.ai/inferenceServing=true, llm-d.ai/model=…    [measured]
-                     dual-pods.llm-d.ai/dual = fma-requester-…-9rlg7     [NOT OBSERVED]
+                     dual-pods.llm-d.ai/dual = fma-requester-…-zhlrl     [measured]
+             annots: dual-pods.llm-d.ai/server-port = 8000               [measured]
+                     dual-pods.llm-d.ai/requester   = <uid> <pod>        [measured]
 ```
 
-Every line above is measured except the last: the launcher-side `dual` label is
-taken from FMA's source and has not been seen on a live pod. See the warning in
-the previous section — the hop's cost depends on it, though not its correctness.
+Every line above is measured, the launcher-side `dual` label on a live bound pair
+included (phase 0). The requester's half was confirmed the same way: `:8000`
+refused the connection and `:8080` / `:8081` returned 404 with zero `vllm:`
+series, so it genuinely reports nothing.
 
 The ownerReferences walk from the launcher reaches a `LauncherConfig` and stops.
 FMA guarantees it always will: the server patch "must change the Pod's labels in
@@ -466,30 +478,53 @@ frequently doesn't:
   the top at 09:26Z.
 
 Ship an **opt-in** PodMonitor under a name nothing else claims
-(`config/base/monitoring/fma-launcher-podmonitor.yaml`), relabelling to
-`<podIP>:8000` and selecting on **both** `app.kubernetes.io/component=launcher`
-and `dual-pods.llm-d.ai/launcher-config-name`. The first is a generic
+(`config/base/monitoring/fma-launcher-podmonitor.yaml`), building the address
+from the pod's own `server-port` annotation (below) and selecting on **both**
+`app.kubernetes.io/component=launcher` and
+`dual-pods.llm-d.ai/launcher-config-name`. The first is a generic
 `app.kubernetes.io` label that any workload may use; the second is FMA's own and
 is present on every launcher pod observed. Selecting on the generic label alone
 risks adopting an unrelated workload's pods and scraping them on a port that
 means something else entirely.
 
-**Instances really do get their own ports**, which is what makes the pin bite.
-The launcher's instance record carries the port per instance —
-`"options": "... --port 8000"` and `"annotations": {"inference-port": "8000"}` —
-and the ISC declares a single `modelServerConfig.port: 8000`. A port recorded
-per-instance is only meaningful if instances differ in it; a second concurrent
-instance cannot bind 8000 again. The launcher assigns them, and only the launcher
-knows the mapping.
+**Do not hardcode `:8000` — the port is on the pod.** Phase 0 found that a bound
+launcher carries `dual-pods.llm-d.ai/server-port=8000` as an annotation, so
+Prometheus can read it via `__meta_kubernetes_pod_annotation_…` and build the
+address dynamically:
 
-**This pins the design to one engine per launcher pod, and that limit is real.**
-A launcher running several vLLM instances puts them on several ports; a
-`__address__` rewrite to a fixed `:8000` scrapes exactly one of them and the rest
-are never collected. So the multiplicity §1.5 reasons about is lost at the scrape
-layer *before* attribution can apply any guard — the under-measurement there is
-total for the non-`:8000` engines, not partial. A PodMonitor cannot enumerate
-ports that are assigned at instance-creation time, so this cannot be fixed on our
-side. It is stated here as a known limit and pushed upstream below.
+```yaml
+relabelings:
+  - sourceLabels: [__meta_kubernetes_pod_container_name]
+    action: keep
+    regex: inference-server
+  - sourceLabels:
+      - __meta_kubernetes_pod_ip
+      - __meta_kubernetes_pod_annotation_dual_pods_llm_d_ai_server_port
+    regex: (.+);(.+)
+    replacement: $1:$2
+    targetLabel: __address__
+```
+
+This is strictly better than the upstream template's fixed `:8000` rewrite: it
+follows FMA if it ever assigns a different port, and it generates **no target at
+all** for an unbound launcher — which lacks the annotation — instead of scraping
+a port with nothing behind it. Sleeping spares stop appearing as zero-valued
+series, which is the §2 problem removed one layer earlier.
+
+**Instances really do get their own ports**, which is why the fixed pin was
+wrong in the first place. The launcher's instance record carries the port per
+instance — `"options": "... --port 8000"` and
+`"annotations": {"inference-port": "8000"}` — while the ISC declares a single
+`modelServerConfig.port: 8000`. A second concurrent instance cannot bind 8000
+again.
+
+**The multi-instance limit remains**, softened but not removed. The
+`server-port` annotation is singular: one pod, one value. A launcher hosting
+several instances can express only one of them in pod metadata, so a PodMonitor —
+which generates targets from pod metadata — still reaches exactly one engine. The
+under-measurement for the others is total, not partial, and invisible. Fixing it
+needs FMA to expose either one annotation per instance or a single aggregated
+endpoint; see the upstream asks.
 
 It must be opt-in, and the installer must refuse to apply it when another
 PodMonitor already selects launcher pods. Two scrape configs on one pod produce
@@ -641,6 +676,80 @@ existing scarcity machinery — limiters, priority, urgent-ceiling reclamation �
 still the right and sufficient answer to the second row of that table. FMA adds a
 new *warm-slot* resource that can be exhausted independently of GPUs; it does not
 add a new kind of scarcity.
+
+### 10. FMA breaks GPU accounting, for quota and for the physical limiter alike
+
+§6 established that Kubernetes charges the GPU to the requester. That is true
+while a pair is bound. It is not the whole picture, and the gap is large.
+
+Measured on pokprod001 with **every requester at `replicas: 0`**:
+
+| | |
+| --- | --- |
+| GPU requests charged in the namespace | **1** (the decode pod) |
+| launcher pods requesting any GPU | **0 of 14** |
+| launchers running a vLLM instance | **9** |
+| distinct physical GPUs those instances hold | **9** |
+| of those, bound to a requester | **0** |
+
+Nine GPUs are occupied by running vLLM processes — each naming its own GPU UUID,
+each in sleep mode with weights offloaded — while Kubernetes accounts for none of
+them. This is not a bug in FMA so much as the *point* of FMA: the warm pool is
+what makes a bind take five seconds. But it has three consequences that any
+GPU-aware autoscaler has to face.
+
+**1. Quota under-charges.** A `ResourceQuota` on `requests.nvidia.com/gpu` counts
+requester replicas and nothing else. It would not prevent FMA from occupying
+every GPU on a node, and it cannot express the warm pool at all. Tenant fairness
+built on GPU quota is silently defeated in an FMA namespace.
+
+**2. The physical limiter under-counts.** `internal/gpuusage` derives its picture
+from namespaced pod usage, so it sees 1 where 10 GPUs are in play. WVA can
+therefore conclude that GPUs are free when they are not — the unsafe direction,
+and precisely the input its scarcity and reclamation logic trusts.
+
+**3. The scheduler can double-book.** From Kubernetes' view those nine GPUs are
+allocatable. Another workload may land on one, take the memory a sleeping
+instance released, and then contend with it when FMA wakes it. Sleep mode is what
+makes this survivable rather than fatal, and it is still a real hazard on a shared
+cluster.
+
+**There is no metadata fix.** The obvious idea — read it off the pods — does not
+work: `dual-pods.llm-d.ai/vllm-config`, `/server-port`, `/instance-id` and
+`/requester` are present **only while bound**. An orphaned launcher still running
+an instance carries just `launcher-config-hash` and
+`launcher-populator-template-hash`. Cluster-wide, **no pod carries a
+`vllm-config` annotation** right now, while nine GPUs are held. Only the
+launcher's `:8001/v2/vllm/instances` API knows, and §2 rules out calling a
+workload's API from the collector.
+
+Note the interaction with §4: the dynamic PodMonitor keys on the `server-port`
+annotation, so it generates no target for an unbound launcher. That is correct
+for autoscaling — no phantom idle replicas — and it means the metrics path will
+not surface this either. The two goals genuinely conflict, and this design
+chooses correct autoscaling over complete accounting.
+
+**What WVA should do, in order of cost:**
+
+1. **Do not silently assume the pod-request view is complete in an FMA
+   namespace.** Detect FMA (launcher pods exist) and mark the namespace's GPU
+   picture as a *lower bound* rather than a measurement, in whatever the limiter
+   and `gpuusage` expose.
+2. **Do not make reclamation decisions that depend on believed-free GPUs** in
+   such a namespace. Refusing to act on an unknown is correct; acting on a number
+   known to be wrong is not. This matters because the urgent-ceiling mechanism
+   exists precisely to free GPUs, and it would be reasoning from a figure that
+   understates occupancy by the size of the warm pool.
+3. **Optionally let the operator declare the warm pool** (`launcherCount ×
+   maxInstances`, or an explicit GPU count) so it can be subtracted at plan time,
+   where reading `LauncherPopulationPolicy` is permitted (§8).
+
+**And an upstream ask**, added below: make the warm pool visible. Either have
+launchers request the GPUs they hold — an extended resource would do, if the real
+one would double-book — or keep the `accelerators` / `vllm-config` annotation on
+the provider for as long as an instance is resident, not only while bound. Today
+a cluster administrator cannot answer "which GPUs are in use?" from the API
+server, and that is a property worth fixing regardless of WVA.
 
 ## Is the requester Deployment really the right `scaleTargetRef`?
 
@@ -891,13 +1000,12 @@ End-to-end, on a real FMA install: drive load, then assert
 
 ## Phases
 
-0. **Bind one pair and look at it.** Scale a requester `0 → 1`, wait for the
-   bind, dump labels *and* annotations on both pods, and curl the requester's
-   ports. This settles the two unverified claims at once — whether the launcher
-   carries `dual` (which decides GET-vs-LIST, see the warning above) and whether
-   the requester emits engine metrics. Everything else in phase 1 is written
-   against those two answers. Also settle the supply-path question in §3 and
-   §9's launcher-populator question in the same pass; both are reads.
+0. ~~**Bind one pair and look at it.**~~ **Done** (2026-08-14). The launcher
+   carries `dual`, the requester emits nothing, and the bind took under 5 s — see
+   the fact-check table. It also turned up the `server-port` annotation that
+   removes §4's hardcoded port, and the GPU accounting gap in §10. Still open in
+   this phase, both reads: the supply-path question in §3 and §9's
+   launcher-populator question.
 0.5 **Pool-level degraded mode (§9).** Cheapest useful step: makes WVA able to
    drive an FMA variant with no attribution fix and no PodMonitor change, using
    EPP signals already collected, and brings WVA level with what plain KEDA does
@@ -928,7 +1036,15 @@ Worth filing, none blocking:
    engine → requester mapping into a pure metadata join and would let any
    observer attribute a multi-model launcher correctly, without calling the
    launcher's CRUD API.
-5. **Expose one aggregated `/metrics` on the launcher covering every instance it
+5. **Make the warm pool's GPU occupancy visible to the API server** (§10). A
+   launcher running a resident instance holds a real GPU while requesting none,
+   and strips the annotations that named it as soon as the pair unbinds — so
+   neither `ResourceQuota` nor any pod-based accounting can see it. Either
+   request the GPUs (an extended resource, if requesting the real one would
+   double-book against the requester), or keep `accelerators` / `vllm-config` on
+   the provider for as long as the instance is resident. Today a cluster admin
+   cannot answer "which GPUs are in use?" from the API server.
+6. **Expose one aggregated `/metrics` on the launcher covering every instance it
    hosts, with an instance-identifying label on each series.** This is the ask
    that actually unblocks multi-instance launchers, and it subsumes (4). Today
    each instance serves its own metrics on its own dynamically-assigned port, and
@@ -963,21 +1079,73 @@ that cites measurements should say which ones it actually took.
 | `wva_pod_mapping_miss_total` has never incremented | no series, any namespace |
 | the "ready pod(s) but none attributed" message exists | `internal/collector/replica_metrics.go:240` |
 
+**Measured by binding a live pair (phase 0, requester scaled 0 → 1 → 0):**
+
+| claim | evidence |
+| --- | --- |
+| the **launcher** carries `dual`, naming its requester | `dual = fma-requester-…-zhlrl` — the hop's cost model holds |
+| the cross-link is bidirectional | requester carried `dual = launcher-…-pgqdm` simultaneously |
+| binding is fast | bound and labelled in **under 5 s** |
+| the requester emits no engine metrics | `:8000` refused, `:8080` / `:8081` → 404, zero `vllm:` series |
+| the requester declares no inference port | ports are `probes:8080`, `spi:8081` |
+| requester and launcher agree on the GPU | both name `GPU-712a7368-…` |
+| the launcher is **still** not a scrape target while bound | `up{}` unchanged |
+| the bound launcher's port is in pod metadata | `dual-pods.llm-d.ai/server-port=8000` |
+| the instance ID is on the provider too | `dual-pods.llm-d.ai/instance-id=IOOes…` (docs say the *label* is requester-only; the annotation is not) |
+| binding annotations exist **only while bound** | an orphan running an instance carries only the two hash annotations |
+| GPU accounting gap | 9 launchers holding 9 distinct GPUs, 0 bound, 0 GPU requests, 1 GPU charged in the namespace |
+
 **From FMA's source or docs, not observed live:**
 
 | claim | source | risk if wrong |
 | --- | --- | --- |
-| `dual` label on **both** halves | `pkg/api/interface.go` | **high** — §1 inverts to a LIST-based index |
-| bound ⇒ awake | `docs/dual-pods.md` | low — §2 no longer relies on it |
-| requester replicas is the scale lever | `docs/dual-pods.md` + both upstream ScaledObject templates | low — corroborated twice |
+| bound ⇒ awake | `docs/dual-pods.md` | low — §2 does not rely on it, and §10 shows resident-but-unbound instances exist |
 | a launcher may host several models | `docs/launcher.md` | low — only widens §1.5 |
+| requester replicas is the scale lever | `docs/dual-pods.md` + both upstream ScaledObject templates | low — corroborated twice, and phase 0 confirmed a bind follows a scale-up |
 
-**Unverified, no way to check without a bound pair:**
+Nothing load-bearing remains unverified.
 
-| claim | why |
-| --- | --- |
-| the requester pod emits no engine metrics | no requester pod exists (`replicas: 0`); inferred from FMA's architecture and from the "none attributed" symptom an earlier session observed |
-| the launcher-side `dual` label | same — requires a bind |
+## Conformance: Kubernetes and Go practice
+
+**Kubernetes.** The design adds no CRD, no API group dependency, no informer and
+no watch; it reads pods with RBAC the controller already holds
+(`get;list;watch`, declared at `internal/collector/locator/locator.go:6`) and
+writes nothing. The extra read is a single conditional `GET` on the existing
+`client.Reader`, on the same `ctx`, only for pods that already failed
+attribution — consistent with the call-driven model the external-scaler design
+adopted deliberately in place of informers. It mutates no object owned by
+another controller, and the one object it ships (a PodMonitor) is opt-in,
+uniquely named to avoid the collision that caused this whole investigation, and
+preflighted against existing PodMonitors so a pod is never scraped twice. Optional
+integrations that must not break when their CRDs are absent are exactly what
+label-based, presence-free detection is for.
+
+Two Kubernetes-specific details worth stating because they are easy to get wrong:
+a `podMetricsEndpoints` entry may carry relabelings with no `port` (the upstream
+FMA template does this and it works), and annotation keys reach relabeling with
+dots and slashes replaced by underscores —
+`dual-pods.llm-d.ai/server-port` becomes
+`__meta_kubernetes_pod_annotation_dual_pods_llm_d_ai_server_port`.
+
+**Go.** The change lives inside `podLocator.Locate` rather than behind a new
+abstraction: no interface is introduced for a single implementation, per
+Effective Go's preference for discovering interfaces rather than designing them.
+New constants follow the existing `PodMappingMiss*` naming (MixedCaps, no
+underscores) and each gets a doc comment starting with its own name. Errors stay
+last in the return list and are wrapped with context; the hop returns "not
+attributed" rather than an error, because an unattributable pod is an expected
+state and not a failure. Logging goes through the logger already on the context.
+No goroutines, channels or shared state are added, so there is nothing new to
+cancel or race. Tests are table-driven in `*_test.go` beside the code, and
+include the negative cases that keep the common path honest — notably the
+call-count assertion, which is the Go-idiomatic way to prevent a performance
+regression from being invisible.
+
+The one deliberate deviation worth naming: the design reads a vendor-specific
+label key (`dual-pods.llm-d.ai/dual`) in a package that is otherwise
+topology-agnostic. It is kept to a single named constant in
+`internal/constants/labels.go` and consulted at exactly one call site, so the
+coupling is one line rather than an assumption spread through the collector.
 
 ## Open questions
 
