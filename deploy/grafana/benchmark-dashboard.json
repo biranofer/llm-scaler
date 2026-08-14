@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -22,11 +25,20 @@
       "id": 1,
       "title": "Deployment Replicas",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -52,17 +64,31 @@
           "refId": "B"
         }
       ],
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 2,
       "title": "WVA Desired Ratio",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -81,17 +107,31 @@
           "refId": "A"
         }
       ],
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 3,
       "title": "KV Cache Usage",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -104,9 +144,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.7 },
-              { "color": "red", "value": 0.9 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
             ]
           }
         },
@@ -114,27 +163,41 @@
       },
       "targets": [
         {
-          "expr": "vllm:kv_cache_usage_perc{namespace=~\"llm-d.*\"}",
+          "expr": "vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}",
           "legendFormat": "{{pod}}",
           "refId": "A"
         },
         {
-          "expr": "avg(vllm:kv_cache_usage_perc{namespace=~\"llm-d.*\"})",
+          "expr": "avg(vllm:kv_cache_usage_perc{namespace=~\"$namespace\"})",
           "legendFormat": "avg",
           "refId": "B"
         }
       ],
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 4,
       "title": "Queue Depth (Requests Waiting)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -148,27 +211,41 @@
       },
       "targets": [
         {
-          "expr": "vllm:num_requests_waiting{namespace=~\"llm-d.*\"}",
+          "expr": "vllm:num_requests_waiting{namespace=~\"$namespace\"}",
           "legendFormat": "{{pod}} waiting",
           "refId": "A"
         },
         {
-          "expr": "vllm:num_requests_running{namespace=~\"llm-d.*\"}",
+          "expr": "vllm:num_requests_running{namespace=~\"$namespace\"}",
           "legendFormat": "{{pod}} running",
           "refId": "B"
         }
       ],
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "id": 5,
       "title": "Scaling Activity",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus" },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
@@ -197,13 +274,50 @@
           "refId": "C"
         }
       ],
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "schemaVersion": 39,
-  "tags": ["benchmark", "wva", "autoscaling"],
-  "templating": { "list": [] },
-  "time": { "from": "now-30m", "to": "now" },
+  "tags": [
+    "benchmark",
+    "wva",
+    "autoscaling"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus"
+        },
+        "query": {
+          "query": "label_values(vllm:num_requests_running, namespace)",
+          "refId": "namespace-variable-query"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "description": "The namespace whose model servers to chart. Populated from vLLM metrics present in Prometheus."
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "utc",
   "title": "WVA Benchmark: Scale-Up Latency",

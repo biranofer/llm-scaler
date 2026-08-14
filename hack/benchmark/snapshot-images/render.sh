@@ -76,16 +76,22 @@ curl -sf "http://localhost:$PORT_GRAFANA/api/health" >/dev/null || {
 UID_DASH=$(python3 -c "import json;d=json.load(open('$DASHBOARD'));print(d.get('uid') or 'wva-benchmark')")
 SLUG=$(python3 -c "import json,re;d=json.load(open('$DASHBOARD'));print(re.sub(r'[^a-z0-9]+','-',(d.get('title') or 'dashboard').lower()).strip('-'))")
 
-echo "rendering panels from $DASHBOARD"
-python3 - "$SNAP_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" <<'PY'
+# The dashboard takes a namespace variable, so the render URL has to say which
+# one -- otherwise Grafana renders the variable's default ("All") and the panel
+# titles claim a scope the snapshot does not have.
+NS_VAR=$(python3 -c "import json;print(json.load(open('$SNAP_DIR/panels.json')).get('namespace') or '')")
+echo "rendering panels from $DASHBOARD (namespace=${NS_VAR:-<all>})"
+python3 - "$SNAP_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" "$NS_VAR" <<'PY'
 import json, subprocess, sys, re, pathlib
 snap_dir, port, uid, slug, frm, to = sys.argv[1:7]
+ns_var = sys.argv[7] if len(sys.argv) > 7 else ""
 panels = json.load(open(pathlib.Path(snap_dir) / "panels.json"))["panels"]
 for panel in panels:
     safe = re.sub(r"[^a-z0-9]+", "-", panel["title"].lower()).strip("-")
     out = pathlib.Path(snap_dir) / f"panel-{safe}.png"
     url = (f"http://localhost:{port}/render/d-solo/{uid}/{slug}"
-           f"?panelId={panel['id']}&from={frm}&to={to}&width=1000&height=400&tz=UTC")
+           f"?panelId={panel['id']}&from={frm}&to={to}&width=1000&height=400&tz=UTC"
+           + (f"&var-namespace={ns_var}" if ns_var else ""))
     rc = subprocess.run(["curl", "-sf", "-o", str(out), url]).returncode
     size = out.stat().st_size if out.exists() else 0
     print(f"  {panel['title'][:34]:34} {out.name:44} {'ok' if rc==0 and size>1000 else 'FAILED'} ({size}B)")
@@ -93,7 +99,7 @@ PY
 
 FULL="$SNAP_DIR/dashboard.png"
 curl -sf -o "$FULL" \
-  "http://localhost:$PORT_GRAFANA/render/d/$UID_DASH/$SLUG?from=$FROM_MS&to=$TO_MS&width=1200&height=1400&tz=UTC" \
+  "http://localhost:$PORT_GRAFANA/render/d/$UID_DASH/$SLUG?from=$FROM_MS&to=$TO_MS&width=1200&height=1400&tz=UTC${NS_VAR:+&var-namespace=$NS_VAR}" \
   && echo "  full dashboard -> $(basename "$FULL") ($(wc -c < "$FULL")B)" \
   || echo "  full dashboard render FAILED"
 

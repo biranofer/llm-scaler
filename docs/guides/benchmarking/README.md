@@ -167,10 +167,10 @@ API. The output is one PNG per panel plus the whole dashboard. Because the data
 is a file, a run can be re-rendered months later with no cluster at all, and the
 images cannot drift from the dashboard — they *are* the dashboard.
 
-The capture rewrites the namespace in each query. The shipped dashboard pins
-`namespace=~"llm-d.*"`, so the KV-cache and queue-depth panels are empty for any
-run in a namespace not called `llm-d*` — which looks like a broken exporter
-rather than a mismatched matcher.
+The dashboard takes a **Namespace** variable, populated from the vLLM metrics
+Prometheus actually holds, so the KV-cache and queue-depth panels work wherever
+the benchmark runs. Pick your namespace at the top of the dashboard when viewing
+it live; `--namespace` does it for a capture, and the render passes it through.
 
 ## Two variants
 

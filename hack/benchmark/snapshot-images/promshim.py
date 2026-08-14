@@ -26,8 +26,21 @@ INDEX = {}
 
 
 def normalise(expr):
-    """Whitespace-insensitive key. Grafana reflows newlines in an expr."""
-    return re.sub(r"\s+", " ", (expr or "").strip())
+    """Key that survives whitespace AND the namespace matcher's spelling.
+
+    Grafana reflows newlines in an expr, and the dashboard's namespace is a
+    template variable -- so the SAME panel arrives as any of
+
+        namespace=~"$namespace"      (the dashboard's literal text)
+        namespace=~"evgensh-wva-test" (Grafana, after interpolation)
+        namespace="evgensh-wva-test"  (what capture rewrote it to)
+
+    Matching on the exact string would miss two of the three and render an empty
+    panel that looks like a quiet run. A snapshot covers ONE namespace, so
+    collapsing the matcher loses nothing.
+    """
+    text = re.sub(r"\s+", " ", (expr or "").strip())
+    return re.sub(r'namespace\s*=~?\s*"[^"]*"', 'namespace=<NS>', text)
 
 
 def build_index(snapshot):
