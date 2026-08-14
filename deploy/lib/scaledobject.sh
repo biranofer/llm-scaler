@@ -599,10 +599,10 @@ so_discover() {
                         fma_launchers=$(kubectl get pods -n "$ns" \
                             -l app.kubernetes.io/component=launcher \
                             --no-headers 2>/dev/null | wc -l | tr -d ' ')
-                        log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name: it is the workload Prometheus scrapes, so it is the one WVA can measure."
+                        log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name by default; the requester is written below as a second variant with apply: no — set it to yes to autoscale both halves of this model."
                         log_warning "FMA launcher pods (${fma_launchers:-?} in $ns) run vLLM and serve traffic. WVA follows the dual-pods pairing to attribute a BOUND launcher's metrics, but only if something scrapes them — launchers declare no container ports, so a port-name PodMonitor generates no target. Check with: kubectl get podmonitor -n $ns. See docs/deployment/operations.md, 'FMA launcher pods'."
                         log_warning "GPU accounting in $ns is a LOWER BOUND: a launcher keeps its vLLM instance resident after unbinding, holding a real GPU while requesting none, and the annotations naming that GPU are stripped at unbind — so neither ResourceQuota nor the WVA limiter can see it. Subtract the warm pool by hand when planning capacity. See docs/deployment/gpu-limiter.md, 'FMA namespaces'."
-                        note="${note:+$note }FMA topology: requester $fma_requester present and ${fma_launchers:-?} launcher pod(s) serving traffic WVA cannot attribute. This entry targets the decode workload, the only one WVA can both scale and measure."
+                        note="${note:+$note }FMA topology: requester $fma_requester and ${fma_launchers:-?} launcher pod(s) also serve this model. This entry is the modelservice half and is the default target. The FMA half is written below as a second variant with apply: no — turn it on to have WVA size both."
                     fi
                 fi
                 existing=$(so_existing_info "$ns" "$name")
@@ -685,12 +685,22 @@ so_discover_fma_requesters() {
     while IFS='|' read -r name model_label; do
         [ -n "$name" ] || continue
 
-        # `both`: the modelservice half is the target and has already been
-        # emitted, with its own warning about unmeasured launcher traffic.
+        # `both`: a modelservice workload already serves this model and was
+        # emitted above. The FMA half is still written out, defaulted OFF.
+        #
+        # It used to be dropped silently, which meant the plan did not show a
+        # workload that was serving traffic -- the one thing a plan is for. It is
+        # now an entry you can turn on, using the same `apply:` switch as
+        # everything else rather than a second switch that could disagree with it:
+        #
+        #   leave it              scale the modelservice half only (unchanged)
+        #   set apply: yes        scale BOTH as two variants of one model
+        #   set it yes, other no  scale the FMA half only
+        #
+        # Both entries carry the same modelID on purpose. That is what makes WVA
+        # treat them as two variants of one model and allocate replicas between
+        # them by variantCost, rather than sizing two unrelated models.
         sibling=$(so_serving_workload_for_model "$ns" "$model_label")
-        if [ -n "$sibling" ]; then
-            continue
-        fi
 
         apply=yes; note=""
         min="${WVA_DEFAULT_SO_MIN:-1}"; max="${WVA_DEFAULT_SO_MAX:-10}"
@@ -708,12 +718,36 @@ so_discover_fma_requesters() {
         # -- it holds the workload at minReplicaCount and reports healthy.
         launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
             --no-headers 2>/dev/null | wc -l | tr -d ' ')
+
+        # Cap maxReplicas at the number of launcher pods present, when that is
+        # lower than the default. A requester replica becomes capacity only if a
+        # launcher can bind to it; past that the pod stays Pending, and a pending
+        # replica still counts toward anticipated supply, so it suppresses the
+        # scale-up it was supposed to provide. Writing the generic default here
+        # would have contradicted this entry's own note.
+        #
+        # It is a ceiling on launchers only, not on GPUs -- the true bound is
+        # min(warm slots, free GPUs) and the second half is not knowable from
+        # here. So this is the safe direction, not the whole answer, and the note
+        # says as much.
+        if [ "${launchers:-0}" -gt 0 ] && [ "${launchers:-0}" -lt "$max" ]; then
+            max="$launchers"
+        fi
+
         scrapers=$(wva_launcher_scrapers "$ns" | paste -sd, -)
         if [ -z "$scrapers" ]; then
             apply=no
             note="${note:+$note }No PodMonitor generates a scrape target for the ${launchers:-0} launcher pod(s) in $ns, so this variant would have no metrics at all -- launchers declare no container ports, and a port-name endpoint resolves nothing. Fix with: kubectl apply -k config/fma-launcher-metrics -n $ns (or WVA_FMA_LAUNCHER_METRICS=true at install), then set apply: yes."
         else
             note="${note:+$note }FMA variant: the requester is the scale target, and its engine metrics come from launcher pods scraped by $scrapers. WVA follows the dual-pods pairing to attribute them."
+        fi
+
+        # Defaulted off when the modelservice half already covers this model, so
+        # an existing install's plan applies exactly what it applied before and
+        # turning the second variant on stays a deliberate act.
+        if [ -n "$sibling" ]; then
+            apply=no
+            note="${note:+$note }SECOND VARIANT: $sibling already serves this model and is the entry above. Set apply: yes to autoscale this FMA half alongside it — same modelID, so WVA treats the two as variants of one model and allocates replicas between them by variantCost. Left as no, only $sibling is scaled and the traffic EPP sends to launchers is unmeasured. maxReplicas is capped at the ${launchers:-0} launcher pod(s) present, which bounds warm slots but NOT free GPUs — check both before raising it, since past either ceiling requester pods stay Pending and suppress further scale-up."
         fi
 
         existing=$(so_existing_info "$ns" "$name")

@@ -114,9 +114,10 @@ that object at WVA instead of adding a second, because two ScaledObjects on one
 target is two HPAs writing the same replica count. A workload whose model could
 not be read is written as `no` with the reason, and never created without one.
 
-> **Running Fast Model Actuation?** The plan targets the requester rather than
-> a decode Deployment, and an entry can arrive as `apply: no` until the launcher
-> pods are scraped. See [WVA with Fast Model Actuation](../../deployment/fma.md).
+> **Running Fast Model Actuation?** The plan can carry a second entry for the
+> same model — the FMA half — switched off by default, and an entry can arrive as
+> `apply: no` until the launcher pods are scraped. See
+> [WVA with Fast Model Actuation](../../deployment/fma.md).
 
 ## Verification
 

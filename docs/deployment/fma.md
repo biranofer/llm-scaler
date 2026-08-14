@@ -109,13 +109,13 @@ kubectl get podmonitor -n "$NS" -o jsonpath='{range .items[*]}{.metadata.name}{"
 
 ## 2. Register the workload
 
-What `make scaledobjects-plan` targets depends on what the namespace holds:
+What `make scaledobjects-plan` writes depends on what the namespace holds:
 
-| namespace holds | the plan targets | why |
+| namespace holds | the plan writes | default |
 | --- | --- | --- |
-| a `decode`/`prefill` Deployment only | that Deployment | the ordinary case, unchanged |
-| an FMA **requester** only | the requester | nothing else there can be scaled |
-| **both** | the `decode` Deployment | one entry, not two, plus a warning that launcher traffic is unmeasured |
+| a `decode`/`prefill` Deployment only | one entry for that Deployment | `apply: yes` |
+| an FMA **requester** only | one entry for the requester | `apply: yes` — nothing else there can be scaled |
+| **both** | **two entries**, the modelservice half and the FMA half | the FMA half is `apply: no`, so an existing install applies exactly what it applied before |
 
 A requester entry looks like this. The model comes from the
 `InferenceServerConfig` the pod template names, since a requester has no
@@ -133,19 +133,38 @@ plan:
     name: fma-requester-dev-model      # the requester, not a decode Deployment
     modelID: "meta/llama"              # read from the InferenceServerConfig
     minReplicas: 1
-    maxReplicas: 4                     # bound this by the launcher pool — see below
+    maxReplicas: 3                     # capped at the launcher pods present
     variantCost: "10.0"
     # inferencePool: (none)            # the pool selects the LAUNCHER, not the requester
 ```
 
-If step 1 has not been done, the entry arrives as `apply: no` with the command
+### Running both halves of one model
+
+When a modelservice Deployment and an FMA requester both serve a model, the plan
+offers both and lets you pick with the switch it already has:
+
+| you want | you do |
+| --- | --- |
+| the modelservice half only | leave the plan alone — this is the default |
+| **both, as two variants** | set the FMA entry to `apply: yes` |
+| the FMA half only | set the FMA entry to `yes` and the modelservice entry to `no` |
+
+Both entries carry the **same `modelID`**, which is what makes WVA treat them as
+two variants of one model — it then allocates replicas between them by
+`variantCost`, exactly as it does for two accelerator types. They are not two
+models, and nothing new is deployed: this option appears only when both workloads
+already exist, since WVA never creates model servers.
+
+### When the entry arrives switched off
+
+If step 1 has not been done, the FMA entry arrives as `apply: no` with the command
 that fixes it, rather than being omitted or applied blind:
 
 ```yaml
-  # note: No PodMonitor generates a scrape target for the 14 launcher pod(s) in
-  # llm-d-sim, so this variant would have no metrics at all — launchers declare no
-  # container ports, and a port-name endpoint resolves nothing. Fix with:
-  # kubectl apply -k config/fma-launcher-metrics -n llm-d-sim
+  # note: No PodMonitor generates a scrape target for the N launcher pod(s) in
+  # <namespace>, so this variant would have no metrics at all — launchers declare
+  # no container ports, and a port-name endpoint resolves nothing. Fix with:
+  # kubectl apply -k config/fma-launcher-metrics -n <namespace>
   # (or WVA_FMA_LAUNCHER_METRICS=true at install), then set apply: yes.
   - apply: "no"
     namespace: llm-d-sim
@@ -160,13 +179,15 @@ worse than none — it holds the workload at `minReplicaCount` and reports healt
 
 ## 3. Size `maxReplicas` from the launcher pool
 
-**FMA does not cap scaling. The launcher pool does.**
+**FMA does not cap scaling. The launcher pool does.** Nothing about FMA's
+presence stops ordinary scaling — a modelservice Deployment in the same namespace
+scales to its own `maxReplicas` as usual.
 
-A requester replica becomes capacity only if a launcher can bind to it *and* a
-GPU is free. Past that ceiling the extra requester pods sit `Pending` — and
-pending replicas still count toward *anticipated supply*, so they suppress the
-very scale-up they were meant to provide. The system settles into "I have asked
-for enough" while serving nothing new.
+What is bounded is the FMA half. A requester replica becomes capacity only if a
+launcher can bind to it *and* a GPU is free. Past that ceiling the extra requester
+pods sit `Pending` — and pending replicas still count toward *anticipated supply*,
+so they suppress the very scale-up they were meant to provide. The system settles
+into "I have asked for enough" while serving nothing new.
 
 ```
 ceiling = min( Σ_nodes (launcherCount × maxInstances),   # warm slots
@@ -177,6 +198,12 @@ ceiling = min( Σ_nodes (launcherCount × maxInstances),   # warm slots
 `maxInstances` from the `LauncherConfig`. The populator maintains a **declared**
 count — it does not grow the pool with demand — so this ceiling is real and
 static until someone changes it.
+
+The plan caps a requester entry's `maxReplicas` at the number of launcher pods
+present, which is the first half of that `min()`. **It does not know the second
+half**: free GPUs are not visible from discovery, and in an FMA namespace the GPU
+picture is itself a lower bound (below). Treat the written value as a safe
+starting point, not a computed answer, and check both terms before raising it.
 
 ## GPU accounting is a lower bound here
 
