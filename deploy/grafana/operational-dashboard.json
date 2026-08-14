@@ -81,6 +81,28 @@
         "refresh": 2,
         "skipUrlSync": false,
         "type": "query"
+      },
+      {
+        "name": "controller_instance",
+        "label": "Controller",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource_uid}"
+        },
+        "query": {
+          "query": "label_values(wva_desired_replicas, controller_instance)",
+          "refId": "controller-variable-query"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "description": "Which WVA controller emitted the series. A cluster runs one per namespace-scoped install; this is how an admin tells them apart."
       }
     ]
   },
@@ -107,6 +129,226 @@
   "links": [],
   "liveNow": false,
   "panels": [
+    {
+      "id": 55,
+      "type": "stat",
+      "title": "WVA installs present",
+      "description": "WVA controller Deployments on the cluster, from kube-state-metrics. Compare with the next panel: a gap means an install exists but is not being scraped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(kube_deployment_status_replicas_available{deployment=~\".*workload-variant-autoscaler.*|wva-controller-manager\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 56,
+      "type": "stat",
+      "title": "Controllers reporting metrics",
+      "description": "Distinct controllers whose metrics reach Prometheus. Lower than 'installs present' means some install is not scraped -- a broken ServiceMonitor looks exactly like a controller that is not scaling.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(count by (controller_instance) (wva_desired_replicas))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 57,
+      "type": "stat",
+      "title": "WVA scrape targets DOWN",
+      "description": "Scrape targets Prometheus cannot reach. Anything above zero is an install whose panels below will be silently empty.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(up{service=~\".*wva.*metrics.*\"} == 0) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 58,
+      "type": "stat",
+      "title": "Namespaces being optimized",
+      "description": "Namespaces with at least one WVA-managed variant reporting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(count by ($namespace_label) (wva_desired_replicas))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
     {
       "datasource": {
         "type": "prometheus",
@@ -137,7 +379,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "id": 47,
       "options": {
@@ -202,7 +444,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 4
       },
       "id": 54,
       "options": {
@@ -265,7 +507,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 4
       },
       "id": 50,
       "options": {
@@ -346,7 +588,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 4
       },
       "id": 10,
       "options": {
@@ -428,7 +670,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 4
+        "y": 8
       },
       "id": 49,
       "options": {
@@ -510,7 +752,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 4
+        "y": 8
       },
       "id": 53,
       "options": {
@@ -592,7 +834,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 4
+        "y": 8
       },
       "id": 24,
       "options": {
@@ -717,7 +959,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 4
+        "y": 8
       },
       "id": 25,
       "options": {
@@ -785,7 +1027,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 8
+        "y": 12
       },
       "id": 26,
       "options": {
@@ -896,7 +1138,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 16
       },
       "id": 40,
       "options": {
@@ -973,7 +1215,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above — a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1036,7 +1278,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 32
       },
       "id": 41,
       "options": {
@@ -1150,7 +1392,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 24
       },
       "id": 42,
       "options": {
@@ -1259,7 +1501,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 47
       },
       "id": 52,
       "options": {
@@ -1376,7 +1618,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 39
       },
       "id": 43,
       "options": {
@@ -1485,7 +1727,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 55
       },
       "id": 51,
       "options": {
@@ -1654,7 +1896,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 63
       },
       "id": 30,
       "options": {

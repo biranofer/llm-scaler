@@ -55,15 +55,75 @@ install_operational_dashboard() {
         return 0
     }
 
+    # ONE dashboard object serves every install on the cluster: the name is
+    # fixed and the namespace is shared, so ten namespace-scoped installs apply
+    # the same ConfigMap. That is deliberate -- the dashboard is generic and
+    # driven by variables, and ten identical copies in the picker would be
+    # worse -- but it means an OLDER install must not quietly revert a newer
+    # one. The version it was published with is stamped on the object, and a
+    # lower version leaves it alone and says so.
+    local ours existing
+    ours="${IMG##*:}"
+    [ -n "$ours" ] && [ "$ours" != "$IMG" ] || ours="unknown"
+    existing=$(kubectl get configmap wva-operation-dashboard -n "$ns" \
+        -o jsonpath='{.metadata.annotations.wva\.llmd\.ai/dashboard-version}' 2>/dev/null || true)
+
+    # Compare only when BOTH sides look like versions. sort -V on a tag like
+    # `wva-ext`, `latest` or `main` orders it against v0.7.0 by ASCII accident --
+    # `wva-ext` would win and block every release publish thereafter, which is a
+    # silent way to freeze a cluster's dashboard on somebody's dev build.
+    # Compare the NUMERIC core only. sort -V puts v0.8.0-rc4 after v0.8.0, the
+    # opposite of what a pre-release means, so an rc install would block the GA
+    # release's dashboard for good.
+    local semver='^v?[0-9]+\.[0-9]+' existing_core ours_core
+    existing_core=$(printf '%s' "$existing" | sed 's/^v//; s/-.*$//')
+    ours_core=$(printf '%s' "$ours" | sed 's/^v//; s/-.*$//')
+    if [ -n "$existing" ] && [ "$existing_core" != "$ours_core" ] && \
+       printf '%s' "$existing" | grep -qE "$semver" && \
+       printf '%s' "$ours" | grep -qE "$semver" && \
+       [ "$(printf '%s\n%s\n' "$existing_core" "$ours_core" | sort -V | tail -1)" = "$existing_core" ]; then
+        log_info "Dashboard in $ns was published by $existing, newer than this install ($ours) — leaving it alone."
+        log_info "  Republish with: kubectl delete configmap wva-operation-dashboard -n $ns"
+        return 0
+    fi
+
+    # Pinning the namespace variable is only safe when this dashboard is NOT the
+    # shared one. The ConfigMap name is fixed, so if it lands in a shared
+    # monitoring namespace then ten installs write the same object -- pinning it
+    # to one tenant's namespace would mean everyone sees whoever installed last,
+    # which is worse than the "All" it replaced. Pin only when the dashboard is
+    # published into the install's OWN namespace, where nobody else can be
+    # looking at it.
+    local scope patched
+    scope="$(wva_install_scope)"
+    patched="$(mktemp)"
+    if [ "$scope" = "namespace" ] && [ "$ns" != "$WVA_NS" ]; then
+        cp "$json" "$patched"
+        log_info "Dashboard published to the shared $ns — namespace left selectable."
+        log_info "  Set DASHBOARD_NS=$WVA_NS to publish a copy pinned to this namespace."
+    elif [ "$scope" = "namespace" ]; then
+        yq -o=json -I2 \
+            '(.templating.list[] | select(.name == "namespace") | .current) =
+                 {"text": "'"$WVA_NS"'", "value": "'"$WVA_NS"'"} |
+             (.templating.list[] | select(.name == "namespace") | .includeAll) = false' \
+            "$json" > "$patched" 2>/dev/null || cp "$json" "$patched"
+        log_info "Dashboard scoped to $WVA_NS (namespace-scoped install)"
+    else
+        cp "$json" "$patched"
+        log_info "Dashboard left cluster-wide (cluster-scoped install)"
+    fi
+
     if kubectl create configmap wva-operation-dashboard \
-        --from-file=operational-dashboard.json="$json" \
+        --from-file=operational-dashboard.json="$patched" \
         -n "$ns" --dry-run=client -o yaml \
         | kubectl label --local -f - grafana_dashboard=1 -o yaml \
+        | kubectl annotate --local -f - "wva.llmd.ai/dashboard-version=$ours" -o yaml \
         | kubectl apply -f - >/dev/null; then
-        log_success "Operational dashboard published to $ns (ConfigMap wva-operation-dashboard, label grafana_dashboard=1)"
+        log_success "Operational dashboard published to $ns (ConfigMap wva-operation-dashboard, version $ours, label grafana_dashboard=1)"
     else
         log_warning "Could not publish the operational dashboard to $ns"
     fi
+    rm -f "$patched"
 }
 
 # wva_detect_prometheus_url echoes an in-cluster URL for a Prometheus that is
