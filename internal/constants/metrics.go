@@ -340,6 +340,30 @@ const (
 	// the locator found no owning ScaledObject above it. A pod owned by something
 	// else entirely — an FMA launcher, owned by a LauncherConfig — counts here.
 	PodMappingMissUnresolved = "unresolved"
+
+	// PodMappingMissUnboundLauncher indicates an FMA server-providing pod with no
+	// current binding: a launcher carrying no dual-pods pairing label.
+	//
+	// Expected and benign. An unbound launcher is a warm spare, serving nothing,
+	// and declining to attribute it is correct. It is separated from
+	// "unresolved" so a pool of spares — which can be large, and is permanent —
+	// does not bury a genuine attribution bug in the same counter.
+	PodMappingMissUnboundLauncher = "unbound_launcher"
+
+	// PodMappingMissPairingUnresolved indicates a launcher that DID declare a
+	// pairing, whose partner still did not resolve to a managed scaler.
+	//
+	// Unlike the reason above this one is worth investigating: the partner pod
+	// may be gone, its ownerReferences may reach no ScaledObject, or the two
+	// halves may disagree on the model they serve.
+	//
+	// The proposal called this `foreign_model_instance`, after the third case.
+	// Renamed because the collector cannot tell the three apart from here, and
+	// naming one of them would repeat the mistake this investigation started
+	// with — a log line that asserted "possible pod/pod_name label mismatch" for
+	// a condition with several possible causes, and sent readers hunting the
+	// wrong one.
+	PodMappingMissPairingUnresolved = "pairing_unresolved"
 )
 
 // Metric Label Names

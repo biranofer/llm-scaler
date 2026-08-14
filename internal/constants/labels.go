@@ -52,6 +52,17 @@ const (
 	// 63-character limit on label values while pod names may be longer. A pair
 	// whose requester name exceeds that cannot be expressed here.
 	DualPodsPairLabelKey = "dual-pods.llm-d.ai/dual"
+
+	// ComponentLabelKey is the standard Kubernetes component label. FMA sets it
+	// on launcher pods, which is the only use this project reads it for.
+	ComponentLabelKey = "app.kubernetes.io/component"
+
+	// LauncherComponent is the ComponentLabelKey value FMA gives a
+	// server-providing pod. Such a pod's ownerReferences lead to a
+	// LauncherConfig, never to a scale target, so it is attributable only through
+	// DualPodsPairLabelKey — which makes this label the way to tell a warm spare
+	// apart from a pod that genuinely should have resolved.
+	LauncherComponent = "launcher"
 )
 
 // Kubernetes Annotation Keys

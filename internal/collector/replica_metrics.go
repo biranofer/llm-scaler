@@ -1003,6 +1003,11 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	replicaMetrics := make([]domain.ReplicaMetrics, 0, len(podData))
 	collectedAt := time.Now()
 
+	// Pods attributed through the FMA pairing rather than their own owner chain,
+	// summarised once after the loop.
+	pairedAttributions := 0
+	pairedExample := ""
+
 	for instanceKey, data := range podData {
 		// Use the actual pod name (not instance IP:port) for logging
 		podName := data.podName
@@ -1043,22 +1048,30 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 
 		if vaName == "" {
-			// The ownerReferences walk found no managed scaler above this pod, so
-			// its metrics belong to nothing this optimizer drives. Count it so the
-			// otherwise-silent skip is observable; the pod is unattributed, so the
-			// metric is keyed by namespace and reason only.
-			//
-			// A pod owned by something that is not a Deployment/LWS under a
-			// ScaledObject lands here -- an FMA launcher, owned by a
-			// LauncherConfig, is the case that prompted this note. It is not a
-			// missing label: no label participates in attribution any more.
-			metrics.IncPodMappingMiss(namespace, constants.PodMappingMissUnresolved)
-			logger.Info("Skipping pod: its ownerReferences reach no scale target this optimizer drives",
+			// Neither the ownerReferences walk nor the FMA pairing hop reached a
+			// managed scaler, so this pod's metrics belong to nothing this
+			// optimizer drives. Count it so the otherwise-silent skip is
+			// observable; the pod is unattributed, so the metric is keyed by
+			// namespace and reason only.
+			reason, why := unattributedReason(c.locator, ctx, namespace, podName)
+			metrics.IncPodMappingMiss(namespace, reason)
+			logger.Info("Skipping pod: nothing this optimizer drives could be resolved for it",
 				"pod", podName,
 				"instance", instanceKey,
-				"owner", "walk ended without a managed scaler",
+				"reason", reason,
+				"detail", why,
 				"scale targets", getScaleTargetNames(scaleTargets))
 			continue
+		}
+		if isFMALauncher(c.locator, ctx, namespace, podName) {
+			// A launcher's owner chain cannot reach a scale target, so if it
+			// resolved at all it did so through the pairing. Count it, and report
+			// once per cycle below: without this, a working hop and a broken one
+			// both look like silence.
+			pairedAttributions++
+			if pairedExample == "" {
+				pairedExample = podName + " -> " + vaName
+			}
 		}
 
 		// Skip LWS worker pods (non-leaders). Only LWS leader pods (worker-index="0")
@@ -1146,6 +1159,18 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 
 		replicaMetrics = append(replicaMetrics, metric)
+	}
+
+	// One line per cycle when the FMA pairing hop carried anything, because the
+	// alternative is that a working hop and a broken one are both silent. An
+	// operator who has just applied the launcher PodMonitor needs to see this
+	// appear; one who is debugging a flat variant needs to see that it does not.
+	if pairedAttributions > 0 {
+		logger.Info("Attributed FMA launcher pods through their dual-pods pairing",
+			"count", pairedAttributions,
+			"example", pairedExample,
+			"model", modelID,
+			"namespace", namespace)
 	}
 
 	for vaName, statuses := range vaMetricsFreshnessStatus {
@@ -1302,6 +1327,50 @@ func (c *ReplicaMetricsCollector) CollectModelArrivalRate(
 		"modelID", modelID, "namespace", namespace, "arrivalRate", arrivalRate)
 
 	return arrivalRate
+}
+
+// isFMALauncher reports whether a pod is a Fast Model Actuation server-providing
+// pod. Its owner chain cannot reach a scale target by design, so a launcher that
+// resolved did so through the pairing hop.
+//
+// Labels come from the locator's cache, which the attribution walk has already
+// populated for this pod, so this costs a map lookup and no API call.
+func isFMALauncher(loc locator.PodLocator, ctx context.Context, namespace, podName string) bool {
+	if loc == nil {
+		return false
+	}
+	return loc.GetPodLabels(ctx, namespace, podName)[constants.ComponentLabelKey] == constants.LauncherComponent
+}
+
+// unattributedReason classifies why a pod resolved to no managed scaler, and
+// returns the metric reason plus a human-readable detail for the log.
+//
+// The three outcomes are deliberately kept apart. A warm FMA spare is expected
+// and permanent, and burying it in the same counter as a real bug makes the
+// counter useless in exactly the namespaces where attribution is hardest. A
+// launcher that declared a pairing and still did not resolve is worth chasing.
+// Anything else is the ordinary "this pod is not ours" case.
+//
+// What it deliberately does NOT do is guess between the causes of the second
+// case — partner deleted, partner unmanaged, or a model disagreement. The
+// collector cannot tell them apart, and this investigation began with a log line
+// that named one cause for a multi-cause condition and sent every reader after
+// the wrong one.
+func unattributedReason(loc locator.PodLocator, ctx context.Context, namespace, podName string) (reason, detail string) {
+	if loc == nil {
+		return constants.PodMappingMissUnresolved, "no locator wired"
+	}
+	labels := loc.GetPodLabels(ctx, namespace, podName)
+	if labels[constants.ComponentLabelKey] != constants.LauncherComponent {
+		return constants.PodMappingMissUnresolved,
+			"the walk up its ownerReferences reached no Deployment or LWS under a ScaledObject"
+	}
+	if partner := labels[constants.DualPodsPairLabelKey]; partner != "" {
+		return constants.PodMappingMissPairingUnresolved,
+			"FMA launcher paired with " + partner + ", which itself resolved to no scale target, no longer exists, or serves a different model"
+	}
+	return constants.PodMappingMissUnboundLauncher,
+		"FMA launcher with no bound instance; it is a warm spare and is serving nothing"
 }
 
 // getScaleTargetNames extracts scale target names from the scale target map.
