@@ -306,6 +306,13 @@ main() {
         # After the scaler backend: a ScaledObject is meaningless until KEDA is there
         # to reconcile it.
         install_default_scaledobjects
+
+        # Opt-in scraping for FMA launcher pods, into the WORKLOAD namespace —
+        # not the controller's, which is where the overlay would have put it and
+        # where it would have selected nothing.
+        if [ "${WVA_FMA_LAUNCHER_METRICS:-false}" = "true" ]; then
+            deploy_fma_launcher_podmonitor "${WVA_WATCH_NS:-$WVA_NS}"
+        fi
     fi
 
     if [ "$phase" = "prereqs" ]; then

@@ -142,6 +142,12 @@ deploy_wva_controller() {
         ln -s "$WVA_PROJECT/config/components/prometheus-alerts" "$tmp_overlay/prometheus-alerts"
     fi
 
+    # NOTE: the FMA launcher PodMonitor is deliberately NOT wired in here. This
+    # overlay renders into the CONTROLLER's namespace, and launcher pods live in
+    # the workload namespace — which differs whenever WVA_WATCH_NS is set, and is
+    # plural for a cluster-scoped install. It is applied per workload namespace
+    # instead; see deploy_fma_launcher_podmonitor.
+
     # config/base/manager/kustomization.yaml transforms the base image name "controller"
     # to the published release image. The overlay must match the POST-transform name.
     local base_image

@@ -312,8 +312,36 @@ kubectl get podmonitor -n "$NS" -o jsonpath='{range .items[*]}{.metadata.name}{"
 ```
 
 A `port` of `metrics` on an FMA namespace means the launchers are not being
-scraped. Re-apply the FMA scenario's PodMonitor, and avoid deploying two guides
-into one namespace.
+scraped. Avoid deploying two guides into one namespace, and either re-apply the
+FMA scenario's PodMonitor or use the one below.
+
+#### Making launchers scrapeable
+
+WVA ships a PodMonitor for this. Set `WVA_FMA_LAUNCHER_METRICS=true` at install
+time, or apply it directly at any point — it needs nothing from WVA and is
+equally useful in a namespace that has FMA and no autoscaler:
+
+```bash
+kubectl apply -k config/fma-launcher-metrics -n <namespace-with-launchers>
+```
+
+It builds the scrape address from `dual-pods.llm-d.ai/server-port`, the port FMA
+records on the pod, rather than hardcoding one — so it follows FMA if the port
+changes, and it **skips launchers with no bound instance**, which carry no such
+annotation. Verified on a cluster: 14 unbound launchers produced 0 targets, and a
+launcher produced `up=1` with 96 distinct vLLM metric names within 30 s of
+binding. Without the skip, the unbound ones become permanently-DOWN targets.
+
+Two things to know:
+
+- It goes in the **workload** namespace, not the controller's. The installer uses
+  `WVA_WATCH_NS` (falling back to `WVA_NS`); a cluster-scoped install must repeat
+  the command for every namespace running launchers.
+- The installer **refuses** to apply it when another PodMonitor already scrapes
+  launchers there. Two scrape configs on one pod give it two targets under the
+  same `(instance, pod)` key, and WVA's additive `sum by` queries would
+  double-count throughput while the `max by` ones still looked correct — a
+  failure that shows up as inflated tokens/sec, not as an error.
 
 First stop for any of these:
 

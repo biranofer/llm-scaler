@@ -7,6 +7,128 @@
 # Requires vars: DEPLOY_PROMETHEUS.
 #
 
+# fma_launcher_scrape_conflict echoes the names of PodMonitors in $1 that ALREADY
+# generate targets for FMA launcher pods, or nothing.
+#
+# It exists to stop the fma-launcher-metrics component from being applied on top
+# of one. Two scrape configs on one pod produce two targets at the same
+# (instance, pod) key, and the collector's additive queries -- the `sum by` ones
+# behind dispatch rate and generation-token rate -- would DOUBLE-COUNT, while the
+# `max by` ones would not. Capacity then looks right while throughput reads 2x,
+# which is a hard failure to spot and a worse outcome than not scraping at all.
+#
+# Selecting a launcher is NOT the same as scraping one, and the difference is the
+# whole point. llm-d's own vllm-<model> PodMonitor selects a launcher the moment
+# it binds -- the serving labels are stamped on it then -- but names its endpoint
+# by port NAME, and a launcher declares no container ports, so the operator
+# resolves nothing and generates no target. A conflict test based on selectors
+# alone would therefore report a clash in precisely the situation this component
+# exists to fix, and refuse to fix it.
+#
+# So a monitor counts as scraping a launcher only if it could actually produce a
+# target for one:
+#
+#   - it sets targetPort (a number bypasses the named-port lookup), or
+#   - it rewrites __address__ in a relabeling (what the FMA-aware template does), or
+#   - it names a port that a launcher pod actually declares.
+#
+# Matching is done by asking the API server rather than by comparing selectors, so
+# a monitor that reaches launchers by any label combination is caught.
+# matchExpressions are not evaluated -- kubectl cannot take them as a selector
+# string -- so an expression-only monitor can slip through. This is a guard
+# against the realistic case, not a proof.
+#
+# With no launcher pods present there is nothing to resolve against and this
+# reports no conflict, which is the right answer: the component is inert until FMA
+# appears, and should be in place beforehand so it works when it does.
+fma_launcher_scrape_conflict() {
+    local ns="$1" launchers launcher_ports pm sel rewrites ports matched
+    launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+        -o name 2>/dev/null)
+    [ -n "$launchers" ] || return 0
+
+    # Container port NAMES declared by launcher pods. Empty on every FMA build
+    # seen so far, which is exactly why they are invisible by default.
+    launcher_ports=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+        -o jsonpath='{range .items[*].spec.containers[*].ports[*]}{.name}{"\n"}{end}' 2>/dev/null \
+        | grep -v '^$' | sort -u)
+
+    kubectl get podmonitor -n "$ns" -o json 2>/dev/null \
+      | jq -r '.items[]
+               | select(.metadata.name != "fma-launcher-metrics")
+               | [ .metadata.name,
+                   ((.spec.selector.matchLabels // {}) | to_entries
+                     | map("\(.key)=\(.value)") | join(",")),
+                   ( [ (.spec.podMetricsEndpoints // [])[]
+                       | (.targetPort != null)
+                         or ((.relabelings // []) | any(.targetLabel == "__address__")) ]
+                     | any ),
+                   ( [ (.spec.podMetricsEndpoints // [])[] | .port // empty ] | join(" ") ) ]
+               | @tsv' 2>/dev/null \
+      | while IFS=$'\t' read -r pm sel rewrites ports; do
+            [ -n "$sel" ] || continue
+            matched=$(kubectl get pods -n "$ns" -l "$sel" -o name 2>/dev/null)
+            [ -n "$matched" ] || continue
+            printf '%s\n' "$matched" | grep -Fxq -f <(printf '%s\n' "$launchers") || continue
+
+            if [ "$rewrites" = "true" ]; then
+                printf '%s\n' "$pm"
+                continue
+            fi
+            # Named-port endpoints only conflict if a launcher declares that port.
+            local p
+            for p in $ports; do
+                if printf '%s\n' "$launcher_ports" | grep -Fxq -- "$p"; then
+                    printf '%s\n' "$pm"
+                    break
+                fi
+            done
+        done
+}
+
+# deploy_fma_launcher_podmonitor applies the launcher PodMonitor into $1, the
+# namespace whose launcher pods should be scraped.
+#
+# It takes a namespace rather than riding the WVA overlay because the two are not
+# the same place. The overlay renders into WVA_NS, where the CONTROLLER runs;
+# launcher pods live in the workload namespace, which is WVA_NS only for a plain
+# namespace-scoped install, is WVA_WATCH_NS whenever that is set, and is any
+# number of namespaces for a cluster-scoped one. A PodMonitor in the wrong
+# namespace selects nothing and reports no error, which is the worst way for
+# monitoring to fail.
+#
+# Returns 0 when it applied, or when it deliberately did not. A monitoring add-on
+# must not fail an install.
+deploy_fma_launcher_podmonitor() {
+    local ns="$1" conflict launchers
+
+    if ! kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+        log_warning "WVA_FMA_LAUNCHER_METRICS is set but the PodMonitor CRD is absent — install the Prometheus Operator first. Skipping."
+        return 0
+    fi
+
+    conflict=$(fma_launcher_scrape_conflict "$ns" | paste -sd, -)
+    if [ -n "$conflict" ]; then
+        log_warning "Not applying the FMA launcher PodMonitor: $conflict already scrapes launcher pods in $ns. Two scrape configs on one pod give it two targets under the same (instance, pod) key, and WVA's additive queries would double-count throughput while capacity still looked correct. Remove the other PodMonitor first, or keep using it and leave WVA_FMA_LAUNCHER_METRICS unset."
+        return 0
+    fi
+
+    if ! kubectl apply -k "$WVA_PROJECT/config/fma-launcher-metrics" -n "$ns" >/dev/null 2>&1; then
+        log_warning "Failed to apply the FMA launcher PodMonitor in $ns; continuing without it."
+        return 0
+    fi
+
+    launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+        --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${launchers:-0}" -gt 0 ]; then
+        log_success "FMA launcher PodMonitor applied in $ns ($launchers launcher pod(s) present). Only launchers with a BOUND instance become targets — an unbound one carries no server-port annotation and is skipped, so warm spares never appear as idle replicas."
+    else
+        log_info "FMA launcher PodMonitor applied in $ns. No launcher pods there yet; it will start scraping if FMA is installed later."
+    fi
+
+    log_info "Cluster-scoped installs: this applied to $ns only. Repeat for every namespace that runs FMA launchers — kubectl apply -k config/fma-launcher-metrics -n <ns>"
+}
+
 # foreign_prometheus echoes any Prometheus on this cluster that this install did
 # NOT put there, or nothing.
 #
