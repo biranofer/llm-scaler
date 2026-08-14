@@ -282,10 +282,10 @@ has 1 ready pod(s) but none attributed
 There is no workload in an FMA variant that WVA can both scale and measure. If
 FMA and a modelservice `decode` Deployment coexist, WVA targets the decode
 Deployment — it is the half it can see — and under-measures demand by whatever
-share of traffic EPP routes to launchers. Measured on a benchmark run: EPP
-dispatched ~64 req/s across nine launchers against 5.9 req/s to the decode pod,
-with launchers at 143 requests running and KV cache 99.9% full. `deploy/lib`
-warns when it detects this at plan time.
+share of traffic EPP routes to launchers. Measured on a benchmark run: at peak
+EPP dispatched 27.4 req/s across nine launchers against 5.9 req/s to the decode
+pod — about 82% of the load — with launchers at 143 requests running and KV cache
+99.9% full. `deploy/lib` warns when it detects this at plan time.
 
 #### A second, separate trap: the PodMonitor gets overwritten
 

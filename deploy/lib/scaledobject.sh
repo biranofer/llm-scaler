@@ -216,8 +216,9 @@ readonly SO_SERVING_MARKER='llm-d.ai/inferenceServing=true'
 #
 # The launchers really do serve. Measured on pokprod001 during a benchmark, one
 # launcher ran at 143 requests running, 61 waiting, KV cache 99.9% full, while
-# the decode pod took a fraction of the traffic. EPP dispatched ~64 req/s across
-# nine launchers against 5.9 req/s to the decode pod.
+# the decode pod took a fraction of the traffic: at peak EPP dispatched 27.4
+# req/s across nine launchers against 5.9 req/s to the decode pod, so roughly
+# 82% of the load landed where WVA cannot see it.
 #
 # WVA cannot use any of it. A launcher pod's ownerReferences lead to a
 # LauncherConfig, not to a Deployment or LWS under a ScaledObject, so the walk in

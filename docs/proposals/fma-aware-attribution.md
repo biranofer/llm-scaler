@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed.
+Proposed. Fact-checked against pokprod001 on 2026-08-14; see
+[Fact-check status](#fact-check-status) for which claims are measured, which are
+sourced from FMA's code, and which remain unverified. One unverified claim is
+load-bearing and must be settled before implementation.
 
 ## Problem
 
@@ -12,8 +15,15 @@ FMA splits a model server across two pods. A **requester** Deployment carries th
 llm-d identity and is what a scaler moves; **launcher** pods, owned by a
 `LauncherConfig`, hold the GPU and run vLLM. WVA attributes a pod's metrics by
 walking its `ownerReferences` looking for a Deployment or LWS under a
-ScaledObject. A launcher's owner is a `LauncherConfig`, so the walk ends with
-nothing and the pod is dropped into `wva_pod_mapping_miss_total`.
+ScaledObject. A launcher's owner is a `LauncherConfig`, so the walk would end
+with nothing and the pod would be dropped, counted in
+`wva_pod_mapping_miss_total`.
+
+*Would*, because in practice it never gets that far. That counter has **never
+incremented anywhere on the cluster** — checked across all namespaces, no series
+exists. Launcher metrics are not collected at all (§4), so no launcher pod ever
+reaches attribution to be rejected by it. The blindness is total and it is silent
+even in the metric built to make it visible.
 
 The two halves fail in opposite directions:
 
@@ -29,10 +39,18 @@ the requester and the controller says so every cycle:
 has 1 ready pod(s) but none attributed
 ```
 
-Measured on pokprod001 (2026-08-14): EPP dispatched ~64 req/s across nine
-launchers against 5.9 req/s to the decode pod. A launcher scraped mid-benchmark
-reported 143 requests running, 61 waiting, KV cache 99.9% full. WVA saw none of
-it, and demand was computed from the decode pod alone.
+Measured on pokprod001 (2026-08-14), over the benchmark's load window: EPP
+dispatched at peak **27.4 req/s across nine launchers** against **5.9 req/s** to
+the decode pod — so roughly **82%** of the traffic went to pods WVA cannot see. A
+launcher scraped mid-benchmark reported 143 requests running, 61 waiting, KV
+cache 99.9% full. WVA saw none of it, and demand was computed from the decode pod
+alone.
+
+(An earlier draft said "~64 req/s". That was `sum(max_over_time(per-pod))` = 65.1,
+which adds nine peaks that never occurred at the same instant. The honest figure
+is `max_over_time(sum(...))` = 27.4. The conclusion is unchanged and the ratio is
+still lopsided, but the number was inflated 2.4× and is corrected here and
+everywhere it was repeated.)
 
 This is not an FMA defect. It is WVA assuming that the pod which reports is the
 pod which is owned, and FMA is the first topology where that is deliberately
@@ -48,8 +66,11 @@ From FMA's `docs/dual-pods.md`, confirmed against a live cluster:
   the observable form, present on *both* halves of a bound pair.
 - **Unbound means asleep.** "An unbound server-providing Pod is asleep. The
   transitions between asleep and awake happen while bound: wake up ASAP after
-  binding, go to sleep just before unbinding." So *bound ⇔ awake*, and a pod
-  carrying the `dual` label is by construction a live engine.
+  binding, go to sleep just before unbinding." So *bound ⇔ awake* as an intent,
+  and a pod carrying the `dual` label should be a live engine. Treat this as
+  FMA's design goal, not as an invariant to lean on: §2 shows the `sleeping`
+  label reporting the opposite of the launcher's own instance list on this very
+  cluster.
 - **Replicas are the scale lever.** "Increasing the replica count on a
   server-requesting Deployment creates additional server-requesting Pods, each
   requiring its own binding to a server-providing Pod. Each replica generates a
@@ -83,6 +104,30 @@ design rests on it:
 maintains on the server-requesting and server-providing Pods". That it lives on
 **both** halves is what makes this design a single pod GET instead of a
 namespace-wide LIST: the launcher names its requester directly.
+
+> **⚠ This is the one load-bearing claim that has NOT been observed live.**
+>
+> It comes from FMA's source, which is authoritative for intent, but no pod on
+> pokprod001 currently carries `dual-pods.llm-d.ai/dual` at all — the label
+> exists only while a pair is bound, and every requester Deployment on the
+> cluster is at `replicas: 0`. The only time it *was* observed, it was on the
+> **requester** (`dual = launcher-fma-…-pgqdm`); the launcher side has never
+> been seen carrying it.
+>
+> Nor does the provider carry the binding annotation the docs describe: the only
+> `dual-pods.llm-d.ai/*` annotations present on any launcher are
+> `launcher-config-hash` and `launcher-populator-template-hash`. Those are
+> populator bookkeeping, not a binding record — consistent with nothing being
+> bound, but it means the annotation path is unverified too.
+>
+> **Verification, before any code:** scale one requester Deployment `0 → 1`,
+> wait for the bind, and dump the labels and annotations of *both* pods. If the
+> launcher carries `dual`, the design stands as written. If it does not, §1
+> must invert to a namespace LIST of pods carrying `dual`, indexed
+> launcher → requester — which still works, and is the same index §1.5 needs for
+> multi-instance launchers anyway, but costs a LIST per collection cycle instead
+> of one conditional GET. That is a materially different cost profile and it
+> should not be discovered during implementation.
 
 Also observed directly: a sleeping launcher still answers `/metrics` with
 `vllm:num_requests_running 0`, `vllm:kv_cache_usage_perc 0` and
@@ -118,16 +163,20 @@ by ownership:
 ScaledObject  <requester>-wva
   └─ Deployment  fma-requester-qwen-…      ← what KEDA scales
        └─ ReplicaSet
-            └─ Pod  fma-requester-…-9rlg7  ← owned, emits NOTHING
-                    labels: llm-d.ai/role=requester
-                            dual-pods.llm-d.ai/dual = launcher-fma-…-pgqdm  ──┐
+            └─ Pod  fma-requester-…-9rlg7  ← owned, emits no engine metrics
+                    labels: llm-d.ai/role=requester                     [measured]
+                            dual-pods.llm-d.ai/dual = launcher-…-pgqdm  [measured] ─┐
                                                                               │
    LauncherConfig  fma-qwen-…                                                 │
      └─ Pod  launcher-fma-…-pgqdm          ← emits EVERYTHING, owned by ──────┘
-             vllm:num_requests_running = 143, waiting = 61, kv = 99.9%
-             labels: dual-pods.llm-d.ai/dual = fma-requester-…-9rlg7
-                     llm-d.ai/inferenceServing=true, llm-d.ai/model=…
+             vllm:num_requests_running = 143, waiting = 61, kv = 99.9%   [measured]
+             labels: llm-d.ai/inferenceServing=true, llm-d.ai/model=…    [measured]
+                     dual-pods.llm-d.ai/dual = fma-requester-…-9rlg7     [NOT OBSERVED]
 ```
+
+Every line above is measured except the last: the launcher-side `dual` label is
+taken from FMA's source and has not been seen on a live pod. See the warning in
+the previous section — the hop's cost depends on it, though not its correctness.
 
 The ownerReferences walk from the launcher reaches a `LauncherConfig` and stops.
 FMA guarantees it always will: the server patch "must change the Pod's labels in
@@ -842,9 +891,13 @@ End-to-end, on a real FMA install: drive load, then assert
 
 ## Phases
 
-0. **Settle the supply-path question in §3** before writing any of it. It is a
-   read, not a change, and it decides whether the mid-binding divergence is safe
-   or actively harmful. Settle §9's launcher-populator question in the same pass.
+0. **Bind one pair and look at it.** Scale a requester `0 → 1`, wait for the
+   bind, dump labels *and* annotations on both pods, and curl the requester's
+   ports. This settles the two unverified claims at once — whether the launcher
+   carries `dual` (which decides GET-vs-LIST, see the warning above) and whether
+   the requester emits engine metrics. Everything else in phase 1 is written
+   against those two answers. Also settle the supply-path question in §3 and
+   §9's launcher-populator question in the same pass; both are reads.
 0.5 **Pool-level degraded mode (§9).** Cheapest useful step: makes WVA able to
    drive an FMA variant with no attribution fix and no PodMonitor change, using
    EPP signals already collected, and brings WVA level with what plain KEDA does
@@ -883,6 +936,48 @@ Worth filing, none blocking:
    unobservable by any Prometheus-based consumer, not just by WVA. A single
    endpoint on a known port, with `instance_id` on the series, would make the
    whole class of tools work.
+
+## Fact-check status
+
+Checked against pokprod001 on 2026-08-14. Kept in the document because a design
+that cites measurements should say which ones it actually took.
+
+**Measured on the live cluster:**
+
+| claim | evidence |
+| --- | --- |
+| launcher pods are owned by a `LauncherConfig` | `ownerReferences: LauncherConfig/fma-qwen-…` |
+| a bound launcher serves the full vLLM surface on `:8000` | 364 `vllm:` series; `:8200` refused |
+| the decode pod uses `:8200`, launchers declare no ports at all | pod specs |
+| launchers produce **no scrape target** | `up{namespace=…}` lists decode, EPP, WVA only |
+| the vLLM PodMonitor selects by port **name** | `port: metrics`, no `targetPort` |
+| load split during the benchmark | 27.4 req/s to nine launchers vs 5.9 to decode |
+| a launcher at saturation | 143 running, 61 waiting, KV 99.9% |
+| pool state | 14 launchers, 9 `sleeping=true`, 5 `sleeping=false`, requester `replicas: 0` |
+| the `sleeping` label disagrees with the launcher's own instance list | `sleeping=false` → 0 instances; `sleeping=true` → 1 running |
+| instances record their own port | `--port 8000` plus `annotations.inference-port` |
+| the ISC declares one `modelServerConfig.port` | `8000` |
+| requester reserves the GPU, launcher requests none | pod specs + FMA template comment |
+| no FMA CRD has a `scale` subresource | `status` only on all three |
+| decode ScaledObject envelope | `min=1 max=10` |
+| `wva_pod_mapping_miss_total` has never incremented | no series, any namespace |
+| the "ready pod(s) but none attributed" message exists | `internal/collector/replica_metrics.go:240` |
+
+**From FMA's source or docs, not observed live:**
+
+| claim | source | risk if wrong |
+| --- | --- | --- |
+| `dual` label on **both** halves | `pkg/api/interface.go` | **high** — §1 inverts to a LIST-based index |
+| bound ⇒ awake | `docs/dual-pods.md` | low — §2 no longer relies on it |
+| requester replicas is the scale lever | `docs/dual-pods.md` + both upstream ScaledObject templates | low — corroborated twice |
+| a launcher may host several models | `docs/launcher.md` | low — only widens §1.5 |
+
+**Unverified, no way to check without a bound pair:**
+
+| claim | why |
+| --- | --- |
+| the requester pod emits no engine metrics | no requester pod exists (`replicas: 0`); inferred from FMA's architecture and from the "none attributed" symptom an earlier session observed |
+| the launcher-side `dual` label | same — requires a bind |
 
 ## Open questions
 
