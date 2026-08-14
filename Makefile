@@ -104,8 +104,25 @@ BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
-BENCHMARK_KEDA_SCALE_UP_PERIOD ?= 0
+# How often each scaling POLICY may act. This is a rate-limit window, not a
+# delay: the scenario's policy is "Percent 100", so 5s permits doubling every
+# 5s. It cannot make scaling faster than the HPA control loop, which
+# re-evaluates on kube-controller-manager's sync period (15s by default) --
+# below that, a smaller number changes nothing.
+BENCHMARK_KEDA_SCALE_UP_PERIOD ?= 5
 BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 300
+
+# The stabilization window is what actually delays a scale-up: HPA takes the
+# most conservative recommendation across it, so load must persist this long
+# before replicas are added. The scenario ships 120s, which dominates every
+# other latency in the loop -- KEDA polls every 5s, WVA recomputes every 15s,
+# and a decode replica measured 61s to Ready on pokprod001. Benchmarking WVA's
+# reaction with a 120s window measures the window.
+#
+# 0 is a VALID value here (unlike periodSeconds), meaning "act on the current
+# recommendation". Empty means "leave the scenario's own value alone".
+BENCHMARK_KEDA_SCALE_UP_STABILIZATION ?= 0
+BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION ?=
 # WVA under benchmark is installed from THIS repo, after standup, into the
 # benchmark namespace at namespace scope. It used to come from the published
 # Helm chart named in the scenario — a released binary, not the code under test,
@@ -715,6 +732,17 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleDown.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)' \
 			$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml; \
 	fi
+	@# Stabilization windows. Applied when NON-EMPTY, not when > 0: unlike
+	@# periodSeconds, 0 is a legal and meaningful value here ("act now").
+	@if [ -n "$(BENCHMARK_KEDA_SCALE_UP_STABILIZATION)" ]; then \
+		yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleUp.stabilizationWindowSeconds) = $(BENCHMARK_KEDA_SCALE_UP_STABILIZATION)' \
+			$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml; \
+	fi
+	@if [ -n "$(BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION)" ]; then \
+		yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleDown.stabilizationWindowSeconds) = $(BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION)' \
+			$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml; \
+	fi
+	@echo "Scaling behaviour: scaleUp period=$(BENCHMARK_KEDA_SCALE_UP_PERIOD)s stabilization=$(BENCHMARK_KEDA_SCALE_UP_STABILIZATION)s, scaleDown period=$(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)s stabilization=$(if $(BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION),$(BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION),scenario default)"
 	@echo "KEDA bounds set: min=$(BENCHMARK_KEDA_MIN_REPLICAS) max=$(BENCHMARK_KEDA_MAX_REPLICAS), periods up=$(BENCHMARK_KEDA_SCALE_UP_PERIOD)s down=$(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)s"
 	@# Turn OFF the scenario's own WVA install. This repo installs WVA from
 	@# deploy/ in benchmark-deploy-wva, and benchmark-deploy-wva refuses to run
