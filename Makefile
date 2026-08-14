@@ -681,6 +681,26 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-standup BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
+	@# Standing a guide up into a namespace that already runs FMA silently breaks
+	@# it. Both render a PodMonitor named vllm-<model>, and a scenario without
+	@# `fma.enabled` renders the port-NAME form, which generates no target for a
+	@# launcher (they declare no container ports). The FMA stack keeps serving and
+	@# its metrics just stop being collected, with no error anywhere. That is
+	@# exactly what happened on pokprod001 -- an FMA guide at 09:25Z, another guide
+	@# over the top at 09:26Z -- and it is why a benchmark once showed a variant
+	@# flat at one replica through a 155-deep queue.
+	@launchers=$$(kubectl get pods -n "$(BENCHMARK_NAMESPACE)" -l app.kubernetes.io/component=launcher --no-headers 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$${launchers:-0}" -gt 0 ]; then \
+		echo ""; \
+		echo "WARNING: $(BENCHMARK_NAMESPACE) already runs Fast Model Actuation ($$launchers launcher pod(s))."; \
+		echo "         This standup renders a PodMonitor named vllm-<model>, the same name the FMA guide uses."; \
+		echo "         If this scenario does not set fma.enabled, it will OVERWRITE the FMA-aware one and the"; \
+		echo "         launchers stop being scraped -- silently. Metrics for most of the traffic then vanish."; \
+		echo "         Either use a scenario with fma.enabled, or stand this up in a clean namespace, or"; \
+		echo "         re-apply scraping afterwards:  kubectl apply -k config/fma-launcher-metrics -n $(BENCHMARK_NAMESPACE)"; \
+		echo "         See docs/deployment/operations.md, 'FMA launcher pods'."; \
+		echo ""; \
+	fi
 	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ]; then \
 		echo "Direct-KEDA mode: this feature isn't in a released llm-d-benchmark tag yet — upgrading the llm-d-benchmark checkout to '$(BENCHMARK_REPO_REF)' (unreleased)..."; \
 		if ! kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then \

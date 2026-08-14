@@ -175,6 +175,54 @@ Two pieces remain open:
    with an unresolved accelerator is charged to no pool, so a quota reports more
    of its allowance free than it has. `wva_unattributed_gpus` reports the amount.
 
+## Gap 3: an FMA warm pool holds GPUs that no pod requests
+
+Both gaps above are about GPUs this accounting charges to the wrong place. This
+one is about GPUs it cannot see at all, and unlike the others it cannot be closed
+from inside WVA.
+
+Fast Model Actuation splits a server across a requester pod, which reserves the
+accelerator, and a launcher pod, which runs the engine on it. Launchers request
+**no** `nvidia.com/gpu` — deliberately, since requesting on both halves would
+double-book N launchers plus N requesters on an N-GPU node. While a pair is
+bound the accounting is exactly right: the GPU is charged to the requester, which
+is the scale target this file is about.
+
+The gap opens on unbind. The launcher keeps its vLLM instance resident — that is
+what makes the next bind take seconds — and goes on occupying a physical GPU
+charged to nobody. Measured on pokprod001 with every requester at `replicas: 0`:
+
+```
+GPU requests charged in the namespace : 1
+launcher pods running a vLLM instance : 9, on 9 distinct GPU UUIDs
+```
+
+So `Used` under-states by the size of the warm pool, and `Limit − Used` over-states
+free capacity by the same amount — the same direction as Gap 1, and for a
+different reason.
+
+**Why it cannot be closed here.** The obvious fix is to read the GPUs off the
+pods: FMA does record them, in `dual-pods.llm-d.ai/vllm-config` and
+`/accelerators`. But those annotations, along with `/server-port` and
+`/instance-id`, exist **only while the pair is bound**. An orphaned launcher still
+running an instance carries neither, so the API server holds no record of what it
+is using. Only the launcher's own HTTP API knows, and the collector does not call
+workload APIs.
+
+Two things follow for anyone reading these numbers:
+
+- In an FMA namespace, treat the budget as a **lower bound on usage** and an
+  **upper bound on what is free**. `deploy/lib` warns at plan time when it finds
+  launcher pods.
+- A `ResourceQuota` on `requests.nvidia.com/gpu` has the same blind spot, so it is
+  not a backstop here — which matters, because the limiter is advisory precisely
+  on the grounds that ResourceQuota is the real boundary.
+
+Closing it needs FMA to make the occupancy visible; that is item 1 in
+[Requests to Fast Model Actuation](../proposals/fma-upstream-requests.md).
+Operator-facing guidance is in
+[the GPU limiter guide](../deployment/gpu-limiter.md), "FMA namespaces".
+
 ## Testing the placement check end-to-end
 
 The scale-from-zero placement check has unit coverage on every seam, and its
