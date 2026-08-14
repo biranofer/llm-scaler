@@ -110,7 +110,7 @@ BENCHMARK_KEDA_MAX_REPLICAS ?= 10
 # re-evaluates on kube-controller-manager's sync period (15s by default) --
 # below that, a smaller number changes nothing.
 BENCHMARK_KEDA_SCALE_UP_PERIOD ?= 5
-BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 300
+BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 120
 
 # The stabilization window is what actually delays a scale-up: HPA takes the
 # most conservative recommendation across it, so load must persist this long
@@ -121,8 +121,18 @@ BENCHMARK_KEDA_SCALE_DOWN_PERIOD ?= 300
 #
 # 0 is a VALID value here (unlike periodSeconds), meaning "act on the current
 # recommendation". Empty means "leave the scenario's own value alone".
+# Scale-down carries the conservatism, and it belongs in the STABILIZATION
+# window rather than the policy period: HPA takes the maximum recommendation
+# across this window, so 300s is what makes a replica survive a momentary dip.
+# The period is only a rate limit, and with "Percent 100" a single step may
+# remove everything anyway -- a long period there looks cautious and prevents
+# almost nothing, which is why these two are the way round they are.
+#
+# The asymmetry is deliberate: removing a replica too eagerly costs a 61s cold
+# start (measured on pokprod001) on the next request, while keeping one too
+# long only costs money.
 BENCHMARK_KEDA_SCALE_UP_STABILIZATION ?= 0
-BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION ?=
+BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION ?= 300
 # WVA under benchmark is installed from THIS repo, after standup, into the
 # benchmark namespace at namespace scope. It used to come from the published
 # Helm chart named in the scenario — a released binary, not the code under test,
