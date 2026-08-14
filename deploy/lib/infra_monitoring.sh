@@ -120,6 +120,17 @@ install_operational_dashboard() {
         | kubectl annotate --local -f - "wva.llmd.ai/dashboard-version=$ours" -o yaml \
         | kubectl apply -f - >/dev/null; then
         log_success "Operational dashboard published to $ns (ConfigMap wva-operation-dashboard, version $ours, label grafana_dashboard=1)"
+        # The tenant's scoping is a LINK, not a default. A variable default lives
+        # in the dashboard JSON, and this object is shared by every install on
+        # the cluster -- so there is no per-tenant default to set. A URL gives
+        # each namespace its own entry point into the one dashboard, with no
+        # collisions and nothing for the next install to overwrite.
+        local uid slug
+        uid=$(yq -r '.uid // "wva-operational"' "$json" 2>/dev/null)
+        slug=$(yq -r '.title // "wva"' "$json" 2>/dev/null \
+               | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')
+        log_info "  This namespace's view: <your-grafana>/d/$uid/$slug?var-namespace=$WVA_NS"
+        log_info "  Cluster-wide view:     <your-grafana>/d/$uid/$slug"
     else
         log_warning "Could not publish the operational dashboard to $ns"
     fi

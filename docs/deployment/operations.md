@@ -77,6 +77,68 @@ Skip it entirely with `DEPLOY_OPERATIONAL_DASHBOARD=false`.
 Read the panels top-down. The upper row answers "is WVA seeing the cluster at all";
 until those are healthy, the scaling panels below them are meaningless.
 
+#### One dashboard, many installs
+
+The ConfigMap has a **fixed name in whatever namespace you publish it to**, so
+every install on a cluster writes the same object. That is deliberate — the
+dashboard is generic and driven by variables, and one copy per tenant would fill
+the picker with identical dashboards — but it has consequences worth knowing.
+
+**The first row is the admin's view.** *Installs present* counts WVA Deployments
+from kube-state-metrics; *Controllers reporting metrics* counts the ones whose
+metrics actually arrive. A gap between them is an install nobody is scraping,
+and it is the difference that matters: a controller that is not scraped looks
+exactly like a controller that is not scaling. *Scrape targets DOWN* names how
+many, and the **Controller** variable says which.
+
+**Your namespace's view is a link, not a default.** A Grafana variable's default
+lives inside the dashboard JSON, and this object is shared by every install on
+the cluster — so there is no per-tenant default to set: pinning it would mean
+everyone sees whichever tenant installed last. Each namespace gets its own entry
+point into the one dashboard instead, which the install prints:
+
+```
+<your-grafana>/d/wva-operational/wva-operational-dashboard?var-namespace=<your-namespace>
+```
+
+Drop the query string for the cluster-wide view. If you would rather have your
+own dashboard object — pinned, private, nobody else writing it — publish a copy
+into your own namespace:
+
+```bash
+DASHBOARD_NS=<your-namespace> make deploy-wva   # pinned to that namespace
+```
+
+**Namespace label:** `wva_*` metrics carry both `namespace` and
+`exported_namespace`. `exported_namespace` is the *workload's* namespace and
+`namespace` is the *controller's* — the same for a namespace-scoped install,
+different for a cluster-scoped one, where grouping by `namespace` would collapse
+every workload onto the controller's namespace. The dashboard defaults to
+`exported_namespace` for that reason; the benchmark dashboard defaults to
+`namespace`, because vLLM metrics carry only that one.
+
+**Versions.** The ConfigMap records the WVA version that published it, and an
+older install will not overwrite a newer dashboard — it says so and leaves it.
+Panels for metrics a given version does not emit stay empty for that install:
+on a cluster running several versions, an empty panel may mean "older
+controller", not "nothing happening". Force a republish with:
+
+```bash
+kubectl delete configmap wva-operation-dashboard -n <dashboard-namespace>
+```
+
+**Who can see what is the datasource's decision, not WVA's.** On OpenShift,
+`thanos-querier:9091` is cluster-monitoring-view — anything querying through it
+reads every namespace, whatever scope WVA was installed with. For a tenant
+Grafana that must only see its own namespace, point the datasource at
+`thanos-querier:9092`, which enforces per-namespace RBAC.
+
+That is also what makes the shared dashboard safe rather than merely tidy: with
+a per-namespace datasource the **Namespace** variable only lists namespaces the
+viewer may read, so "All" already means "all of mine". Pinning a default never
+provided isolation — it only hid names from the dropdown while every query still
+ran with the datasource's own permissions.
+
 ### The metrics that answer specific questions
 
 All are exposed by the controller and scraped by the ServiceMonitor the install
