@@ -42,6 +42,14 @@ repo and registers the workloads. prometheus-adapter is deliberately not
 installed: it and KEDA both claim the `external.metrics.k8s.io` APIService, of
 which a cluster has one.
 
+To keep llm-d-benchmark from installing it anyway, the standup creates the
+`prometheus-adapter-resource-reader` ClusterRole that its "is prometheus-adapter
+already here?" probe looks for. That object is cluster-scoped and unsuffixed, so
+on a shared cluster it may already belong to a **real** prometheus-adapter
+release: when it does, and that release lives in another namespace, the standup
+leaves it alone and says so rather than rewriting its Helm ownership — which
+would break that release's next `helm upgrade`.
+
 ### 2. Run a workload
 
 <!-- guide:verify.run start -->
