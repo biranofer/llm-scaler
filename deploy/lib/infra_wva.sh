@@ -480,9 +480,20 @@ wva_reconcile_prometheus_scheme() {
             ;;
     esac
 
-    # Wait for WVA to be ready
+    # Wait for WVA to be ready.
+    #
+    # `kubectl wait --for=condition=Ready pod -l ...` asks about ANY pod carrying
+    # the label — and during a rolling update the PREVIOUS pod is still there and
+    # still ready. An upgrade whose new pod cannot start therefore satisfied this
+    # instantly. Ask the rollout instead: it is the only check that requires the
+    # UPDATED replicas to be the ready ones.
     log_info "Waiting for WVA controller to be ready..."
-    if kubectl wait --for=condition=Ready pod -l "$WVA_CONTROLLER_LABEL_SELECTOR" -n "$WVA_NS" --timeout=60s; then
+    local wva_deploy
+    wva_deploy=$(kubectl get deployment -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+        -o name 2>/dev/null | head -1)
+    if [ -z "$wva_deploy" ]; then
+        log_warning "No WVA Deployment found in $WVA_NS to wait for"
+    elif kubectl rollout status "$wva_deploy" -n "$WVA_NS" --timeout=60s; then
         :
     else
         log_warning "WVA controller is not ready yet - check 'kubectl get pods -n $WVA_NS'"

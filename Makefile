@@ -1,7 +1,11 @@
 # Image URL to use all building/pushing image targets
-IMAGE_TAG_BASE ?= ghcr.io/llm-d
-IMG_TAG ?= latest
-IMG ?= $(IMAGE_TAG_BASE)/llm-d-workload-variant-autoscaler:$(IMG_TAG)
+# This branch's manifests pass --external-scaler-bind-address, a flag no
+# RELEASED image has: ghcr.io/llm-d/...:latest crash-loops on it with "unknown
+# flag", and the install has nothing to run. The default therefore points at a
+# build of THIS tree. Change it back when the external scaler ships upstream.
+IMAGE_TAG_BASE ?= ghcr.io/ev-shindin
+IMG_TAG ?= wva-ext
+IMG ?= $(IMAGE_TAG_BASE)/llm-scaler:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 CLUSTER_GPU_TYPE ?= nvidia-mix
 CLUSTER_NODES ?= 3
@@ -627,9 +631,11 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 ## up can (re)install the autoscaler without redeploying the model servers.
 ##
 ## IMG decides what is measured. It defaults to $(IMAGE_TAG_BASE)/...:$(IMG_TAG),
-## which is a REGISTRY image — pass IMG=<a build of this tree> to benchmark the
-## working copy. Benchmarking a published tag is what this target exists to stop
-## happening silently, so it says which image it is installing.
+## a REGISTRY image built from this branch — which is NOT automatically the
+## working copy. Pass IMG=<your build> after changing controller code, or the run
+## measures whatever was last pushed under that tag. Benchmarking the wrong
+## binary is what this target exists to stop happening silently, so it says which
+## image it is installing.
 .PHONY: benchmark-deploy-wva
 benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (namespace scope) and create its ScaledObjects. Set IMG=<your build>.
 	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \

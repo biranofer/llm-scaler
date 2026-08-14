@@ -85,13 +85,15 @@ Optional, except `BENCHMARK_NAMESPACE`.
 | Parameter | Default | Example |
 | --- | --- | --- |
 | `BENCHMARK_NAMESPACE` | — (required) | `my-bench` |
-| `IMG` | the published image | `ghcr.io/you/wva:dev` |
+| `IMG` | a build of this branch | `ghcr.io/you/wva:dev` |
 | `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
 | `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
 
-**`IMG` decides what is measured.** It defaults to a published image, so a run
-that does not set it benchmarks a release rather than your branch — and nothing
-in the results afterwards says which binary produced them.
+**`IMG` decides what is measured**, and nothing in the results afterwards says
+which binary produced them. The default is a build of this branch rather than a
+release: released images reject `--external-scaler-bind-address`, which these
+manifests pass, so a run against one measures a CrashLoopBackOff. Set `IMG` to
+your own build whenever you have changed controller code.
 
 ## Two variants
 

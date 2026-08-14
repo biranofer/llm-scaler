@@ -23,10 +23,23 @@ verify_deployment() {
     log_info "Waiting for the WVA controller to become available..."
     # `kubectl get pods | grep Running` was not a readiness check: a pod stuck at
     # "0/1 Running" — crash-looping on a bad config, or unable to reach Prometheus —
-    # matches it. Ask the Deployment whether it is Available instead, which is the
-    # condition that means the container passed its probes.
-    if kubectl wait --for=condition=Available \
-        deployment -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+    # matches it.
+    #
+    # Neither is `--for=condition=Available` on the Deployment, which is what this
+    # used to ask. A rolling update keeps the PREVIOUS ReplicaSet's pod running
+    # until the new one is ready, and one ready pod is enough to hold Available
+    # true — so an upgrade to an image that cannot start reported success while
+    # the new pod sat in CrashLoopBackOff. Verified on a real cluster: installing
+    # this branch's manifests with the default (released) IMG crash-loops on
+    # "unknown flag: --external-scaler-bind-address", and the install still said
+    # "WVA controller is running and ready".
+    #
+    # `rollout status` is the check that means what this claims: it waits for the
+    # UPDATED replicas to be available, and fails when they never are.
+    local wva_deploy
+    wva_deploy=$(kubectl get deployment -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" \
+        -o name 2>/dev/null | head -1)
+    if [ -n "$wva_deploy" ] && kubectl rollout status "$wva_deploy" -n "$WVA_NS" \
         --timeout="${WVA_VERIFY_TIMEOUT:-180s}" >/dev/null 2>&1; then
         log_success "WVA controller is running and ready"
     else

@@ -14,15 +14,19 @@ export REPO_ROOT
 
 # The controller image the guides install.
 #
-# Set this to a build of your own tree when you are testing an unmerged branch:
-# the default is a published image, and a released image does not accept flags a
-# newer branch's manifests pass. That mismatch presents as CrashLoopBackOff,
-# which reads like a broken image rather than a version skew.
+# The default is a build of THIS branch, not a release: these manifests pass
+# --external-scaler-bind-address, and no released image accepts it. Pointing the
+# guides at ghcr.io/llm-d/...:latest gave a CrashLoopBackOff on "unknown flag",
+# which reads like a broken image rather than version skew.
+#
+# Set this to a build of your own tree when you change controller code:
+#     make docker-build docker-push IMG=ghcr.io/<you>/<repo>:<tag>
+#
 # The variable is IMG, because that is what the make targets read. It was
 # exported here as WVA_IMAGE, which nothing anywhere reads: a reader testing an
 # unmerged branch set it, saw no effect, and got the CrashLoopBackOff described
 # above from the published image they thought they had replaced.
-export IMG="${IMG:-ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest}"
+export IMG="${IMG:-ghcr.io/ev-shindin/llm-scaler:wva-ext}"
 
 # The namespace WVA installs into.
 #
