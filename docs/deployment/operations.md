@@ -77,6 +77,21 @@ Skip it entirely with `DEPLOY_OPERATIONAL_DASHBOARD=false`.
 Read the panels top-down. The upper row answers "is WVA seeing the cluster at all";
 until those are healthy, the scaling panels below them are meaningless.
 
+#### Who owns the dashboard
+
+The dashboard is published as a ConfigMap into a **monitoring** namespace, which
+is normally not the namespace WVA runs in — so publishing the shared one is a
+**cluster-admin** action even though it happens during the tenant install step.
+
+| | can do |
+| --- | --- |
+| Cluster admin | publish and update the shared dashboard in the monitoring namespace; decide the datasource, and therefore who sees what |
+| Namespace admin | publish a private copy into their own namespace (`DASHBOARD_NS=<own>`); use the shared one through their `?var-namespace=` link |
+
+A namespace admin running `make deploy-wva` without rights to the monitoring
+namespace gets a message saying so — the install continues, and only the
+dashboard step is skipped. Nothing about WVA's scaling depends on it.
+
 #### One dashboard, many installs
 
 The ConfigMap has a **fixed name in whatever namespace you publish it to**, so

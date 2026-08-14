@@ -50,10 +50,26 @@ install_operational_dashboard() {
         log_warning "Operational dashboard JSON not found at $json — skipping"
         return 0
     fi
-    kubectl get namespace "$ns" >/dev/null 2>&1 || {
-        log_warning "Namespace $ns does not exist — skipping the operational dashboard. Set DASHBOARD_NS to the namespace your Grafana watches."
-        return 0
-    }
+    # Forbidden is not absent. Publishing into a SHARED monitoring namespace is a
+    # cluster-admin action, and a namespace admin running `make deploy-wva` will
+    # be denied here -- telling them the namespace "does not exist" sends them to
+    # create one, when what they need is either their admin or a copy in their
+    # own namespace.
+    local ns_err
+    if ! ns_err=$(kubectl get namespace "$ns" 2>&1 >/dev/null); then
+        case "$ns_err" in
+            *[Ff]orbidden*)
+                log_info "No permission to read namespace $ns — the shared dashboard belongs to whoever administers monitoring."
+                log_info "  Cluster admin: run this install, or apply deploy/grafana/operational-dashboard.json as a ConfigMap labelled grafana_dashboard=1 in $ns."
+                log_info "  Namespace admin: publish your own copy with DASHBOARD_NS=$WVA_NS — everything else about this install is unaffected."
+                return 0
+                ;;
+            *)
+                log_warning "Namespace $ns does not exist — skipping the operational dashboard. Set DASHBOARD_NS to the namespace your Grafana watches."
+                return 0
+                ;;
+        esac
+    fi
 
     # ONE dashboard object serves every install on the cluster: the name is
     # fixed and the namespace is shared, so ten namespace-scoped installs apply
@@ -132,7 +148,22 @@ install_operational_dashboard() {
         log_info "  This namespace's view: <your-grafana>/d/$uid/$slug?var-namespace=$WVA_NS"
         log_info "  Cluster-wide view:     <your-grafana>/d/$uid/$slug"
     else
-        log_warning "Could not publish the operational dashboard to $ns"
+        # Same distinction on the write: a tenant who can READ the shared
+        # namespace still cannot usually create ConfigMaps in it.
+        local apply_err
+        apply_err=$(kubectl create configmap wva-operation-dashboard \
+            --from-file=operational-dashboard.json="$patched" \
+            -n "$ns" --dry-run=client -o yaml 2>&1 \
+            | kubectl apply --dry-run=server -f - 2>&1 >/dev/null || true)
+        case "$apply_err" in
+            *[Ff]orbidden*)
+                log_info "No permission to write the dashboard into $ns — it is the monitoring namespace's to own."
+                log_info "  Namespace admin: DASHBOARD_NS=$WVA_NS publishes your own copy instead."
+                ;;
+            *)
+                log_warning "Could not publish the operational dashboard to $ns: ${apply_err:-unknown error}"
+                ;;
+        esac
     fi
     rm -f "$patched"
 }
