@@ -208,15 +208,45 @@ so_plan_rows() {
 # to autoscale.
 readonly SO_SERVING_MARKER='llm-d.ai/inferenceServing=true'
 
-# Fast Model Actuation puts the serving path behind a REQUESTER Deployment: the
-# launcher pods host vLLM, and the requester is what a scaler is meant to move.
-# The decode Deployment still exists and still carries the serving marker, so
-# discovery finds it and would scale a workload that neither serves traffic nor
-# emits the vLLM metrics WVA reads -- the controller says as much, once per
-# cycle:
+# Fast Model Actuation splits a model server across two pods: a REQUESTER
+# Deployment that carries the llm-d identity, and LAUNCHER pods -- owned by a
+# LauncherConfig -- that hold the GPU and run vLLM. The dual-pods controller
+# pairs them, stamping the serving labels onto whichever launcher is currently
+# bound (the requester grows a dual-pods.llm-d.ai/dual label naming it).
 #
-#   Skipping pod that doesn't match any scale target: launcher-fma-...
-#   No saturation metrics available for model
+# The launchers really do serve. Measured on pokprod001 during a benchmark, one
+# launcher ran at 143 requests running, 61 waiting, KV cache 99.9% full, while
+# the decode pod took a fraction of the traffic. EPP dispatched ~64 req/s across
+# nine launchers against 5.9 req/s to the decode pod.
+#
+# WVA cannot use any of it. A launcher pod's ownerReferences lead to a
+# LauncherConfig, not to a Deployment or LWS under a ScaledObject, so the walk in
+# CollectReplicaMetrics ends without a scale target and the pod is skipped --
+# counted in wva_pod_mapping_miss_total, and otherwise silent. Point a
+# ScaledObject at the requester and the controller says so every cycle:
+#
+#   has 1 ready pod(s) but none attributed
+#
+# That is the durable limitation: an FMA variant has no workload WVA can both
+# scale and measure. The requester can be scaled but reports nothing; the
+# launchers report everything but belong to no scale target.
+#
+# Scraping is a second, independent failure, and it is easy to cause by accident.
+# A launcher declares no container ports and serves metrics on :8000 (the decode
+# pod uses :8200), so a PodMonitor that selects its endpoint by port NAME
+# resolves nothing and generates no target at all -- not a failing target, no
+# target. llm-d-benchmark gets this right when a scenario sets `fma.enabled`: it
+# renders the endpoint with a relabeling that forces __address__ to <podIP>:8000.
+# But that PodMonitor is named vllm-<model>, and a later standup of a NON-FMA
+# guide into the same namespace renders the same name with `port: metrics` and
+# overwrites it. The FMA stack keeps serving; its metrics just stop being
+# collected. That is what happened on pokprod001 -- an FMA guide at 09:25Z, a
+# workload-autoscaling guide over the top at 09:26Z, and from then on `up{}`
+# listed the decode pod, EPP and WVA, and no launcher.
+#
+# Consequence for anyone reading a plan: in a namespace where FMA is present, WVA
+# measures only the decode Deployment, and the GPUs behind the launchers are
+# counted nowhere. See docs/deployment/operations.md, "FMA launcher pods".
 #
 # The requester is not found by SO_SERVING_MARKER: it carries the hyphenated
 # llm-d.ai/inference-serving, not the camelCase llm-d.ai/inferenceServing that
@@ -464,28 +494,35 @@ so_discover() {
                 #
                 # An earlier version pointed the plan at the requester, on the
                 # scenario's word that "launcher pods host vLLM and the requester
-                # is the serving path". Measured on pokprod001, that is wrong:
+                # is the serving path". Measured on pokprod001, retargeting is
+                # still wrong -- the requester holds no engine and WVA said so
+                # once per cycle, "has 1 ready pod(s) but none attributed" -- but
+                # the reason recorded here used to be wrong too. It claimed the
+                # launchers "answer 0 vLLM series on :8000". They answer 364. A
+                # launcher scraped mid-benchmark reported 143 running, 61 waiting
+                # and KV 99.9% full; the earlier check had caught a sleeping one.
                 #
-                #   vllm:* metrics in Prometheus come from the DECODE pod
-                #   the requester and the launchers answer 0 vLLM series on :8000
+                # What is true is that the launchers are unusable to WVA for a
+                # different reason: they are owned by a LauncherConfig, so the
+                # attribution walk reaches no scale target and drops them. See the
+                # note above SO_FMA_ROLE_MARKER for the full shape.
                 #
-                # Scaling the requester therefore gave WVA a target it cannot
-                # measure -- the controller said so itself, once per cycle:
-                # "has 1 ready pod(s) but none attributed". This workload, the one
-                # discovery already found, is the one that serves and reports.
-                #
-                # The detection stays because FMA changes how a namespace should
-                # be read: the launcher pods are owned by a LauncherConfig, so
-                # they are attributed to no scale target and their GPUs are
-                # counted nowhere.
+                # So the decode Deployment stays the target -- it is the workload
+                # WVA can both scale and measure -- and the operator gets told, at
+                # warning level, that a second serving tier exists which WVA is
+                # not measuring. Silence here reads as "FMA is handled".
                 if [ "$kind" = "Deployment" ]; then
-                    local model_label fma_requester
+                    local model_label fma_requester fma_launchers
                     model_label=$(printf '%s' "$labels" | tr ' ' '\n' \
                         | sed -n 's/^llm-d\.ai\/model=//p' | head -1)
                     fma_requester=$(so_fma_requester "$ns" "$model_label")
                     if [ -n "$fma_requester" ] && [ "$fma_requester" != "$name" ]; then
-                        log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name, which is the workload that serves and reports vLLM metrics — the requester and launcher pods report none."
-                        note="${note:+$note }FMA topology: requester $fma_requester present; this entry targets the model server, which is what reports vLLM metrics."
+                        fma_launchers=$(kubectl get pods -n "$ns" \
+                            -l app.kubernetes.io/component=launcher \
+                            --no-headers 2>/dev/null | wc -l | tr -d ' ')
+                        log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name: it is the workload Prometheus scrapes, so it is the one WVA can measure."
+                        log_warning "FMA launcher pods (${fma_launchers:-?} in $ns) run vLLM and serve traffic, but they are owned by a LauncherConfig, so WVA attributes their metrics to no scale target and drops them. Demand for '$model_label' will be under-measured by whatever share of traffic EPP sends to launchers. See docs/deployment/operations.md, 'FMA launcher pods'."
+                        note="${note:+$note }FMA topology: requester $fma_requester present and ${fma_launchers:-?} launcher pod(s) serving traffic WVA cannot attribute. This entry targets the decode workload, the only one WVA can both scale and measure."
                     fi
                 fi
                 existing=$(so_existing_info "$ns" "$name")

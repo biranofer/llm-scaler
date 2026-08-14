@@ -53,6 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
@@ -66,7 +67,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -1093,8 +1093,27 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			tokensInUse = int64(rounded)
 		}
 
-		if (data.hasKv || data.hasQueue) && !data.hasArrivalRate {
-			logger.Info("Pod has engine metrics but no dispatch rate — possible pod/pod_name label mismatch", "pod", podName, "model", modelID, "namespace", namespace)
+		// A pod that is demonstrably serving but has no dispatch rate is worth a
+		// line, because EPP is where per-replica arrival rate comes from and its
+		// absence silently degrades every analyzer that reads ArrivalRate.
+		//
+		// Gate on observed work, not on `hasKv || hasQueue`. Those are true for an
+		// idle pod too -- the engine reports 0 rather than nothing -- while the EPP
+		// counter behind the dispatch rate goes stale a few minutes after the last
+		// request, so rate() returns no series at all. The old condition therefore
+		// fired every reconcile on a healthy idle namespace and blamed a label
+		// mismatch for what was simply no traffic.
+		//
+		// The cause is also no longer asserted: a missing dispatch rate means EPP is
+		// absent, or EPP is present but names this pod differently in pod_name.
+		// Both are real, and the collector cannot tell them apart from here.
+		if (kvUsage > 0 || queueLen > 0) && !data.hasArrivalRate {
+			logger.Info("Pod is serving but no dispatch rate was collected for it; EPP may be absent, or its pod_name may not match this pod",
+				"pod", podName,
+				"model", modelID,
+				"namespace", namespace,
+				"kvCacheUsage", kvUsage,
+				"queueLength", queueLen)
 		}
 
 		// Track freshness for metrics in this pod

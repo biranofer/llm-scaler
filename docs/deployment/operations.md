@@ -241,6 +241,7 @@ procedures, including the simulator and the e2e suites, are in
 | nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
 | a model never wakes from zero | the EPP flow-control queue is not reaching WVA | see [Troubleshooting](../developer-guide/troubleshooting.md) |
 | `READY False` on the ScaledObject, and the HPA's `TARGETS` reads `cpu: <unknown>/80%` | KEDA could not fetch the metric spec from WVA, so it fell back to a CPU metric. The trigger names a scaler it cannot reach | `kubectl logs -n keda deploy/keda-operator \| grep external` |
+| demand looks far too low for the load you are driving, and `has N ready pod(s) but none attributed` appears each cycle | FMA is in the namespace: launcher pods are serving traffic that WVA cannot attribute | see [FMA launcher pods](#fma-launcher-pods) |
 
 ### `no children to pick from` after a reinstall
 
@@ -258,6 +259,61 @@ Verified on kind: the ScaledObjects went `READY True` within a poll interval of
 the restart, with nothing else changed. Deleting the ScaledObjects before
 uninstalling avoids it — which `make undeploy-wva` now does for the ones it
 created.
+
+### FMA launcher pods
+
+Fast Model Actuation splits a model server in two: a **requester** Deployment
+that carries the llm-d identity, and **launcher** pods — owned by a
+`LauncherConfig` — that hold the GPU and run vLLM. A dual-pods controller pairs
+them and stamps the serving labels onto whichever launcher is bound, which is how
+the launcher becomes an EPP endpoint.
+
+**WVA cannot measure that topology.** Attribution walks a pod's
+`ownerReferences` looking for a Deployment or LWS under a ScaledObject. A
+launcher's owner is a `LauncherConfig`, so the walk ends with nothing and the pod
+is dropped — counted in `wva_pod_mapping_miss_total`, silent otherwise. The
+requester can be scaled but runs no engine, so pointing a ScaledObject at it
+produces, once per cycle:
+
+```
+has 1 ready pod(s) but none attributed
+```
+
+There is no workload in an FMA variant that WVA can both scale and measure. If
+FMA and a modelservice `decode` Deployment coexist, WVA targets the decode
+Deployment — it is the half it can see — and under-measures demand by whatever
+share of traffic EPP routes to launchers. Measured on a benchmark run: EPP
+dispatched ~64 req/s across nine launchers against 5.9 req/s to the decode pod,
+with launchers at 143 requests running and KV cache 99.9% full. `deploy/lib`
+warns when it detects this at plan time.
+
+#### A second, separate trap: the PodMonitor gets overwritten
+
+Launcher pods declare no container ports and serve metrics on `:8000` (a decode
+pod uses `:8200`). A PodMonitor that selects its endpoint **by port name**
+resolves nothing and generates *no target at all* — not a failing target.
+
+llm-d-benchmark handles this when a scenario sets `fma.enabled`: it renders the
+endpoint with a relabeling that forces `__address__` to `<podIP>:8000`. But that
+object is named `vllm-<model>`, and standing up a **non-FMA** guide into the same
+namespace renders the same name with `port: metrics` and overwrites it. The FMA
+stack keeps serving; its metrics just stop being collected, with no error
+anywhere.
+
+Check for it directly — an FMA namespace whose launchers are scraped lists them
+in `up{}`:
+
+```bash
+# should include launcher-* pods; if it lists only decode/EPP/WVA, they are dark
+kubectl get --raw "/api/v1/namespaces/$NS/services/prometheus:9090/proxy/api/v1/query?query=up%7Bnamespace%3D%22$NS%22%7D"
+
+# and confirm the endpoint form
+kubectl get podmonitor -n "$NS" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.podMetricsEndpoints[*].port}{"\n"}{end}'
+```
+
+A `port` of `metrics` on an FMA namespace means the launchers are not being
+scraped. Re-apply the FMA scenario's PodMonitor, and avoid deploying two guides
+into one namespace.
 
 First stop for any of these:
 

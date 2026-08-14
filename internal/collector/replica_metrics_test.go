@@ -1743,8 +1743,8 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Name:      "deploy-pod-abc123",
 				Namespace: namespace,
 				Labels: map[string]string{
-					"app":                     "my-app",
-					"pod-template-hash":       "abc123",
+					"app":               "my-app",
+					"pod-template-hash": "abc123",
 				},
 			},
 			Status: corev1.PodStatus{
@@ -1757,8 +1757,8 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Name:      "deploy-pod-def456",
 				Namespace: namespace,
 				Labels: map[string]string{
-					"app":                     "my-app",
-					"pod-template-hash":       "def456",
+					"app":               "my-app",
+					"pod-template-hash": "def456",
 				},
 			},
 			Status: corev1.PodStatus{
@@ -1771,8 +1771,8 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Name:      "deploy-pod-ghi789",
 				Namespace: namespace,
 				Labels: map[string]string{
-					"app":                     "my-app",
-					"pod-template-hash":       "ghi789",
+					"app":               "my-app",
+					"pod-template-hash": "ghi789",
 				},
 			},
 			Status: corev1.PodStatus{
