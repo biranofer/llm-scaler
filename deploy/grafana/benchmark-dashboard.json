@@ -54,12 +54,12 @@
       },
       "targets": [
         {
-          "expr": "wva_desired_replicas",
+          "expr": "wva_desired_replicas{$namespace_label=~\"$namespace\"}",
           "legendFormat": "desired {{variant_name}}",
           "refId": "A"
         },
         {
-          "expr": "wva_current_replicas",
+          "expr": "wva_current_replicas{$namespace_label=~\"$namespace\"}",
           "legendFormat": "current {{variant_name}}",
           "refId": "B"
         }
@@ -102,7 +102,7 @@
       },
       "targets": [
         {
-          "expr": "wva_desired_ratio",
+          "expr": "wva_desired_ratio{$namespace_label=~\"$namespace\"}",
           "legendFormat": "ratio {{variant_name}}",
           "refId": "A"
         }
@@ -259,17 +259,17 @@
       },
       "targets": [
         {
-          "expr": "wva_desired_replicas",
+          "expr": "wva_desired_replicas{$namespace_label=~\"$namespace\"}",
           "legendFormat": "desired {{variant_name}}",
           "refId": "A"
         },
         {
-          "expr": "wva_current_replicas",
+          "expr": "wva_current_replicas{$namespace_label=~\"$namespace\"}",
           "legendFormat": "current {{variant_name}}",
           "refId": "B"
         },
         {
-          "expr": "rate(wva_replica_scaling_total[2m])",
+          "expr": "rate(wva_replica_scaling_total{$namespace_label=~\"$namespace\"}[2m])",
           "legendFormat": "scaling rate {{variant_name}} {{direction}}",
           "refId": "C"
         }
