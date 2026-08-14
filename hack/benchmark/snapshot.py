@@ -58,17 +58,25 @@ def load_panels(dashboard_path):
     return panels
 
 
-def retarget_namespace(expr, namespace):
+# A namespace matcher, however the dashboard spells it:
+#   namespace=~"..."            plain
+#   exported_namespace=~"..."   relabelled on the way into Prometheus
+#   $namespace_label=~"..."     the dashboard's own variable, uninterpolated
+NAMESPACE_MATCHER = re.compile(r'(?:\$namespace_label|\w*namespace)\s*=~?\s*"[^"]*"')
+
+
+def retarget_namespace(expr, namespace, label="namespace"):
     """Point a query at the namespace actually being benchmarked.
 
-    The shipped dashboard hardcodes namespace=~"llm-d.*", which matches nothing
-    when the benchmark runs anywhere else -- the KV-cache and queue-depth panels
-    come back empty and read as a broken exporter rather than a mismatched
-    matcher. Rewritten here so the dashboard itself stays untouched.
+    The dashboard addresses the namespace through variables ($namespace_label
+    and $namespace) so it works in any namespace and with either label spelling.
+    Those are Grafana's to interpolate; querying Prometheus directly means
+    substituting them here, or every panel comes back empty and reads as a
+    broken exporter rather than an unexpanded variable.
     """
     if not namespace:
         return expr
-    return re.sub(r'namespace\s*=~?\s*"[^"]*"', 'namespace="%s"' % namespace, expr)
+    return NAMESPACE_MATCHER.sub('%s="%s"' % (label, namespace), expr)
 
 
 def query_range(base_url, token, expr, start, end, step, insecure):
@@ -106,6 +114,9 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dashboard", default=str(DEFAULT_DASHBOARD))
     parser.add_argument("--namespace", default=os.environ.get("BENCHMARK_NAMESPACE", ""))
+    parser.add_argument("--namespace-label", default="namespace",
+                        help="the label carrying the namespace; metrics relabelled on "
+                             "the way in arrive as exported_namespace")
     parser.add_argument("--prometheus-url", required=True)
     parser.add_argument("--token")
     parser.add_argument("--token-file")
@@ -135,7 +146,7 @@ def main():
     for panel in panels:
         series = []
         for expr in panel["queries"]:
-            targeted = retarget_namespace(expr, args.namespace)
+            targeted = retarget_namespace(expr, args.namespace, args.namespace_label)
             try:
                 result = query_range(args.prometheus_url, token, targeted,
                                      start, end, args.step, args.insecure)
@@ -156,6 +167,7 @@ def main():
         "captured_at": end,
         "window": {"start": start, "end": end, "step": int(args.step)},
         "namespace": args.namespace,
+        "namespace_label": args.namespace_label,
         "prometheus_url": args.prometheus_url,
         "dashboard": str(args.dashboard),
         "panels": captured,

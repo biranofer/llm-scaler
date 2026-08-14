@@ -40,7 +40,11 @@ def normalise(expr):
     collapsing the matcher loses nothing.
     """
     text = re.sub(r"\s+", " ", (expr or "").strip())
-    return re.sub(r'namespace\s*=~?\s*"[^"]*"', 'namespace=<NS>', text)
+    # The label is a variable too ($namespace_label), and interpolates to either
+    # namespace or exported_namespace depending on how the metric was relabelled
+    # -- so collapse the whole matcher, label included.
+    return re.sub(r'(?:\$namespace_label|\w*namespace)\s*=~?\s*"[^"]*"',
+                  'namespace=<NS>', text)
 
 
 def build_index(snapshot):

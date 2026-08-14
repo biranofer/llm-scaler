@@ -163,12 +163,12 @@
       },
       "targets": [
         {
-          "expr": "vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}",
+          "expr": "vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"}",
           "legendFormat": "{{pod}}",
           "refId": "A"
         },
         {
-          "expr": "avg(vllm:kv_cache_usage_perc{namespace=~\"$namespace\"})",
+          "expr": "avg(vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"})",
           "legendFormat": "avg",
           "refId": "B"
         }
@@ -211,12 +211,12 @@
       },
       "targets": [
         {
-          "expr": "vllm:num_requests_waiting{namespace=~\"$namespace\"}",
+          "expr": "vllm:num_requests_waiting{$namespace_label=~\"$namespace\"}",
           "legendFormat": "{{pod}} waiting",
           "refId": "A"
         },
         {
-          "expr": "vllm:num_requests_running{namespace=~\"$namespace\"}",
+          "expr": "vllm:num_requests_running{$namespace_label=~\"$namespace\"}",
           "legendFormat": "{{pod}} running",
           "refId": "B"
         }
@@ -291,6 +291,31 @@
   "templating": {
     "list": [
       {
+        "name": "namespace_label",
+        "label": "Namespace label",
+        "type": "custom",
+        "query": "exported_namespace,namespace",
+        "current": {
+          "text": "exported_namespace",
+          "value": "exported_namespace"
+        },
+        "options": [
+          {
+            "text": "exported_namespace",
+            "value": "exported_namespace",
+            "selected": true
+          },
+          {
+            "text": "namespace",
+            "value": "namespace",
+            "selected": false
+          }
+        ],
+        "includeAll": false,
+        "multi": false,
+        "description": "Which label carries the namespace. Metrics relabelled on the way into Prometheus arrive as exported_namespace."
+      },
+      {
         "name": "namespace",
         "label": "Namespace",
         "type": "query",
@@ -298,19 +323,14 @@
           "type": "prometheus"
         },
         "query": {
-          "query": "label_values(vllm:num_requests_running, namespace)",
+          "query": "label_values(vllm:num_requests_running, $namespace_label)",
           "refId": "namespace-variable-query"
         },
         "refresh": 1,
         "includeAll": true,
-        "allValue": ".*",
         "multi": false,
-        "current": {
-          "text": "All",
-          "value": "$__all"
-        },
         "sort": 1,
-        "description": "The namespace whose model servers to chart. Populated from vLLM metrics present in Prometheus."
+        "description": "The namespace whose model servers to chart."
       }
     ]
   },
