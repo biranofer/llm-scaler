@@ -309,16 +309,17 @@ const (
 	WVASaturationMetricsUp = "wva_saturation_metrics_up"
 
 	// WVAPodMappingMissTotal is a counter that tracks pods whose metrics could not be
-	// attributed to a managed scaler (neither the llm-d.ai/variant label nor the
-	// pod locator resolved them). Makes the otherwise-silent skip visible.
+	// attributed to a managed scaler: the walk up their ownerReferences ended
+	// without reaching one. Makes the otherwise-silent skip visible.
 	// Labels: namespace, reason
 	WVAPodMappingMissTotal = "wva_pod_mapping_miss_total"
 )
 
 // Pod-mapping miss reasons (values for the `reason` label of WVAPodMappingMissTotal).
 const (
-	// PodMappingMissUnresolved indicates a scraped pod resolved to no managed scaler —
-	// no llm-d.ai/variant label and the locator found no owning HPA/ScaledObject.
+	// PodMappingMissUnresolved indicates a scraped pod resolved to no managed scaler:
+	// the locator found no owning ScaledObject above it. A pod owned by something
+	// else entirely — an FMA launcher, owned by a LauncherConfig — counts here.
 	PodMappingMissUnresolved = "unresolved"
 )
 

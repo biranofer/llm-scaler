@@ -460,23 +460,32 @@ so_discover() {
                     apply=no
                     note="no --served-model-name or --model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
                 fi
-                # FMA: scale the requester, not this decode Deployment.
+                # FMA: report it, do NOT retarget.
                 #
-                # Done here, after the modelID has been read and before anything
-                # looks the workload up: the requester's container is not vLLM
-                # and carries no --served-model-name, so the model can only come
-                # from the decode's args -- but the TARGET must be the requester.
-                # Everything below (existing ScaledObject, pool, the plan entry)
-                # then refers to the workload that will actually be scaled.
+                # An earlier version pointed the plan at the requester, on the
+                # scenario's word that "launcher pods host vLLM and the requester
+                # is the serving path". Measured on pokprod001, that is wrong:
+                #
+                #   vllm:* metrics in Prometheus come from the DECODE pod
+                #   the requester and the launchers answer 0 vLLM series on :8000
+                #
+                # Scaling the requester therefore gave WVA a target it cannot
+                # measure -- the controller said so itself, once per cycle:
+                # "has 1 ready pod(s) but none attributed". This workload, the one
+                # discovery already found, is the one that serves and reports.
+                #
+                # The detection stays because FMA changes how a namespace should
+                # be read: the launcher pods are owned by a LauncherConfig, so
+                # they are attributed to no scale target and their GPUs are
+                # counted nowhere.
                 if [ "$kind" = "Deployment" ]; then
                     local model_label fma_requester
                     model_label=$(printf '%s' "$labels" | tr ' ' '\n' \
                         | sed -n 's/^llm-d\.ai\/model=//p' | head -1)
                     fma_requester=$(so_fma_requester "$ns" "$model_label")
                     if [ -n "$fma_requester" ] && [ "$fma_requester" != "$name" ]; then
-                        log_info "FMA detected in $ns for model '$model_label': the requester Deployment $fma_requester hosts the serving path, so the plan targets it instead of $name (the launcher pods run vLLM; scaling $name would move a workload that neither serves traffic nor reports vLLM metrics)."
-                        note="${note:+$note }FMA topology: retargeted from $name to the requester $fma_requester."
-                        name="$fma_requester"
+                        log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name, which is the workload that serves and reports vLLM metrics — the requester and launcher pods report none."
+                        note="${note:+$note }FMA topology: requester $fma_requester present; this entry targets the model server, which is what reports vLLM metrics."
                     fi
                 fi
                 existing=$(so_existing_info "$ns" "$name")

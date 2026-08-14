@@ -1517,7 +1517,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "0", // leader
 				},
 			},
@@ -1533,7 +1532,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "1", // worker
 				},
 			},
@@ -1549,7 +1547,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "2", // worker
 				},
 			},
@@ -1565,7 +1562,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "0", // leader
 				},
 			},
@@ -1581,7 +1577,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "1", // worker
 				},
 			},
@@ -1597,7 +1592,6 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "lws-app",
-					constants.VariantLabelKey: vaName,
 					lwsv1.WorkerIndexLabelKey: "2", // worker
 				},
 			},
@@ -1750,7 +1744,6 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "my-app",
-					constants.VariantLabelKey: vaName,
 					"pod-template-hash":       "abc123",
 				},
 			},
@@ -1765,7 +1758,6 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "my-app",
-					constants.VariantLabelKey: vaName,
 					"pod-template-hash":       "def456",
 				},
 			},
@@ -1780,7 +1772,6 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 				Namespace: namespace,
 				Labels: map[string]string{
 					"app":                     "my-app",
-					constants.VariantLabelKey: vaName,
 					"pod-template-hash":       "ghi789",
 				},
 			},

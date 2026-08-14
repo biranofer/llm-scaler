@@ -15,12 +15,6 @@ const (
 	// This enables creating namespace-local ConfigMaps before VAs are created, avoiding race conditions.
 	NamespaceConfigEnabledLabelKey = "wva.llmd.ai/config-enabled"
 
-	// VariantLabelKey is the label key stamped on pod templates of managed workloads.
-	// The value is set to the VariantAutoscaling resource name, enabling direct pod-to-VA mapping
-	// without ownership traversal. This label is used by the metrics collector to filter pods
-	// and associate them with their managing VariantAutoscaling resource.
-	VariantLabelKey = "llm-d.ai/variant"
-
 	// PolicyNamespaceLabelKey, on a NAMESPACE object, names the namespace WVA reads
 	// limiters and quotas from for workloads in that namespace.
 	//
