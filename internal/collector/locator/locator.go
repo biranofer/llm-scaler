@@ -12,6 +12,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -125,12 +127,82 @@ func (l *podLocator) Locate(ctx context.Context, namespace, podName string) (*Ma
 		return nil, err
 	}
 	if target == (chainNode{}) {
-		return nil, nil
+		// The walk reached no scale target. On every topology but one that
+		// settles it, and this returns nil without another call.
+		return l.locateViaPairing(ctx, namespace, podName)
 	}
 
 	// Step 2: scale target → managed scaler. NOT cached; field-index reads
 	// are cheap and reflect the current annotation / scaleTargetRef state.
 	return l.resolveScaler(ctx, target)
+}
+
+// locateViaPairing resolves a pod whose ownerReferences reach no scale target by
+// following a declared pairing to the pod that does.
+//
+// Fast Model Actuation splits a model server across two pods: a REQUESTER
+// Deployment that carries the llm-d identity and is what a scaler moves, and
+// LAUNCHER pods — owned by a LauncherConfig — that hold the GPU and run the
+// engine. The ownerReferences gap is deliberate and permanent: FMA patches the
+// provider's labels specifically so the ReplicaSet does not adopt it, which is
+// exactly why the walk above ends with nothing. But the engine metrics come from
+// the launcher, so without this hop an FMA variant has no workload WVA can both
+// scale and measure, and its load is attributed to nothing.
+//
+// FMA maintains DualPodsPairLabelKey on both halves of a bound pair, each naming
+// the other, so a launcher names its requester directly and one lookup suffices.
+// Going the other way would mean listing every pod in the namespace on every
+// collection cycle, including namespaces that have no FMA at all.
+//
+// Detection is a label read, never a CRD read: no client for fma.llm-d.ai, no
+// informer, no RBAC on that group, and no check that the API even exists. FMA can
+// therefore be installed long after WVA and be picked up on the next cycle, and a
+// cluster that never installs it never executes past the first lookup below.
+func (l *podLocator) locateViaPairing(ctx context.Context, namespace, podName string) (*ManagedScaler, error) {
+	// resolveTarget has already cached this pod's labels, so the common case —
+	// an ordinary unmanaged pod with no pairing — costs one map lookup and no
+	// API call. A miss means the pod does not exist, the one path that does not
+	// populate the cache.
+	labels, cached := l.cache.getLabels(podKey{Namespace: namespace, Name: podName})
+	if !cached {
+		return nil, nil
+	}
+	partner := labels[constants.DualPodsPairLabelKey]
+	if partner == "" || partner == podName {
+		return nil, nil
+	}
+
+	// One hop, and one only: resolveTarget rather than Locate, so a pair that
+	// names each other resolves or fails rather than recursing. The partner is
+	// looked up in this pod's own namespace — the label carries a bare name, and
+	// a pairing that crossed namespaces would not be one FMA created.
+	partnerTarget, err := l.resolveTarget(ctx, namespace, partner)
+	if err != nil {
+		return nil, err
+	}
+	if partnerTarget == (chainNode{}) {
+		return nil, nil
+	}
+
+	// Both halves carry ModelLabelKey in the same sanitized form, so this
+	// compares like with like. It rejects what FMA permits but no observed
+	// deployment does: one launcher hosting instances for several models, whose
+	// singular pairing label can name only one requester. Absence on either side
+	// is not a mismatch — the label reaches a launcher from the
+	// InferenceServerConfig's label map, which FMA treats as arbitrary, so its
+	// absence proves nothing either way.
+	if partnerLabels, ok := l.cache.getLabels(podKey{Namespace: namespace, Name: partner}); ok {
+		podModel, partnerModel := labels[constants.ModelLabelKey], partnerLabels[constants.ModelLabelKey]
+		if podModel != "" && partnerModel != "" && podModel != partnerModel {
+			ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
+				"pairing not followed: the paired pod serves a different model",
+				"namespace", namespace, "pod", podName, "partner", partner,
+				"model", podModel, "partnerModel", partnerModel)
+			return nil, nil
+		}
+	}
+
+	return l.resolveScaler(ctx, partnerTarget)
 }
 
 // resolveTarget runs Step 1 of resolution: pod → top-level scale-target

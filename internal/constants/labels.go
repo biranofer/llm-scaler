@@ -28,6 +28,30 @@ const (
 	// actually asks when auditing, and one an annotation cannot answer.
 	//
 	PolicyNamespaceLabelKey = "wva.llmd.ai/policy-namespace"
+
+	// ModelLabelKey names the model a serving pod belongs to. llm-d puts it on
+	// every model-server pod template, and FMA copies it onto a launcher pod at
+	// bind time from the InferenceServerConfig's label map.
+	//
+	// Its value is a sanitized, DNS-safe form of the model ID, NOT the model ID:
+	// `Qwen/Qwen3-0.6B` appears here as `qwen-qwe-694d2b87-en3-0-6b`. It is
+	// therefore comparable with another pod's copy of the same label, and not
+	// with the `model_name` label on a vLLM metric series.
+	ModelLabelKey = "llm-d.ai/model"
+
+	// DualPodsPairLabelKey names the other half of a Fast Model Actuation pair.
+	//
+	// FMA's dual-pods controller maintains it on BOTH the server-requesting pod
+	// (the requester, which a scaler moves) and the server-providing pod (the
+	// launcher, which holds the GPU and runs the engine), each naming the other,
+	// and only while the two are bound. It is how a launcher — owned by a
+	// LauncherConfig, and deliberately not adopted by any ReplicaSet — can still
+	// be resolved to the workload that governs it.
+	//
+	// Note the value is a pod NAME carried in a label, so it is subject to the
+	// 63-character limit on label values while pod names may be longer. A pair
+	// whose requester name exceeds that cannot be expressed here.
+	DualPodsPairLabelKey = "dual-pods.llm-d.ai/dual"
 )
 
 // Kubernetes Annotation Keys
