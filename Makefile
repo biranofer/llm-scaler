@@ -695,11 +695,26 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@#
 	@# yq addresses them directly, so a key that moves again fails loudly at the
 	@# path instead of quietly matching no lines.
-	@yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.minReplicas) = $(BENCHMARK_KEDA_MIN_REPLICAS) | \
-	        (.scenario[] | select(has("wva")) | .wva.hpa.maxReplicas) = $(BENCHMARK_KEDA_MAX_REPLICAS) | \
-	        (.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleUp.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_UP_PERIOD) | \
-	        (.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleDown.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)' \
-		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@# One yq call per key, deliberately. A `\` continuation inside the
+	@# single-quoted expression is NOT removed by the shell -- it reaches yq as
+	@# literal backslash-newline and dies with
+	@#   Error: 1:65: lexer: invalid input text "\\\n        (.scen..."
+	@# Separate calls also name which key failed, instead of one opaque error.
+	@yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.minReplicas) = $(BENCHMARK_KEDA_MIN_REPLICAS)' $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.maxReplicas) = $(BENCHMARK_KEDA_MAX_REPLICAS)' $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@# The periods are applied only when > 0. BENCHMARK_KEDA_SCALE_UP_PERIOD
+	@# defaults to 0, and HPA rejects periodSeconds: 0 ("must be greater than
+	@# zero") -- so writing the default would produce a ScaledObject the API
+	@# refuses. That default was harmless only while the old awk silently matched
+	@# nothing; applying it for real makes 0 mean "keep the scenario's own value".
+	@if [ "$(BENCHMARK_KEDA_SCALE_UP_PERIOD)" -gt 0 ] 2>/dev/null; then \
+		yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleUp.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_UP_PERIOD)' \
+			$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml; \
+	fi
+	@if [ "$(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)" -gt 0 ] 2>/dev/null; then \
+		yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleDown.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)' \
+			$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml; \
+	fi
 	@echo "KEDA bounds set: min=$(BENCHMARK_KEDA_MIN_REPLICAS) max=$(BENCHMARK_KEDA_MAX_REPLICAS), periods up=$(BENCHMARK_KEDA_SCALE_UP_PERIOD)s down=$(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)s"
 	@# Turn OFF the scenario's own WVA install. This repo installs WVA from
 	@# deploy/ in benchmark-deploy-wva, and benchmark-deploy-wva refuses to run
