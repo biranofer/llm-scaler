@@ -91,7 +91,18 @@ make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 <!-- guide:deploy.register end -->
 
 `scaledobjects-plan` finds the model servers and writes one entry each, applying
-nothing:
+nothing.
+
+**Under Fast Model Actuation the plan targets the requester, not the decode
+Deployment**, and says so at INFO before it writes anything. With FMA the
+launcher pods host vLLM and the requester is the serving path, while the decode
+Deployment still carries the `llm-d.ai/inferenceServing` label — so scaling it
+would move a workload that neither serves traffic nor reports the vLLM metrics
+WVA reads. The requester is matched on `llm-d.ai/role=requester` and the same
+`llm-d.ai/model`, so a namespace serving two models retargets each to its own.
+The modelID still comes from the model server's own `--served-model-name`; only
+the target changes, and the plan entry carries a note saying what it was
+retargeted from.
 
 ```yaml
 plan:
@@ -185,7 +196,7 @@ preflight reported.
 | Parameter | Default | Example |
 | --- | --- | --- |
 | `NAMESPACE` | the namespace running llm-d, discovered | `llm-d-optimized-baseline` |
-| `IMG` | the published image | `ghcr.io/you/wva:dev` |
+| `IMG` | the image CI builds from main | `ghcr.io/you/wva:dev` |
 | `PROMETHEUS_URL` | detected; Thanos on OpenShift | `http://prom.monitoring.svc:9090` |
 
 Full list: [Configuration reference](../../deployment/configuration.md).

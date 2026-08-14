@@ -169,8 +169,27 @@ do is also reachable through plan-then-apply, which does not.
 | `WVA_DEFAULT_SO_MAX` | `maxReplicaCount` on generated objects | `10` |
 | `WVA_DEFAULT_SO_TEMPLATE` | Your own ScaledObject template, substituted per workload. Placeholders: `{{NAMESPACE}}` `{{NAME}}` `{{KIND}}` `{{APIVERSION}}` `{{MODEL_ID}}` `{{SCALER_ADDRESS}}` `{{MIN}}` `{{MAX}}` `{{VARIANT_COST}}` `{{SCALING_POLICY}}`. Start from `config/samples/keda/external-scaler/scaledobject-template.yaml` | the shipped shape |
 
+| `WVA_SO_SCALE_UP_PERIOD` | `periodSeconds` on the generated object's scale-up policy. A rate-limit window, not a delay — and nothing acts faster than the HPA control loop's sync period (15s by default) | `5` |
+| `WVA_SO_SCALE_UP_STABILIZATION` | `stabilizationWindowSeconds` for scale-up. This is the knob that delays a scale-up: HPA takes its most conservative recommendation across the window. `0` means act on the current one | `0` |
+| `WVA_SO_SCALE_DOWN_PERIOD` | `periodSeconds` on the scale-down policy | `120` |
+| `WVA_SO_SCALE_DOWN_STABILIZATION` | `stabilizationWindowSeconds` for scale-down — how long demand must stay low before a replica is removed | `300` |
+
 `WVA_DEFAULT_SO_MIN` and `_MAX` are only the values the plan is *written* with.
 What gets applied is what the file says when you apply it, per entry.
+
+The scaling behaviour is written into every generated ScaledObject rather than
+inherited. Kubernetes' own defaults happen to match the windows above, so on a
+stock cluster only the policy periods differ — but those defaults belong to the
+API server, and a cluster that retunes them would quietly change how every
+workload WVA creates scales, with nothing in the object to show it. The
+asymmetry is deliberate: scale-up acts immediately because the wait is already
+paid in cold start, while scale-down is patient because removing a replica too
+early costs that cold start on the next request and keeping one too long only
+costs money.
+
+**Adopting an existing ScaledObject leaves its behaviour alone.** `apply: adopt`
+repoints the triggers and bounds; polling interval, cooldown, fallback and
+`behavior` stay as whoever tuned them left them.
 
 Set them on a deploy to do this during install:
 

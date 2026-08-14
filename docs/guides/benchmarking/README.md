@@ -89,6 +89,37 @@ Optional, except `BENCHMARK_NAMESPACE`.
 | `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
 | `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
 | `MODEL_ID` | `Qwen/Qwen3-0.6B` | `Qwen/Qwen3-32B` |
+| `BENCHMARK_REPO_REF` | `v0.7.8` | `main` |
+| `BENCHMARK_IMAGE_TAG` | the value of `BENCHMARK_REPO_REF` | `nightly` |
+| `BENCHMARK_HARNESS_RUN_AS_USER` | `0` | `1000` |
+| `BENCHMARK_KEDA_SCALE_UP_PERIOD` | `5` | `15` |
+| `BENCHMARK_KEDA_SCALE_UP_STABILIZATION` | `0` | `60` |
+| `BENCHMARK_KEDA_SCALE_DOWN_PERIOD` | `120` | `60` |
+| `BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION` | `300` | `120` |
+
+**The harness image must match `BENCHMARK_REPO_REF`.** The harness pod always
+runs the checkout's scripts — they are copied in from a ConfigMap built from the
+tree — while the image comes from llm-d-benchmark's `defaults.yaml`, which pins
+`v0.7.0` regardless of ref. Mixing them fails at the first treatment, e.g.
+v0.7.8's scripts call `guidellm run` and the v0.7.0 image's guidellm only has
+`benchmark`: `Error: No such command 'run'`. `BENCHMARK_IMAGE_TAG` follows the
+ref for you; set it only to pin something else.
+
+**`BENCHMARK_HARNESS_RUN_AS_USER` is 0 because the harness writes to
+`/usr/local/bin` at startup.** llm-d-benchmark stopped forcing that UID in
+v0.7.8, so on OpenShift the pod gets a namespace UID and dies with
+`cp: cannot create regular file ...: Permission denied`. Granting `anyuid` to
+its ServiceAccount may not be enough — a cluster SCC with a higher priority can
+still win and impose `MustRunAsRange`; asking for UID 0 is what makes that SCC
+unable to admit the pod.
+
+**Scaling knobs: the stabilization window is the one that matters.** HPA takes
+its most conservative recommendation across that window, so `scaleUp`
+stabilization is what delays a scale-up — the `periodSeconds` values are rate
+limits, and nothing reacts faster than the HPA control loop's sync period (15s
+by default). Scale-up therefore acts on the current recommendation (`0`), while
+scale-down waits 300s: removing a replica too eagerly costs a cold start on the
+next request, and keeping one too long only costs money.
 
 **The default model is small on purpose.** These runs measure WVA's scaling
 behaviour, and a 0.6B model exercises the same path a 32B one does — discovery,
@@ -106,6 +137,40 @@ which binary produced them. The default is a build of this branch rather than a
 release: released images reject `--external-scaler-bind-address`, which these
 manifests pass, so a run against one measures a CrashLoopBackOff. Set `IMG` to
 your own build whenever you have changed controller code.
+
+## Snapshotting a run
+
+A run's charts live in Prometheus, which ages them out. Capture them while they
+are still there:
+
+```bash
+hack/benchmark/snapshot.py \
+  --namespace ${BENCHMARK_NAMESPACE} \
+  --prometheus-url https://thanos-querier-openshift-monitoring.apps.<cluster>/ \
+  --token "$(oc whoami -t)" --insecure \
+  --since 30m --out <run-dir>/snapshot
+```
+
+That writes `panels.json`: every query in `deploy/grafana/benchmark-dashboard.json`,
+run over the window, with its results. It is stdlib-only, so it works in a shell
+whose python has no pip — including the one the benchmark venv provides.
+
+Then render the images, offline, through the real dashboard:
+
+```bash
+hack/benchmark/snapshot-images/render.sh <run-dir>/snapshot
+```
+
+Grafana and its image renderer come up in docker, provisioned with this repo's
+own dashboard, and read the snapshot through a shim that speaks the Prometheus
+API. The output is one PNG per panel plus the whole dashboard. Because the data
+is a file, a run can be re-rendered months later with no cluster at all, and the
+images cannot drift from the dashboard — they *are* the dashboard.
+
+The capture rewrites the namespace in each query. The shipped dashboard pins
+`namespace=~"llm-d.*"`, so the KV-cache and queue-depth panels are empty for any
+run in a namespace not called `llm-d*` — which looks like a broken exporter
+rather than a mismatched matcher.
 
 ## Two variants
 

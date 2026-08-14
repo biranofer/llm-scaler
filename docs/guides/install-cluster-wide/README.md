@@ -88,7 +88,7 @@ Optional.
 | --- | --- | --- |
 | `SCOPE` | `namespace` — **set `cluster` for this guide** | `cluster` |
 | `WVA_NS` | `workload-variant-autoscaler-system` | `wva-system` |
-| `IMG` | the published image | `ghcr.io/you/wva:dev` |
+| `IMG` | the image CI builds from main | `ghcr.io/you/wva:dev` |
 
 Full list: [Configuration reference](../../deployment/configuration.md).
 

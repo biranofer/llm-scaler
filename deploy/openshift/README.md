@@ -406,7 +406,7 @@ kubectl delete -k llm-d/guides/optimized-baseline/modelserver/gpu/vllm/base -n l
 kubectl delete scaledobject --all -n llm-d-optimized-baseline
 
 # Delete WVA
-make undeploy
+make undeploy-wva
 
 # Delete namespaces
 kubectl delete namespace llm-d-optimized-baseline
