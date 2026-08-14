@@ -64,7 +64,15 @@ export PATH := /opt/homebrew/bin:$(PATH)
 BENCHMARK_REPO_URL   ?= https://github.com/llm-d/llm-d-benchmark.git
 BENCHMARK_REPO_DIR   ?= $(CURDIR)/llm-d-benchmark
 BENCHMARK_DIRECT_KEDA ?= false
-BENCHMARK_REPO_REF   ?= $(if $(filter true,$(BENCHMARK_DIRECT_KEDA)),main,v0.7.0)
+# v0.7.8, not v0.7.0: guidellm moved to a nested profile schema
+# (spec.backend.kind, constraints[], data[]) and upstream converted its profiles
+# to match in 00e1516 "[Run] Update guidellm profiles (compatibility with
+# v0.7.3)". v0.7.0's profiles are still flat while the harness IMAGE it pulls is
+# v0.7.3, so every guidellm run from a v0.7.0 checkout dies with
+#   Error: Invalid value for '--backend' ...: Field required (at
+#   'backend.openai_http.target'); Extra inputs are not permitted (at 'target')
+# -- including on llm-d-benchmark's own shipped profiles.
+BENCHMARK_REPO_REF   ?= $(if $(filter true,$(BENCHMARK_DIRECT_KEDA)),main,v0.7.8)
 BENCHMARK_SPEC       ?= $(if $(filter true,$(BENCHMARK_DIRECT_KEDA)),guides/epp-keda-saturation,guides/workload-autoscaling)
 BENCHMARK_NAMESPACE  ?= # set via BENCHMARK_NAMESPACE=<namespace>
 BENCHMARK_GATEWAY_URL ?= http://infra-llmdbench-inference-gateway-istio.$(BENCHMARK_NAMESPACE).svc.cluster.local:80
@@ -674,18 +682,25 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
 	@sed -i.bak 's/replicas: 2$$/replicas: $(BENCHMARK_DECODE_REPLICAS)/' \
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
-	@awk ' \
-		/scaledObject:/ { in_keda=1 } \
-		in_keda && /^    [a-z]/ && !/scaledObject:/ { in_keda=0 } \
-		in_keda && /minReplicas: / { gsub(/minReplicas: [0-9]+/, "minReplicas: $(BENCHMARK_KEDA_MIN_REPLICAS)"); } \
-		in_keda && /maxReplicas: / { gsub(/maxReplicas: [0-9]+/, "maxReplicas: $(BENCHMARK_KEDA_MAX_REPLICAS)"); } \
-		in_keda && /scaleUp:/ { scale_section="up"; } \
-		in_keda && /scaleDown:/ { scale_section="down"; } \
-		in_keda && scale_section=="up" && /periodSeconds: 180/ { gsub(/periodSeconds: 180/, "periodSeconds: $(BENCHMARK_KEDA_SCALE_UP_PERIOD)"); scale_section=""; } \
-		in_keda && scale_section=="down" && /periodSeconds: 300/ { gsub(/periodSeconds: 300/, "periodSeconds: $(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)"); scale_section=""; } \
-		{ print } \
-	' $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml > $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml.tmp && \
-	mv $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml.tmp $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@# The replica bounds and scaling periods, set by PATH rather than by
+	@# pattern-matching indented text.
+	@#
+	@# This was an awk block anchored on `scaledObject:` and `periodSeconds:
+	@# 180`/`300`. Neither string occurs in the scenario -- not in v0.7.8, and
+	@# not in v0.7.0 either (checked with grep -c: zero in both). So
+	@# BENCHMARK_KEDA_MIN_REPLICAS, BENCHMARK_KEDA_MAX_REPLICAS and both period
+	@# variables silently did nothing, for every run this repo has ever made.
+	@# The bounds live at .wva.hpa.*, and the periods under
+	@# .wva.hpa.behavior.scale{Up,Down}.policies[].
+	@#
+	@# yq addresses them directly, so a key that moves again fails loudly at the
+	@# path instead of quietly matching no lines.
+	@yq -i '(.scenario[] | select(has("wva")) | .wva.hpa.minReplicas) = $(BENCHMARK_KEDA_MIN_REPLICAS) | \
+	        (.scenario[] | select(has("wva")) | .wva.hpa.maxReplicas) = $(BENCHMARK_KEDA_MAX_REPLICAS) | \
+	        (.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleUp.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_UP_PERIOD) | \
+	        (.scenario[] | select(has("wva")) | .wva.hpa.behavior.scaleDown.policies[].periodSeconds) = $(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@echo "KEDA bounds set: min=$(BENCHMARK_KEDA_MIN_REPLICAS) max=$(BENCHMARK_KEDA_MAX_REPLICAS), periods up=$(BENCHMARK_KEDA_SCALE_UP_PERIOD)s down=$(BENCHMARK_KEDA_SCALE_DOWN_PERIOD)s"
 	@# Turn OFF the scenario's own WVA install. This repo installs WVA from
 	@# deploy/ in benchmark-deploy-wva, and benchmark-deploy-wva refuses to run
 	@# beside a controller it did not install -- two controllers decide the same
@@ -807,7 +822,26 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 			exit 1; \
 		fi; \
 	fi
-	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" ]; then \
+	@# The profiles in this repo are named <workload>.yaml.in, and neither branch
+	@# below looked for that: one wanted <workload>.in, the other bare
+	@# <workload>. So nothing was ever copied, and the run died with
+	@#   Profile 'prefill_heavy.yaml' not found in .../workload/profiles/guidellm
+	@# -- naming the file it wanted while the file sat un-copied in
+	@# test/benchmark/scenarios. The CLI is invoked with -w <workload>.yaml, so
+	@# It must land as <workload>.yaml.in and NOT as <workload>.yaml. Every
+	@# profile the harness ships is .yaml.in only; profile_renderer.py
+	@# substitutes the REPLACE_ENV_* tokens in the template and produces the
+	@# .yaml itself. Copying a .yaml too shadows that render with an unsubstituted
+	@# file, and guidellm then dies on every option at once:
+	@#   Error: Invalid value for '--backend' / '--model' / '--target' ...:
+	@# with the values empty. The CLI is still invoked as -w <workload>.yaml; it
+	@# resolves that to the template, exactly as it does for its own profiles.
+	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" ]; then \
+		echo "Copying local workload $(BENCHMARK_WORKLOAD).yaml.in to the $(BENCHMARK_HARNESS) harness..."; \
+		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" \
+		   "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml.in"; \
+		rm -f "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml"; \
+	elif [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" ]; then \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" \
 		   "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).in"; \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" \
