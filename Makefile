@@ -626,8 +626,26 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@# Already working? Then do not run install.sh at all. It runs
 	@# `sudo apt-get update` even when every tool it needs is present, and a
 	@# standup re-runs this target on every invocation.
+	@# Skip only when the installed CLI matches the CHECKOUT. The venv is an
+	@# editable install, so its code follows the tree but its package VERSION is
+	@# frozen at install time -- and the version resolver picks the harness image
+	@# tag from that version. After moving the ref v0.7.0 -> v0.7.8 the CLI still
+	@# reported 0.7.0, so the run used ghcr.io/llm-d/llm-d-benchmark:v0.7.0 while
+	@# copying v0.7.8's harness scripts into it. Those scripts call `guidellm
+	@# run`; the v0.7.0 image's guidellm only has `benchmark`, so every treatment
+	@# died with "Error: No such command 'run'".
+	@# Already working? Then do not run install.sh at all. It runs
+	@# `sudo apt-get update` even when every tool it needs is present, and a
+	@# standup re-runs this target on every invocation.
+	@#
+	@# The CLI is an editable install, so its CODE follows the checkout when the
+	@# ref moves; only its package VERSION is frozen, and that version is not
+	@# worth reinstalling for -- upstream ships pyproject 0.7.0 at tag v0.7.8, so
+	@# it says 0.7.0 on every ref anyway. The one thing that version used to
+	@# decide, the harness image tag, is now pinned explicitly in
+	@# benchmark-standup and benchmark-run instead of being inferred from it.
 	@if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
-		echo "llmdbenchmark already installed at $(LLMDBENCHMARK) — skipping install.sh."; \
+		echo "llmdbenchmark present at $(LLMDBENCHMARK) — skipping install.sh."; \
 		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
 	else \
 		cd $(BENCHMARK_REPO_DIR) && \
@@ -792,6 +810,20 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@yq -i '(.scenario[] | select(has("harness")) | .harness.runAsUser) = $(BENCHMARK_HARNESS_RUN_AS_USER)' \
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml && \
 		echo "Harness runAsUser=$(BENCHMARK_HARNESS_RUN_AS_USER) (v0.7.8 stopped forcing it; OpenShift needs it)."
+	@# Pin the harness IMAGE to the ref we checked out.
+	@#
+	@# defaults.yaml hardcodes llm-d-benchmark_version: v0.7.0 -- in v0.7.8 as
+	@# well as v0.7.0 -- so the image never follows the checkout. The scripts
+	@# always do: they are copied from the checkout into the pod. v0.7.8's
+	@# guidellm-llm-d-benchmark.sh calls `guidellm run`, and the v0.7.0 image's
+	@# guidellm only has `benchmark`, so every treatment died with
+	@#   Error: No such command 'run'.
+	@# after the runAsUser fix let those scripts land -- the permission failure
+	@# had been hiding the mismatch by leaving the image's own scripts in place.
+	@$(eval BENCHMARK_IMAGE_TAG ?= $(BENCHMARK_REPO_REF))
+	@yq -i '(.scenario[] | select(has("common")) | .common.images.benchmark.tag) = "$(BENCHMARK_IMAGE_TAG)"' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml && \
+		echo "Harness image tag=$(BENCHMARK_IMAGE_TAG) (defaults.yaml pins v0.7.0 regardless of ref)."
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) standup \
 		-p $(BENCHMARK_NAMESPACE) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
@@ -943,6 +975,10 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# and the pod is admitted with a namespace UID again. Observed: standup
 	@# applied it, the run twenty minutes later did not.
 	@yq -i '(.scenario[] | select(has("harness")) | .harness.runAsUser) = $(BENCHMARK_HARNESS_RUN_AS_USER)' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml 2>/dev/null || true
+	@# Same reasoning as in benchmark-standup: run renders its own plan, and the
+	@# image must match the ref whose scripts get copied into the pod.
+	@yq -i '(.scenario[] | select(has("common")) | .common.images.benchmark.tag) = "$(if $(BENCHMARK_IMAGE_TAG),$(BENCHMARK_IMAGE_TAG),$(BENCHMARK_REPO_REF))"' \
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml 2>/dev/null || true
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
