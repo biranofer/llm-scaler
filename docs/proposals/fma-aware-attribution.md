@@ -305,19 +305,43 @@ that pod and WVA gains a replica reporting `kv_cache_usage_perc 0`,
 fix, reintroduced through its own fix, and it fails silently in the direction
 that hurts.
 
-Two guards, in increasing order of cost and authority:
+**Do not use the `sleeping` label as the guard.** An earlier draft proposed
+rejecting pods with `dual-pods.llm-d.ai/sleeping == "true"` as a cheap
+stale-binding check. Measured against the launcher's own CRUD API, that guard is
+not merely weak, it is inverted:
 
-1. **Reject when `dual-pods.llm-d.ai/sleeping == "true"`.** Provider-only, on the
-   pod object already in hand, zero extra API calls. Catches every case where the
-   controller updated one label and not the other.
-2. **Require `vllm:engine_sleep_state{sleep_state="awake"} == 1`.** The engine's
-   own report of its own state, owing nothing to the control plane. Costs one
-   more collector query, and it is the only guard that survives a controller
-   which has stopped updating labels altogether.
+```
+pod labelled sleeping=false  ->  GET :8001/v2/vllm/instances
+                                 {"total_instances":0,"running_instances":0,"instances":[]}
 
-Take (1) in phase 1 — it is free. Take (2) if a real deployment ever shows a
-stale binding, or preemptively if the extra query is judged cheap. Note (2) also
-gives a direct answer to "is this replica actually serving", which no label can.
+pod labelled sleeping=true   ->  {"total_instances":1,"running_instances":1,
+                                  "instances":[{"status":"running",
+                                    "options":"--model Qwen/Qwen3-0.6B --enable-sleep-mode ... --port 8000",
+                                    "gpu_uuids":["GPU-ae2da921-..."],
+                                    "annotations":{"inference-port":"8000"}}]}
+```
+
+The pod claiming to be awake hosts nothing; the pod claiming to be asleep hosts a
+running instance. The label describes the *sleep state of the instances*, so it
+reads `false` both when an instance is awake and when there is no instance at
+all — the two cases an autoscaler most needs to tell apart. Rejecting on
+`sleeping == "true"` would discard real capacity and admit empty pods.
+
+So the guard is:
+
+1. **`dual` is the key, and it is sufficient.** Both pods above carry no `dual`
+   label, so both are rejected before `sleeping` is ever read. The label required
+   for attribution is also the strongest signal available on the pod, which is
+   the argument for keying on it rather than on liveness.
+2. **`vllm:engine_sleep_state{sleep_state="awake"} == 1`** is the only
+   pod-observable truth about whether a replica is serving. It comes from the
+   engine, owes nothing to the control plane, and is the guard to add if a
+   deployment ever shows a live binding whose labels disagree with reality.
+
+Do **not** add a third guard reading the launcher's CRUD API. It answers the
+question perfectly — instance ID, port, GPU UUIDs, sleep state — but calling a
+workload pod's API from the collector is a dependency the design does not have
+and should not acquire.
 
 **A real deployment already shows the drift.** Measured on pokprod001 while
 writing this:
@@ -400,6 +424,14 @@ and `dual-pods.llm-d.ai/launcher-config-name`. The first is a generic
 is present on every launcher pod observed. Selecting on the generic label alone
 risks adopting an unrelated workload's pods and scraping them on a port that
 means something else entirely.
+
+**Instances really do get their own ports**, which is what makes the pin bite.
+The launcher's instance record carries the port per instance —
+`"options": "... --port 8000"` and `"annotations": {"inference-port": "8000"}` —
+and the ISC declares a single `modelServerConfig.port: 8000`. A port recorded
+per-instance is only meaningful if instances differ in it; a second concurrent
+instance cannot bind 8000 again. The launcher assigns them, and only the launcher
+knows the mapping.
 
 **This pins the design to one engine per launcher pod, and that limit is real.**
 A launcher running several vLLM instances puts them on several ports; a
@@ -664,6 +696,44 @@ maintains a declared count, §8's warm-slot ceiling is real and the KEDA scenari
 is simply sized so it is never hit. If it genuinely grows, §8's first row is
 already solved upstream. These are very different worlds and the comment alone
 does not settle which one we are in.
+
+## Can FMA run with no loss of metric fidelity?
+
+Yes — in the single-instance-per-launcher case, which is what deployments
+currently do. Not universally.
+
+A bound launcher is an ordinary vLLM server: it answers `/metrics` with the full
+364-series surface, `model_name` and all, indistinguishable from a modelservice
+decode pod. Nothing about FMA degrades the *content* of the metrics. What FMA
+changes is only whether they are collected and to whom they are attributed.
+
+**Full fidelity requires three things, all achievable:**
+
+| requirement | status |
+| --- | --- |
+| launchers are scraped | solved upstream — the FMA PodMonitor relabels to `<podIP>:8000`. Only breaks when a non-FMA guide overwrites it (§4) |
+| launcher metrics are attributed to the scale target | §1, this proposal. Not solved today |
+| one bound instance per launcher pod | true in every deployment observed; the instance takes `:8000`, which is the port the relabel targets |
+
+Under those three, WVA reads exactly the same per-replica KV usage, queue depth
+and token histograms it reads from a modelservice deployment, and the saturation
+analyzer works unmodified. There is no inherent degradation and no need for the
+pool-level mode of §9.
+
+**The one case that does degrade** is several concurrent instances in one
+launcher. Each takes its own port (see §4), a PodMonitor cannot enumerate ports
+assigned at instance-creation time, and so only the `:8000` one is collected. The
+loss is proportional — with 4 of 4 instances bound, three quarters of the
+capacity is unmeasured — and it is invisible, since the one instance that *is*
+scraped looks perfectly healthy.
+
+Whether this matters in practice depends on the phase-0 question in §9: with
+`launcherCount: 1` per node and `maxInstances: 4`, a 4-GPU node would host one
+launcher pod with up to four instances, which would make multi-instance the
+normal case rather than the exception. Every deployment inspected so far runs one
+instance per launcher, but the configuration plainly permits otherwise, and the
+fix is not on our side — it is upstream ask 5, one aggregated `/metrics` per
+launcher labelled by instance.
 
 ## The artifacts must work without WVA installed
 
