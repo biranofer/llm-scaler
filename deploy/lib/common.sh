@@ -184,6 +184,33 @@ EOF
     name: ${binding}
 EOF
     done
+    # The OpenShift ServiceMonitor pins the serving cert's name with
+    # tlsConfig.serverName, and that is a plain STRING: `namespace:` rewrites
+    # namespace fields, not a namespace spelled inside a value. Left alone it
+    # keeps naming the overlay's default namespace, the service-ca SAN never
+    # matches, and Prometheus rejects every scrape with
+    #
+    #   http: TLS handshake error ...: remote error: tls: bad certificate
+    #
+    # once per scrape interval, forever. Nothing else fails: the controller is
+    # healthy and idle, so the only symptom is that no wva_* series ever appear
+    # — which also silently empties any benchmark report built from them. Found
+    # by installing into a namespace that is not the overlay default and reading
+    # the controller log.
+    #
+    # It belongs here rather than in the component because only this layer knows
+    # the namespace: a component's replacement runs before the outer
+    # `namespace:` transform, when the Service still has no namespace at all.
+    if [ "${ENVIRONMENT:-}" = "openshift" ]; then
+        cat >> "$kustomization" <<EOF
+- patch: |-
+    - op: replace
+      path: /spec/endpoints/0/tlsConfig/serverName
+      value: wva-controller-manager-metrics-service.${ns}.svc
+  target:
+    kind: ServiceMonitor
+EOF
+    fi
 }
 
 # wva_overlay_dir echoes the absolute Kustomize overlay directory for the selected

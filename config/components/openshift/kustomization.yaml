@@ -76,9 +76,16 @@ patches:
     - op: replace
       path: /spec/endpoints/0/tlsConfig/insecureSkipVerify
       value: false
+    # The namespace here is a PLACEHOLDER. `namespace:` rewrites namespace
+    # fields, not a literal inside a patch value, so this string would keep
+    # saying wva-system in every other namespace — and Prometheus would reject
+    # the serving cert with "tls: bad certificate" on every scrape, silently,
+    # because the SAN is the real service DNS name. The replacement below puts
+    # the install's own namespace here. Found by installing into a namespace
+    # that is not wva-system and reading the controller log.
     - op: add
       path: /spec/endpoints/0/tlsConfig/serverName
-      value: wva-controller-manager-metrics-service.wva-system.svc
+      value: wva-controller-manager-metrics-service.PLACEHOLDER-NAMESPACE.svc
     - op: add
       path: /spec/endpoints/0/tlsConfig/ca
       value:
