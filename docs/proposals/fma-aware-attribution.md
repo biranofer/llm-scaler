@@ -214,14 +214,40 @@ Two facts make this tractable:
 - **We already key per engine, not per pod.** `buildInstanceKey` produces
   `podName + ":" + port`, and `instance` is in the grouping key of every
   collector query (`max by (model_name, instance, pod)`). Two engines in one
-  launcher arrive as two distinct replica rows, with distinct ports, today.
+  launcher arrive as two distinct replica rows, with distinct ports, today —
+  *provided both are scraped*, which under the PodMonitor in §4 they are not.
+  The reasoning below is therefore about what attribution does with rows that
+  reach it; §4 is where the rows go missing in the first place.
 - **Every vLLM series carries `model_name`.** A row already declares which model
   it belongs to, independently of any pod-level label.
 
 So the guard is a per-row model check, not a per-pod one:
 
-> Accept the pairing hop for a row only when the requester named by `dual`
-> carries an `llm-d.ai/model` matching that row's `model_name`.
+> Accept the pairing hop for a row only when the **registry entry** of the
+> ScaledObject the hop resolved to declares a `ModelID` equal to that row's
+> `model_name`.
+
+It must be the registry's `ModelID`, not a pod label. The obvious-looking version
+of this guard — compare the requester's `llm-d.ai/model` to `model_name` —
+compares two things that are never equal:
+
+| | observed value |
+| --- | --- |
+| pod label `llm-d.ai/model` | `qwen-qwe-694d2b87-en3-0-6b` |
+| series label `model_name` | `Qwen/Qwen3-0.6B` |
+
+The label is a sanitized DNS-safe form of the model ID. A guard written that way
+rejects every row, the hop attributes nothing, and phase 1 ships as a no-op that
+looks implemented. `registry.Entry.Metadata` → `scalermeta.Meta.ModelID` is
+documented as "the model this variant serves", comes from the KEDA trigger
+metadata, and is the identity the rest of attribution already keys on — so the
+comparison is apples to apples and costs no extra call.
+
+It is also the more robust choice for a second reason: `llm-d.ai/model` on a
+launcher is stamped from the `InferenceServerConfig`'s label map, which FMA
+treats as arbitrary (its own examples use `model-reg` / `model-repo` /
+`e2e-test.fma.llm-d.ai/isc-label`). Nothing guarantees an llm-d label convention
+on an FMA pod. The registry does not depend on one.
 
 Consequences, stated plainly:
 
@@ -253,10 +279,32 @@ number that looks slightly low.
 
 ### 2. Sleeping launchers exclude themselves
 
-No liveness check is needed, because FMA already guarantees the invariant we
-want: unbound ⇒ asleep, and unbound ⇒ no `dual` label. A sleeping launcher
-therefore fails the pairing hop and is dropped — which is correct, because it is
-serving nothing.
+FMA's invariant does most of the work: unbound ⇒ asleep, and unbound ⇒ no `dual`
+label, so a sleeping launcher fails the pairing hop and is dropped — correct,
+because it is serving nothing.
+
+**That invariant must not be trusted on its own.** It is maintained by the
+dual-pods controller, and a controller that is lagging, restarting or wedged can
+leave a stale `dual` label on a provider that has already gone to sleep. Attribute
+that pod and WVA gains a replica reporting `kv_cache_usage_perc 0`,
+`num_requests_running 0` — a fake idle replica, which dilutes utilization and
+**suppresses scale-up**. That is precisely the failure this proposal exists to
+fix, reintroduced through its own fix, and it fails silently in the direction
+that hurts.
+
+Two guards, in increasing order of cost and authority:
+
+1. **Reject when `dual-pods.llm-d.ai/sleeping == "true"`.** Provider-only, on the
+   pod object already in hand, zero extra API calls. Catches every case where the
+   controller updated one label and not the other.
+2. **Require `vllm:engine_sleep_state{sleep_state="awake"} == 1`.** The engine's
+   own report of its own state, owing nothing to the control plane. Costs one
+   more collector query, and it is the only guard that survives a controller
+   which has stopped updating labels altogether.
+
+Take (1) in phase 1 — it is free. Take (2) if a real deployment ever shows a
+stale binding, or preemptively if the extra query is judged cheap. Note (2) also
+gives a direct answer to "is this replica actually serving", which no label can.
 
 It should be dropped *legibly*, though. Add a second reason to
 `wva_pod_mapping_miss_total` alongside `PodMappingMissUnresolved`:
@@ -284,6 +332,16 @@ under-reports supply — the safe direction.
 
 `VariantCapacity.ReplicaCount` remains in scale-target units. Nothing changes.
 
+**Unverified, and it must be verified before phase 1 lands.** The claim above
+about the divergence being safe assumes supply is derived from the attributed
+rows. If supply is instead derived from the scale target's replica count while
+demand comes from attributed rows, the sign flips and the divergence becomes
+dangerous: a requester pod is counted as supply the moment it exists, its
+launcher is not yet bound so nothing is attributed to it, and the variant reads
+as over-provisioned exactly while it is waiting for capacity — suppressing the
+scale-up that would fix it. Read the supply path in the saturation analyzer and
+settle this; do not carry the assumption into code.
+
 ### 4. Make the launchers scrapeable (the prerequisite)
 
 Attribution is worthless if Prometheus never scrapes the launchers, and today it
@@ -301,8 +359,22 @@ frequently doesn't:
   the top at 09:26Z.
 
 Ship an **opt-in** PodMonitor under a name nothing else claims
-(`config/base/monitoring/fma-launcher-podmonitor.yaml`), selecting
-`app.kubernetes.io/component=launcher` and relabelling to `<podIP>:8000`.
+(`config/base/monitoring/fma-launcher-podmonitor.yaml`), relabelling to
+`<podIP>:8000` and selecting on **both** `app.kubernetes.io/component=launcher`
+and `dual-pods.llm-d.ai/launcher-config-name`. The first is a generic
+`app.kubernetes.io` label that any workload may use; the second is FMA's own and
+is present on every launcher pod observed. Selecting on the generic label alone
+risks adopting an unrelated workload's pods and scraping them on a port that
+means something else entirely.
+
+**This pins the design to one engine per launcher pod, and that limit is real.**
+A launcher running several vLLM instances puts them on several ports; a
+`__address__` rewrite to a fixed `:8000` scrapes exactly one of them and the rest
+are never collected. So the multiplicity §1.5 reasons about is lost at the scrape
+layer *before* attribution can apply any guard — the under-measurement there is
+total for the non-`:8000` engines, not partial. A PodMonitor cannot enumerate
+ports that are assigned at instance-creation time, so this cannot be fixed on our
+side. It is stated here as a known limit and pushed upstream below.
 
 It must be opt-in, and the installer must refuse to apply it when another
 PodMonitor already selects launcher pods. Two scrape configs on one pod produce
@@ -331,10 +403,16 @@ pokprod001 has, and it is why the earlier "retarget to the requester" change was
 reverted — correctly, for that namespace. With §1 and §4 in place the second row
 becomes genuinely supported, which it is not today.
 
-When the FMA path is selected but §4 is not satisfied, **refuse to write the
-plan entry** rather than emit one that scales blind. A ScaledObject that cannot
-measure its workload is worse than no ScaledObject: it holds the workload at
-`minReplicaCount` while reporting healthy.
+When the FMA path is selected but §4 is not satisfied, emit the plan entry with
+**`apply: no` and the reason**, rather than either applying it or omitting it.
+
+Applying it is wrong: a ScaledObject that cannot measure its workload is worse
+than no ScaledObject, because it holds the workload at `minReplicaCount` while
+reporting healthy. But omitting it is also wrong, and that was the earlier
+draft's mistake — it turns a monitoring misconfiguration into a silent absence
+the operator has to diagnose from nothing, and it makes a fixable scrape problem
+look like discovery failing to find the workload at all. `apply: no` shows both
+the workload and what to fix, which is what the plan format exists for.
 
 ### 6. GPU accounting
 
@@ -386,8 +464,14 @@ End-to-end, on a real FMA install: drive load, then assert
 
 ## Phases
 
+0. **Settle the supply-path question in §3** before writing any of it. It is a
+   read, not a change, and it decides whether the mid-binding divergence is safe
+   or actively harmful.
 1. **Locator pairing hop + tests.** Self-contained. Makes FMA measurable
-   anywhere the launchers are already scraped correctly.
+   anywhere the launchers are already scraped correctly. Includes the
+   registry-`ModelID` guard (§1.5) and the `sleeping` label guard (§2) — both
+   are part of phase 1, not follow-ups; without them the hop either attributes
+   nothing or attributes sleeping pods.
 2. **Scrape enablement.** PodMonitor, preflight, docs.
 3. **Discovery target rules.** Requester-only namespaces become supported.
 4. **GPU accounting** via `accelerators`.
@@ -408,8 +492,15 @@ Worth filing, none blocking:
    to `dual-pods.llm-d.ai/instance`. That single addition turns the
    engine → requester mapping into a pure metadata join and would let any
    observer attribute a multi-model launcher correctly, without calling the
-   launcher's CRUD API. Alternatively, put the instance ID on the metrics series
-   itself.
+   launcher's CRUD API.
+5. **Expose one aggregated `/metrics` on the launcher covering every instance it
+   hosts, with an instance-identifying label on each series.** This is the ask
+   that actually unblocks multi-instance launchers, and it subsumes (4). Today
+   each instance serves its own metrics on its own dynamically-assigned port, and
+   no `PodMonitor` can enumerate those — so a multi-instance launcher is
+   unobservable by any Prometheus-based consumer, not just by WVA. A single
+   endpoint on a known port, with `instance_id` on the series, would make the
+   whole class of tools work.
 
 ## Open questions
 
