@@ -26,7 +26,7 @@ export REPO_ROOT
 # exported here as WVA_IMAGE, which nothing anywhere reads: a reader testing an
 # unmerged branch set it, saw no effect, and got the CrashLoopBackOff described
 # above from the published image they thought they had replaced.
-export IMG="${IMG:-ghcr.io/ev-shindin/llm-scaler:wva-ext}"
+export IMG="${IMG:-ghcr.io/ev-shindin/llm-scaler:main}"
 
 # The namespace WVA installs into.
 #

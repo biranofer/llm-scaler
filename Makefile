@@ -4,7 +4,10 @@
 # flag", and the install has nothing to run. The default therefore points at a
 # build of THIS tree. Change it back when the external scaler ships upstream.
 IMAGE_TAG_BASE ?= ghcr.io/ev-shindin
-IMG_TAG ?= wva-ext
+# `main`, built by ci-main-image on every push to main -- reproducible from a
+# commit and multi-arch, unlike a tag pushed by hand from a laptop. Rebuilt
+# automatically, so it cannot silently go stale the way a personal tag does.
+IMG_TAG ?= main
 IMG ?= $(IMAGE_TAG_BASE)/llm-scaler:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 CLUSTER_GPU_TYPE ?= nvidia-mix
