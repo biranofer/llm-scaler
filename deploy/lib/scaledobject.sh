@@ -780,6 +780,41 @@ spec:
   maxReplicaCount: ${max}
   advanced:
     restoreToOriginalReplicaCount: true
+    # Scaling behaviour, stated rather than inherited.
+    #
+    # Kubernetes' own defaults are already scaleUp stabilization 0 and scaleDown
+    # 300, so on a stock cluster this changes only the policy periods. It is
+    # written out anyway because those defaults are the API server's, not ours:
+    # a cluster that changes them would silently change how every WVA-created
+    # workload scales, and nothing here would say so.
+    #
+    # The asymmetry is the point. Scale-up acts on the current recommendation
+    # (stabilization 0) because a decode replica measured 61s to Ready and the
+    # wait is already paid in cold start. Scale-down waits for 300s of sustained
+    # low demand, because removing a replica too eagerly costs that cold start
+    # on the next request while keeping one too long only costs money.
+    #
+    # The period is a rate limit, not a delay, and with "Percent 100" one step
+    # may move the whole way -- so the conservatism lives in the window above,
+    # not here. Nothing reacts faster than the HPA control loop either, which
+    # re-evaluates on kube-controller-manager's sync period (15s by default).
+    #
+    # Override per install with WVA_SO_SCALE_{UP,DOWN}_{PERIOD,STABILIZATION},
+    # or replace the shape entirely with WVA_DEFAULT_SO_TEMPLATE.
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: ${WVA_SO_SCALE_UP_STABILIZATION:-0}
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: ${WVA_SO_SCALE_UP_PERIOD:-5}
+        scaleDown:
+          stabilizationWindowSeconds: ${WVA_SO_SCALE_DOWN_STABILIZATION:-300}
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: ${WVA_SO_SCALE_DOWN_PERIOD:-120}
   triggers:
     - type: external-push
       name: wva-external-scaler
