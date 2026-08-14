@@ -75,7 +75,15 @@ BENCHMARK_FORCE      ?= true
 BENCHMARK_MONITORING ?= true
 BENCHMARK_UV         ?= false
 BENCHMARK_SCENARIOS_DIR ?= $(CURDIR)/test/benchmark/scenarios
-BENCHMARK_MODEL_ID   ?= $(MODEL_ID)
+# Only an EXPLICIT MODEL_ID overrides the scenario's own model. MODEL_ID's
+# default is e2ewva/dummy-model, which exists solely in the kind emulator, and
+# this value is forwarded to the benchmark CLI as `-m` — a full override of the
+# model the scenario names. Defaulting it therefore replaced Qwen/Qwen3-32B with
+# the emulator's dummy on a real GPU cluster, for the exact command the
+# benchmarking guide documents (it sets BENCHMARK_NAMESPACE and IMG, not
+# MODEL_ID). Empty means "use the scenario's model", which is what a guide
+# reader expects.
+BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID)),$(MODEL_ID),)
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
