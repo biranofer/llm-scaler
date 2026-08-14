@@ -686,6 +686,18 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		{ print } \
 	' $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml > $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml.tmp && \
 	mv $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml.tmp $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml
+	@# Turn OFF the scenario's own WVA install. This repo installs WVA from
+	@# deploy/ in benchmark-deploy-wva, and benchmark-deploy-wva refuses to run
+	@# beside a controller it did not install -- two controllers decide the same
+	@# replica count. The scenario's copy is also the RELEASED chart
+	@# (ghcr.io/llm-d/...), which rejects --external-scaler-bind-address, and it
+	@# pulls kustomize resources from
+	@# github.com/llm-d/llm-d/guides/workload-autoscaling/wva-config/platform/ocp?ref=main,
+	@# a path that does not currently exist -- standup died there on pokprod.
+	@# Restored with the rest of the scenario from the .bak below.
+	@yq -i '(.scenario[] | select(has("wva")) | .wva.enabled) = false' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml && \
+		echo "Scenario's own WVA install disabled (this repo installs it from deploy/)."
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) standup \
 		-p $(BENCHMARK_NAMESPACE) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
