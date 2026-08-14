@@ -75,15 +75,24 @@ BENCHMARK_FORCE      ?= true
 BENCHMARK_MONITORING ?= true
 BENCHMARK_UV         ?= false
 BENCHMARK_SCENARIOS_DIR ?= $(CURDIR)/test/benchmark/scenarios
-# Only an EXPLICIT MODEL_ID overrides the scenario's own model. MODEL_ID's
-# default is e2ewva/dummy-model, which exists solely in the kind emulator, and
-# this value is forwarded to the benchmark CLI as `-m` — a full override of the
-# model the scenario names. Defaulting it therefore replaced Qwen/Qwen3-32B with
-# the emulator's dummy on a real GPU cluster, for the exact command the
-# benchmarking guide documents (it sets BENCHMARK_NAMESPACE and IMG, not
-# MODEL_ID). Empty means "use the scenario's model", which is what a guide
-# reader expects.
-BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID)),$(MODEL_ID),)
+# The model WVA is benchmarked against, forwarded to the benchmark CLI as `-m`,
+# which OVERRIDES the model the scenario names.
+#
+# Qwen3-0.6B by default, deliberately: what these runs measure is WVA's scaling
+# behaviour, and that exercises the same path — discovery, the ScaledObject
+# plan, the scale decision, the report — whatever the model's size. The
+# scenario's own Qwen/Qwen3-32B pulls a far larger image and holds several GPUs
+# per replica for the whole run, which is a poor default on a shared cluster.
+# Pass MODEL_ID=Qwen/Qwen3-32B for the heavy run, or BENCHMARK_MODEL_ID= (empty)
+# to defer to whatever the scenario names.
+#
+# It must NOT fall back to MODEL_ID's own default, e2ewva/dummy-model: that
+# model exists solely in the kind emulator, and defaulting to it meant the exact
+# command the benchmarking guide documents (BENCHMARK_NAMESPACE and IMG, no
+# MODEL_ID) benchmarked the emulator's dummy on a real GPU cluster. The
+# kind-emulator targets pass MODEL_ID= into their sub-makes, so origin reads
+# "command line" there and they keep the dummy.
+BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID)),$(MODEL_ID),Qwen/Qwen3-0.6B)
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10

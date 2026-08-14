@@ -88,11 +88,18 @@ Optional, except `BENCHMARK_NAMESPACE`.
 | `IMG` | a build of this branch | `ghcr.io/you/wva:dev` |
 | `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
 | `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
-| `MODEL_ID` | the scenario's own model | `Qwen/Qwen3-0.6B` |
+| `MODEL_ID` | `Qwen/Qwen3-0.6B` | `Qwen/Qwen3-32B` |
 
-`MODEL_ID` is an override, not a setting: leave it out and the scenario's model
-is used (`guides/workload-autoscaling` serves `Qwen/Qwen3-32B`). Set it only to
-benchmark a different model than the scenario names.
+**The default model is small on purpose.** These runs measure WVA's scaling
+behaviour, and a 0.6B model exercises the same path a 32B one does — discovery,
+the ScaledObject plan, the scale decision, the report — while pulling far less
+and holding one GPU per replica instead of several. Pass
+`MODEL_ID=Qwen/Qwen3-32B` when you want the scenario's own model, or
+`BENCHMARK_MODEL_ID=` (empty) to defer to whatever the scenario names.
+
+Latency and throughput numbers are model-specific, so a 0.6B run tells you
+nothing about a 32B model's TTFT. It tells you whether WVA scaled correctly,
+which is what this suite is for.
 
 **`IMG` decides what is measured**, and nothing in the results afterwards says
 which binary produced them. The default is a build of this branch rather than a
