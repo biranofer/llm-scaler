@@ -208,6 +208,38 @@ so_plan_rows() {
 # to autoscale.
 readonly SO_SERVING_MARKER='llm-d.ai/inferenceServing=true'
 
+# Fast Model Actuation puts the serving path behind a REQUESTER Deployment: the
+# launcher pods host vLLM, and the requester is what a scaler is meant to move.
+# The decode Deployment still exists and still carries the serving marker, so
+# discovery finds it and would scale a workload that neither serves traffic nor
+# emits the vLLM metrics WVA reads -- the controller says as much, once per
+# cycle:
+#
+#   Skipping pod that doesn't match any scale target: launcher-fma-...
+#   No saturation metrics available for model
+#
+# The requester is not found by SO_SERVING_MARKER: it carries the hyphenated
+# llm-d.ai/inference-serving, not the camelCase llm-d.ai/inferenceServing that
+# marks a model server. Its role label is the reliable marker, and it is what
+# llm-d sets deliberately.
+readonly SO_FMA_ROLE_MARKER='llm-d.ai/role=requester'
+
+# so_fma_requester echoes the FMA requester Deployment serving $2's model in $1,
+# or nothing. Matched on the role label AND the model label, so a namespace
+# running two models retargets each to its own requester rather than to whichever
+# one happens to be listed first.
+so_fma_requester() {
+    local ns="$1" model_label="$2"
+    [ -n "$model_label" ] || return 0
+    kubectl get deployments -n "$ns" -o json 2>/dev/null \
+      | jq -r --arg m "$model_label" '
+          .items[]
+          | (.spec.template.metadata.labels // {}) as $l
+          | select($l["llm-d.ai/role"] == "requester" and $l["llm-d.ai/model"] == $m)
+          | .metadata.name' \
+      | head -1
+}
+
 # Where each kind keeps its pod template, as a jq path. An LWS may omit
 # leaderTemplate entirely, and plenty of workloads have a container with no args
 # — getpath and // handle both, which a go-template does not: `range` over a
@@ -427,6 +459,25 @@ so_discover() {
                 if [ -z "$model" ]; then
                     apply=no
                     note="no --served-model-name or --model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+                fi
+                # FMA: scale the requester, not this decode Deployment.
+                #
+                # Done here, after the modelID has been read and before anything
+                # looks the workload up: the requester's container is not vLLM
+                # and carries no --served-model-name, so the model can only come
+                # from the decode's args -- but the TARGET must be the requester.
+                # Everything below (existing ScaledObject, pool, the plan entry)
+                # then refers to the workload that will actually be scaled.
+                if [ "$kind" = "Deployment" ]; then
+                    local model_label fma_requester
+                    model_label=$(printf '%s' "$labels" | tr ' ' '\n' \
+                        | sed -n 's/^llm-d\.ai\/model=//p' | head -1)
+                    fma_requester=$(so_fma_requester "$ns" "$model_label")
+                    if [ -n "$fma_requester" ] && [ "$fma_requester" != "$name" ]; then
+                        log_info "FMA detected in $ns for model '$model_label': the requester Deployment $fma_requester hosts the serving path, so the plan targets it instead of $name (the launcher pods run vLLM; scaling $name would move a workload that neither serves traffic nor reports vLLM metrics)."
+                        note="${note:+$note }FMA topology: retargeted from $name to the requester $fma_requester."
+                        name="$fma_requester"
+                    fi
                 fi
                 existing=$(so_existing_info "$ns" "$name")
                 if [ -n "$existing" ]; then
