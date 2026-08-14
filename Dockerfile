@@ -1,5 +1,9 @@
 # Build the manager binary
-FROM quay.io/projectquay/golang:1.25@sha256:94758a6003e442ccbed85c22533306c94e3b385231f554be53962d798ec5e087 AS builder
+# Digest re-pinned 2026-08-14: the previous one (sha256:94758a60...) had been
+# removed from quay.io and resolved to "not found", so every build without that
+# layer already cached failed -- CI could not build main at all, while local
+# builds kept succeeding from cache and hid it.
+FROM quay.io/projectquay/golang:1.25@sha256:584a3564b3e98dcbd200ffcb22636ff95f7ddc73e692dff13e993ad3d702fdaa AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
