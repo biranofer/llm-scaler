@@ -202,6 +202,55 @@ Guards, all cheap and all necessary:
 - **Partner must resolve.** If the named pod is gone, treat it as an ordinary
   miss.
 
+### 1.5 A launcher may host several models at once
+
+FMA's `docs/launcher.md` is explicit that one launcher pod can run multiple vLLM
+instances concurrently, "where clients can spin up different models on demand",
+each an isolated subprocess with its own configuration. So "one launcher, one
+variant" is not an assumption the design may make.
+
+Two facts make this tractable:
+
+- **We already key per engine, not per pod.** `buildInstanceKey` produces
+  `podName + ":" + port`, and `instance` is in the grouping key of every
+  collector query (`max by (model_name, instance, pod)`). Two engines in one
+  launcher arrive as two distinct replica rows, with distinct ports, today.
+- **Every vLLM series carries `model_name`.** A row already declares which model
+  it belongs to, independently of any pod-level label.
+
+So the guard is a per-row model check, not a per-pod one:
+
+> Accept the pairing hop for a row only when the requester named by `dual`
+> carries an `llm-d.ai/model` matching that row's `model_name`.
+
+Consequences, stated plainly:
+
+- Several engines of the **same** model in one launcher — all rows accepted, all
+  attributed to the same ScaledObject, and they stay distinct replicas for
+  capacity and demand. Correct.
+- Engines of a **different** model in the same launcher — rejected, counted, and
+  *under-measured*. Not mis-attributed, which is the property that matters: a
+  row is never charged to a variant it does not belong to.
+
+The under-measurement is real and worth naming. The provider's `dual` label is
+singular — one pod name — so it structurally cannot express a launcher bound to
+several requesters. Only the requester side carries the per-instance identity
+(`dual-pods.llm-d.ai/instance`, requester-only, an opaque ID such as
+`Izmp_2DY2cq-OEWQ0emoeC5q5qW5GvmCpmVuUkTdGZNci` — not a port, so it does not join
+to the Prometheus `instance` label).
+
+Fully resolving a multi-model launcher therefore requires the reverse index:
+LIST the namespace's pods carrying `dual-pods.llm-d.ai/dual`, keyed
+launcher → [requesters]. That expresses the multiplicity the forward label
+cannot. It costs a LIST per cycle, so it is **not** in phase 1; it is the
+phase-3 upgrade, and it should be built only if a real deployment shows a
+launcher serving two variants at once. Until then, the phase-1 behaviour —
+attribute one model, count the rest, never lie — is the right trade.
+
+Emit `wva_pod_mapping_miss_total{reason="foreign_model_instance"}` for the
+rejected rows so the situation is visible rather than inferred from a demand
+number that looks slightly low.
+
 ### 2. Sleeping launchers exclude themselves
 
 No liveness check is needed, because FMA already guarantees the invariant we
@@ -355,17 +404,27 @@ Worth filing, none blocking:
 2. Give the FMA PodMonitor a name that a non-FMA guide cannot overwrite.
 3. Document vLLM scraping in `docs/metrics.md`, which today covers only FMA
    controller metrics.
+4. Stamp the bound instance's **admin/serving port** onto the requester pod next
+   to `dual-pods.llm-d.ai/instance`. That single addition turns the
+   engine → requester mapping into a pure metadata join and would let any
+   observer attribute a multi-model launcher correctly, without calling the
+   launcher's CRUD API. Alternatively, put the instance ID on the metrics series
+   itself.
 
 ## Open questions
 
-- **Multiple vLLM instances per launcher.** FMA's launcher "can have multiple
-  child processes, each running a distinct vllm instance", and
-  `dual-pods.llm-d.ai/instance` distinguishes them. Our attribution is per *pod*,
-  so two instances serving two different requesters in one launcher would be
-  conflated. Observed metrics carry an `engine="0"` label that may be the
-  discriminator, but the mapping from `engine` to instance ID is unverified.
-  Everything above assumes one bound instance per launcher pod, which is what
-  the observed deployments do. This should be confirmed before phase 3.
+- **Mapping a specific engine to a specific requester**, in a launcher hosting
+  several. §1.5 attributes at most one model per launcher pod; the rest are
+  under-measured. Closing it needs a port → instance-ID → requester join that no
+  label currently provides. The launcher's own CRUD API
+  (`GET /v2/vllm/instances`) knows the mapping, but calling it from WVA means
+  talking to a workload pod, which the collector deliberately does not do.
+  A cheaper option: have FMA stamp the admin port onto the requester alongside
+  `dual-pods.llm-d.ai/instance`, which would make the join pure metadata. This
+  is an upstream ask, listed below.
+- **Does the `dual` label survive a launcher restart** before rebinding? If the
+  label lands after the container is ready, there is a window where a live
+  engine is unattributed. Harmless (it under-reports supply) but worth measuring.
 - **Does the `dual` label survive a launcher restart** before rebinding? If the
   label lands after the container is ready, there is a window where a live
   engine is unattributed. Harmless (it under-reports supply) but worth measuring.
