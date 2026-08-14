@@ -936,6 +936,14 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 			rm -f "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml.bak"; \
 		fi; \
 	fi
+	@# The harness UID has to be set HERE too, not only in benchmark-standup.
+	@# run renders its own plan from the scenario, and standup restores the
+	@# scenario from its .bak when it finishes -- so by the time the harness pod
+	@# is created the patch is gone, config.yaml carries harness.runAsUser: null,
+	@# and the pod is admitted with a namespace UID again. Observed: standup
+	@# applied it, the run twenty minutes later did not.
+	@yq -i '(.scenario[] | select(has("harness")) | .harness.runAsUser) = $(BENCHMARK_HARNESS_RUN_AS_USER)' \
+		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml 2>/dev/null || true
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
