@@ -91,18 +91,7 @@ make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 <!-- guide:deploy.register end -->
 
 `scaledobjects-plan` finds the model servers and writes one entry each, applying
-nothing.
-
-**Under Fast Model Actuation the plan targets the requester, not the decode
-Deployment**, and says so at INFO before it writes anything. With FMA the
-launcher pods host vLLM and the requester is the serving path, while the decode
-Deployment still carries the `llm-d.ai/inferenceServing` label — so scaling it
-would move a workload that neither serves traffic nor reports the vLLM metrics
-WVA reads. The requester is matched on `llm-d.ai/role=requester` and the same
-`llm-d.ai/model`, so a namespace serving two models retargets each to its own.
-The modelID still comes from the model server's own `--served-model-name`; only
-the target changes, and the plan entry carries a note saying what it was
-retargeted from.
+nothing:
 
 ```yaml
 plan:
@@ -124,6 +113,10 @@ up. `apply: adopt` is for a workload something else already scales: it repoints
 that object at WVA instead of adding a second, because two ScaledObjects on one
 target is two HPAs writing the same replica count. A workload whose model could
 not be read is written as `no` with the reason, and never created without one.
+
+> **Running Fast Model Actuation?** The plan targets the requester rather than
+> a decode Deployment, and an entry can arrive as `apply: no` until the launcher
+> pods are scraped. See [WVA with Fast Model Actuation](../../deployment/fma.md).
 
 ## Verification
 

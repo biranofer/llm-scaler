@@ -262,102 +262,23 @@ created.
 
 ### FMA launcher pods
 
-Fast Model Actuation splits a model server in two: a **requester** Deployment
-that carries the llm-d identity, and **launcher** pods — owned by a
-`LauncherConfig` — that hold the GPU and run vLLM. A dual-pods controller pairs
-them and stamps the serving labels onto whichever launcher is bound, which is how
-the launcher becomes an EPP endpoint.
+A namespace running Fast Model Actuation needs two things WVA does not do by
+default, and both fail silently when missing:
 
-**WVA cannot measure that topology.** Attribution walks a pod's
-`ownerReferences` looking for a Deployment or LWS under a ScaledObject. A
-launcher's owner is a `LauncherConfig`, so the walk ends with nothing and the pod
-is dropped — counted in `wva_pod_mapping_miss_total`, silent otherwise. The
-requester can be scaled but runs no engine, so pointing a ScaledObject at it
-produces, once per cycle:
+- **the launcher pods must be scraped.** They declare no container ports, so a
+  PodMonitor selecting by port name generates no target for them at all — not a
+  failing target, no target. Fix with
+  `kubectl apply -k config/fma-launcher-metrics -n <ns>`.
+- **the plan must target the requester**, not a decode Deployment, when the
+  requester is the only serving workload there.
 
-```
-has 1 ready pod(s) but none attributed
-```
+Symptoms: demand far lower than the load you are driving, `has N ready pod(s)
+but none attributed` once per cycle, or a variant flat at `minReplicaCount`
+while the queue grows.
 
-WVA follows the `dual-pods.llm-d.ai/dual` pairing to attribute a launcher's
-metrics to the requester's ScaledObject, so an FMA variant is measurable once its
-launchers are scraped (below). What discovery does depends on the namespace's
-shape:
-
-| namespace holds | plan targets | note |
-| --- | --- | --- |
-| a modelservice `decode`/`prefill` Deployment only | that Deployment | unchanged |
-| an FMA **requester** only | the requester Deployment | its model is read from the `InferenceServerConfig` the pod template names; `apply: no` with the reason if nothing scrapes the launchers yet |
-| **both** | the modelservice Deployment | one entry, not two, plus a warning that launcher traffic is unmeasured |
-
-The last row is a namespace running two guides at once rather than a supported
-topology. WVA targets the decode Deployment — the half it can see — and
-under-measures demand by whatever share of traffic EPP routes to launchers. Measured on a benchmark run: at peak
-EPP dispatched 27.4 req/s across nine launchers against 5.9 req/s to the decode
-pod — about 82% of the load — with launchers at 143 requests running and KV cache
-99.9% full. `deploy/lib` warns when it detects this at plan time.
-
-#### A second, separate trap: the PodMonitor gets overwritten
-
-Launcher pods declare no container ports and serve metrics on `:8000` (a decode
-pod uses `:8200`). A PodMonitor that selects its endpoint **by port name**
-resolves nothing and generates *no target at all* — not a failing target.
-
-llm-d-benchmark handles this when a scenario sets `fma.enabled`: it renders the
-endpoint with a relabeling that forces `__address__` to `<podIP>:8000`. But that
-object is named `vllm-<model>`, and standing up a **non-FMA** guide into the same
-namespace renders the same name with `port: metrics` and overwrites it. The FMA
-stack keeps serving; its metrics just stop being collected, with no error
-anywhere.
-
-Check for it directly — an FMA namespace whose launchers are scraped lists them
-in `up{}`:
-
-```bash
-# should include launcher-* pods; if it lists only decode/EPP/WVA, they are dark
-kubectl get --raw "/api/v1/namespaces/$NS/services/prometheus:9090/proxy/api/v1/query?query=up%7Bnamespace%3D%22$NS%22%7D"
-
-# and confirm the endpoint form
-kubectl get podmonitor -n "$NS" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.podMetricsEndpoints[*].port}{"\n"}{end}'
-```
-
-A `port` of `metrics` on an FMA namespace means the launchers are not being
-scraped. Avoid deploying two guides into one namespace, and either re-apply the
-FMA scenario's PodMonitor or use the one below.
-
-#### Making launchers scrapeable
-
-WVA ships a PodMonitor for this. Set `WVA_FMA_LAUNCHER_METRICS=true` at install
-time, or apply it directly at any point — it needs nothing from WVA and is
-equally useful in a namespace that has FMA and no autoscaler:
-
-```bash
-kubectl apply -k config/fma-launcher-metrics -n <namespace-with-launchers>
-```
-
-It builds the scrape address from `dual-pods.llm-d.ai/server-port`, the port FMA
-records on the pod, rather than hardcoding one — so it follows FMA if the port
-changes, and it **skips launchers with no bound instance**, which carry no such
-annotation. Verified on a cluster: 14 unbound launchers produced 0 targets, and a
-launcher produced `up=1` with 96 distinct vLLM metric names within 30 s of
-binding. Without the skip, the unbound ones become permanently-DOWN targets.
-
-**In a namespace with no FMA it does nothing at all.** Its selector requires
-`app.kubernetes.io/component=launcher` *and* `dual-pods.llm-d.ai/launcher-config-name`,
-so it matches no pods, generates no targets and adds no series — and it stays in
-place, so it starts working by itself if FMA is installed later. Applying it
-pre-emptively is safe; leaving it applied after FMA is removed is also safe.
-
-Two things to know:
-
-- It goes in the **workload** namespace, not the controller's. The installer uses
-  `WVA_WATCH_NS` (falling back to `WVA_NS`); a cluster-scoped install must repeat
-  the command for every namespace running launchers.
-- The installer **refuses** to apply it when another PodMonitor already scrapes
-  launchers there. Two scrape configs on one pod give it two targets under the
-  same `(instance, pod)` key, and WVA's additive `sum by` queries would
-  double-count throughput while the `max by` ones still looked correct — a
-  failure that shows up as inflated tokens/sec, not as an error.
+The whole story — how attribution works, how to size `maxReplicas` from the
+launcher pool, why GPU accounting is a lower bound, and what to check — is in
+[WVA with Fast Model Actuation](fma.md).
 
 First stop for any of these:
 
