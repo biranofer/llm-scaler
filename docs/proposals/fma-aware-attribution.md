@@ -223,31 +223,44 @@ Two facts make this tractable:
 
 So the guard is a per-row model check, not a per-pod one:
 
-> Accept the pairing hop for a row only when the **registry entry** of the
-> ScaledObject the hop resolved to declares a `ModelID` equal to that row's
-> `model_name`.
+> Accept the pairing hop only when the scaler it resolves to is **one of the
+> `scaleTargets` this collection pass was given**.
 
-It must be the registry's `ModelID`, not a pod label. The obvious-looking version
-of this guard — compare the requester's `llm-d.ai/model` to `model_name` —
-compares two things that are never equal:
+`CollectReplicaMetrics` already receives
+`scaleTargets map[string]scaletarget.ScaleTargetAccessor` — the authoritative set
+of scale targets for this pass — and already reports it in the skip message
+(`getScaleTargetNames`). Membership is therefore an identity check on data
+already in hand: no string parsing, no extra call, nothing to get subtly wrong.
 
-| | observed value |
-| --- | --- |
-| pod label `llm-d.ai/model` | `qwen-qwe-694d2b87-en3-0-6b` |
-| series label `model_name` | `Qwen/Qwen3-0.6B` |
+Two tempting alternatives are both worse, and one is broken:
 
-The label is a sanitized DNS-safe form of the model ID. A guard written that way
-rejects every row, the hop attributes nothing, and phase 1 ships as a no-op that
-looks implemented. `registry.Entry.Metadata` → `scalermeta.Meta.ModelID` is
-documented as "the model this variant serves", comes from the KEDA trigger
-metadata, and is the identity the rest of attribution already keys on — so the
-comparison is apples to apples and costs no extra call.
+- **Compare the requester's `llm-d.ai/model` to the row's `model_name`.**
+  Broken. Those are never equal:
 
-It is also the more robust choice for a second reason: `llm-d.ai/model` on a
-launcher is stamped from the `InferenceServerConfig`'s label map, which FMA
-treats as arbitrary (its own examples use `model-reg` / `model-repo` /
-`e2e-test.fma.llm-d.ai/isc-label`). Nothing guarantees an llm-d label convention
-on an FMA pod. The registry does not depend on one.
+  | | observed value |
+  | --- | --- |
+  | pod label `llm-d.ai/model` | `qwen-qwe-694d2b87-en3-0-6b` |
+  | series label `model_name` | `Qwen/Qwen3-0.6B` |
+
+  The label is a sanitized DNS-safe form. A guard written this way rejects every
+  row, the hop attributes nothing, and phase 1 ships as a no-op that looks
+  implemented. Worse, `llm-d.ai/model` on a launcher is stamped from the
+  `InferenceServerConfig`'s label map, which FMA treats as arbitrary (its own
+  examples use `model-reg` / `model-repo` / `e2e-test.fma.llm-d.ai/isc-label`) —
+  so nothing guarantees the label exists on an FMA pod at all.
+
+- **Compare the resolved entry's `scalermeta.Meta.ModelID` to `model_name`.**
+  Correct today — `ParseMeta` rejects empty `modelID` outright, so every
+  registered entry has one — but it couples the guard to a trigger-metadata field
+  that is *proposed for removal* on the grounds that it is derivable from the
+  InferencePool. If that lands, this guard silently starts rejecting everything.
+  Scale-target membership does not care.
+
+Note the rows themselves are already partitioned by model before attribution runs
+(`collector.filterResultsToModel`, see the note above `RegisterSaturationQueries`),
+so the row side of any model comparison is a constant within a pass. The only
+open question the guard must answer is whether the *scaler the hop landed on*
+belongs to this pass — which is exactly what membership tests.
 
 Consequences, stated plainly:
 
@@ -414,17 +427,110 @@ the operator has to diagnose from nothing, and it makes a fixable scrape problem
 look like discovery failing to find the workload at all. `apply: no` shows both
 the workload and what to fix, which is what the plan format exists for.
 
-### 6. GPU accounting
+### 6. GPU accounting needs no change — the requester already holds the GPU
 
-`dual-pods.llm-d.ai/accelerators` carries GPU UUIDs on both halves of a bound
-pair, so `internal/gpuusage` can charge a variant the GPUs actually behind it
-instead of inferring from replica count.
+An earlier draft of this section was wrong. It said unbound launchers "hold real
+GPUs" that should be reported as a namespace-level pool reservation. At the
+Kubernetes resource level they hold none.
 
-Unbound launchers hold real GPUs too — that is what makes FMA fast — but they
-belong to no variant. Report them as a namespace-level pool reservation, never
-as variant demand. Charging warm spares to a variant would make every FMA
-namespace look permanently over-provisioned and would fight the limiter, which
-is advisory anyway (see `docs/`, WVA limiter notes).
+In the dual-pods model the **requester** reserves the GPU and the launcher binds
+onto it. FMA's own deployment template is explicit, in a comment on the launcher
+pod spec:
+
+> the launcher deliberately does NOT request a GPU. In the FMA dual-pods model
+> the requester reserves the GPU and the launcher binds onto it; if the launcher
+> also requested `nvidia.com/gpu` it would double-book (N launchers + N
+> requesters = 2N GPU requests on an N-GPU node), leaving requesters Pending with
+> Insufficient nvidia.com/gpu.
+
+The requester's container carries `nvidia.com/gpu: {{ fma.requester.limitsGPU }}`,
+default **1**. The launcher's carries no GPU request at all.
+
+So the GPU is charged to the **scale target**, which is what `internal/gpuusage`
+already accounts against. FMA needs no special case: replica count × the scale
+target's per-pod GPU request is the correct answer, and it is the answer WVA
+already computes. Treat `dual-pods.llm-d.ai/accelerators` as a cross-check for
+diagnostics, not as an accounting source — introducing it as one would
+double-count against the requester's own request.
+
+### 7. Scale-up is bounded by the launcher pool, and overshoot is silent
+
+A requester replica only becomes capacity if a launcher can bind to it *and* a
+GPU is free. Neither is guaranteed:
+
+- `launcher.maxInstances` (default **4**) caps instances per launcher, and
+  `LauncherPopulationPolicy` caps how many launcher pods exist.
+- `dualPod.sleeperLimit` (default **2**) bounds how many sleepers are kept warm.
+- FMA scenarios pin launchers **and** requesters to a single GPU node
+  (`fma.launcherNodeSelection`), so the ceiling is that node's GPUs.
+
+Past that ceiling, extra requester pods do not fail — they sit **Pending with
+Insufficient nvidia.com/gpu**. To an autoscaler this is the worst shape of
+failure: `spec.replicas` rises, `currentReplicas` rises, no capacity appears,
+demand stays high, and the next cycle asks for more. WVA would ratchet to
+`maxReplicaCount` against a wall.
+
+Therefore, for an FMA variant, `maxReplicaCount` must be bounded by the launcher
+pool rather than by an arbitrary number. Discovery can compute the bound from
+the `LauncherConfig` and `LauncherPopulationPolicy`, but that requires reading
+the `fma.llm-d.ai` API group — which the *installer* may do, since it is a
+one-shot admin-context operation, and which the *controller* must not, per the
+principles above. Setting it at plan time keeps the runtime free of any FMA
+dependency.
+
+Until that is implemented, the plan should warn when it targets a requester
+whose `maxReplicaCount` exceeds the number of launcher pods present.
+
+## Is the requester Deployment really the right `scaleTargetRef`?
+
+Yes, and it is worth stating the evidence because the whole design rests on it.
+
+- FMA's `docs/dual-pods.md`: "Increasing the replica count on a
+  server-requesting Deployment creates additional server-requesting Pods, each
+  requiring its own binding to a server-providing Pod. Each replica generates a
+  distinct inference server instance."
+- The requester is a real `Deployment` with a `replicas` field —
+  `24_fma-deployment.yaml.j2` renders `kind: Deployment`,
+  `name: fma-requester-<model>`, `replicas: {{ fma.requester.replicas | default(0) }}`
+  — so it has a `scale` subresource and KEDA can drive it with no adapter.
+- It is the object that reserves the GPU (§6), so its replica count is a true
+  capacity unit rather than a bookkeeping one.
+- Default replicas is **0**, which matches the live cluster (requester at 0, no
+  bound pairs). An FMA variant therefore starts at zero by design, which makes
+  WVA's scale-from-zero path the normal case for FMA rather than an edge — and a
+  good fit, since fast wake is the entire point of FMA.
+
+Two caveats that do **not** invalidate it:
+
+- FMA supports the requester being part of any set — `dual-pods.md` names
+  "ReplicaSet, StatefulSet, LeaderWorkerSet" — so the design must not hardcode
+  `Deployment`. The existing scale-target resolution already handles the kinds
+  WVA supports; anything else should be reported, not assumed.
+- The ceiling is the launcher pool, not `maxReplicaCount` (§7).
+
+## The artifacts must work without WVA installed
+
+The observability half of this proposal is not WVA-specific and must not be
+made so. A launcher pod that no PodMonitor scrapes is invisible to *every*
+Prometheus consumer — dashboards, KEDA's own scalers, a plain HPA on custom
+metrics, an operator reading Grafana. WVA is simply where the symptom was
+noticed.
+
+Concretely:
+
+- The PodMonitor in §4 must be a standalone object with no dependency on WVA
+  being present: no WVA labels required for it to function, no ownership by the
+  WVA install, and it must be applicable to a namespace that has FMA and no
+  autoscaler at all. Someone running FMA without WVA has the same blind spot and
+  deserves the same fix.
+- The `deploy/lib` warning must describe what is unmeasured, not merely what WVA
+  cannot see, and must not fire when WVA is not being installed.
+- Nothing in the design may make FMA depend on WVA, or on our PodMonitor, to
+  serve traffic. Both halves keep working if neither is installed; they only
+  stop being observable.
+
+The attribution half (§1, §1.5, §2) obviously runs only inside WVA. It changes
+no cluster state and is invisible to anything else.
 
 ## What does not change
 
@@ -452,7 +558,12 @@ Unit, in `internal/collector/locator`:
 - partner in a **different namespace** → not followed
 - partner with a **different** `llm-d.ai/model` → rejected
 - launcher **without** `dual` → `unbound_launcher`
+- launcher whose `dual` resolves to a scaler **outside this pass's
+  `scaleTargets`** → rejected, not attributed to the wrong variant
+- launcher with `dual` **and** `sleeping="true"` → rejected (stale-label case)
 - ordinary Deployment pod → byte-identical to today, one API call
+- registry entry with **no** `modelID` → the hop still works, because membership
+  does not read it (regression guard for the field's proposed removal)
 
 Fixture, in `test/e2e/fixtures/model_service_builder.go`: an FMA layout — a
 requester Deployment under a ScaledObject, plus pods owned by a fake
@@ -469,9 +580,9 @@ End-to-end, on a real FMA install: drive load, then assert
    or actively harmful.
 1. **Locator pairing hop + tests.** Self-contained. Makes FMA measurable
    anywhere the launchers are already scraped correctly. Includes the
-   registry-`ModelID` guard (§1.5) and the `sleeping` label guard (§2) — both
-   are part of phase 1, not follow-ups; without them the hop either attributes
-   nothing or attributes sleeping pods.
+   scale-target-membership guard (§1.5) and the `sleeping` label guard (§2) —
+   both are part of phase 1, not follow-ups; without them the hop either
+   attributes nothing or attributes sleeping pods.
 2. **Scrape enablement.** PodMonitor, preflight, docs.
 3. **Discovery target rules.** Requester-only namespaces become supported.
 4. **GPU accounting** via `accelerators`.
