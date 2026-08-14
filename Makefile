@@ -546,7 +546,38 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 		echo "llm-d-benchmark already cloned at $(BENCHMARK_REPO_DIR); checking out $(BENCHMARK_REPO_REF)..."; \
 		cd $(BENCHMARK_REPO_DIR) && git fetch --tags && git checkout $(BENCHMARK_REPO_REF); \
 	fi
-	@cd $(BENCHMARK_REPO_DIR) && ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv)
+	@# install.sh reaches for sudo when a prerequisite is missing: it apt-installs
+	@# pip when python3 has no ensurepip, and drops helmfile/helm/kubectl into
+	@# /usr/local/bin. Under a non-interactive shell that sudo prompt has no
+	@# terminal to read from, and the step HANGS -- silently, because this recipe
+	@# is @-prefixed. Observed on WSL: no venv, no output, no error, forever.
+	@#
+	@# So say what is missing before running it, and close stdin so any sudo
+	@# prompt fails fast instead of blocking. Everything below installs into
+	@# $$HOME and needs no admin rights.
+	@missing=""; \
+	command -v helmfile >/dev/null 2>&1 || missing="$$missing helmfile"; \
+	if ! command -v uv >/dev/null 2>&1 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then \
+		missing="$$missing uv-or-python3-venv"; \
+	fi; \
+	if [ -n "$$missing" ]; then \
+		echo "Missing prerequisites:$$missing"; \
+		echo ""; \
+		echo "llm-d-benchmark's install.sh would try to install these with sudo, and"; \
+		echo "in a non-interactive shell that blocks on a password prompt forever."; \
+		echo "Install them into your home directory instead -- no admin rights needed:"; \
+		echo ""; \
+		echo "  # uv (brings its own Python, avoids the missing-ensurepip apt path)"; \
+		echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+		echo ""; \
+		echo "  # helmfile"; \
+		echo "  curl -sSL https://github.com/helmfile/helmfile/releases/download/v0.169.1/helmfile_0.169.1_linux_amd64.tar.gz \\"; \
+		echo "    | tar -xz -C \"\$$HOME/bin\" helmfile && chmod +x \"\$$HOME/bin/helmfile\""; \
+		echo ""; \
+		echo "Then re-run: make benchmark-install BENCHMARK_UV=true"; \
+		exit 1; \
+	fi
+	@cd $(BENCHMARK_REPO_DIR) && ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv) </dev/null
 	@echo "Upgrading helm-diff to v3.15.10 for Helm 4 compatibility..."
 	@helm plugin uninstall diff 2>/dev/null || true
 	@helm plugin install https://github.com/databus23/helm-diff --version v3.15.10 --verify=false 2>&1
