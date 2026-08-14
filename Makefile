@@ -552,9 +552,12 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@# terminal to read from, and the step HANGS -- silently, because this recipe
 	@# is @-prefixed. Observed on WSL: no venv, no output, no error, forever.
 	@#
-	@# So say what is missing before running it, and close stdin so any sudo
-	@# prompt fails fast instead of blocking. Everything below installs into
-	@# $$HOME and needs no admin rights.
+	@# So say what is missing before running it. Closing stdin is NOT enough on
+	@# its own -- sudo reads the password from /dev/tty, not stdin, so
+	@# `install.sh </dev/null` still hung on `sudo apt-get update` for 50
+	@# minutes. It runs under setsid below, which detaches the controlling
+	@# terminal so sudo has no tty to prompt on and fails immediately.
+	@# Everything suggested below installs into $$HOME and needs no admin rights.
 	@missing=""; \
 	command -v helmfile >/dev/null 2>&1 || missing="$$missing helmfile"; \
 	if ! command -v uv >/dev/null 2>&1 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then \
@@ -570,17 +573,47 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 		echo "  # uv (brings its own Python, avoids the missing-ensurepip apt path)"; \
 		echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
 		echo ""; \
-		echo "  # helmfile"; \
-		echo "  curl -sSL https://github.com/helmfile/helmfile/releases/download/v0.169.1/helmfile_0.169.1_linux_amd64.tar.gz \\"; \
+		echo "  # helmfile -- the version llm-d-benchmark pins (tool_version_for)"; \
+		echo "  HF=$$(sed -n 's/.*helmfile)[[:space:]]*echo[[:space:]]*\"\([0-9.]*\)\".*/\1/p' \"$(BENCHMARK_REPO_DIR)/install.sh\" 2>/dev/null | head -1); HF=$${HF:-1.5.1}; \\"; \
+		echo "  curl -sSL \"https://github.com/helmfile/helmfile/releases/download/v$$HF/helmfile_$${HF}_linux_amd64.tar.gz\" \\"; \
 		echo "    | tar -xz -C \"\$$HOME/bin\" helmfile && chmod +x \"\$$HOME/bin/helmfile\""; \
 		echo ""; \
 		echo "Then re-run: make benchmark-install BENCHMARK_UV=true"; \
 		exit 1; \
 	fi
-	@cd $(BENCHMARK_REPO_DIR) && ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv) </dev/null
-	@echo "Upgrading helm-diff to v3.15.10 for Helm 4 compatibility..."
-	@helm plugin uninstall diff 2>/dev/null || true
-	@helm plugin install https://github.com/databus23/helm-diff --version v3.15.10 --verify=false 2>&1
+	@# Already working? Then do not run install.sh at all. It runs
+	@# `sudo apt-get update` even when every tool it needs is present, and a
+	@# standup re-runs this target on every invocation.
+	@if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
+		echo "llmdbenchmark already installed at $(LLMDBENCHMARK) — skipping install.sh."; \
+		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
+	else \
+		cd $(BENCHMARK_REPO_DIR) && \
+		setsid ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv) </dev/null; \
+	fi
+	@# helm-diff has to match helm's MAJOR version, and this step assumed Helm 4:
+	@#   - v3.15.10's plugin.yaml uses `platformHooks`, a Helm 4 schema field.
+	@#     Installing it under helm 3 leaves a plugin that loads on every helm
+	@#     invocation and fails -- `helm plugin list`, and helmfile with it, stop
+	@#     working until the directory is deleted by hand.
+	@#   - `--verify` is a Helm 4 flag. Under helm 3 the command fails outright
+	@#     with "unknown flag: --verify", so this step could never have run.
+	@# Verified on helm v3.16.3, where it did both.
+	@# The version comes from llm-d-benchmark's own tool_version_for(), so this
+	@# cannot drift from the version the standup was tested against. Hardcoding a
+	@# second copy is how this line came to pin a Helm 4 build on a helm 3 box.
+	@diff_ver=$$(sed -n 's/.*helm-diff)[[:space:]]*echo[[:space:]]*"\(v[0-9.]*\)".*/\1/p' \
+		"$(BENCHMARK_REPO_DIR)/install.sh" 2>/dev/null | head -1); \
+	diff_ver=$${diff_ver:-v3.13.0}; \
+	echo "Installing helm-diff $$diff_ver (pinned by llm-d-benchmark)..."; \
+	helm plugin uninstall diff >/dev/null 2>&1 || true; \
+	helm plugin install https://github.com/databus23/helm-diff --version $$diff_ver >/tmp/helm-diff-install.log 2>&1 \
+		|| helm plugin install https://github.com/databus23/helm-diff --version $$diff_ver --verify=false >>/tmp/helm-diff-install.log 2>&1 \
+		|| { echo "helm-diff install failed. helmfile uses it to diff; applies still work."; \
+		     echo "Its own words:"; sed 's/^/  /' /tmp/helm-diff-install.log | tail -6; \
+		     echo "  A helm older than the one llm-d-benchmark pins is the usual cause"; \
+		     echo "  (helm $$(helm version --short 2>/dev/null) here)."; }; \
+	helm plugin list 2>/dev/null | awk '$$1=="diff"{print "  installed: helm-diff " $$2}'
 
 .PHONY: benchmark-standup
 benchmark-standup: ## Stand up the benchmark environment, then install WVA from this repo (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, IMG=<your build>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
