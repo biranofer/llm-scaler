@@ -580,6 +580,21 @@ Yes, and it is worth stating the evidence because the whole design rests on it.
   WVA's scale-from-zero path the normal case for FMA rather than an edge — and a
   good fit, since fast wake is the entire point of FMA.
 
+It is also what upstream already does, in both integrations.
+`llm-d-benchmark`'s ScaledObject templates branch identically —
+`28_wva-scaledobject.yaml.j2` (WVA) and `30_keda-scaledobject.yaml.j2`
+(KEDA-only) both render:
+
+```jinja
+{% if fma.enabled %}
+{% set scale_name = 'fma-requester-' ~ model_id_label %}
+{% else %}
+{% set scale_name = model_id_label ~ '-decode' %}
+```
+
+so `Deployment/fma-requester-<model>` is not a proposal, it is the deployed
+convention. The variant is named `<model>-fma` rather than `<model>-decode`.
+
 Two caveats that do **not** invalidate it:
 
 - FMA supports the requester being part of any set — `dual-pods.md` names
@@ -587,6 +602,68 @@ Two caveats that do **not** invalidate it:
   `Deployment`. The existing scale-target resolution already handles the kinds
   WVA supports; anything else should be reported, not assumed.
 - The ceiling is the launcher pool, not `maxReplicaCount` (§7).
+
+### 9. Why plain KEDA already autoscales FMA, and what that implies
+
+FMA is not un-autoscalable today. `llm-d-benchmark` ships working
+`ocp-keda-fma-hotstart` / `-warmstart` scenarios, and the mechanism is worth
+understanding because it explains exactly which part of WVA is the odd one out.
+From that scenario's own header:
+
+> KEDA (`eppKedaSaturation.enabled: true`) scales the FMA requester Deployment on
+> **EPP pool saturation metrics**; FMA's launcher-populator reconciles launcher
+> pods to match.
+
+The loop is:
+
+```
+EPP pool saturation (Prometheus)  →  KEDA trigger  →  requester Deployment replicas
+   →  dual-pods controller binds each new requester to a sleeping launcher
+   →  launcher gets the serving labels AT BIND TIME  →  joins the InferencePool
+   →  EPP routes to it  →  saturation falls
+```
+
+The serving labels come from the `InferenceServerConfig`'s
+`modelServerConfig.labels`, *not* from the `LauncherConfig` pod template,
+precisely so that only launchers actually serving traffic appear in the pool.
+That is the same mechanism §2 relies on, seen from the other side.
+
+**The crucial property: this loop never reads a per-replica engine metric.** EPP
+pool saturation is emitted by the EPP pod, which is a normal Deployment behind a
+normal ServiceMonitor and is always scraped. So the KEDA path is structurally
+immune to everything in §1 through §4 — launcher ownership, launcher scraping,
+sleeping pods, multi-instance launchers. None of it can affect a signal that is
+measured at the pool.
+
+WVA is the odd one out because its saturation analyzer is *per-replica by
+design*: it wants each replica's KV usage and queue depth to compute
+supply and demand in tokens. That is a better model — it can size capacity rather
+than chase a threshold — and it is exactly why it needs attribution to work.
+
+Which suggests a **degraded mode worth having**, independent of everything above:
+when per-replica attribution yields nothing for a variant, WVA can still decide
+from model-level signals it *already collects* — `QueryModelArrivalRate`,
+`QuerySchedulerQueueSize` / `QuerySchedulerQueueBytes`, and
+`inference_extension_flow_control_pool_saturation`, all EPP-sourced and all
+pool-level. That is strictly more information than the KEDA scenario uses, and it
+would let WVA drive an FMA variant *today*, with no PodMonitor change and no
+attribution fix, at the cost of the token-level sizing.
+
+This is not a substitute for §1 — a fallback that silently replaces the good
+model with a worse one is how a system becomes impossible to reason about. It
+should be explicit: reported in the variant's status, visible in a metric, and
+never entered while per-replica data is available. But it does mean the phasing
+has an earlier and much cheaper first step than "fix attribution", and it is the
+step that makes WVA no worse than KEDA on FMA.
+
+Worth verifying before relying on the loop above: the claim that "FMA's
+launcher-populator reconciles launcher pods to match" implies the pool grows with
+demand, whereas `LauncherPopulationPolicy.spec.countForLauncher[].launcherCount`
+reads as a fixed count per matching node (observed: `1`). If the populator only
+maintains a declared count, §8's warm-slot ceiling is real and the KEDA scenario
+is simply sized so it is never hit. If it genuinely grows, §8's first row is
+already solved upstream. These are very different worlds and the comment alone
+does not settle which one we are in.
 
 ## The artifacts must work without WVA installed
 
@@ -697,7 +774,11 @@ End-to-end, on a real FMA install: drive load, then assert
 
 0. **Settle the supply-path question in §3** before writing any of it. It is a
    read, not a change, and it decides whether the mid-binding divergence is safe
-   or actively harmful.
+   or actively harmful. Settle §9's launcher-populator question in the same pass.
+0.5 **Pool-level degraded mode (§9).** Cheapest useful step: makes WVA able to
+   drive an FMA variant with no attribution fix and no PodMonitor change, using
+   EPP signals already collected, and brings WVA level with what plain KEDA does
+   on FMA today. Must be explicit in status and metrics, never silent.
 1. **Locator pairing hop + tests.** Self-contained. Makes FMA measurable
    anywhere the launchers are already scraped correctly. Includes the
    scale-target-membership guard (§1.5) and the `sleeping` label guard (§2) —
