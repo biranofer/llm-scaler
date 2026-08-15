@@ -182,13 +182,25 @@ count toward *anticipated supply*, so they suppress the very scale-up they were
 meant to provide.
 
 ```
-ceiling = min( Σ_nodes (launcherCount × maxInstances),   # warm slots
-               Σ_nodes free GPUs )                        # accelerators
+ceiling = min( launcher pods,        # one ROUTABLE instance each, see below
+               Σ_nodes free GPUs )   # accelerators
 ```
 
-The plan caps the entry at the launcher pods present, which is the first term
-only. The second is not visible from discovery, and in an FMA namespace the GPU
+**Not `launcherCount × maxInstances`.** `maxInstances` is FMA's per-pod ceiling —
+4 in the deployment measured — but a second instance on the same pod is only
+useful if the InferencePool declares its port, and every pool measured declares
+one. So `maxInstances` is not the binding constraint and sizing against it
+overstates the ceiling by that factor: the 15th replica in a 14-launcher
+namespace has nowhere to go, and requester pods past the ceiling sit `Pending`
+while counting toward *anticipated supply*, suppressing the very scale-up they
+were meant to provide.
+
+The plan already caps the entry at the launcher pods present, which is the first
+term. The second is not visible from discovery, and in an FMA namespace the GPU
 picture is itself a lower bound ([why](#gpu-accounting-is-a-lower-bound)).
+
+Raise the first term by having the pool declare the other ports, not by raising
+`maxReplicas` — see [One launcher, several models](#one-launcher-several-models).
 
 ## Verification
 
