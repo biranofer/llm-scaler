@@ -253,22 +253,38 @@ kubectl exec -n ${NAMESPACE} <some-pod> -- \
 
 ### What that means for WVA
 
-The pod-level metadata is **singular** where the launcher is plural, and that is
-the whole limitation:
+Two separate limits, and they are worth keeping apart because only one of them
+needs anything from FMA.
 
-- **one `dual` label per pod**, so it can name only one requester;
-- **one `server-port` annotation per pod**, so a PodMonitor — which builds targets
-  from pod metadata — reaches at most one instance.
+**Measurement already distinguishes instances.** Every series carries
+`model_name` from vLLM plus `instance` (`podIP:port`) and `pod` from Prometheus,
+and WVA keys replicas on `podName + ":" + port`. Two instances in one launcher
+are two distinct replicas as far as the collector is concerned — no change
+needed.
 
-So in a multi-model launcher WVA measures the instance on the annotated port and
-**under-measures the rest**. Rows whose model does not match the pairing are
-rejected rather than mis-attributed: a row is never charged to a variant it does
-not belong to. Watch for `pairing_unresolved`.
+**Attribution is solvable with what is already on the pods.** The launcher's
+`dual` label is singular, so it names one requester. But each requester names its
+launcher, so the reverse lookup — the pods whose `dual` points at this launcher —
+yields every requester bound into it. The row itself carries `model_name`, and
+each requester belongs to exactly one model, so the model is the join key: pick
+the requester whose scale target belongs to the model this collection pass is
+for. No instance ID required. WVA does not do this yet; it is the reverse index
+described in [the design](../../proposals/fma-aware-attribution.md) §1.5.
 
-Every deployment observed so far runs **one instance per launcher**, where this
-does not arise. Closing it needs FMA to expose one aggregated `/metrics` per
-launcher labelled by instance — [upstream request
-5](../../proposals/fma-upstream-requests.md).
+**Scraping is the part that needs FMA.** A PodMonitor builds its targets from pod
+metadata, and there is one `server-port` annotation per pod, so only that
+instance is ever scraped — the other instances' rows do not exist to attribute,
+however good the attribution is. Closing that needs FMA to expose one aggregated
+`/metrics` per launcher, labelled by instance —
+[upstream request 5](../../proposals/fma-upstream-requests.md).
+
+So today WVA measures the instance on the annotated port and **under-measures the
+rest**. Rows whose model does not match the pairing are rejected rather than
+mis-attributed: a row is never charged to a variant it does not belong to. Watch
+for `pairing_unresolved`.
+
+Every deployment observed so far runs **one instance per launcher**, where none of
+this arises.
 
 ### Sleep mode and the warm pool
 

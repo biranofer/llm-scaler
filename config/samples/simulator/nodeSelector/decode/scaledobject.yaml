@@ -32,6 +32,24 @@ spec:
       metadata:
         # The deploy overlays apply namePrefix: wva-, so the Service that routes
         # to the controller's gRPC port resolves to this name.
+        #
+        # The NAMESPACE here is the controller's, and this file names the default
+        # one — which is what `CREATE_CLUSTER=true make deploy-e2e-infra` installs,
+        # and what these samples are written for.
+        #
+        # If you installed WVA into some other namespace — a namespace-scoped
+        # install puts it in the workload's namespace — this address resolves to
+        # nothing, and the symptom is quiet: KEDA cannot fetch a metric spec,
+        # falls back to a CPU metric, and the HPA reads
+        # `cpu: <unknown>/80%` with READY False while the workload is never
+        # scaled by WVA at all.
+        #
+        # Fix it without editing this file: discovery finds the object and offers
+        # to repoint it at whichever install is actually running —
+        #
+        #     make scaledobjects-plan WVA_DEFAULT_SO_PLAN=plan.yaml
+        #     # set apply: adopt on the entry
+        #     make scaledobjects-apply WVA_DEFAULT_SO_PLAN=plan.yaml
         scalerAddress: wva-external-scaler.workload-variant-autoscaler-system.svc.cluster.local:9090
         # Must match what the container actually serves (--model test-model), and
         # it is the grouping key: variants sharing a modelID are optimized

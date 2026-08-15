@@ -55,6 +55,23 @@ Each sample includes its own KEDA `ScaledObject`. That object is the
 registration — without it WVA is never called about the workload and scales
 nothing, quietly.
 
+**Those ScaledObjects name the controller's namespace**, and they name the
+default one, because that is where `deploy-e2e-infra` above installs it. If you
+installed WVA somewhere else — a namespace-scoped install puts the controller in
+the workload's own namespace — the trigger resolves to nothing, and the symptom
+is quiet rather than loud: KEDA cannot fetch a metric spec, falls back to a CPU
+metric, and the HPA sits at `cpu: <unknown>/80%` with `READY False` while nothing
+scales.
+
+Repoint them at whichever install is actually running, without editing the
+samples:
+
+```bash
+make scaledobjects-plan WVA_DEFAULT_SO_PLAN=plan.yaml
+# discovery finds each object and offers it; set apply: adopt
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=plan.yaml
+```
+
 ## Configuration Options
 
 For a complete list of environment variables and configuration options, see the [Configuration Reference](../../docs/deployment/configuration.md) in the main deployment guide.

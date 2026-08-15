@@ -1251,15 +1251,27 @@ coupling is one line rather than an assumption spread through the collector.
 
 ## Open questions
 
-- **Mapping a specific engine to a specific requester**, in a launcher hosting
-  several. §1.5 attributes at most one model per launcher pod; the rest are
-  under-measured. Closing it needs a port → instance-ID → requester join that no
-  label currently provides. The launcher's own CRUD API
-  (`GET /v2/vllm/instances`) knows the mapping, but calling it from WVA means
-  talking to a workload pod, which the collector deliberately does not do.
-  A cheaper option: have FMA stamp the admin port onto the requester alongside
-  `dual-pods.llm-d.ai/instance`, which would make the join pure metadata. This
-  is an upstream ask, listed below.
+- ~~**Mapping a specific engine to a specific requester**~~ — **resolved on
+  paper; it needs no upstream change.** An earlier draft said this required a
+  port → instance-ID → requester join that no label provides. That was wrong,
+  and worth correcting because it made the case look blocked when it is not.
+
+  The join key is the **model**, not the instance ID. Every series already
+  carries `model_name` (from vLLM) and `instance` = `podIP:port` (from
+  Prometheus), and `buildInstanceKey` already keys replicas per `pod:port` — so
+  two instances in one launcher are two distinct rows today. Each requester names
+  its launcher in `dual`, so the reverse lookup yields every requester bound into
+  that launcher, and each requester belongs to exactly one model. Picking the
+  candidate whose scale target belongs to the pass's model resolves the row
+  exactly, using the scale-target-membership guard §1.5 already specifies.
+
+  So the reverse index below is the whole fix, and its cost is a LIST per cycle
+  rather than an upstream dependency.
+
+  What DOES still need FMA is scraping, which is a different limit: a PodMonitor
+  builds targets from pod metadata, there is one `server-port` annotation per
+  pod, and so only one instance's rows exist to attribute. Perfect attribution
+  cannot recover a series that was never collected. See upstream request 5.
 - **Does the `dual` label survive a launcher restart** before rebinding? If the
   label lands after the container is ready, there is a window where a live
   engine is unattributed. Harmless (it under-reports supply) but worth measuring.
