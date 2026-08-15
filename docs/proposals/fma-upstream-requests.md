@@ -196,9 +196,25 @@ the sleeping-instance caveat would save each consumer rediscovering it.
 
 ---
 
-## 7. A bound launcher joins the InferencePool before its instance can serve
+## 7. A launcher's readiness says nothing about whether it can serve
 
-**Severity: high.** This one costs requests.
+**Severity: medium — a latent risk, not a measured outage.**
+
+> **Correction.** An earlier version of this item blamed a burst of 503s during a
+> benchmark on this gap, asserting that a bind put a sleeping instance into the
+> pool. The metrics refute that. Across the error window the bound launcher was
+> `up{}` continuously, scraped without a gap, and **running 146 concurrent
+> requests**; `engine_sleep_state` was never recorded at all; and
+> `num_requests_waiting` was 0 on every engine. It was serving, not waking.
+>
+> Those 503s track EPP flow control instead — `"Priority band is saturated;
+> enforcing HoL blocking"`, `saturation:1` — i.e. load shedding while
+> under-provisioned, which also explains why the non-FMA run did not see them: it
+> had scaled to 4 replicas by that point, while the FMA run was at 1–2 per
+> variant for the same offered load.
+>
+> The gap below is real and worth fixing. It was not the cause of that incident,
+> and the measurement that appeared to support it has been removed.
 
 A launcher's pod readiness reflects the **launcher process**, not the vLLM
 instance inside it. The pod has been `Ready` for as long as it has been running —
@@ -206,27 +222,16 @@ instance inside it. The pod has been `Ready` for as long as it has been running 
 on it at **bind** time, and the `InferencePool` selector is labels only
 (`{llm-d.ai/inferenceServing: "true", llm-d.ai/model: …}`); readiness cannot be
 expressed in a label selector. So the moment a pair binds, a pod that looks
-healthy in every respect enters the pool while its instance is still waking from
-sleep — and EPP dispatches to it.
+healthy in every respect enters the pool whatever state its instance is in — and
+EPP dispatches to it.
 
-Measured on pokprod during a 594-second benchmark at 10 req/s:
-
-| minute | ok | errors |
-| --- | --- | --- |
-| 12:53 | 336 | 0 |
-| 12:54 | 626 | 0 |
-| **12:55** | **217** | **324** |
-| 12:56 | 552 | 0 |
-| … | … | 0 |
-
-All 324 were `503 Service Unavailable` from the EPP route, confined to the single
-minute in which a bind occurred; every other minute of the run was clean.
-
-The control is what makes it conclusive: **the same benchmark without FMA scaled
-1 → 4 replicas and logged zero errors.** A starting *decode* pod never breaks
-anything, because that pod carries a `readinessProbe` on `/v1/models` and stays
-`NotReady` until its engine answers. Only the launcher path fails, because
-nothing ties its pod readiness to the instance it is hosting.
+The window is small in practice, which is why it has not been caught in the act:
+FMA's whole premise is that a bound instance wakes in seconds, since it stays
+resident with weights offloaded. Nothing here measured a request lost to it. The
+exposure is that the guarantee rests on wake being fast rather than on the pod
+reporting when it is ready, so anything that makes a wake slow — a cold instance,
+a contended node, an instance that never started — becomes traffic loss with no
+signal.
 
 **The probe exists and points at the wrong service.** A launcher already has a
 `readinessProbe` — it just does not measure what pool membership needs:

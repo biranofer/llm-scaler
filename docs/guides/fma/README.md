@@ -447,25 +447,20 @@ Treat every GPU number in an FMA namespace as a minimum. Detail:
   named `vllm-<model>`; standing up a non-FMA guide in the same namespace
   overwrites the FMA-aware one with a port-name endpoint, and the launchers go
   dark with no error. `make benchmark-standup` warns when it detects launchers.
-- **Binding a launcher can cost a burst of 503s.** A launcher's `readinessProbe`
+- **A launcher's readiness does not track its instance.** The `readinessProbe`
   asks `:8001/v2/vllm/instances` — the launcher's own CRUD API — while EPP dials
   `:8000`, the pool's `targetPort`. Port 8001 answers whenever the process
   manager is up, including with zero instances, with one asleep, and while one is
   starting, so the pod reads `Ready` for its whole life regardless of whether
-  anything can serve. FMA applies the serving labels at bind time and the
-  `InferencePool` selector is labels only, so a waking instance enters the pool
-  looking healthy and EPP dispatches to it.
+  anything can serve. The decode pod probes `/v1/models` — the engine itself —
+  and so stays `NotReady` until it can actually answer.
 
-  Measured: **324 `503 Service Unavailable` in the single minute a bind
-  occurred**, in a 594-second run that was otherwise clean — while the same
-  benchmark *without* FMA scaled 1 → 4 and logged **zero** errors. The decode pod
-  is harmless because its probe asks `/v1/models`, the engine itself, so it stays
-  `NotReady` until it can serve. Same cluster, same EPP, same pool mechanics —
-  the only difference is which endpoint the probe asks.
-
-  There is no WVA-side fix: it reads pool membership, it does not set it. Expect
-  a burst on each bind, and weigh it when choosing how eagerly to scale an FMA
-  variant — the cost grows with how often the autoscaler moves. Tracked as
+  In practice the exposure is small, because a bound instance wakes in seconds:
+  no request has been observed lost to it here. What it means is that the
+  guarantee rests on wake being fast rather than on the pod reporting readiness,
+  so a slow or failed wake becomes silent traffic loss. Not fixable from WVA,
+  and not fixable in `LauncherConfig` either — a probe set in `podTemplate` is
+  overwritten by the controller (tested). Tracked as
   [upstream request 7](../../proposals/fma-upstream-requests.md).
 
 ## Next
