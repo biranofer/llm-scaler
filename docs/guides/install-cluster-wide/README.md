@@ -67,7 +67,26 @@ kubectl get scaledobject,hpa -A
 ```
 <!-- guide:verify.objects end -->
 
-`CurrentMetrics` populated on the HPA means the whole chain works.
+**`READY True` on the ScaledObject** is the signal, together with a number in
+the HPA's `TARGETS` — `1/1 (avg)` is WVA saying one replica is the right size.
+
+Do not read `CurrentMetrics` as the check. On a ScaledObject whose trigger WVA
+never answers, it is still populated — with an empty entry, `[{"type":""}]` —
+while `READY` is `False` and `TARGETS` reads `<unknown>/1 (avg)` and nothing is
+being scaled. Measured on kind: it says "populated" in exactly the case you are
+verifying against.
+
+`TARGETS` showing `<unknown>` means KEDA could not reach the scaler. The usual
+cause is a ScaledObject naming a different install's namespace — most easily hit
+by installing cluster-wide over a namespace-scoped install, or the other way
+round, since the object keeps the old address. Repoint it at the install that is
+running:
+
+<!-- guide:troubleshoot.repoint start -->
+```bash
+make scaledobjects-repoint
+```
+<!-- guide:troubleshoot.repoint end -->
 
 ## Cleanup
 

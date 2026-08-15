@@ -17,6 +17,10 @@ verify:
   objects:
     run: kubectl get scaledobject,hpa -A
 
+troubleshoot:
+  repoint:
+    run: make scaledobjects-repoint
+
 cleanup:
   uninstall:
     run: make undeploy-wva SCOPE=cluster
