@@ -111,6 +111,57 @@ def format_bound(bound_by):
     return {"k1-memory": "k1", "k2-compute": "k2"}.get(bound_by, bound_by)
 
 
+def build_cycles(rc_events, k2_events, sq_by_ts):
+    """Aggregates k2-decision + replica-capacity-decision + scheduler-queue-demand
+    into ONE row per optimize cycle (timestamp), totalled across every replica
+    that reported that cycle. Used for both the tier-transitions table and the
+    per-iteration detail table, so a cycle with several replicas at different
+    priorities is one aggregate point in both — not several same-timestamp rows
+    read as a sequence of transitions that never happened in time."""
+    rc_by_ts = defaultdict(list)
+    for e in rc_events:
+        rc_by_ts[e["_ts"]].append(e)
+    k2_by_ts = defaultdict(list)
+    for e in k2_events:
+        k2_by_ts[e["_ts"]].append(e)
+
+    cycles = []
+    for ts in sorted(set(rc_by_ts) | set(k2_by_ts)):
+        rcs = rc_by_ts.get(ts, [])
+        k2s = k2_by_ts.get(ts, [])
+
+        priorities = [k.get("priority", "?") for k in k2s]
+        priority_label = ",".join(sorted(set(priorities))) if priorities else "?"
+        # k1 and k2 are shared across replicas of one variant unless their
+        # history-bucket key differs (rare within one cycle) — show the most
+        # common value rather than every replica's copy.
+        k1_common = Counter(r.get("k1MemoryBound") for r in rcs).most_common(1)
+        k2_common = Counter(r.get("k2ComputeBound") for r in rcs).most_common(1)
+        bound_counts = Counter(format_bound(r.get("boundBy", "?")) for r in rcs)
+
+        tokens_in_use = sum(r.get("tokensInUse", 0) or 0 for r in rcs)
+        local_queue = sum(r.get("localQueueDemand", 0) or 0 for r in rcs)
+        replica_demand_total = sum(r.get("replicaDemand", 0) or 0 for r in rcs)
+
+        sq = sq_by_ts.get(ts)
+        epp_queue = (sq.get("estimatedTokens") if sq else 0) or 0
+
+        cycles.append({
+            "ts": ts,
+            "time_short": ts.split("T")[1].split("+")[0] if "T" in ts else ts,
+            "n": max(len(rcs), len(k2s)),
+            "priority_label": priority_label,
+            "k1": k1_common[0][0] if k1_common else "?",
+            "k2": k2_common[0][0] if k2_common else "?",
+            "bound_label": ",".join(sorted(bound_counts)) if bound_counts else "?",
+            "tokens_in_use": tokens_in_use,
+            "local_queue": local_queue,
+            "epp_queue": epp_queue,
+            "total_demand": replica_demand_total + epp_queue,
+        })
+    return cycles
+
+
 def parse_iso(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
@@ -211,27 +262,32 @@ def render_report(events, start, stop):
         lines.extend(md_table(["Priority", "Meaning", "Count", "% of cycles"], dist_rows))
         lines.append("")
 
-        # Transitions: consecutive cycles where the priority changed.
+        # k1 vs k2 range, from replica-capacity-decision.
+        rc_events = [e for e in events
+                     if e["_msg"] == "replica-capacity-decision" and e.get("variant") == variant]
+
+        # Per-cycle aggregation, shared by transitions and the detail table
+        # below — see build_cycles for why this must be per-cycle, not per-event.
+        cycles = build_cycles(rc_events, v_events, sq_by_ts)
+
+        # Transitions: consecutive CYCLES (not raw events) where the aggregate
+        # priority label changed.
         lines.append("### Tier transitions")
         lines.append("")
         transitions = []
         prev = None
-        for e in v_events:
-            cur = e.get("priority")
+        for c in cycles:
+            cur = c["priority_label"]
             if cur != prev:
-                transitions.append((e["_ts"], prev, cur, e))
+                transitions.append((c["time_short"], prev, cur, c["k2"]))
                 prev = cur
         if not transitions:
             lines.append("_No transitions recorded._")
         else:
-            trans_rows = [[ts, frm or "(start)", to, e.get("k2", e.get("k1", "?"))]
-                          for ts, frm, to, e in transitions]
-            lines.extend(md_table(["Time", "From", "To", "k2 (or k1 on P4)"], trans_rows))
+            trans_rows = [[ts, frm or "(start)", to, k2] for ts, frm, to, k2 in transitions]
+            lines.extend(md_table(["Time", "From", "To", "k2"], trans_rows))
         lines.append("")
 
-        # k1 vs k2 range, from replica-capacity-decision.
-        rc_events = [e for e in events
-                     if e["_msg"] == "replica-capacity-decision" and e.get("variant") == variant]
         if rc_events:
             k1_vals = [e["k1MemoryBound"] for e in rc_events if "k1MemoryBound" in e]
             k2_vals = [e["k2ComputeBound"] for e in rc_events if "k2ComputeBound" in e]
@@ -246,13 +302,8 @@ def render_report(events, start, stop):
                 lines.append(f"k2 range: {min(k2_vals)} - {max(k2_vals)} tokens")
             lines.append("")
 
-        # Per-iteration detail: ONE row per optimize cycle, totalled across every
-        # ready replica of this variant that cycle — not one row per replica.
-        # k2-decision and replica-capacity-decision both fire once per replica
-        # per cycle, so grouping either by timestamp gives the cycle's replica
-        # count; demand fields (KV-in-use, local queue) are summed across them.
-        # EPP/scheduler queue demand is model-level (one scheduler-queue-demand
-        # event per cycle, not per replica or per variant), joined by timestamp.
+        # Per-iteration detail: the same per-cycle aggregation used for
+        # transitions above, one row per cycle (not per replica).
         lines.append("### Per-iteration detail")
         lines.append("")
         lines.append("One row per optimize cycle, totalled across every ready replica of this "
@@ -264,46 +315,10 @@ def render_report(events, start, stop):
         lines.append(f"Legend — Bound: {BOUND_LEGEND}.")
         lines.append("")
 
-        rc_by_ts = defaultdict(list)
-        for e in rc_events:
-            rc_by_ts[e["_ts"]].append(e)
-        k2_by_ts = defaultdict(list)
-        for e in v_events:
-            k2_by_ts[e["_ts"]].append(e)
-        all_ts = sorted(set(rc_by_ts) | set(k2_by_ts))
-
-        detail_rows = []
-        for ts in all_ts:
-            rcs = rc_by_ts.get(ts, [])
-            k2s = k2_by_ts.get(ts, [])
-            time_short = ts.split("T")[1].split("+")[0] if "T" in ts else ts
-            n = max(len(rcs), len(k2s))
-
-            priorities = [k.get("priority", "?") for k in k2s]
-            priority_label = ",".join(sorted(set(priorities))) if priorities else "?"
-            # k1 and k2 are shared across replicas of one variant unless their
-            # history-bucket key differs (rare within one cycle) — show the
-            # most common value rather than every replica's copy.
-            k1_val = Counter(r.get("k1MemoryBound") for r in rcs).most_common(1)
-            k2_val = Counter(r.get("k2ComputeBound") for r in rcs).most_common(1)
-            k1_val = k1_val[0][0] if k1_val else "?"
-            k2_val = k2_val[0][0] if k2_val else "?"
-            bound_counts = Counter(format_bound(r.get("boundBy", "?")) for r in rcs)
-            bound_label = ",".join(sorted(bound_counts)) if bound_counts else "?"
-
-            tokens_in_use = sum(r.get("tokensInUse", 0) or 0 for r in rcs)
-            local_queue = sum(r.get("localQueueDemand", 0) or 0 for r in rcs)
-            replica_demand_total = sum(r.get("replicaDemand", 0) or 0 for r in rcs)
-
-            sq = sq_by_ts.get(ts)
-            epp_queue = sq.get("estimatedTokens") if sq else 0
-            epp_queue = epp_queue if epp_queue is not None else 0
-            total_demand = replica_demand_total + epp_queue
-
-            detail_rows.append([
-                time_short, n, priority_label, k2_val, k1_val, bound_label,
-                tokens_in_use, local_queue, epp_queue, total_demand,
-            ])
+        detail_rows = [[
+            c["time_short"], c["n"], c["priority_label"], c["k2"], c["k1"], c["bound_label"],
+            c["tokens_in_use"], c["local_queue"], c["epp_queue"], c["total_demand"],
+        ] for c in cycles]
         lines.extend(md_table(
             ["Time", "N", "Priority", "k2", "k1", "Bound", "KVinUse", "LocalQ", "EPPq", "TotalDemand"],
             detail_rows))
