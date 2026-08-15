@@ -3,17 +3,24 @@
 the controller logs within a given results dir's run window, and render a
 markdown report of which fallback tier fired, when, and why.
 
-Reads five log lines emitted by internal/engines/analyzers/saturation_v2:
-  - k2-decision                    per replica, per cycle: which of the four
-                                    k2 priority tiers fired (observed /
-                                    historical / derived / fallback-to-k1)
-  - replica-capacity-decision       per replica, per cycle: k1 vs k2, which
-                                    bound won, demand/queue inputs
-  - replica-capacity-no-cache-info  when vllm:cache_config_info is absent
-  - variant-capacity-source         zero-replica variant: compatible-variant
-                                    borrow or no-data
-  - zero-replica-capacity-estimate  zero-replica variant: live / derived /
-                                    stored-fallback estimate
+Reads six log lines:
+  - k2-decision                    (saturation_v2) per replica, per cycle:
+                                    which of the four k2 priority tiers fired
+                                    (observed / historical / derived /
+                                    fallback-to-k1)
+  - replica-capacity-decision      (saturation_v2) per replica, per cycle:
+                                    k1 vs k2, which bound won, demand/queue
+                                    inputs
+  - replica-capacity-no-cache-info (saturation_v2) when vllm:cache_config_info
+                                    is absent
+  - variant-capacity-source        (saturation_v2) zero-replica variant:
+                                    compatible-variant borrow or no-data
+  - zero-replica-capacity-estimate (saturation_v2) zero-replica variant:
+                                    live / derived / stored-fallback estimate
+  - Applied saturation decision via shared cache
+                                    (steadystate) the actual, post-enforcement
+                                    target replica count for the variant this
+                                    cycle
 
 Output:
   metrics/processed/k2_decisions.json   (raw per-event records)
@@ -41,10 +48,15 @@ except ImportError:
 
 # Tab-delimited zap console encoding: ts, level, caller, message, json-fields.
 # Matched on message name only (not file:line) — see dump_wva_target_timeseries.py
-# for why pinning the caller path is the wrong thing to do here.
+# for why pinning the caller path is the wrong thing to do here. The message
+# itself is matched up to the next tab rather than restricted to
+# lowercase-hyphen text, since "Applied saturation decision via shared cache"
+# is a plain sentence, not one of this package's own kebab-case message names.
 LOG_LINE = re.compile(
-    r'^(?P<ts>\S+)\t\S+\t\S+\t(?P<msg>[a-z0-9-]+)\t(?P<json>\{.*\})$'
+    r'^(?P<ts>\S+)\t\S+\t\S+\t(?P<msg>[^\t]+)\t(?P<json>\{.*\})$'
 )
+
+DECISION_MSG = "Applied saturation decision via shared cache"
 
 MESSAGES = {
     "k2-decision",
@@ -53,14 +65,7 @@ MESSAGES = {
     "variant-capacity-source",
     "zero-replica-capacity-estimate",
     "scheduler-queue-demand",
-}
-
-PRIORITY_ORDER = ["P1-obs", "P2-hist", "P3-k2", "P4-k1"]
-PRIORITY_MEANING = {
-    "P1-obs": "observed (queue saturated, tokensInUse used directly)",
-    "P2-hist": "historical (rolling average of prior observations)",
-    "P3-k2": "derived (estimated from deployment args)",
-    "P4-k1": "fallback (no observed/historical/derived signal; memory-bound only)",
+    DECISION_MSG,
 }
 
 
@@ -83,13 +88,15 @@ def md_table(headers, rows):
 
 
 # Legend for the abbreviated codes in the per-iteration detail table's
-# "Inputs" and "Bound" columns — kept short so each row fits on one line.
+# "Inputs", "Bound", and "Decision" columns — kept short so each row fits on
+# one line.
 INPUTS_LEGEND = (
     "q=queueLength/queueThreshold, h=history-window sample count, "
     "in/out=avg input/output tokens this cycle, no-sig=no observed/historical/"
     "derived signal (fell all the way to k1)"
 )
 BOUND_LEGEND = "k1=memory-bound won, k2=compute-bound won"
+DECISION_LEGEND = "DN = the controller decided N replicas (post scale-to-zero/min-replica enforcement)"
 
 
 def format_priority_inputs(priority, e):
@@ -111,13 +118,13 @@ def format_bound(bound_by):
     return {"k1-memory": "k1", "k2-compute": "k2"}.get(bound_by, bound_by)
 
 
-def build_cycles(rc_events, k2_events, sq_by_ts):
+def build_cycles(rc_events, k2_events, sq_by_ts, decision_by_ts):
     """Aggregates k2-decision + replica-capacity-decision + scheduler-queue-demand
-    into ONE row per optimize cycle (timestamp), totalled across every replica
-    that reported that cycle. Used for both the tier-transitions table and the
-    per-iteration detail table, so a cycle with several replicas at different
-    priorities is one aggregate point in both — not several same-timestamp rows
-    read as a sequence of transitions that never happened in time."""
+    + the applied decision into ONE row per optimize cycle (timestamp),
+    totalled across every replica that reported that cycle — not one row per
+    replica, and not a naive walk of raw events (a cycle with several
+    replicas at different priorities is one aggregate point, not several
+    same-timestamp entries read as a sequence that never happened in time)."""
     rc_by_ts = defaultdict(list)
     for e in rc_events:
         rc_by_ts[e["_ts"]].append(e)
@@ -146,6 +153,9 @@ def build_cycles(rc_events, k2_events, sq_by_ts):
         sq = sq_by_ts.get(ts)
         epp_queue = (sq.get("estimatedTokens") if sq else 0) or 0
 
+        target = decision_by_ts.get(ts)
+        decision_label = f"D{target}" if target is not None else "?"
+
         cycles.append({
             "ts": ts,
             "time_short": ts.split("T")[1].split("+")[0] if "T" in ts else ts,
@@ -158,6 +168,7 @@ def build_cycles(rc_events, k2_events, sq_by_ts):
             "local_queue": local_queue,
             "epp_queue": epp_queue,
             "total_demand": replica_demand_total + epp_queue,
+            "decision": decision_label,
         })
     return cycles
 
@@ -242,122 +253,51 @@ def render_report(events, start, stop):
     # several models sharing a log window this would need a modelID filter too.
     sq_by_ts = {e["_ts"]: e for e in events if e["_msg"] == "scheduler-queue-demand"}
 
+    # The applied-decision line's "variant" field is "namespace/name" (a
+    # composite cache key — see steadystate/engine.go), while every
+    # saturation_v2 event uses the bare name. Strip the namespace prefix so
+    # both sides join on the same key.
+    decision_events = [e for e in events if e["_msg"] == DECISION_MSG]
+
     for variant in variants:
         v_events = [e for e in k2_events if e.get("variant") == variant]
         if not v_events:
             continue
-        lines.append(f"## Variant: {variant}")
-        lines.append("")
 
-        counts = Counter(e.get("priority", "?") for e in v_events)
-        total = sum(counts.values())
-        lines.append("### K2 fallback-tier distribution")
-        lines.append("")
-        dist_rows = []
-        for p in PRIORITY_ORDER:
-            if p not in counts:
-                continue
-            pct = 100 * counts[p] / total if total else 0
-            dist_rows.append([p, PRIORITY_MEANING[p], counts[p], f"{pct:.1f}%"])
-        lines.extend(md_table(["Priority", "Meaning", "Count", "% of cycles"], dist_rows))
-        lines.append("")
-
-        # k1 vs k2 range, from replica-capacity-decision.
         rc_events = [e for e in events
                      if e["_msg"] == "replica-capacity-decision" and e.get("variant") == variant]
 
-        # Per-cycle aggregation, shared by transitions and the detail table
-        # below — see build_cycles for why this must be per-cycle, not per-event.
-        cycles = build_cycles(rc_events, v_events, sq_by_ts)
+        decision_by_ts = {
+            e["_ts"]: e.get("target")
+            for e in decision_events
+            if e.get("variant", "").rsplit("/", 1)[-1] == variant
+        }
 
-        # Transitions: consecutive CYCLES (not raw events) where the aggregate
-        # priority label changed.
-        lines.append("### Tier transitions")
-        lines.append("")
-        transitions = []
-        prev = None
-        for c in cycles:
-            cur = c["priority_label"]
-            if cur != prev:
-                transitions.append((c["time_short"], prev, cur, c["k2"]))
-                prev = cur
-        if not transitions:
-            lines.append("_No transitions recorded._")
-        else:
-            trans_rows = [[ts, frm or "(start)", to, k2] for ts, frm, to, k2 in transitions]
-            lines.extend(md_table(["Time", "From", "To", "k2"], trans_rows))
-        lines.append("")
+        cycles = build_cycles(rc_events, v_events, sq_by_ts, decision_by_ts)
 
-        if rc_events:
-            k1_vals = [e["k1MemoryBound"] for e in rc_events if "k1MemoryBound" in e]
-            k2_vals = [e["k2ComputeBound"] for e in rc_events if "k2ComputeBound" in e]
-            bound_counts = Counter(e.get("boundBy", "?") for e in rc_events)
-            lines.append("### Which bound governed (k1-memory vs k2-compute)")
-            lines.append("")
-            lines.extend(md_table(["Bound", "Cycles"],
-                                   [[b, c] for b, c in bound_counts.most_common()]))
-            lines.append("")
-            if k1_vals and k2_vals:
-                lines.append(f"k1 range: {min(k1_vals)} - {max(k1_vals)} tokens  ")
-                lines.append(f"k2 range: {min(k2_vals)} - {max(k2_vals)} tokens")
-            lines.append("")
-
-        # Per-iteration detail: the same per-cycle aggregation used for
-        # transitions above, one row per cycle (not per replica).
-        lines.append("### Per-iteration detail")
+        lines.append(f"## Variant: {variant}")
         lines.append("")
         lines.append("One row per optimize cycle, totalled across every ready replica of this "
                       "variant that cycle (N). KVinUse/LocalQ/EPPq/TotalDemand are all in tokens; "
-                      "Priority lists every tier that fired across N replicas this cycle (see the "
-                      "fallback-tier distribution above for what each code means). Time is "
-                      "HH:MM:SS on the run date above.")
+                      "Priority lists every k2 tier that fired across N replicas this cycle "
+                      "(P1-obs=observed, P2-hist=historical average, P3-k2=derived from deployment "
+                      "args, P4-k1=no signal, memory-bound only). Time is HH:MM:SS on the run date "
+                      "above.")
         lines.append("")
-        lines.append(f"Legend — Bound: {BOUND_LEGEND}.")
+        lines.append(f"Legend — Bound: {BOUND_LEGEND}.  Decision: {DECISION_LEGEND}.")
         lines.append("")
 
         detail_rows = [[
             c["time_short"], c["n"], c["priority_label"], c["k2"], c["k1"], c["bound_label"],
-            c["tokens_in_use"], c["local_queue"], c["epp_queue"], c["total_demand"],
+            c["tokens_in_use"], c["local_queue"], c["epp_queue"], c["total_demand"], c["decision"],
         ] for c in cycles]
         lines.extend(md_table(
-            ["Time", "N", "Priority", "k2", "k1", "Bound", "KVinUse", "LocalQ", "EPPq", "TotalDemand"],
+            ["Time", "N", "Priority", "k2", "k1", "Bound", "KVinUse", "LocalQ", "EPPq",
+             "TotalDemand", "Decision"],
             detail_rows))
         lines.append("")
 
-    # No-cache-info fallback events (missing vllm:cache_config_info).
-    nci_events = [e for e in events if e["_msg"] == "replica-capacity-no-cache-info"]
-    if nci_events:
-        lines.append("## No-cache-info fallback events")
-        lines.append("")
-        lines.append("These pods never reported `vllm:cache_config_info`; capacity came from "
-                      "the capacity store instead of live KV-cache metrics.")
-        lines.append("")
-        lines.extend(md_table(
-            ["Time", "Variant", "Pod", "Reason"],
-            [[e["_ts"], e.get("variant", "?"), e.get("pod", "?"), e.get("reason", "?")]
-             for e in nci_events]))
-        lines.append("")
-
-    # Zero-replica capacity estimates.
-    zr_events = [e for e in events if e["_msg"] == "zero-replica-capacity-estimate"]
-    vs_events = [e for e in events if e["_msg"] == "variant-capacity-source"]
-    if zr_events or vs_events:
-        lines.append("## Zero-replica capacity estimation")
-        lines.append("")
-        lines.append("How a variant's capacity was estimated while it had no ready replicas.")
-        lines.append("")
-        zr_rows = []
-        for e in zr_events:
-            detail = f"perReplicaCapacity={e.get('perReplicaCapacity','?')}"
-            if e.get("boundedBy"):
-                detail += f", boundedBy={e['boundedBy']}"
-            zr_rows.append([e["_ts"], e.get("variant", "?"), e.get("source", "?"), detail])
-        for e in vs_events:
-            zr_rows.append([e["_ts"], e.get("variant", "?"), "(aggregation)", e.get("reason", "?")])
-        lines.extend(md_table(["Time", "Variant", "Source", "Detail"], zr_rows))
-        lines.append("")
-
-    if not k2_events and not nci_events and not zr_events and not vs_events:
+    if not k2_events:
         lines.append("_No k1/k2 decision events found in the run window. "
                       "Check that the controller image includes the k1/k2 logging "
                       "and that LOG_LEVEL permits INFO output._")
