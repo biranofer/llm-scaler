@@ -12,7 +12,7 @@ data:
     PROMETHEUS_TLS_INSECURE_SKIP_VERIFY: "false"
 
     # Optimization
-    GLOBAL_OPT_INTERVAL: "60s"
+    GLOBAL_OPT_INTERVAL: "15s"
 
     # Feature Flags
     WVA_SCALE_TO_ZERO: "false"
