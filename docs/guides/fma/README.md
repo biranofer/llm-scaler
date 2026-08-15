@@ -181,6 +181,14 @@ is free. Past that, extra requester pods sit `Pending` — and pending replicas
 count toward *anticipated supply*, so they suppress the very scale-up they were
 meant to provide.
 
+The dependency runs one way only: **requesters are bounded by launchers, never
+the reverse.** The pool is a declared count, not a response to demand —
+`LauncherPopulationPolicy.spec.countForLauncher[].launcherCount` is per matching
+*node*, so the pool size is `nodes × launcherCount` and it does not grow when
+requesters do. Confirmed on a live cluster: 14 nodes match, `launcherCount` is 1,
+and there are exactly 14 launcher pods — sitting there with the requester
+Deployment at `replicas: 0`. Launchers exist with no requesters at all.
+
 ```
 ceiling = min( launcher pods,        # one ROUTABLE instance each, see below
                Σ_nodes free GPUs )   # accelerators
@@ -369,6 +377,34 @@ for `pairing_unresolved`.
 
 Every deployment observed so far runs **one instance per launcher**, where none of
 this arises.
+
+### When a launcher changes instance
+
+The scrape address is rebuilt from the pod's annotation on every service-discovery
+pass, so a rebind is followed without anything being reconfigured. Measured on
+kind, with one pod running two engines on two ports and the annotation moved
+between them:
+
+| | `server-port` | scrape target | series |
+| --- | --- | --- | --- |
+| bound to A | `8000` | `podIP:8000` up | `model_name=A instance=podIP:8000` |
+| rebound to B | `8001` | **follows** to `podIP:8001` up | `model_name=B instance=podIP:8001` |
+| unbound | *removed* | **no target** | — |
+
+Two consequences worth knowing.
+
+**The old series do not vanish with the target.** For one lookback window the
+instant query still returns `model_name=A instance=podIP:8000`, because its last
+sample is recent even though nothing is scraping it any more. That is what makes
+the `instance` label alone unsafe as identity across a rebind.
+
+**Attribution rejects them anyway, and now says so.** Collection runs per model,
+so those rows are looked up against the model they claim, while the pod's pairing
+now names the *new* model's requester. The row resolves to a variant this model
+does not own, so it is ignored rather than charged to the wrong one, and counted
+as `other_model_variant`. A brief count right after a rebind is expected; a
+sustained one means a pairing pointing at a variant of a model the pod does not
+serve.
 
 ### Sleep mode and the warm pool
 
