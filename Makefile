@@ -528,7 +528,7 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@cd $(BENCHMARK_REPO_DIR) && ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv)
 	@echo "Upgrading helm-diff to v3.15.10 for Helm 4 compatibility..."
 	@helm plugin uninstall diff 2>/dev/null || true
-	@helm plugin install https://github.com/databus23/helm-diff --version v3.15.10 --verify=false 2>&1
+	@helm plugin install https://github.com/databus23/helm-diff --version v3.15.10 2>&1
 
 .PHONY: benchmark-standup
 benchmark-standup: ## Stand up the benchmark environment, then install WVA from this repo (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, IMG=<your build>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
@@ -548,7 +548,9 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
 		cd $(BENCHMARK_REPO_DIR) && git checkout -- config/scenarios config/specification config/templates 2>/dev/null || true; \
 	fi
-	@$(MAKE) benchmark-install BENCHMARK_REPO_REF=$(BENCHMARK_REPO_REF)
+	@if [ ! -x "$(LLMDBENCHMARK)" ]; then \
+		$(MAKE) benchmark-install BENCHMARK_REPO_REF=$(BENCHMARK_REPO_REF); \
+	fi
 	@cd $(BENCHMARK_REPO_DIR) && git reset --hard origin/$(BENCHMARK_REPO_REF) 2>/dev/null || true
 	@if [ -f "$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml" ]; then \
 		echo "Copying local scenario: hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml -> $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml"; \
@@ -717,7 +719,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
-		-w $(BENCHMARK_WORKLOAD).yaml \
+		-w $(if $(filter %.yaml,$(BENCHMARK_WORKLOAD)),$(BENCHMARK_WORKLOAD),$(BENCHMARK_WORKLOAD).yaml) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,) \
 		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT)
