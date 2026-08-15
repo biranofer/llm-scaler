@@ -27,6 +27,27 @@ make benchmark-install
 ```
 <!-- guide:prerequisites.cli end -->
 
+### If the namespace runs Fast Model Actuation
+
+Benchmarking an FMA namespace works, and standup warns you about the one trap
+that matters: this stack renders a PodMonitor named `vllm-<model>`, the same name
+the FMA guide uses, so a scenario without `fma.enabled` **overwrites the
+FMA-aware one and the launchers stop being scraped, silently**. Most of the
+traffic then goes unmeasured — which is how a variant once sat flat at one
+replica through a 155-deep queue.
+
+Two things follow for the numbers you get:
+
+- `BENCHMARK_KEDA_MAX_REPLICAS` is a starting value, not the ceiling. Discovery
+  caps an FMA variant at the **launcher pods present**, because only one instance
+  per launcher is reachable today. Raising the variable past that buys nothing —
+  the extra requester pods sit `Pending` and, counting toward anticipated supply,
+  suppress the scale-up they were meant to provide.
+- The launcher pool does not grow with the benchmark. It is a declared count per
+  matching node, so load does not expand it.
+
+Both are explained in [Autoscale a Fast Model Actuation stack](../fma/README.md).
+
 ## Installation Instructions
 
 ### 1. Stand up the stack
