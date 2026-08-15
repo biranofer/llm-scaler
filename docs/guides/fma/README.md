@@ -122,11 +122,16 @@ This is where the WVA scrape path is the more robust of the two: the
 `server-port` annotation is per-pod and FMA rewrites it at bind time, so the
 PodMonitor follows a rebind that EPP cannot.
 
-That has a consequence worth knowing before designing around it. The pool's
-target port is one number for the whole pool, not a per-pod value, so **EPP can
-reach exactly one server per launcher pod**. A launcher hosting a second
-instance on another port is unreachable through the InferencePool contract no
-matter what WVA does — see [One launcher, several models](#one-launcher-several-models).
+The ports are a property of the **pool**, not of the pod. `targetPorts` is a list
+of up to 8, and the v1 API says every entry "will be treated as a distinctive
+endpoint by EPP, addressable as a `podIP:portNumber` combination" — so a launcher
+hosting several instances *can* be fully routable, provided the pool declares
+each port. Nothing on the pod says which ports it serves; the pool does.
+
+In practice **every one of the 163 pools measured declares exactly one port**, so
+today EPP reaches one server per launcher pod. That is a property of how these
+pools are configured, not a limit of the contract — see
+[One launcher, several models](#one-launcher-several-models).
 
 ### 2. Register the workload
 
@@ -329,17 +334,21 @@ however good the attribution is. Closing that needs FMA to expose one aggregated
 `/metrics` per launcher, labelled by instance —
 [upstream request 5](../../proposals/fma-upstream-requests.md).
 
-**Routing has the same limit, and it is not WVA's to fix.** An `InferencePool`
-carries one `targetPort` for the whole pool, applied to every endpoint — not a
-per-pod value. Measured on a shared cluster: **163 pools, every one of them
-`targetPort: 8000`**. So EPP can reach exactly one server per launcher pod, and a
-second instance on another port receives no traffic through the pool at all.
+**Routing is configuration, not a wall.** An `InferencePool`'s `targetPorts` is a
+list of up to 8, and the v1 API treats each as a distinct endpoint addressable as
+`podIP:portNumber`. So the contract already accommodates a launcher serving four
+instances on four ports — `maxInstances: 4` fits inside the limit of 8 with room
+to spare.
 
-That reorders the work. Even with aggregated launcher metrics (upstream request
-5) and the reverse index above, a second instance would be measurable but still
-unroutable — so it would be a replica nothing dispatches to, which is worse than
-not having it. Multi-model-per-launcher needs a change to the InferencePool
-contract before it needs anything from WVA.
+What is missing is that nobody declares them: **163 pools measured, every one
+with exactly one port**. Until a pool lists the other ports, the instances behind
+them get no traffic. That is a change to how the pool is generated — the llm-d
+router chart writes it — not a change to the API.
+
+So the order of work is: the pool must declare the ports (routing), FMA must
+expose the other instances' metrics (measurement, upstream request 5), and WVA
+must attribute them (the reverse index above). All three are needed, and the
+first two are not ours. What has changed is that none of them requires a new API.
 
 So today WVA measures the instance on the annotated port and **under-measures the
 rest**. Rows whose model does not match the pairing are rejected rather than
