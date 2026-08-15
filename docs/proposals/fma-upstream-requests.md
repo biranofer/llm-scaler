@@ -228,15 +228,40 @@ anything, because that pod carries a `readinessProbe` on `/v1/models` and stays
 `NotReady` until its engine answers. Only the launcher path fails, because
 nothing ties its pod readiness to the instance it is hosting.
 
-**Request**, any one of which closes it:
+**The probe exists and points at the wrong service.** A launcher already has a
+`readinessProbe` — it just does not measure what pool membership needs:
 
-1. Do not apply the serving labels until the instance is awake and answering —
-   pool membership then implies servability, which is what the selector assumes.
-2. Give the launcher a readiness gate that tracks the bound instance, so
-   `Ready` means the engine can serve and existing readiness filtering applies.
-3. Failing either, publish the instance's readiness on the pod so a consumer can
-   gate on it — the `sleeping` label is close, but item 2 above shows it
-   disagrees with the launcher's own instance list.
+```
+launcher readinessProbe   ->  :8001/v2/vllm/instances    the launcher's CRUD API
+EPP dials                 ->  :8000                      the pool's targetPort
+```
+
+Port 8001 is the process manager. It answers `200` whenever the launcher itself
+is up — including with `total_instances: 0`, with the instance asleep, and while
+one is still starting — so `Ready` is true for the entire life of the pod and
+says nothing about whether anything can serve on 8000.
+
+Contrast the decode pod, which never produced one of these errors:
+
+```
+decode readinessProbe     ->  /v1/models                 the engine itself
+decode startupProbe       ->  /v1/models
+```
+
+Same cluster, same EPP, same InferencePool mechanics. The difference is only
+which endpoint the probe asks.
+
+**Request** — the first is a one-line change and closes it outright:
+
+1. Point the launcher's `readinessProbe` at the bound instance: `/v1/models` on
+   the `dual-pods.llm-d.ai/server-port` port, not `/v2/vllm/instances` on 8001.
+   `Ready` then means servable, and the readiness filtering that already protects
+   the decode path protects launchers too — nothing downstream has to change.
+2. Or do not apply the serving labels until the instance is awake, so pool
+   membership implies servability, which is what a label-only selector assumes.
+3. Or publish the instance's readiness on the pod for consumers to gate on. The
+   `sleeping` label is the closest thing today, and item 2 above shows it
+   disagrees with the launcher's own instance list, so it cannot carry this.
 
 Until then, every bind is a window in which a share of traffic 503s, and the
 window scales with how often the autoscaler moves — which makes autoscaling an

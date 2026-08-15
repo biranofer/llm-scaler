@@ -447,17 +447,21 @@ Treat every GPU number in an FMA namespace as a minimum. Detail:
   named `vllm-<model>`; standing up a non-FMA guide in the same namespace
   overwrites the FMA-aware one with a port-name endpoint, and the launchers go
   dark with no error. `make benchmark-standup` warns when it detects launchers.
-- **Binding a launcher can cost a burst of 503s.** A launcher's pod readiness
-  tracks the launcher process, not the instance inside it, so the pod is `Ready`
-  long before any instance is. FMA applies the serving labels at bind time and
-  the `InferencePool` selector is labels only, so a waking instance enters the
-  pool looking healthy and EPP dispatches to it.
+- **Binding a launcher can cost a burst of 503s.** A launcher's `readinessProbe`
+  asks `:8001/v2/vllm/instances` — the launcher's own CRUD API — while EPP dials
+  `:8000`, the pool's `targetPort`. Port 8001 answers whenever the process
+  manager is up, including with zero instances, with one asleep, and while one is
+  starting, so the pod reads `Ready` for its whole life regardless of whether
+  anything can serve. FMA applies the serving labels at bind time and the
+  `InferencePool` selector is labels only, so a waking instance enters the pool
+  looking healthy and EPP dispatches to it.
 
   Measured: **324 `503 Service Unavailable` in the single minute a bind
   occurred**, in a 594-second run that was otherwise clean — while the same
-  benchmark *without* FMA scaled 1 → 4 and logged **zero** errors. A starting
-  decode pod is harmless because it carries a `readinessProbe` and stays
-  `NotReady` until its engine answers; nothing plays that role for a launcher.
+  benchmark *without* FMA scaled 1 → 4 and logged **zero** errors. The decode pod
+  is harmless because its probe asks `/v1/models`, the engine itself, so it stays
+  `NotReady` until it can serve. Same cluster, same EPP, same pool mechanics —
+  the only difference is which endpoint the probe asks.
 
   There is no WVA-side fix: it reads pool membership, it does not set it. Expect
   a burst on each bind, and weigh it when choosing how eagerly to scale an FMA
