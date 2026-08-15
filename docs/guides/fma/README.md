@@ -86,7 +86,16 @@ means, and only one of them needs a declared port.
 | | how it finds the launcher | needs a declared container port? |
 | --- | --- | --- |
 | **EPP** (InferencePool) | label selector, then the **pool's** `targetPort` | no — the port is a property of the pool |
-| **Prometheus** (PodMonitor by port *name*) | label selector, then a port **named** on the pod | yes — and a launcher declares none |
+| **PodMonitor** by port `name` **or** `portNumber` | label selector, then a port **declared on the pod** | yes — and a launcher declares none |
+| **PodMonitor** building `__address__` (what we ship) | label selector, then podIP + the `server-port` annotation | no |
+
+`portNumber` looks like it should be the easy answer — an integer, no name required —
+and it is not. Measured on kind, both PodMonitors selecting the same portless pod
+in the same Prometheus: the `portNumber` job **is** generated and then relabelled
+away, landing in `droppedTargets`, because `__meta_kubernetes_pod_container_port_number`
+never matches a port the pod never declared. The address-building job scraped it
+`health=up`. Constructing the address is not a workaround here; it is the only
+mechanism that reaches these pods.
 
 FMA stamps `llm-d.ai/model`, `llm-d.ai/inferenceServing=true`, the
 `dual-pods.llm-d.ai/dual` pair label and the `server-port` annotation onto a
@@ -97,6 +106,21 @@ launcher metrics are missing by default and why this file exists.
 
 Measured on a shared cluster: **163 InferencePools, every one of them
 `targetPort: 8000`** — and 48 of them select on `llm-d.ai/model`.
+
+**EPP cannot follow a port change, and nothing updates it.** `targetPorts` is a
+field on the InferencePool — the pool spec has only `appProtocol`,
+`endpointPickerRef`, `selector` and `targetPorts`, with no per-endpoint form —
+written by the llm-d router chart, while FMA's controllers only patch pod labels.
+Yet the port is declared *per model*: the `InferenceServerConfig` carries both
+the model label and `modelServerConfig.port` in the same object, so a rebind to a
+different model brings a different ISC and may bring a different port. They agree
+today because everything uses 8000, by convention rather than by construction. If
+they ever diverge, the launcher joins the pool by label and EPP dials a port
+nothing is listening on — healthy by selector, unreachable in fact.
+
+This is where the WVA scrape path is the more robust of the two: the
+`server-port` annotation is per-pod and FMA rewrites it at bind time, so the
+PodMonitor follows a rebind that EPP cannot.
 
 That has a consequence worth knowing before designing around it. The pool's
 target port is one number for the whole pool, not a per-pod value, so **EPP can

@@ -371,6 +371,27 @@ const (
 	// a condition with several possible causes, and sent readers hunting the
 	// wrong one.
 	PodMappingMissPairingUnresolved = "pairing_unresolved"
+
+	// PodMappingMissOtherModelVariant indicates a pod that resolved to a real
+	// managed scaler which this model's pass does not own.
+	//
+	// The pass selects series by model_name, so the series says one model while
+	// the pod's current pairing leads to another model's variant. An FMA launcher
+	// rebound from one model to another produces exactly this: the pod IP and
+	// port stay the same, FMA repoints the pairing and model labels at the new
+	// requester, and samples from before the rebind are still inside the query
+	// window.
+	//
+	// It is not an error. The row is ignored rather than charged to a variant it
+	// does not belong to, which is the safe direction. It is counted because the
+	// alternative is silence: the pairing DID resolve, so `pairing_unresolved`
+	// never fires, and a rebind would otherwise leave no trace at all while the
+	// old model reads slightly small for one query window.
+	//
+	// Sustained counts mean something else: a launcher whose pairing points at a
+	// variant of a model it does not serve, which is the multi-instance case the
+	// singular pairing label cannot express.
+	PodMappingMissOtherModelVariant = "other_model_variant"
 )
 
 // Metric Label Names

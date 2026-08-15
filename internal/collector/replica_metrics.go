@@ -331,6 +331,38 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 		for i := range replicaMetrics {
 			attributed[replicaMetrics[i].VariantName]++
 		}
+
+		// A row that resolved to a variant this model does not own. The engine
+		// never looks it up, so it is already ignored rather than mis-charged --
+		// but ignored silently, and this is the one place that can see it, since
+		// only here are "the variants of this model" and "what each row resolved
+		// to" both in hand.
+		//
+		// An FMA launcher rebound to another model lands here: same pod, same
+		// port, pairing now naming the new model's requester, while samples from
+		// before the rebind are still inside the query window.
+		owned := make(map[string]struct{}, len(variantAutoscalings))
+		for _, va := range variantAutoscalings {
+			owned[va.Name] = struct{}{}
+		}
+		foreign := make(map[string]int)
+		for i := range replicaMetrics {
+			name := replicaMetrics[i].VariantName
+			if name == "" {
+				continue
+			}
+			if _, ours := owned[name]; !ours {
+				foreign[name]++
+			}
+		}
+		for name, n := range foreign {
+			metrics.IncPodMappingMiss(namespace, constants.PodMappingMissOtherModelVariant)
+			ctrl.LoggerFrom(ctx).Info(
+				"rows resolved to a variant this model does not own; ignoring them",
+				"namespace", namespace, "model", modelID, "variant", name, "rows", n,
+				"note", "expected briefly after an FMA launcher is rebound to another model; sustained means a pairing points at a variant of a model the pod does not serve")
+		}
+
 		for _, va := range variantAutoscalings {
 			if attributed[va.Name] > 0 {
 				continue
