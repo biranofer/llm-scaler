@@ -298,14 +298,18 @@ SCOPE ?= $(if $(WVA_SCOPE),$(WVA_SCOPE),namespace)
 # The phases split where the PERMISSIONS split, so a namespace admin can own the
 # controller without holding cluster-scoped rights:
 #
-#   1. check-prereqs-on-<platform>   read-only. Renders the overlay this install
+#   1. check-prereqs                 read-only. Renders the overlay this install
 #                                    would apply, asks whether you may create each
 #                                    kind in it, and reports the namespace and
 #                                    Prometheus it resolved.
-#   2. setup-prereqs-on-<platform>   CLUSTER ADMIN, once per namespace: the
+#   2. setup-prereqs                 CLUSTER ADMIN, once per namespace: the
 #                                    namespace, cluster-scoped RBAC, the
 #                                    ServiceMonitor, and Prometheus / KEDA if the
 #                                    cluster has none.
+#
+# Phases 1 and 2 take the platform as ENVIRONMENT=kubernetes|openshift; only
+# phase 3 also has -on-k8s / -on-openshift spellings. This block used to write
+# all three as <phase>-on-<platform>, naming two targets that do not exist.
 #   3. deploy-wva-on-<platform>      everything (the default). Set
 #                                    INSTALL_PHASE=wva for the controller alone,
 #                                    which is what a namespace owner runs once an

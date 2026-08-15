@@ -34,8 +34,10 @@ except ImportError:
 # The caller field is matched loosely on the FILE name only. Pinning the package
 # path is what silently broke this: the decision log moved from saturation/ to
 # steadystate/, the pattern stopped matching, and the dump went to zero samples
-# with no error — post_run_analyze.sh swallows the failure, so two plot panels
-# just disappeared.
+# with no error — and because post_run_analyze.sh then swallowed the failure, two
+# plot panels just disappeared. That script now names a step that produced
+# nothing, but a zero-sample dump that still exits 0 stays invisible to it, so
+# this pattern remains the place the breakage has to be prevented.
 DECISION_PAT = re.compile(
     r'^(?P<ts>\S+)	\S+	\S*engine\.go:\d+	'
     r'Applied saturation decision via shared cache	'

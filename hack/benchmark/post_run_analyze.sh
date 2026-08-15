@@ -11,29 +11,50 @@
 #   ./hack/benchmark/post_run_analyze.sh <results_dir> [namespace] [suffix]
 #
 # Where:
-#   <results_dir> is e.g. biran-20260531-130812-164/results/guidellm-1780222131-3ew5uw_1
-#   [namespace]   defaults to $BENCHMARK_NAMESPACE or `biran`
+#   <results_dir> is e.g. <user>-20260531-130812-164/results/guidellm-1780222131-3ew5uw_1
+#   [namespace]   defaults to $BENCHMARK_NAMESPACE; required if that is unset
 #   [suffix]      optional title suffix for the plot
 set -euo pipefail
 
 RESULTS_DIR="${1:?usage: $0 <results_dir> [namespace] [suffix]}"
-NS="${2:-${BENCHMARK_NAMESPACE:-biran}}"
+# No fallback namespace. This used to default to a person's namespace, so a run
+# with BENCHMARK_NAMESPACE unset scraped logs from a namespace that does not
+# exist, the optional steps swallowed the failure, and the result was an empty
+# analysis reported as a success. Every benchmark make target requires this
+# variable and says so; this now matches them.
+NS="${2:-${BENCHMARK_NAMESPACE:-}}"
+if [ -z "$NS" ]; then
+    echo "ERROR: no namespace. Pass it as the second argument, or set BENCHMARK_NAMESPACE=<namespace>." >&2
+    exit 1
+fi
 SUFFIX="${3:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Steps 1, 3 and 4 are best-effort by design -- a missing controller log or an
+# older collect_metrics.sh should not cost you the rest of the analysis. What
+# they must not do is disappear: every failure is recorded and named at the end,
+# because the previous version swallowed them and then printed "Done" over a list
+# of files that were never written.
+FAILED=""
+
 echo "[1/5] dump_wva_target_timeseries.py (decisions + V2 analyzer numbers)"
-python3 "$SCRIPT_DIR/dump_wva_target_timeseries.py" "$RESULTS_DIR" -n "$NS" || \
-    echo "  (skipping: log dump failed; raw-scrape estimate will still render)"
+python3 "$SCRIPT_DIR/dump_wva_target_timeseries.py" "$RESULTS_DIR" -n "$NS" || {
+    FAILED="${FAILED}  [1] dump_wva_target_timeseries.py — no WVA decisions or analyzer numbers. The controller's log buffer may no longer cover the run window (kubectl rotates it), or namespace '$NS' is wrong."$'\n'
+}
 
 echo "[2/5] dump_capacity_demand_estimate.py (raw scrape estimate)"
 python3 "$SCRIPT_DIR/dump_capacity_demand_estimate.py" "$RESULTS_DIR"
 
 echo "[3/5] dump_epp_throughput.py (request rate from EPP counters)"
-python3 "$SCRIPT_DIR/dump_epp_throughput.py" "$RESULTS_DIR" || true
+python3 "$SCRIPT_DIR/dump_epp_throughput.py" "$RESULTS_DIR" || {
+    FAILED="${FAILED}  [3] dump_epp_throughput.py — no request-rate series."$'\n'
+}
 
 echo "[4/5] dump_wva_full_timeseries.py (WVA Prometheus metrics — empty if collect_metrics.sh predates the WVA scrape patch)"
-python3 "$SCRIPT_DIR/dump_wva_full_timeseries.py" "$RESULTS_DIR" || true
+python3 "$SCRIPT_DIR/dump_wva_full_timeseries.py" "$RESULTS_DIR" || {
+    FAILED="${FAILED}  [4] dump_wva_full_timeseries.py — no WVA Prometheus series."$'\n'
+}
 
 echo "[5/5] plot_two_variant_pipeline.py"
 if [ -n "$SUFFIX" ]; then
@@ -42,9 +63,27 @@ else
     python3 "$SCRIPT_DIR/plot_two_variant_pipeline.py" "$RESULTS_DIR"
 fi
 
-echo "Done. Outputs:"
-echo "  $RESULTS_DIR/metrics/processed/wva_target_timeseries.json"
-echo "  $RESULTS_DIR/metrics/processed/capacity_demand_estimate.json"
-echo "  $RESULTS_DIR/metrics/processed/epp_throughput.json"
-echo "  $RESULTS_DIR/metrics/processed/wva_metrics_timeseries.json"
-echo "  $RESULTS_DIR/metrics/graphs/two_variant_v2_full_pipeline.png"
+echo ""
+if [ -n "$FAILED" ]; then
+    echo "Finished, but some steps produced nothing:"
+    printf '%s' "$FAILED"
+    echo ""
+fi
+
+# Only files that exist are listed. A path printed under "Outputs" is a claim
+# that it is there.
+echo "Outputs:"
+found_any=false
+for f in "$RESULTS_DIR/metrics/processed/wva_target_timeseries.json" \
+         "$RESULTS_DIR/metrics/processed/capacity_demand_estimate.json" \
+         "$RESULTS_DIR/metrics/processed/epp_throughput.json" \
+         "$RESULTS_DIR/metrics/processed/wva_metrics_timeseries.json" \
+         "$RESULTS_DIR/metrics/graphs/two_variant_v2_full_pipeline.png"; do
+    if [ -e "$f" ]; then
+        echo "  $f"
+        found_any=true
+    else
+        echo "  (not written) $f"
+    fi
+done
+[ "$found_any" = true ] || exit 1

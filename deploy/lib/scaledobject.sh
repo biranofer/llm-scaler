@@ -477,7 +477,7 @@ so_namespaces_of() {
     # `|| true` is load-bearing. A cluster-wide list is exactly what a NAMESPACE
     # ADMIN may not do, and a denied kubectl exits non-zero: under the callers'
     # `set -e` with pipefail, that took the whole preflight down without printing
-    # a single line — a tenant running `make check-prereqs-namespace-on-k8s` got
+    # a single line — a tenant running `make check-prereqs SCOPE=namespace` got
     # silence. Not finding namespaces is a legitimate answer here; the caller
     # decides what it means.
     kubectl get "$resource" -A -o json 2>/dev/null \
