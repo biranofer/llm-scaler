@@ -196,6 +196,7 @@ def _extract_variant_replica_stats(results_dir, secondary_suffix):
         data = json.load(f)
 
     primary_totals, secondary_totals = [], []
+    saw_controller = False
     for snap in data["snapshots"]:
         p, s = 0, 0
         for c in snap.get("controllers", []):
@@ -203,14 +204,24 @@ def _extract_variant_replica_stats(results_dir, secondary_suffix):
             ready = c.get("ready_replicas", 0) or 0
             if not _is_serving_controller(name):
                 continue
-            if f"-{secondary_suffix}" in name:
+            saw_controller = True
+            # Substring, not "-<suffix>". The FMA requester is named
+            # fma-requester-<model>, with the marker at the START, so requiring a
+            # leading hyphen matched nothing and every FMA replica was counted as
+            # primary -- or, when the primary list was empty too, reported as
+            # 0.00 replicas for a variant that had demonstrably scaled to 4.
+            if secondary_suffix in name:
                 s += ready
             else:
                 p += ready
         primary_totals.append(p)
         secondary_totals.append(s)
 
-    if not primary_totals:
+    # Snapshots exist but none carried a serving controller: the collection ran
+    # against a namespace that had already been torn down, which is a missing
+    # measurement rather than a measurement of zero. Returning 0.00 here reported
+    # "no replicas" for a run that used several, and a cost of 0.
+    if not primary_totals or not saw_controller:
         return None, None, None, None
     return (mean(primary_totals), max(primary_totals),
             mean(secondary_totals), max(secondary_totals))
