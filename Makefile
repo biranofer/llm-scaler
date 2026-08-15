@@ -44,7 +44,7 @@ LLMD_NAMESPACE       ?= llm-d-optimized-baseline
 GATEWAY_NAME         ?= # discovered automatically in e2es
 MODEL_ID             ?= e2ewva/dummy-model
 DEPLOYMENT           ?= # discovered automatically in e2es
-REQUEST_RATE         ?= 20
+REQUEST_RATE         ?= 10
 NUM_PROMPTS          ?= 3000
 
 # E2E test configuration (for test/e2e/ suite)
@@ -994,10 +994,23 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@#   Error: Invalid value for '--backend' / '--model' / '--target' ...:
 	@# with the values empty. The CLI is still invoked as -w <workload>.yaml; it
 	@# resolves that to the template, exactly as it does for its own profiles.
+	@# __REQUEST_RATE__ is OUR token, substituted here, before the file reaches the
+	@# harness. The harness's own REPLACE_ENV_* tokens resolve from a registry in
+	@# llm-d-benchmark, which benchmark-install re-checks-out to a pinned tag, so
+	@# a token added there would not survive the next install.
+	@#
+	@# A template that still holds the token produces invalid YAML rather than a
+	@# silent fallback: a run at the wrong request rate looks like a result, and
+	@# would be one nobody could reproduce.
+	@#
+	@# Substituted by NAME, not by matching `rate:` lines. Staged ladders (bursty,
+	@# sharegpt) carry several rates whose SHAPE is the scenario, and a pattern
+	@# that rewrote every rate line would flatten them into one number.
 	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" ]; then \
-		echo "Copying local workload $(BENCHMARK_WORKLOAD).yaml.in to the $(BENCHMARK_HARNESS) harness..."; \
-		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" \
-		   "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml.in"; \
+		echo "Copying local workload $(BENCHMARK_WORKLOAD).yaml.in to the $(BENCHMARK_HARNESS) harness (REQUEST_RATE=$(REQUEST_RATE))..."; \
+		sed 's/__REQUEST_RATE__/$(REQUEST_RATE)/g' \
+		   "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" \
+		   > "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml.in"; \
 		rm -f "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml"; \
 	elif [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" ]; then \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" \
