@@ -740,7 +740,9 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
 		cd $(BENCHMARK_REPO_DIR) && git checkout -- config/scenarios config/specification config/templates 2>/dev/null || true; \
 	fi
-	@$(MAKE) benchmark-install BENCHMARK_REPO_REF=$(BENCHMARK_REPO_REF)
+	@if [ ! -x "$(LLMDBENCHMARK)" ]; then \
+		$(MAKE) benchmark-install BENCHMARK_REPO_REF=$(BENCHMARK_REPO_REF); \
+	fi
 	@cd $(BENCHMARK_REPO_DIR) && git reset --hard origin/$(BENCHMARK_REPO_REF) 2>/dev/null || true
 	@if [ -f "$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml" ]; then \
 		echo "Copying local scenario: hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml -> $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml"; \
@@ -1059,7 +1061,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
-		-w $(BENCHMARK_WORKLOAD).yaml \
+		-w $(if $(filter %.yaml,$(BENCHMARK_WORKLOAD)),$(BENCHMARK_WORKLOAD),$(BENCHMARK_WORKLOAD).yaml) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,) \
 		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT)
