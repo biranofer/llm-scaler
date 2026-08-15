@@ -25,7 +25,7 @@ Welcome to the WVA documentation! This directory contains comprehensive guides f
 - **[Queue Model Analyzer](developer-guide/slo-queuemodel.md)** - SLO-aware queueing model
 - **[Pod Scraping Source](developer-guide/pod-scraping-source.md)** - Direct pod metric scraping
 - **[Prometheus Integration](developer-guide/prometheus.md)** - Prometheus metrics and configuration
-- **[WVA with Fast Model Actuation](deployment/fma.md)** - Running WVA in a namespace that uses FMA: scraping the launchers, what the plan targets, sizing from the launcher pool
+- **[WVA with Fast Model Actuation](guides/fma/README.md)** - Running WVA in a namespace that uses FMA: scraping the launchers, what the plan targets, sizing from the launcher pool
 - **[FMA-aware attribution](proposals/fma-aware-attribution.md)** - How WVA measures a Fast Model Actuation variant, whose engine runs in a pod no ScaledObject owns
 - **[Requests to Fast Model Actuation](proposals/fma-upstream-requests.md)** - Findings and change requests for the FMA project
 

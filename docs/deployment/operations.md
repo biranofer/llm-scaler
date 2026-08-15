@@ -241,7 +241,7 @@ procedures, including the simulator and the e2e suites, are in
 | nothing scales, no errors | a limiter is declared and the workload's accelerator does not resolve, so it gets no GPU budget | `kubectl logs -n $NS -l app.kubernetes.io/name=workload-variant-autoscaler \| grep -i accelerator` |
 | a model never wakes from zero | the EPP flow-control queue is not reaching WVA | see [Troubleshooting](../developer-guide/troubleshooting.md) |
 | `READY False` on the ScaledObject, and the HPA's `TARGETS` reads `cpu: <unknown>/80%` | KEDA could not fetch the metric spec from WVA, so it fell back to a CPU metric. The trigger names a scaler it cannot reach | `kubectl logs -n keda deploy/keda-operator \| grep external` |
-| demand looks far too low for the load you are driving, and `has N ready pod(s) but none attributed` appears each cycle | FMA is in the namespace: launcher pods are serving traffic that WVA cannot attribute | see [FMA launcher pods](#fma-launcher-pods) |
+| demand looks far too low for the load you are driving, and `has N ready pod(s) but none attributed` appears each cycle | FMA is in the namespace and nothing is scraping its launcher pods, so the traffic they serve is invisible | see [FMA launcher pods](#fma-launcher-pods) |
 
 ### `no children to pick from` after a reinstall
 
@@ -278,7 +278,7 @@ while the queue grows.
 
 The whole story — how attribution works, how to size `maxReplicas` from the
 launcher pool, why GPU accounting is a lower bound, and what to check — is in
-[WVA with Fast Model Actuation](fma.md).
+[WVA with Fast Model Actuation](../guides/fma/README.md).
 
 First stop for any of these:
 

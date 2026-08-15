@@ -27,6 +27,7 @@ source docs/guides/env.sh
 | --- | --- |
 | [Test against a full llm-d stack](testing-with-llm-d/README.md) | llm-d + WVA on kind, emulated GPUs, no hardware |
 | [Benchmark WVA](benchmarking/README.md) | drive load through a real stack and compare runs |
+| [Autoscale a Fast Model Actuation stack](fma/README.md) | FMA runs the engine in a pod no ScaledObject owns |
 
 ## Reference
 
