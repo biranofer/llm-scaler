@@ -67,15 +67,19 @@ Repoint them at whichever install is actually running, without editing the
 samples:
 
 ```bash
-make scaledobjects-repoint WVA_NS=<your-namespace> SCOPE=namespace
+make scaledobjects-repoint
 ```
 
-It rewrites `scalerAddress` and nothing else — the `modelID`, `variantCost` and
+No arguments: it finds the running install itself and scans the cluster. It
+rewrites `scalerAddress` and nothing else — the `modelID`, `variantCost` and
 replica bounds you set are left alone — and it is idempotent, so it is safe to
 run whenever a workload is not scaling and you are not sure why. It only touches
 objects that already ask for WVA by name *and* whose address resolves to no
 running scaler: a ScaledObject pointing at a second, live WVA install is a
 deliberate choice, and it is reported and left as it is rather than taken over.
+
+If you run several WVA installs it will not guess between them — pass
+`WVA_NS=<namespace>` to say which one these workloads belong to.
 
 ## Configuration Options
 

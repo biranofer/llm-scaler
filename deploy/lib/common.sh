@@ -82,6 +82,53 @@ wva_scope_is_tenant() {
     [ "$(wva_install_scope)" = "namespace" ]
 }
 
+# wva_scaler_namespaces echoes every namespace running a WVA external-scaler
+# Service, one per line -- that is, every install a KEDA trigger could name.
+#
+# The Service is the right thing to look for rather than the Deployment: the
+# address in a ScaledObject resolves to a Service, so a Service is what makes an
+# address answerable, and one without a ready controller behind it is a
+# different fault with a different fix.
+#
+# Empty output means "none found OR not allowed to look", and the two are
+# different problems. Callers that act on the answer must say which they assumed.
+wva_scaler_namespaces() {
+    local out
+    if out=$(kubectl get svc -A -l app.kubernetes.io/name=workload-variant-autoscaler \
+        --field-selector metadata.name=wva-external-scaler \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null); then
+        printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | sort -u
+        return 0
+    fi
+    # No cluster-wide list. The one namespace we can name is still worth checking.
+    kubectl get svc wva-external-scaler -n "$WVA_NS" > /dev/null 2>&1 && echo "$WVA_NS"
+    return 0
+}
+
+# wva_scaler_has_endpoints reports whether the external-scaler Service in $1 has a
+# ready backend -- a controller actually listening, not merely an address that
+# resolves.
+#
+# A Service with no Endpoints is the shape a half-removed install leaves behind,
+# and it is indistinguishable from a live one by name alone. Anything CHOOSING
+# between installs must use this; anything deciding whether to leave another
+# install's object alone must not, because there the Service existing at all is
+# reason enough to keep hands off.
+#
+# EndpointSlice is read first (Endpoints is deprecated and unserved in newer
+# clusters) with Endpoints as the fallback, so this works either side of that
+# change rather than silently reporting "no backend" on every Service.
+wva_scaler_has_endpoints() {
+    local ns="$1" out
+    if out=$(kubectl get endpointslice -n "$ns" -l kubernetes.io/service-name=wva-external-scaler \
+        -o jsonpath='{range .items[*]}{range .endpoints[*]}{.addresses[0]}{"\n"}{end}{end}' 2>/dev/null); then
+        [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ] || return 0
+    fi
+    out=$(kubectl get endpoints wva-external-scaler -n "$ns" \
+        -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null) || return 1
+    [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ]
+}
+
 # WVA_SHARED_CLUSTER_ROLE_BINDINGS are the cluster-scoped bindings every overlay
 # applies under fixed names. They are renamed per install so two installs cannot
 # take them from one another.

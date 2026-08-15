@@ -44,10 +44,10 @@ spec:
         # `cpu: <unknown>/80%` with READY False while the workload is never
         # scaled by WVA at all.
         #
-        # Fix it without editing this file — this repoints it at whichever
-        # install is actually running, and changes nothing else about it:
+        # Fix it without editing this file — this finds whichever install is
+        # actually running and repoints this at it, changing nothing else:
         #
-        #     make scaledobjects-repoint WVA_NS=<your-namespace> SCOPE=namespace
+        #     make scaledobjects-repoint
         scalerAddress: wva-external-scaler.workload-variant-autoscaler-system.svc.cluster.local:9090
         # Must match what the container actually serves (--model test-model), and
         # it is the grouping key: variants sharing a modelID are optimized

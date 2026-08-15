@@ -156,11 +156,12 @@ ScaledObject written for a different install does — the shipped samples name t
 default namespace, and a namespace-scoped install is not there. Repair it with:
 
 ```bash
-make scaledobjects-repoint WVA_NS=${NAMESPACE} SCOPE=namespace
+make scaledobjects-repoint
 ```
 
-That rewrites `scalerAddress` only, leaves your `modelID`, `variantCost` and
-bounds untouched, and is idempotent. See
+It takes no arguments — it finds the install that is running and points the
+object at it. It rewrites `scalerAddress` only, leaves your `modelID`,
+`variantCost` and bounds untouched, and is idempotent. See
 [First-line troubleshooting](../../deployment/operations.md#first-line-troubleshooting)
 for the other causes.
 

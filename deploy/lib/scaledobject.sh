@@ -1022,62 +1022,150 @@ so_adopt_patch() {
 # so unlike so_adopt_patch, which replaces `triggers` wholesale because adoption
 # must displace a competing scaler, this rewrites the list in place.
 so_repoint_stale() {
-    local want="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
-    local self="wva-external-scaler.${WVA_NS}."
-    local ns name addr named_ns triggers patched
-    local fixed=0 left=0 scanned=0
+    local dest want self
+    dest=$(so_repoint_destination) || return 1
+    want="wva-external-scaler.${dest}.svc.cluster.local:9090"
+    self="wva-external-scaler.${dest}."
 
-    for ns in $(so_target_namespaces); do
-        [ -n "$ns" ] || continue
-        local rows
-        # `|| true`: a namespace we cannot list is not a namespace with nothing in
-        # it, but it is also not this function's problem to report -- the plan
-        # path already says which namespaces it could not read.
-        rows=$(kubectl get scaledobject -n "$ns" -o json 2>/dev/null | jq -r --arg self "$self" '
-            .items[]
-            | .metadata.name as $n
-            | [ .spec.triggers[]?.metadata.scalerAddress // ""
-                | select(startswith("wva-external-scaler.") and (startswith($self) | not)) ]
-            | select(length > 0)
-            | $n + " " + .[0]
-        ' 2>/dev/null || true)
-
-        [ -n "$rows" ] || continue
-        while read -r name addr; do
-            [ -n "$name" ] || continue
-            scanned=$((scanned + 1))
-            # wva-external-scaler.<namespace>.svc... -- the second dotted field.
-            named_ns=$(printf '%s' "$addr" | cut -d. -f2)
-            if [ -n "$named_ns" ] && kubectl get svc wva-external-scaler -n "$named_ns" > /dev/null 2>&1; then
-                log_info "  $ns/$name: points at a WVA that is running in $named_ns — leaving it alone. Repointing it here would take it off that install."
-                left=$((left + 1))
-                continue
-            fi
-
-            triggers=$(kubectl get scaledobject "$name" -n "$ns" -o json 2>/dev/null \
-                | jq -c --arg a "$want" '[ .spec.triggers[]?
-                    | if ((.metadata.scalerAddress // "") | startswith("wva-external-scaler."))
-                      then .metadata.scalerAddress = $a else . end ]' 2>/dev/null)
-            if [ -z "$triggers" ] || [ "$triggers" = "null" ]; then
-                log_warning "  $ns/$name: could not read its triggers — skipping."
-                continue
-            fi
-
-            if kubectl patch scaledobject "$name" -n "$ns" --type merge \
-                -p "{\"spec\":{\"triggers\":$triggers}}" > /dev/null 2>&1; then
-                log_success "  $ns/$name: $addr -> $want"
-                fixed=$((fixed + 1))
-            else
-                log_warning "  $ns/$name: patch failed — it may be managed by GitOps, which will put the old address back. Change it at the source."
-            fi
-        done <<< "$rows"
-    done
-
-    if [ "$scanned" -eq 0 ]; then
-        log_success "No ScaledObject names a WVA other than this one — nothing to repoint."
+    local rows
+    rows=$(so_repoint_candidates "$self") || return 1
+    if [ -z "$rows" ]; then
+        log_success "No ScaledObject names a WVA other than the one in $dest — nothing to repoint."
         return 0
     fi
-    log_success "Repointed $fixed at $WVA_NS; left $left pointing at a live scaler elsewhere"
+
+    local ns name addr named_ns triggers
+    local fixed=0 left=0
+    while read -r ns name addr; do
+        [ -n "$name" ] || continue
+        # wva-external-scaler.<namespace>.svc... -- the second dotted field.
+        named_ns=$(printf '%s' "$addr" | cut -d. -f2)
+        if [ -n "$named_ns" ] && kubectl get svc wva-external-scaler -n "$named_ns" > /dev/null 2>&1; then
+            log_info "  $ns/$name: points at a WVA that is running in $named_ns — leaving it alone. Repointing it here would take it off that install."
+            left=$((left + 1))
+            continue
+        fi
+
+        triggers=$(kubectl get scaledobject "$name" -n "$ns" -o json 2>/dev/null \
+            | jq -c --arg a "$want" '[ .spec.triggers[]?
+                | if ((.metadata.scalerAddress // "") | startswith("wva-external-scaler."))
+                  then .metadata.scalerAddress = $a else . end ]' 2>/dev/null)
+        if [ -z "$triggers" ] || [ "$triggers" = "null" ]; then
+            log_warning "  $ns/$name: could not read its triggers — skipping."
+            continue
+        fi
+
+        if kubectl patch scaledobject "$name" -n "$ns" --type merge \
+            -p "{\"spec\":{\"triggers\":$triggers}}" > /dev/null 2>&1; then
+            log_success "  $ns/$name: $addr -> $want"
+            fixed=$((fixed + 1))
+        else
+            log_warning "  $ns/$name: patch failed — it may be managed by GitOps, which will put the old address back. Change it at the source."
+        fi
+    done <<< "$rows"
+
+    log_success "Repointed $fixed at $dest; left $left pointing at a live scaler elsewhere"
+}
+
+# so_repoint_destination echoes the namespace to repoint AT, or fails loudly.
+#
+# It is discovered rather than defaulted. WVA_NS falls back to
+# workload-variant-autoscaler-system, which is the one namespace this command
+# must never assume: a sample naming it and no controller there is the whole
+# fault being repaired, so a stale default would rewrite addresses to another
+# dead end and report success.
+#
+# An explicitly passed WVA_NS is still checked for a running scaler, because the
+# destination being live is what makes the rewrite a fix rather than a different
+# breakage.
+so_repoint_destination() {
+    local found n
+    if [ -n "${WVA_NS_EXPLICIT:-}" ]; then
+        if ! kubectl get svc wva-external-scaler -n "$WVA_NS_EXPLICIT" > /dev/null 2>&1; then
+            log_error "WVA_NS=$WVA_NS_EXPLICIT has no wva-external-scaler Service, so nothing would answer at that address. Install WVA there, or drop WVA_NS and let this find the install."
+            return 1
+        fi
+        echo "$WVA_NS_EXPLICIT"
+        return 0
+    fi
+
+    found=$(wva_scaler_namespaces)
+    n=$(printf '%s' "$found" | grep -c . || true)
+    if [ "$n" -eq 0 ]; then
+        log_error "No WVA external-scaler Service found on this cluster, so there is no install to point at. Install WVA first; if it is in a namespace you cannot list, pass WVA_NS=<namespace>."
+        return 1
+    fi
+
+    # Prefer installs with a ready backend. A Service with no Endpoints is what a
+    # half-removed install leaves behind, and choosing one would repoint every
+    # workload at an address nothing answers -- which looks exactly like the
+    # fault being repaired.
+    local ready ns rn
+    ready=""
+    while read -r ns; do
+        [ -n "$ns" ] || continue
+        wva_scaler_has_endpoints "$ns" && ready="${ready}${ns}"$'\n'
+    done <<< "$found"
+    # Normalize once, so the blank the accumulator leaves behind never reaches a
+    # count or a message.
+    ready=$(printf '%s' "$ready" | grep . || true)
+    rn=$(printf '%s' "$ready" | grep -c . || true)
+
+    if [ "$rn" -eq 1 ]; then
+        log_info "Repointing at the WVA install in $ready"
+        echo "$ready"
+        return 0
+    fi
+    if [ "$rn" -gt 1 ]; then
+        log_error "Several WVA installs are running ($(printf '%s' "$ready" | tr '\n' ' ')). Which one a workload belongs to is your decision, not this command's — re-run with WVA_NS=<namespace>."
+        return 1
+    fi
+
+    # None are ready. One candidate is still unambiguous -- WVA installed but not
+    # up yet is a real state, and the address will start answering once it is.
+    if [ "$n" -eq 1 ]; then
+        log_warning "The WVA external-scaler Service in $found has no ready endpoints — the controller is not running yet. Repointing at it anyway; KEDA stays READY False until it comes up."
+        echo "$found"
+        return 0
+    fi
+    log_error "Several WVA external-scaler Services exist ($(printf '%s' "$found" | tr '\n' ' ')) and none has a ready endpoint, so there is no install to prefer. Bring one up, or re-run with WVA_NS=<namespace>."
+    return 1
+}
+
+# so_repoint_candidates echoes `namespace name address` for every ScaledObject
+# whose WVA trigger names something other than $1.
+#
+# Cluster-wide first, then the install's own namespace: the objects needing
+# repair are in the WORKLOAD namespaces, which for a cluster-scoped install are
+# not WVA_NS. A namespace admin who cannot list cluster-wide still gets their own
+# namespace scanned, and WVA_DEFAULT_SO_NS narrows it deliberately.
+so_repoint_candidates() {
+    local self="$1" out
+    local filter='
+        .items[]
+        | .metadata.namespace as $ns | .metadata.name as $n
+        | [ .spec.triggers[]?.metadata.scalerAddress // ""
+            | select(startswith("wva-external-scaler.") and (startswith($self) | not)) ]
+        | select(length > 0)
+        | $ns + " " + $n + " " + .[0]'
+
+    if [ -n "${WVA_DEFAULT_SO_NS:-}" ]; then
+        local ns
+        for ns in $(so_target_namespaces); do
+            [ -n "$ns" ] || continue
+            kubectl get scaledobject -n "$ns" -o json 2>/dev/null \
+                | jq -r --arg self "$self" "$filter" 2>/dev/null || true
+        done
+        return 0
+    fi
+
+    if out=$(kubectl get scaledobject -A -o json 2>/dev/null); then
+        printf '%s' "$out" | jq -r --arg self "$self" "$filter" 2>/dev/null || true
+        return 0
+    fi
+    log_info "Cannot list ScaledObjects cluster-wide — scanning $WVA_NS only. Pass WVA_DEFAULT_SO_NS=<namespace> to scan somewhere else."
+    kubectl get scaledobject -n "$WVA_NS" -o json 2>/dev/null \
+        | jq -r --arg self "$self" "$filter" 2>/dev/null || true
 }
 
 # render_scaledobject prints one ScaledObject: the shipped shape, or yours.

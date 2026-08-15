@@ -415,8 +415,12 @@ scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply
 ## the namespace they hardcode. Only rewrites scalerAddress, and only when the
 ## address it names resolves to nothing; one pointing at a second, live WVA
 ## install is deliberate and is left alone. Idempotent.
+##
+## Takes no arguments: it finds the running install and scans the cluster. Pass
+## WVA_NS=<ns> only to disambiguate several installs, WVA_DEFAULT_SO_NS=<ns> only
+## to narrow the scan.
 .PHONY: scaledobjects-repoint
-scaledobjects-repoint: ## Repoint ScaledObjects naming a missing WVA at this install. WVA_DEFAULT_SO_NS=<ns>|wva|all.
+scaledobjects-repoint: ## Repoint ScaledObjects naming a missing WVA at the install that is running. Usually needs no arguments.
 	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
 		$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_repoint_stale'
