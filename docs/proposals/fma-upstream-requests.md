@@ -196,6 +196,54 @@ the sleeping-instance caveat would save each consumer rediscovering it.
 
 ---
 
+## 7. A bound launcher joins the InferencePool before its instance can serve
+
+**Severity: high.** This one costs requests.
+
+A launcher's pod readiness reflects the **launcher process**, not the vLLM
+instance inside it. The pod has been `Ready` for as long as it has been running —
+26 hours, in the deployment measured. FMA stamps `llm-d.ai/inferenceServing=true`
+on it at **bind** time, and the `InferencePool` selector is labels only
+(`{llm-d.ai/inferenceServing: "true", llm-d.ai/model: …}`); readiness cannot be
+expressed in a label selector. So the moment a pair binds, a pod that looks
+healthy in every respect enters the pool while its instance is still waking from
+sleep — and EPP dispatches to it.
+
+Measured on pokprod during a 594-second benchmark at 10 req/s:
+
+| minute | ok | errors |
+| --- | --- | --- |
+| 12:53 | 336 | 0 |
+| 12:54 | 626 | 0 |
+| **12:55** | **217** | **324** |
+| 12:56 | 552 | 0 |
+| … | … | 0 |
+
+All 324 were `503 Service Unavailable` from the EPP route, confined to the single
+minute in which a bind occurred; every other minute of the run was clean.
+
+The control is what makes it conclusive: **the same benchmark without FMA scaled
+1 → 4 replicas and logged zero errors.** A starting *decode* pod never breaks
+anything, because that pod carries a `readinessProbe` on `/v1/models` and stays
+`NotReady` until its engine answers. Only the launcher path fails, because
+nothing ties its pod readiness to the instance it is hosting.
+
+**Request**, any one of which closes it:
+
+1. Do not apply the serving labels until the instance is awake and answering —
+   pool membership then implies servability, which is what the selector assumes.
+2. Give the launcher a readiness gate that tracks the bound instance, so
+   `Ready` means the engine can serve and existing readiness filtering applies.
+3. Failing either, publish the instance's readiness on the pod so a consumer can
+   gate on it — the `sleeping` label is close, but item 2 above shows it
+   disagrees with the launcher's own instance list.
+
+Until then, every bind is a window in which a share of traffic 503s, and the
+window scales with how often the autoscaler moves — which makes autoscaling an
+FMA stack cost errors in proportion to how well it works.
+
+---
+
 ## What we confirmed works well
 
 Worth saying, since the above is a list of problems:
