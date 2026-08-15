@@ -52,6 +52,7 @@ MESSAGES = {
     "replica-capacity-no-cache-info",
     "variant-capacity-source",
     "zero-replica-capacity-estimate",
+    "scheduler-queue-demand",
 }
 
 PRIORITY_ORDER = ["P1-obs", "P2-hist", "P3-k2", "P4-k1"]
@@ -184,6 +185,12 @@ def render_report(events, start, stop):
     k2_events = [e for e in events if e["_msg"] == "k2-decision"]
     variants = sorted({e.get("variant", "?") for e in k2_events})
 
+    # scheduler-queue-demand is model-level (one per cycle, not per variant or
+    # per replica) — joined into each variant's per-iteration table by
+    # timestamp only. Fine for the common single-model-per-report case; with
+    # several models sharing a log window this would need a modelID filter too.
+    sq_by_ts = {e["_ts"]: e for e in events if e["_msg"] == "scheduler-queue-demand"}
+
     for variant in variants:
         v_events = [e for e in k2_events if e.get("variant") == variant]
         if not v_events:
@@ -239,51 +246,66 @@ def render_report(events, start, stop):
                 lines.append(f"k2 range: {min(k2_vals)} - {max(k2_vals)} tokens")
             lines.append("")
 
-        # Per-iteration detail: every cycle's k2-decision joined with that same
-        # cycle's replica-capacity-decision. computeReplicaCapacity logs exactly
-        # one k2-decision then exactly one replica-capacity-decision per replica,
-        # per cycle, in that order — so at a timestamp shared by several ready
-        # replicas, pairing by POSITION (not a full cross-product) is the correct
-        # join. Ambiguous only if the two counts disagree, which would mean one
-        # of the two log calls didn't fire for some replica.
+        # Per-iteration detail: ONE row per optimize cycle, totalled across every
+        # ready replica of this variant that cycle — not one row per replica.
+        # k2-decision and replica-capacity-decision both fire once per replica
+        # per cycle, so grouping either by timestamp gives the cycle's replica
+        # count; demand fields (KV-in-use, local queue) are summed across them.
+        # EPP/scheduler queue demand is model-level (one scheduler-queue-demand
+        # event per cycle, not per replica or per variant), joined by timestamp.
         lines.append("### Per-iteration detail")
         lines.append("")
-        lines.append("Every optimize cycle's k2 computation, with the inputs behind whichever "
-                      "fallback tier fired and the resulting k1-vs-k2 comparison. Rows sharing a "
-                      "timestamp are separate ready replicas of this variant in that cycle. Time "
-                      "is HH:MM:SS on the run date above; see legend for the Inputs/Bound codes.")
+        lines.append("One row per optimize cycle, totalled across every ready replica of this "
+                      "variant that cycle (N). KVinUse/LocalQ/EPPq/TotalDemand are all in tokens; "
+                      "Priority lists every tier that fired across N replicas this cycle (see the "
+                      "fallback-tier distribution above for what each code means). Time is "
+                      "HH:MM:SS on the run date above.")
         lines.append("")
-        lines.append(f"Legend — Inputs: {INPUTS_LEGEND}.  Bound: {BOUND_LEGEND}.")
+        lines.append(f"Legend — Bound: {BOUND_LEGEND}.")
         lines.append("")
+
         rc_by_ts = defaultdict(list)
         for e in rc_events:
             rc_by_ts[e["_ts"]].append(e)
-        rc_cursor = defaultdict(int)
+        k2_by_ts = defaultdict(list)
+        for e in v_events:
+            k2_by_ts[e["_ts"]].append(e)
+        all_ts = sorted(set(rc_by_ts) | set(k2_by_ts))
 
         detail_rows = []
-        for e in v_events:
-            ts = e["_ts"]
+        for ts in all_ts:
+            rcs = rc_by_ts.get(ts, [])
+            k2s = k2_by_ts.get(ts, [])
             time_short = ts.split("T")[1].split("+")[0] if "T" in ts else ts
-            priority = e.get("priority", "?")
-            inputs = format_priority_inputs(priority, e)
+            n = max(len(rcs), len(k2s))
 
-            pool = rc_by_ts.get(ts, [])
-            idx = rc_cursor[ts]
-            rc = pool[idx] if idx < len(pool) else None
-            rc_cursor[ts] += 1
+            priorities = [k.get("priority", "?") for k in k2s]
+            priority_label = ",".join(sorted(set(priorities))) if priorities else "?"
+            # k1 and k2 are shared across replicas of one variant unless their
+            # history-bucket key differs (rare within one cycle) — show the
+            # most common value rather than every replica's copy.
+            k1_val = Counter(r.get("k1MemoryBound") for r in rcs).most_common(1)
+            k2_val = Counter(r.get("k2ComputeBound") for r in rcs).most_common(1)
+            k1_val = k1_val[0][0] if k1_val else "?"
+            k2_val = k2_val[0][0] if k2_val else "?"
+            bound_counts = Counter(format_bound(r.get("boundBy", "?")) for r in rcs)
+            bound_label = ",".join(sorted(bound_counts)) if bound_counts else "?"
 
-            if rc is None:
-                detail_rows.append([time_short, priority, inputs, e.get("k2", e.get("k1", "?")),
-                                     "?", "?", "?", "?"])
-                continue
+            tokens_in_use = sum(r.get("tokensInUse", 0) or 0 for r in rcs)
+            local_queue = sum(r.get("localQueueDemand", 0) or 0 for r in rcs)
+            replica_demand_total = sum(r.get("replicaDemand", 0) or 0 for r in rcs)
+
+            sq = sq_by_ts.get(ts)
+            epp_queue = sq.get("estimatedTokens") if sq else 0
+            epp_queue = epp_queue if epp_queue is not None else 0
+            total_demand = replica_demand_total + epp_queue
+
             detail_rows.append([
-                time_short, priority, inputs,
-                rc.get("k2ComputeBound", "?"), rc.get("k1MemoryBound", "?"),
-                format_bound(rc.get("boundBy", "?")), rc.get("replicaDemand", "?"),
-                f"{rc.get('queueLength','?')}/{rc.get('queueThreshold','?')}",
+                time_short, n, priority_label, k2_val, k1_val, bound_label,
+                tokens_in_use, local_queue, epp_queue, total_demand,
             ])
         lines.extend(md_table(
-            ["Time", "Priority", "Inputs", "k2", "k1", "Bound", "Demand", "Queue"],
+            ["Time", "N", "Priority", "k2", "k1", "Bound", "KVinUse", "LocalQ", "EPPq", "TotalDemand"],
             detail_rows))
         lines.append("")
 
