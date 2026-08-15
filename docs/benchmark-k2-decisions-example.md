@@ -5,6 +5,13 @@ run against a `prefill_heavy` benchmark (`Qwen/Qwen3-0.6B`, single variant, TP=1
 OpenShift cluster. Kept here as a worked example of what the report looks like; run the script
 yourself against a fresh results directory to get current numbers.
 
+Per-iteration rows are aggregated one-per-cycle (totalled across every ready replica that
+cycle, column `N`), not one row per replica — a cycle with several replicas at different
+fallback tiers is one row, with `Priority` listing every tier that fired. `LocalQ`/`EPPq` are
+0 throughout this particular run because it predates the demand-breakdown logging
+(`localQueueDemand` on `replica-capacity-decision`, and the `scheduler-queue-demand` line) —
+`TotalDemand` is still correct since it used the pre-existing combined field.
+
 ---
 
 # K1/K2 Capacity Decision Report
@@ -24,15 +31,12 @@ Total events captured: 160
 
 ### Tier transitions
 
-| Time                      | From    | To      | k2 (or k1 on P4) |
-|---------------------------|---------|---------|------------------|
-| 2026-08-15T09:17:41+00:00 | (start) | P4-k1   | 487065           |
-| 2026-08-15T09:18:41+00:00 | P4-k1   | P1-obs  | 607552           |
-| 2026-08-15T09:20:41+00:00 | P1-obs  | P2-hist | 607872           |
-| 2026-08-15T09:20:41+00:00 | P2-hist | P1-obs  | 607872           |
-| 2026-08-15T09:20:41+00:00 | P1-obs  | P2-hist | 607872           |
-| 2026-08-15T09:21:41+00:00 | P2-hist | P1-obs  | 604736           |
-| 2026-08-15T09:21:41+00:00 | P1-obs  | P2-hist | 607088           |
+| Time     | From           | To             | k2     |
+|----------|----------------|----------------|--------|
+| 09:17:41 | (start)        | P4-k1          | 487065 |
+| 09:18:41 | P4-k1          | P1-obs         | 607552 |
+| 09:20:41 | P1-obs         | P1-obs,P2-hist | 607872 |
+| 09:22:41 | P1-obs,P2-hist | P2-hist        | 607088 |
 
 ### Which bound governed (k1-memory vs k2-compute)
 
@@ -45,91 +49,26 @@ k2 range: 487065 - 608192 tokens
 
 ### Per-iteration detail
 
-Every optimize cycle's k2 computation, with the inputs behind whichever fallback tier fired and the resulting k1-vs-k2 comparison. Rows sharing a timestamp are separate ready replicas of this variant in that cycle. Time is HH:MM:SS on the run date above; see legend for the Inputs/Bound codes.
+One row per optimize cycle, totalled across every ready replica of this variant that cycle (N). KVinUse/LocalQ/EPPq/TotalDemand are all in tokens; Priority lists every tier that fired across N replicas this cycle (see the fallback-tier distribution above for what each code means). Time is HH:MM:SS on the run date above.
 
-Legend — Inputs: q=queueLength/queueThreshold, h=history-window sample count, in/out=avg input/output tokens this cycle, no-sig=no observed/historical/derived signal (fell all the way to k1).  Bound: k1=memory-bound won, k2=compute-bound won.
+Legend — Bound: k1=memory-bound won, k2=compute-bound won.
 
-| Time     | Priority | Inputs    | k2     | k1     | Bound | Demand  | Queue |
-|----------|----------|-----------|--------|--------|-------|---------|-------|
-| 09:17:41 | P4-k1    | no-sig    | 487065 | 487065 | k1    | 0       | 0/5   |
-| 09:18:41 | P1-obs   | q371/5 h1 | 607552 | 487065 | k1    | 2465520 | 371/5 |
-| 09:19:41 | P1-obs   | q380/5 h2 | 608192 | 487065 | k1    | 2511232 | 380/5 |
-| 09:20:41 | P2-hist  | h2        | 607872 | 487065 | k1    | 139343  | 0/5   |
-| 09:20:41 | P1-obs   | q386/5 h3 | 607872 | 487065 | k1    | 2540960 | 386/5 |
-| 09:20:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 132878  | 0/5   |
-| 09:20:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 120653  | 0/5   |
-| 09:20:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 244506  | 0/5   |
-| 09:20:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 110348  | 0/5   |
-| 09:21:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 324386  | 0/5   |
-| 09:21:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 308320  | 0/5   |
-| 09:21:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 356838  | 0/5   |
-| 09:21:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 318305  | 0/5   |
-| 09:21:41 | P2-hist  | h3        | 607872 | 487065 | k1    | 427885  | 0/5   |
-| 09:21:41 | P1-obs   | q119/5 h4 | 604736 | 487065 | k1    | 1200688 | 119/5 |
-| 09:21:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 336099  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 342436  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 294815  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 348581  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 391785  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 288862  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 313633  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 316897  | 0/5   |
-| 09:22:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 273501  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 159313  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 129358  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 194900  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 165265  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 243610  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 163089  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 190100  | 0/5   |
-| 09:23:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 148176  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 133646  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 112524  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 136590  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 117132  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 125901  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 121997  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 134606  | 0/5   |
-| 09:24:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 132238  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 107595  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 134478  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 143055  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 143567  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 125069  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 114636  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 148048  | 0/5   |
-| 09:25:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 125645  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 152016  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 134542  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 126349  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 119245  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 133710  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 110540  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 118028  | 0/5   |
-| 09:26:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 134798  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 152592  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 180627  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 138575  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 196693  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 194772  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 116940  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 162513  | 0/5   |
-| 09:27:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 136910  | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 135758  | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 182291  | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 150032  | 0/5   |
-| 09:28:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 182355  | 0/5   |
-| 09:29:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:29:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:29:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:29:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:30:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:30:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:30:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
-| 09:30:41 | P2-hist  | h4        | 607088 | 487065 | k1    | 0       | 0/5   |
+| Time     | N | Priority       | k2     | k1     | Bound | KVinUse | LocalQ | EPPq | TotalDemand |
+|----------|---|----------------|--------|--------|-------|---------|--------|------|-------------|
+| 09:17:41 | 1 | P4-k1          | 487065 | 487065 | k1    | 0       | 0      | 0    | 0           |
+| 09:18:41 | 1 | P1-obs         | 607552 | 487065 | k1    | 607552  | 0      | 0    | 2465520     |
+| 09:19:41 | 1 | P1-obs         | 608192 | 487065 | k1    | 608192  | 0      | 0    | 2511232     |
+| 09:20:41 | 6 | P1-obs,P2-hist | 607872 | 487065 | k1    | 1355600 | 0      | 0    | 3288688     |
+| 09:21:41 | 7 | P1-obs,P2-hist | 607872 | 487065 | k1    | 2676569 | 0      | 0    | 3272521     |
+| 09:22:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 2570510 | 0      | 0    | 2570510     |
+| 09:23:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 1393811 | 0      | 0    | 1393811     |
+| 09:24:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 1014634 | 0      | 0    | 1014634     |
+| 09:25:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 1042093 | 0      | 0    | 1042093     |
+| 09:26:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 1029228 | 0      | 0    | 1029228     |
+| 09:27:41 | 8 | P2-hist        | 607088 | 487065 | k1    | 1279622 | 0      | 0    | 1279622     |
+| 09:28:41 | 7 | P2-hist        | 607088 | 487065 | k1    | 650436  | 0      | 0    | 650436      |
+| 09:29:41 | 4 | P2-hist        | 607088 | 487065 | k1    | 0       | 0      | 0    | 0           |
+| 09:30:41 | 4 | P2-hist        | 607088 | 487065 | k1    | 0       | 0      | 0    | 0           |
 
 ## No-cache-info fallback events
 
