@@ -53,7 +53,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
-	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/locator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/registration"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
@@ -68,7 +67,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 	llmdVariantAutoscalingV1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -194,33 +192,6 @@ func (c *ReplicaMetricsCollector) refreshShared(
 
 // recordUnattributedReadyPodsEvent emits a Warning/UnattributedReadyPods K8s event for va.
 // Deduplication: at most one event per VA per cycle; vaEventTracker records which VAs have
-// eventTarget returns the object an event about this variant should hang on.
-//
-// A VariantAutoscaling is synthesized in memory from a ScaledObject and is NOT
-// registered in the manager's scheme (internal/variant/scheme.go says so, and
-// registering it would claim an API kind that does not exist). Recording against
-// it therefore produced, on every optimization cycle:
-//
-//	"Could not construct reference, will not report event"
-//	err="no kind is registered for the type variant.VariantAutoscaling in scheme"
-//
-// -- an error log instead of the event, so the condition it was meant to report
-// stayed invisible. The ScaledObject is the real object behind the synthetic
-// one, it carries the same name and namespace, it IS in the scheme, and it is
-// where an operator would look: `kubectl describe scaledobject` now shows these.
-func eventTarget(va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling) *kedav1alpha1.ScaledObject {
-	return &kedav1alpha1.ScaledObject{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: kedav1alpha1.SchemeGroupVersion.String(),
-			Kind:       "ScaledObject",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      va.Name,
-			Namespace: va.Namespace,
-		},
-	}
-}
-
 // already received an event this cycle so repeated calls are no-ops for those VAs.
 func (c *ReplicaMetricsCollector) recordUnattributedReadyPodsEvent(
 	va *llmdVariantAutoscalingV1alpha1.VariantAutoscaling,
@@ -236,7 +207,7 @@ func (c *ReplicaMetricsCollector) recordUnattributedReadyPodsEvent(
 			return
 		}
 	}
-	c.recorder.Event(eventTarget(va), corev1.EventTypeWarning, constants.K8SEventUnattributedReadyPods,
+	c.recorder.Event(llmdVariantAutoscalingV1alpha1.EventTarget(va), corev1.EventTypeWarning, constants.K8SEventUnattributedReadyPods,
 		fmt.Sprintf("%s has %d ready pod(s) but none attributed; "+
 			"verify the pods' ownerReferences reach the scale target %q drives",
 			va.Name, readyCount, va.Name))
@@ -261,7 +232,7 @@ func (c *ReplicaMetricsCollector) recordMetricsUnavailableEvent(
 				continue
 			}
 		}
-		c.recorder.Event(eventTarget(va), corev1.EventTypeWarning, constants.K8SEventMetricsUnavailable, reason)
+		c.recorder.Event(llmdVariantAutoscalingV1alpha1.EventTarget(va), corev1.EventTypeWarning, constants.K8SEventMetricsUnavailable, reason)
 		if vaEventTracker != nil {
 			vaEventTracker[key] = true
 		}

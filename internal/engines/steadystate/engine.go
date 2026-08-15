@@ -713,9 +713,11 @@ func (e *Engine) recordEvent(
 		return
 	}
 
+	target := llmdVariantAutoscalingV1alpha1.EventTarget(va)
+
 	if reason == constants.K8SEventResourceConstrained {
 		// This is the only exception where a variant can have 2 K8S events in an optimize cycle: K8SEventScaledUp & K8SEventResourceConstrained
-		e.Recorder.Event(va, eventType, reason, message)
+		e.Recorder.Event(target, eventType, reason, message)
 		return
 	}
 
@@ -725,7 +727,7 @@ func (e *Engine) recordEvent(
 			return
 		}
 	}
-	e.Recorder.Event(va, eventType, reason, message)
+	e.Recorder.Event(target, eventType, reason, message)
 	if e.vaEventTracker != nil {
 		e.vaEventTracker[key] = true
 	}
