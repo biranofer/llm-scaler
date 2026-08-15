@@ -8,6 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
+	ctrl "sigs.k8s.io/controller-runtime"
+
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
@@ -65,6 +68,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	if !ok {
 		return nil, fmt.Errorf("expected *ScalingPolicy, got %T", input.Config)
 	}
+	logger := ctrl.LoggerFrom(ctx)
 
 	// Build GPU count and P/D role lookups from variant states. The role decides
 	// how a waiting request is charged against a replica's KV capacity, so it must
@@ -91,14 +95,14 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		}
 		gpuCount := gpusByVariant[rm.VariantName]
 		rc := a.computeReplicaCapacity(rm, satConfig, input.ModelID, input.Namespace, gpuCount,
-			rolesByVariant[rm.VariantName], accelByVariant[rm.VariantName])
+			rolesByVariant[rm.VariantName], accelByVariant[rm.VariantName], logger)
 		if rc != nil {
 			replicaCapacities = append(replicaCapacities, *rc)
 		}
 	}
 
 	// Phase 2: Per-variant aggregation
-	variantCapacities := a.aggregateByVariant(replicaCapacities, input.ReplicaMetrics, input.VariantStates, input.ModelID, input.Namespace, satConfig.KvCacheThreshold)
+	variantCapacities := a.aggregateByVariant(replicaCapacities, input.ReplicaMetrics, input.VariantStates, input.ModelID, input.Namespace, satConfig.KvCacheThreshold, logger)
 
 	// Model-level demand D (the analyzer owns demand attribution). Supply,
 	// utilization, and RoleCapacities are assembled downstream by the engine's
@@ -143,6 +147,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	gpuCount int,
 	role string,
 	accelerator string,
+	logger logr.Logger,
 ) *ReplicaCapacity {
 	if rm.TotalKvCapacityTokens <= 0 {
 		// TODO: implement proper demand estimation when vllm:cache_config_info is absent.
@@ -150,7 +155,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		// capacity from the capacity store. A better approach would be to estimate
 		// TotalKvCapacityTokens from deployment args (num_gpu_blocks_override, block_size)
 		// or use a dedicated percentage-based demand signal.
-		return a.computeReplicaCapacityFallback(rm, config, modelID, namespace, role, accelerator)
+		return a.computeReplicaCapacityFallback(rm, config, modelID, namespace, role, accelerator, logger)
 	}
 
 	// Compute demand: tokens already resident in KV cache plus the role-aware
@@ -166,19 +171,28 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		engineParams = rec.EngineParams
 	}
 	k2, k2Priority := a.computeK2(
-		modelID, accelerator,
+		modelID, namespace, rm.VariantName, accelerator,
 		gpuCount,
 		rm.QueueLength, rm.TokensInUse,
 		rm.AvgOutputTokens, rm.AvgInputTokens,
 		config.QueueLengthThreshold,
 		engineParams,
 		k1,
+		logger,
 	)
 
 	effectiveCapacity := k1
+	bound := "k1-memory"
 	if k2 < k1 {
 		effectiveCapacity = k2
+		bound = "k2-compute"
 	}
+	logger.Info("replica-capacity-decision",
+		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
+		"k1MemoryBound", k1, "k2ComputeBound", k2, "k2Source", k2Labels[k2Priority],
+		"effectiveCapacity", effectiveCapacity, "boundBy", bound,
+		"tokensInUse", rm.TokensInUse, "replicaDemand", replicaDemand,
+		"queueLength", rm.QueueLength, "queueThreshold", config.QueueLengthThreshold)
 
 	// Update capacity store with live data, preserving EngineParams from any
 	// existing record (parsed from deployment args and needed for FindCompatible).
@@ -222,9 +236,13 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	modelID, namespace string,
 	role string,
 	accelerator string,
+	logger logr.Logger,
 ) *ReplicaCapacity {
 	rec := a.capacityStore.Get(namespace, modelID, rm.VariantName)
 	if rec == nil || rec.EffectiveCapacity <= 0 {
+		logger.Info("replica-capacity-no-cache-info",
+			"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
+			"reason", "no vllm:cache_config_info and no usable capacity-store record")
 		return nil
 	}
 
@@ -269,6 +287,12 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	// not adjusting this line.
 	replicaDemand += waitingQueueDemand(rm, role)
 
+	logger.Info("replica-capacity-no-cache-info",
+		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
+		"reason", "no vllm:cache_config_info; using capacity-store record",
+		"storeEffectiveCapacity", rec.EffectiveCapacity, "storeLearnedFrom", rec.LearnedFrom,
+		"kvCacheUsagePct", rm.KvCacheUsage, "effectiveCapacity", effectiveCapacity, "replicaDemand", replicaDemand)
+
 	return &ReplicaCapacity{
 		PodName:               rm.PodName,
 		VariantName:           rm.VariantName,
@@ -290,13 +314,14 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 // 4. Fallback → k1 (memory-bound only)
 // Returns the k2 value and the priority level (1–4) that produced it.
 func (a *SaturationAnalyzer) computeK2(
-	modelID, accelerator string,
+	modelID, namespace, variantName, accelerator string,
 	gpuCount int,
 	queueLen int, tokensInUse int64,
 	avgOutput, avgInput float64,
 	queueThreshold float64,
 	engineParams *EngineParams,
 	k1 int64,
+	logger logr.Logger,
 ) (int64, k2Source) {
 	outputBucket := classifyOutputLength(avgOutput)
 	historyKey := fmt.Sprintf("%s|%s|%d|%s", modelID, accelerator, gpuCount, outputBucket)
@@ -311,7 +336,13 @@ func (a *SaturationAnalyzer) computeK2(
 			a.computeCapacityHistory[historyKey] = ra
 		}
 		ra.Add(float64(k2Observed))
+		historyLen := ra.Len()
 		a.mu.Unlock()
+		logger.Info("k2-decision",
+			"modelID", modelID, "namespace", namespace, "variant", variantName,
+			"priority", k2Labels[k2SrcObserved], "historyKey", historyKey,
+			"queueLength", queueLen, "queueThreshold", queueThreshold,
+			"k2", k2Observed, "historyWindowLen", historyLen)
 		return k2Observed, k2SrcObserved
 	}
 
@@ -319,20 +350,37 @@ func (a *SaturationAnalyzer) computeK2(
 	// the same slice from Priority 1 under the same lock.
 	a.mu.Lock()
 	var histAvg float64
+	var histLen int
 	if ra, ok := a.computeCapacityHistory[historyKey]; ok {
 		histAvg = ra.Average()
+		histLen = ra.Len()
 	}
 	a.mu.Unlock()
 	if histAvg > 0 {
+		logger.Info("k2-decision",
+			"modelID", modelID, "namespace", namespace, "variant", variantName,
+			"priority", k2Labels[k2SrcHistorical], "historyKey", historyKey,
+			"queueLength", queueLen, "queueThreshold", queueThreshold,
+			"k2", int64(histAvg), "historyWindowLen", histLen)
 		return int64(histAvg), k2SrcHistorical
 	}
 
 	// Priority 3: Derived from deployment args
 	if k2Derived := estimateCapacityFromParams(engineParams, avgInput, avgOutput); k2Derived > 0 {
+		logger.Info("k2-decision",
+			"modelID", modelID, "namespace", namespace, "variant", variantName,
+			"priority", k2Labels[k2SrcDerived], "historyKey", historyKey,
+			"avgInputTokens", avgInput, "avgOutputTokens", avgOutput,
+			"engineParams", engineParams, "k2", k2Derived)
 		return k2Derived, k2SrcDerived
 	}
 
 	// Priority 4: Fallback to k1
+	logger.Info("k2-decision",
+		"modelID", modelID, "namespace", namespace, "variant", variantName,
+		"priority", k2Labels[k2SrcFallback], "historyKey", historyKey,
+		"reason", "no observed/historical/derived k2; capacity is memory-bound only",
+		"k1", k1)
 	return k1, k2SrcFallback
 }
 
@@ -344,6 +392,7 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 	variantStates []domain.VariantReplicaState,
 	modelID, namespace string,
 	kvCacheThreshold float64,
+	logger logr.Logger,
 ) []domain.VariantCapacity {
 	// Group replicas by variant
 	byVariant := make(map[string][]ReplicaCapacity)
@@ -396,15 +445,22 @@ func (a *SaturationAnalyzer) aggregateByVariant(
 		} else if rec := a.capacityStore.Get(namespace, modelID, vs.VariantName); rec != nil && rec.EffectiveCapacity > 0 {
 			// No ready replicas — use stored capacity, enhanced with k2 derivation
 			// for deployment-derived records when workload data is available.
-			perReplicaCapacity = a.estimateStoredCapacity(rec, modelID, accelerator, vs.GPUsPerReplica,
-				kvCacheThreshold, modelAvgInput, modelAvgOutput)
+			perReplicaCapacity = a.estimateStoredCapacity(rec, modelID, namespace, vs.VariantName, accelerator, vs.GPUsPerReplica,
+				kvCacheThreshold, modelAvgInput, modelAvgOutput, logger)
 			capacityLabel = satReasonP0Store
 		} else if rec := a.lookupCompatibleCapacity(namespace, modelID, vs.VariantName, accelerator, vs.GPUsPerReplica); rec != nil {
 			// No own record — try cross-variant estimation from a compatible variant
 			perReplicaCapacity = float64(rec.EffectiveCapacity)
 			capacityLabel = satReasonP0Store
+			logger.Info("variant-capacity-source",
+				"modelID", modelID, "namespace", namespace, "variant", vs.VariantName,
+				"reason", "no own capacity record; borrowed from a compatible variant",
+				"perReplicaCapacity", perReplicaCapacity, "engineParamsSource", rec.LearnedFrom)
 		} else {
 			capacityLabel = satReasonNoData
+			logger.Info("variant-capacity-source",
+				"modelID", modelID, "namespace", namespace, "variant", vs.VariantName,
+				"reason", "no live replicas, no own capacity-store record, no compatible variant found")
 		}
 
 		totalCapacity := float64(replicaCount) * perReplicaCapacity
@@ -495,11 +551,12 @@ func (a *SaturationAnalyzer) lookupCompatibleCapacity(namespace, modelID, varian
 // agree by construction.
 func (a *SaturationAnalyzer) estimateStoredCapacity(
 	rec *CapacityRecord,
-	modelID string,
+	modelID, namespace, variantName string,
 	accelerator string,
 	gpuCount int,
 	kvCacheThreshold float64,
 	modelAvgInput, modelAvgOutput float64,
+	logger logr.Logger,
 ) float64 {
 	if rec == nil {
 		return 0
@@ -507,6 +564,10 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(
 
 	// Live records have observed capacity — use directly
 	if rec.LearnedFrom == learnedFromLive {
+		logger.Info("zero-replica-capacity-estimate",
+			"modelID", modelID, "namespace", namespace, "variant", variantName,
+			"source", "stored-live", "reason", "prior live observation reused while replica count is zero",
+			"perReplicaCapacity", rec.EffectiveCapacity)
 		return float64(rec.EffectiveCapacity)
 	}
 
@@ -514,12 +575,14 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(
 	if rec.EngineParams != nil && modelAvgOutput > 0 {
 		if derived := estimateCapacityFromParams(rec.EngineParams, modelAvgInput, modelAvgOutput); derived > 0 {
 			bounded := derived
+			boundedBy := "derived"
 
 			// Bound by own k1 if TotalKvCapacityTokens is known (num_gpu_blocks_override)
 			if rec.TotalKvCapacityTokens > 0 && kvCacheThreshold > 0 {
 				k1 := int64(float64(rec.TotalKvCapacityTokens) * kvCacheThreshold)
 				if k1 > 0 && k1 < bounded {
 					bounded = k1
+					boundedBy = "own-k1"
 				}
 			}
 
@@ -527,14 +590,25 @@ func (a *SaturationAnalyzer) estimateStoredCapacity(
 			if compatible := a.capacityStore.FindCompatible(modelID, accelerator, gpuCount, rec.EngineParams); compatible != nil && compatible.LearnedFrom == learnedFromLive && compatible.EffectiveCapacity > 0 {
 				if compatible.EffectiveCapacity < bounded {
 					bounded = compatible.EffectiveCapacity
+					boundedBy = "compatible-variant-live"
 				}
 			}
 
+			logger.Info("zero-replica-capacity-estimate",
+				"modelID", modelID, "namespace", namespace, "variant", variantName,
+				"source", "deployment-derived", "boundedBy", boundedBy,
+				"derivedCapacity", derived, "perReplicaCapacity", bounded,
+				"modelAvgInputTokens", modelAvgInput, "modelAvgOutputTokens", modelAvgOutput)
 			return float64(bounded)
 		}
 	}
 
 	// Fallback: stored EffectiveCapacity (EffectiveMaxBatchedTokens from LoadFromDeployment)
+	logger.Info("zero-replica-capacity-estimate",
+		"modelID", modelID, "namespace", namespace, "variant", variantName,
+		"source", "deployment-stored-fallback",
+		"reason", "no workload averages or derivation available; using raw stored EffectiveMaxBatchedTokens",
+		"perReplicaCapacity", rec.EffectiveCapacity)
 	return float64(rec.EffectiveCapacity)
 }
 
