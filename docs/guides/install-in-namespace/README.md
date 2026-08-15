@@ -151,8 +151,18 @@ Three things to read, in this order:
 `TARGETS` reading **`cpu: <unknown>/80%`** means the opposite of it looks: KEDA
 could not fetch the metric spec from WVA and fell back to a CPU metric, so the
 workload is not being scaled by WVA at all. `READY False` accompanies it. The
-usual cause is a trigger naming a scaler it cannot reach — see
-[First-line troubleshooting](../../deployment/operations.md#first-line-troubleshooting).
+usual cause is a trigger naming a scaler it cannot reach, which is what a
+ScaledObject written for a different install does — the shipped samples name the
+default namespace, and a namespace-scoped install is not there. Repair it with:
+
+```bash
+make scaledobjects-repoint WVA_NS=${NAMESPACE} SCOPE=namespace
+```
+
+That rewrites `scalerAddress` only, leaves your `modelID`, `variantCost` and
+bounds untouched, and is idempotent. See
+[First-line troubleshooting](../../deployment/operations.md#first-line-troubleshooting)
+for the other causes.
 
 ### 2. Read the decisions
 

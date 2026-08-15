@@ -67,10 +67,15 @@ Repoint them at whichever install is actually running, without editing the
 samples:
 
 ```bash
-make scaledobjects-plan WVA_DEFAULT_SO_PLAN=plan.yaml
-# discovery finds each object and offers it; set apply: adopt
-make scaledobjects-apply WVA_DEFAULT_SO_PLAN=plan.yaml
+make scaledobjects-repoint WVA_NS=<your-namespace> SCOPE=namespace
 ```
+
+It rewrites `scalerAddress` and nothing else — the `modelID`, `variantCost` and
+replica bounds you set are left alone — and it is idempotent, so it is safe to
+run whenever a workload is not scaling and you are not sure why. It only touches
+objects that already ask for WVA by name *and* whose address resolves to no
+running scaler: a ScaledObject pointing at a second, live WVA install is a
+deliberate choice, and it is reported and left as it is rather than taken over.
 
 ## Configuration Options
 

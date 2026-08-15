@@ -410,6 +410,17 @@ scaledobjects-apply: ## Apply a ScaledObject plan (this is what makes WVA scale 
 scaledobjects-edit: ## Review the discovered model servers in $$EDITOR and apply what you confirm.
 	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) 		WVA_DEFAULT_SO=edit $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; install_default_scaledobjects'
 
+## Repair ScaledObjects that ask for WVA by name but name a namespace where no
+## scaler is running -- what the samples do when you install anywhere other than
+## the namespace they hardcode. Only rewrites scalerAddress, and only when the
+## address it names resolves to nothing; one pointing at a second, live WVA
+## install is deliberate and is left alone. Idempotent.
+.PHONY: scaledobjects-repoint
+scaledobjects-repoint: ## Repoint ScaledObjects naming a missing WVA at this install. WVA_DEFAULT_SO_NS=<ns>|wva|all.
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
+		$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_repoint_stale'
+
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # Supports FOCUS and SKIP variables for ginkgo test filtering.

@@ -993,6 +993,93 @@ so_adopt_patch() {
                     + (if $p == "" then {} else {scalingPolicy:$p} end))}]}}'
 }
 
+# so_repoint_stale repoints ScaledObjects that ask for WVA by name but name a WVA
+# that is not there, at the install that is.
+#
+# The samples hardcode the default namespace in scalerAddress, which is right for
+# `deploy-e2e-infra` and wrong for a namespace-scoped install. The symptom is
+# quiet -- KEDA cannot fetch a metric spec, falls back to CPU, and the HPA reads
+# `cpu: <unknown>/80%` while WVA scales nothing -- and the manual remedy was a
+# three-step plan/edit/apply dance to change one string.
+#
+# It repairs only what is provably broken. A candidate must satisfy BOTH:
+#
+#   1. It already asks for WVA: a trigger whose scalerAddress is
+#      wva-external-scaler.<ns>... So an object scaled by prometheus or cpu is
+#      never converted -- that is adoption, it is a real decision, and it stays
+#      with `scaledobjects-plan` where the operator sees the bounds first.
+#   2. The address it names resolves to NOTHING: no external-scaler Service in
+#      that namespace.
+#
+# (2) is the load-bearing one. Two WVA installs on one cluster is a supported
+# shape, and a ScaledObject pointing at the other one is correct, not stale --
+# repointing it would hijack another team's workload, on a cluster where that is
+# exactly the thing not to do. A live Service there means "deliberate", and
+# deliberate is left alone and said out loud.
+#
+# Only scalerAddress is rewritten. modelID, variantCost and scalingPolicy are
+# whatever the operator tuned, and a repoint is not the moment to reset them --
+# so unlike so_adopt_patch, which replaces `triggers` wholesale because adoption
+# must displace a competing scaler, this rewrites the list in place.
+so_repoint_stale() {
+    local want="wva-external-scaler.${WVA_NS}.svc.cluster.local:9090"
+    local self="wva-external-scaler.${WVA_NS}."
+    local ns name addr named_ns triggers patched
+    local fixed=0 left=0 scanned=0
+
+    for ns in $(so_target_namespaces); do
+        [ -n "$ns" ] || continue
+        local rows
+        # `|| true`: a namespace we cannot list is not a namespace with nothing in
+        # it, but it is also not this function's problem to report -- the plan
+        # path already says which namespaces it could not read.
+        rows=$(kubectl get scaledobject -n "$ns" -o json 2>/dev/null | jq -r --arg self "$self" '
+            .items[]
+            | .metadata.name as $n
+            | [ .spec.triggers[]?.metadata.scalerAddress // ""
+                | select(startswith("wva-external-scaler.") and (startswith($self) | not)) ]
+            | select(length > 0)
+            | $n + " " + .[0]
+        ' 2>/dev/null || true)
+
+        [ -n "$rows" ] || continue
+        while read -r name addr; do
+            [ -n "$name" ] || continue
+            scanned=$((scanned + 1))
+            # wva-external-scaler.<namespace>.svc... -- the second dotted field.
+            named_ns=$(printf '%s' "$addr" | cut -d. -f2)
+            if [ -n "$named_ns" ] && kubectl get svc wva-external-scaler -n "$named_ns" > /dev/null 2>&1; then
+                log_info "  $ns/$name: points at a WVA that is running in $named_ns — leaving it alone. Repointing it here would take it off that install."
+                left=$((left + 1))
+                continue
+            fi
+
+            triggers=$(kubectl get scaledobject "$name" -n "$ns" -o json 2>/dev/null \
+                | jq -c --arg a "$want" '[ .spec.triggers[]?
+                    | if ((.metadata.scalerAddress // "") | startswith("wva-external-scaler."))
+                      then .metadata.scalerAddress = $a else . end ]' 2>/dev/null)
+            if [ -z "$triggers" ] || [ "$triggers" = "null" ]; then
+                log_warning "  $ns/$name: could not read its triggers — skipping."
+                continue
+            fi
+
+            if kubectl patch scaledobject "$name" -n "$ns" --type merge \
+                -p "{\"spec\":{\"triggers\":$triggers}}" > /dev/null 2>&1; then
+                log_success "  $ns/$name: $addr -> $want"
+                fixed=$((fixed + 1))
+            else
+                log_warning "  $ns/$name: patch failed — it may be managed by GitOps, which will put the old address back. Change it at the source."
+            fi
+        done <<< "$rows"
+    done
+
+    if [ "$scanned" -eq 0 ]; then
+        log_success "No ScaledObject names a WVA other than this one — nothing to repoint."
+        return 0
+    fi
+    log_success "Repointed $fixed at $WVA_NS; left $left pointing at a live scaler elsewhere"
+}
+
 # render_scaledobject prints one ScaledObject: the shipped shape, or yours.
 #
 # WVA_DEFAULT_SO_TEMPLATE=<file> substitutes your own template instead, so a fleet
