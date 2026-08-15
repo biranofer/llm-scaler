@@ -76,29 +76,32 @@ verify_deployment() {
     # --- Monitoring
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
         log_info "Checking Prometheus..."
-        if kubectl get pods -n "$MONITORING_NAMESPACE" -l app.kubernetes.io/name=prometheus 2>/dev/null | grep -q Running; then
+        if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
             log_success "Prometheus is running"
         else
-            log_warning "Prometheus may still be starting"
+            log_warning "Prometheus is not ready yet"
         fi
     fi
 
     if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
         log_info "Checking Grafana..."
-        if kubectl get pods -n "$MONITORING_NAMESPACE" -l app.kubernetes.io/name=grafana 2>/dev/null | grep -q Running; then
+        if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=grafana; then
             log_success "Grafana is running"
         else
-            log_warning "Grafana may still be starting"
+            log_warning "Grafana is not ready yet"
         fi
     fi
 
     # --- Scaler backend
     if [ "$SCALER_BACKEND" = "keda" ]; then
         log_info "Checking KEDA..."
-        if kubectl get pods -n "$KEDA_NAMESPACE" -l "$KEDA_OPERATOR_LABEL_SELECTOR" 2>/dev/null | grep -q Running; then
+        if wva_any_pod_ready "$KEDA_NAMESPACE" "$KEDA_OPERATOR_LABEL_SELECTOR"; then
             log_success "KEDA is running"
         else
-            log_warning "KEDA may still be starting"
+            # KEDA not being ready is the difference between "installed" and
+            # "scaling", so this says what follows from it rather than only that
+            # it is not up.
+            log_warning "KEDA is not ready yet — until it is, ScaledObjects stay unready and nothing scales."
         fi
     elif [ "$SCALER_BACKEND" = "none" ]; then
         log_info "Scaler backend skipped (SCALER_BACKEND=none) — assuming external metrics API is pre-installed"

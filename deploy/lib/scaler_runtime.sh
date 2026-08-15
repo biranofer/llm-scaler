@@ -46,7 +46,11 @@ deploy_keda() {
     # Check CRD + operator pods + external metrics APIService to avoid false positives
     # from stale CRDs left behind after a prior uninstall.
     if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
-        if kubectl get pods -A -l "$KEDA_OPERATOR_LABEL_SELECTOR" 2>/dev/null | grep -q Running; then
+        # Readiness, not `grep -q Running`. This decides whether to install KEDA
+        # at all, so a "0/1 Running" operator answering yes here skips the install
+        # that would have fixed it and leaves the cluster with a KEDA that never
+        # reconciles anything.
+        if wva_any_pod_ready -A "$KEDA_OPERATOR_LABEL_SELECTOR"; then
             if kubectl get apiservice "$EXTERNAL_METRICS_APISERVICE_NAME" >/dev/null 2>&1; then
                 log_success "KEDA CRD, operator, and metrics APIService detected — skipping helm install"
                 return

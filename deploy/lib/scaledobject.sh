@@ -1038,8 +1038,12 @@ so_repoint_stale() {
     local fixed=0 left=0
     while read -r ns name addr; do
         [ -n "$name" ] || continue
-        # wva-external-scaler.<namespace>.svc... -- the second dotted field.
-        named_ns=$(printf '%s' "$addr" | cut -d. -f2)
+        # wva-external-scaler.<namespace>.svc...:port -- the second dotted field of
+        # the host. The port is cut FIRST because the in-cluster short form
+        # `wva-external-scaler.<ns>:9090` is legal and leaves the port stuck to the
+        # namespace, which would make a live install look dead and get its
+        # workload taken away.
+        named_ns=$(printf '%s' "$addr" | cut -d: -f1 | cut -d. -f2)
         if [ -n "$named_ns" ] && kubectl get svc wva-external-scaler -n "$named_ns" > /dev/null 2>&1; then
             log_info "  $ns/$name: points at a WVA that is running in $named_ns — leaving it alone. Repointing it here would take it off that install."
             left=$((left + 1))

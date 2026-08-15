@@ -105,6 +105,31 @@ wva_scaler_namespaces() {
     return 0
 }
 
+# wva_any_pod_ready reports whether any pod matching selector $2 in namespace $1
+# is READY. Pass -A for cluster-wide.
+#
+# `kubectl get pods | grep -q Running` is not this check, and the difference is
+# the one that matters when something is wrong: a pod stuck at "0/1 Running" --
+# crash-looping, or failing a probe -- matches Running and is not ready. On a
+# multi-pod list it is worse, because it answers yes when ANY line says Running,
+# including one belonging to a replica that is fine while the one you care about
+# is not.
+#
+# The Ready CONDITION is what "is it up" means, so that is what this reads. A
+# failed call returns non-zero rather than "not ready": being unable to look is
+# not the same as looking and finding nothing, and a caller that gates on this
+# must be able to tell them apart.
+wva_any_pod_ready() {
+    local scope="$1" selector="$2" out
+    local path='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+    if [ "$scope" = "-A" ]; then
+        out=$(kubectl get pods -A -l "$selector" -o jsonpath="$path" 2>/dev/null) || return 2
+    else
+        out=$(kubectl get pods -n "$scope" -l "$selector" -o jsonpath="$path" 2>/dev/null) || return 2
+    fi
+    printf '%s\n' "$out" | grep -qx 'True'
+}
+
 # wva_scaler_has_endpoints reports whether the external-scaler Service in $1 has a
 # ready backend -- a controller actually listening, not merely an address that
 # resolves.
