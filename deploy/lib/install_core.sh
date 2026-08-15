@@ -16,9 +16,20 @@ wva_missing_prereqs() {
     [ -n "$expected" ] || { echo "UNRENDERABLE"; return 0; }
     while read -r kind name; do
         [ -n "$kind" ] && [ -n "$name" ] || continue
+        # Cluster-scoped kinds are the exception; everything else is looked up in
+        # WVA_NS. Naming only ServiceMonitor as namespaced was a bug: Role and
+        # RoleBinding fell through to a lookup with no -n, which resolves against
+        # the CALLER'S CURRENT CONTEXT namespace rather than the install
+        # namespace. With a context pointing anywhere else, four objects that
+        # exist were reported missing -- and the phase that reports it is the
+        # tenant's, so it sent them to ask an admin to redo work already done.
+        # That is the exact failure the Forbidden handling below was added to
+        # prevent, arriving by a different route.
         case "$kind" in
-            ServiceMonitor) out=$(kubectl get servicemonitor "$name" -n "$WVA_NS" 2>&1); rc=$? ;;
-            *)              out=$(kubectl get "$kind" "$name" 2>&1); rc=$? ;;
+            Namespace|ClusterRole|ClusterRoleBinding|CustomResourceDefinition)
+                out=$(kubectl get "$kind" "$name" 2>&1); rc=$? ;;
+            *)
+                out=$(kubectl get "$kind" "$name" -n "$WVA_NS" 2>&1); rc=$? ;;
         esac
         [ $rc -eq 0 ] && continue
         # A denied read is not an absent object, and cluster-scoped RBAC is
@@ -29,8 +40,9 @@ wva_missing_prereqs() {
             continue
         fi
         case "$kind" in
-            ServiceMonitor) echo "$kind/$name (in $WVA_NS)" ;;
-            *)              echo "$kind/$name" ;;
+            Namespace|ClusterRole|ClusterRoleBinding|CustomResourceDefinition)
+                echo "$kind/$name" ;;
+            *)  echo "$kind/$name (in $WVA_NS)" ;;
         esac
     done <<< "$expected"
 }
