@@ -332,6 +332,20 @@ const (
 	//
 	// Labels: namespace, model_name
 	WVAUnmeasuredQueue = "wva_unmeasured_queue"
+
+	// WVAVariantAtMaxReplicas is a gauge, 1 while a variant's target sits on its
+	// own maxReplicas ceiling and 0 otherwise.
+	//
+	// Distinct from wva_decisions_limited_total, which means GPUs ran out. This
+	// one means the operator's own ceiling is the binding constraint, and the
+	// remedy is different: raise maxReplicas rather than add accelerators.
+	// Conflating them would raise a spurious ResourceConstrained warning for a
+	// variant that is simply honouring the bound it was given.
+	//
+	// Worth alerting on only in combination: at max AND utilization still above
+	// the scale-up threshold means demand is going unserved. At max on its own
+	// is the normal state of a variant sized exactly right.
+	WVAVariantAtMaxReplicas = "wva_variant_at_max_replicas"
 )
 
 // Pod-mapping miss reasons (values for the `reason` label of WVAPodMappingMissTotal).

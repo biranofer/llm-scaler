@@ -155,6 +155,53 @@ func TestLogScalingDecisions_EmitsPerModel(t *testing.T) {
 	assert.True(t, msgs["model-b"], "expected log for model-b")
 }
 
+// atMax is what separates "WVA chose this size" from "WVA was not allowed to go
+// higher". Without it both read as a steady target, which is how a benchmark
+// pinned at 4 while demand implied 12 produced numbers that looked like a
+// decision.
+func TestLogScalingDecisions_AtMaxReplicas(t *testing.T) {
+	ctx, logs := zapObserverCtx(t)
+
+	four, ten := 4, 10
+	requests := []allocation.ModelScalingRequest{{
+		ModelID: "model-a", Namespace: "ns",
+		VariantStates: []domain.VariantReplicaState{
+			{VariantName: "pinned", MaxReplicas: &four},
+			{VariantName: "roomy", MaxReplicas: &ten},
+			{VariantName: "unbounded"}, // MaxReplicas nil: no ceiling to be at
+		},
+	}}
+	decisions := []domain.VariantDecision{
+		{ModelID: "model-a", Namespace: "ns", VariantName: "pinned", CurrentReplicas: 4, TargetReplicas: 4, Action: domain.ActionNoChange},
+		{ModelID: "model-a", Namespace: "ns", VariantName: "roomy", CurrentReplicas: 2, TargetReplicas: 4, Action: domain.ActionScaleUp},
+		{ModelID: "model-a", Namespace: "ns", VariantName: "unbounded", CurrentReplicas: 9, TargetReplicas: 99, Action: domain.ActionScaleUp},
+	}
+
+	logScalingDecisions(ctx, requests, decisions)
+
+	require.Equal(t, 1, logs.Len())
+
+	// Asserted through JSON rather than by type-asserting the anonymous struct:
+	// that assertion depends on field order and tags matching the production
+	// type exactly, so it breaks on edits that change nothing an operator sees.
+	// The JSON *is* what they see.
+	raw, err := json.Marshal(logs.All()[0].ContextMap()["decisions"])
+	require.NoError(t, err)
+	var entries []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &entries))
+	require.Len(t, entries, 3)
+
+	got := map[string]any{}
+	for _, e := range entries {
+		got[e["name"].(string)] = e["atMax"]
+	}
+	assert.Equal(t, true, got["pinned"], "target 4 of max 4 is at the ceiling")
+	// omitempty: false is absent rather than present-and-false, which is the
+	// shape the log actually carries.
+	assert.Nil(t, got["roomy"], "target 4 of max 10 has headroom")
+	assert.Nil(t, got["unbounded"], "no MaxReplicas means no ceiling to sit on")
+}
+
 func TestLogScalingDecisions_NoDecisionsSkipsModel(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 

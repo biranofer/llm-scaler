@@ -1022,17 +1022,56 @@ func logScalingDecisions(
 		Curr   int    `json:"curr"`
 		Tgt    int    `json:"tgt"`
 		Action string `json:"action"`
+		// AtMax reports that the target sits on the variant's own maxReplicas
+		// ceiling, so it cannot grow further however much demand asks for.
+		//
+		// WasLimited does not cover this and deliberately never will: it means
+		// GPUs ran out, and marking a self-imposed ceiling as scarcity would
+		// raise a spurious ResourceConstrained warning (see
+		// gpu_limit_attribution.go). But without SOME signal the two outcomes
+		// are indistinguishable in the log -- a run pinned at its ceiling and a
+		// run that got everything it asked for both read as a steady target.
+		//
+		// That is not hypothetical: a benchmark capped at 4 while demand implied
+		// 12 produced a P99 TTFT of 73s and an average of 3.21 replicas, and
+		// nothing in the output said the number was a ceiling rather than a
+		// decision. Read it beside `demand` and `prc` in analyzer-result: at max
+		// with demand still climbing means raise maxReplicas, which is a
+		// different remedy from adding GPUs.
+		AtMax bool `json:"atMax,omitempty"`
+	}
+
+	// maxReplicas per variant, from the request the optimizer was given. The
+	// decisions themselves do not carry the ceiling.
+	maxByVariant := make(map[modelKey]map[string]int, len(modelRequests))
+	for _, req := range modelRequests {
+		k := modelKey{req.Namespace, req.ModelID}
+		for _, st := range req.VariantStates {
+			if st.MaxReplicas == nil || *st.MaxReplicas <= 0 {
+				continue
+			}
+			if maxByVariant[k] == nil {
+				maxByVariant[k] = make(map[string]int, len(req.VariantStates))
+			}
+			maxByVariant[k][st.VariantName] = *st.MaxReplicas
+		}
 	}
 
 	grouped := make(map[modelKey][]decisionEntry, len(modelRequests))
 	for _, d := range decisions {
 		k := modelKey{d.Namespace, d.ModelID}
+		atMax := false
+		if m, ok := maxByVariant[k][d.VariantName]; ok {
+			atMax = d.TargetReplicas >= m
+		}
 		grouped[k] = append(grouped[k], decisionEntry{
 			Name:   d.VariantName,
 			Curr:   d.CurrentReplicas,
 			Tgt:    d.TargetReplicas,
 			Action: string(d.Action),
+			AtMax:  atMax,
 		})
+		metrics.SetVariantAtMaxReplicas(d.Namespace, d.VariantName, atMax)
 	}
 
 	for _, req := range modelRequests {

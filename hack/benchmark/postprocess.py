@@ -31,7 +31,9 @@ import sys
 from statistics import mean
 
 METRICS = [
+    "P95 TTFT (ms)",
     "P99 TTFT (ms)",
+    "P95 ITL (ms/token)",
     "P99 ITL (ms/token)",
     "Avg replicas",
     "Max replicas",
@@ -45,7 +47,9 @@ METRICS = [
 # and a weighted-cost row replaces the plain replica rows.
 def _variant_metrics(primary_label, secondary_label):
     return [
+        "P95 TTFT (ms)",
         "P99 TTFT (ms)",
+        "P95 ITL (ms/token)",
         "P99 ITL (ms/token)",
         f"Avg {primary_label} replicas",
         f"Max {primary_label} replicas",
@@ -90,24 +94,39 @@ def _parse_prometheus_value(line, metric_name):
 
 
 def _extract_latency(results_dir):
-    """P99 TTFT and P99 ITL from results.json."""
+    """P95 and P99 for TTFT and ITL, from results.json.
+
+    P95 as well as P99 because a tail read alone cannot tell a slow run from a
+    run with a few slow requests: on the first pokprod run P95 TTFT was 63.5s
+    against a P99 of 73.2s, so the bulk of the distribution sat close to the
+    tail and the latency was the workload, not an outlier.
+
+    guidellm writes every percentile it computes -- p001 through p999 -- so both
+    are read from the same map. `or` is not used to fall back between them: a
+    genuine 0.0 is falsy and would silently become max.
+    """
     path = os.path.join(results_dir, "results.json")
     if not os.path.isfile(path):
-        return None, None
+        return None, None, None, None
 
     with open(path) as f:
         data = json.load(f)
 
     metrics = data["benchmarks"][0]["metrics"]
 
-    def _p99(section_key):
+    def _pct(section_key, want):
         section = metrics.get(section_key, {}).get("successful", {})
         pcts = section.get("percentiles", {})
         if isinstance(pcts, list):
             pcts = {p["percentile"]: p["value"] for p in pcts}
-        return pcts.get("p99") or pcts.get(99) or section.get("max")
+        for key in (f"p{want}", want):
+            if key in pcts:
+                return pcts[key]
+        return section.get("max")
 
-    return _p99("time_to_first_token_ms"), _p99("inter_token_latency_ms")
+    ttft, itl = "time_to_first_token_ms", "inter_token_latency_ms"
+    return (_pct(ttft, 95), _pct(ttft, 99),
+            _pct(itl, 95), _pct(itl, 99))
 
 
 def _extract_error_count(results_dir):
@@ -272,9 +291,9 @@ def _fmt(metric, value):
     if value is None:
         return "?"
 
-    if metric == "P99 TTFT (ms)":
+    if metric in ("P95 TTFT (ms)", "P99 TTFT (ms)"):
         return f"{value:,.0f}"
-    if metric == "P99 ITL (ms/token)":
+    if metric in ("P95 ITL (ms/token)", "P99 ITL (ms/token)"):
         return f"{value:.2f}" if (value * 100) % 10 != 0 else f"{value:.1f}"
     if metric in ("Avg replicas",) or metric.startswith("Avg ") and "replicas" in metric:
         return f"{value:.2f}"
@@ -301,7 +320,7 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
     When secondary_suffix is given, replica stats are split per variant and a
     weighted cost row is included.
     """
-    p99_ttft, p99_itl = _extract_latency(results_dir)
+    p95_ttft, p99_ttft, p95_itl, p99_itl = _extract_latency(results_dir)
     kv_avg = _extract_kv_cache_avg(results_dir)
     queue_avg = _extract_queue_depth_avg(results_dir)
     startup_avg = _extract_pod_startup_avg(results_dir)
@@ -314,7 +333,9 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
         if p_avg is not None and s_avg is not None:
             cost = p_avg * gpus_per_primary + s_avg * gpus_per_secondary
         return {
+            "P95 TTFT (ms)": p95_ttft,
             "P99 TTFT (ms)": p99_ttft,
+            "P95 ITL (ms/token)": p95_itl,
             "P99 ITL (ms/token)": p99_itl,
             f"Avg {primary_label} replicas": p_avg,
             f"Max {primary_label} replicas": p_max,
@@ -329,7 +350,9 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
 
     avg_rep, max_rep = _extract_replica_stats(results_dir)
     return {
+        "P95 TTFT (ms)": p95_ttft,
         "P99 TTFT (ms)": p99_ttft,
+        "P95 ITL (ms/token)": p95_itl,
         "P99 ITL (ms/token)": p99_itl,
         "Avg replicas": avg_rep,
         "Max replicas": max_rep,

@@ -41,13 +41,14 @@ func replicaSeriesKey(variantName, namespace string) string {
 }
 
 var (
-	replicaScalingTotal *prometheus.CounterVec
-	desiredReplicas     *prometheus.GaugeVec
-	unattributedGPUs    *prometheus.GaugeVec
-	unmeasuredQueue     *prometheus.GaugeVec
-	currentReplicas     *prometheus.GaugeVec
-	desiredRatio        *prometheus.GaugeVec
-	errorsTotal         *prometheus.CounterVec
+	replicaScalingTotal  *prometheus.CounterVec
+	desiredReplicas      *prometheus.GaugeVec
+	unattributedGPUs     *prometheus.GaugeVec
+	unmeasuredQueue      *prometheus.GaugeVec
+	variantAtMaxReplicas *prometheus.GaugeVec
+	currentReplicas      *prometheus.GaugeVec
+	desiredRatio         *prometheus.GaugeVec
+	errorsTotal          *prometheus.CounterVec
 
 	optimizationDuration *prometheus.HistogramVec
 	modelsProcessedGauge *prometheus.GaugeVec
@@ -129,6 +130,10 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// unmeasuredQueueLabels: model-level, since the whole point is that no
 	// variant could be attributed to carry it.
 	unmeasuredQueueLabels := []string{constants.LabelNamespace, constants.LabelModelName}
+	// Per-variant, unlike the model-level gauge above: the ceiling is configured
+	// on the ScaledObject, so one variant of a model can be pinned while a
+	// sibling has headroom.
+	variantAtMaxLabels := []string{constants.LabelNamespace, constants.LabelVariantName}
 	// analyzerTargetLabels: per-analyzer per-replica target P, per variant.
 	analyzerTargetLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 
@@ -143,6 +148,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 		analyzerDemandLabels = append(analyzerDemandLabels, constants.LabelControllerInstance)
 		analyzerTargetLabels = append(analyzerTargetLabels, constants.LabelControllerInstance)
 		unmeasuredQueueLabels = append(unmeasuredQueueLabels, constants.LabelControllerInstance)
+		variantAtMaxLabels = append(variantAtMaxLabels, constants.LabelControllerInstance)
 	}
 
 	replicaScalingTotal = prometheus.NewCounterVec(
@@ -273,6 +279,21 @@ func InitMetrics(registry prometheus.Registerer) error {
 				"engine pod is scraped at all.",
 		},
 		unmeasuredQueueLabels,
+	)
+
+	variantAtMaxReplicas = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAVariantAtMaxReplicas,
+			Help: "1 while a variant's target sits on its own maxReplicas ceiling, 0 otherwise. " +
+				"Not the same as wva_decisions_limited_total, which means GPUs ran out: this " +
+				"means the configured ceiling is the binding constraint, so the remedy is to " +
+				"raise maxReplicas rather than add accelerators. On its own it is unremarkable " +
+				"— a correctly sized variant sits at its ceiling under load. Alert on it only " +
+				"together with utilization above the scale-up threshold, which is demand going " +
+				"unserved. Also read it when interpreting a benchmark: a run pinned at its " +
+				"ceiling measures the ceiling, not the autoscaler.",
+		},
+		variantAtMaxLabels,
 	)
 
 	unattributedGPUs = prometheus.NewGaugeVec(
@@ -481,6 +502,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(unattributedGPUs); err != nil {
 		return err
 	}
+	if err := registry.Register(variantAtMaxReplicas); err != nil {
+		return fmt.Errorf("failed to register variantAtMaxReplicas metric: %w", err)
+	}
 	if err := registry.Register(unmeasuredQueue); err != nil {
 		return fmt.Errorf("failed to register unmeasuredQueue metric: %w", err)
 	}
@@ -641,6 +665,28 @@ func SetUnmeasuredQueue(namespace, modelName string, queued int) {
 		labels[constants.LabelControllerInstance] = controllerInstance
 	}
 	unmeasuredQueue.With(labels).Set(float64(queued))
+}
+
+// SetVariantAtMaxReplicas records whether a variant's target is sitting on its
+// own maxReplicas ceiling. Call it every cycle for every variant, including with
+// false, so the gauge drops back to 0 when the ceiling stops binding rather than
+// pinning at 1 until Prometheus' staleness marker expires.
+func SetVariantAtMaxReplicas(namespace, variantName string, atMax bool) {
+	if variantAtMaxReplicas == nil {
+		return
+	}
+	labels := prometheus.Labels{
+		constants.LabelNamespace:   namespace,
+		constants.LabelVariantName: variantName,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	value := 0.0
+	if atMax {
+		value = 1.0
+	}
+	variantAtMaxReplicas.With(labels).Set(value)
 }
 
 func SetModelsProcessed(count int) {
