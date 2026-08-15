@@ -179,6 +179,37 @@ def _extract_replica_stats(results_dir):
     return mean(totals), max(totals)
 
 
+def _load_replica_timeseries(results_dir):
+    """The replica snapshots for a run, from whichever source actually has them.
+
+    The harness writes replica_status_timeseries.json, and on FMA runs it comes
+    back with snapshots but no controllers: collect_metrics.sh filters them by
+    comparing LLMDBENCH_HARNESS_STACK_NAME (a stack name, e.g.
+    "inference-scheduling-wva") against the llm-d.ai/model label (e.g.
+    "qwen-qwe-..."), which never match. That cannot be corrected from our side --
+    run_only.sh writes the variable into the harness pod from endpoint_stack_name,
+    which is also used as --stack.
+
+    So benchmark-run samples the same thing itself into
+    wva_replica_samples.json. The harness file is still preferred when it has
+    content, so nothing changes on runs where upstream works; ours is the
+    fallback, and its absence is reported as "not measured" rather than zero.
+    """
+    processed = os.path.join(results_dir, "metrics", "processed")
+    for name in ("replica_status_timeseries.json", "wva_replica_samples.json"):
+        path = os.path.join(processed, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if any(s.get("controllers") for s in data.get("snapshots", [])):
+            return data
+    return None
+
+
 def _extract_variant_replica_stats(results_dir, secondary_suffix):
     """Per-variant avg/max ready replicas from replica_status_timeseries.json.
 
@@ -187,13 +218,9 @@ def _extract_variant_replica_stats(results_dir, secondary_suffix):
     all other SERVING controllers are primary — see SERVING_CONTROLLER_MARKERS,
     which covers both the modelservice (decode) and FMA (requester) layouts.
     """
-    path = os.path.join(results_dir, "metrics", "processed",
-                        "replica_status_timeseries.json")
-    if not os.path.isfile(path):
+    data = _load_replica_timeseries(results_dir)
+    if data is None:
         return None, None, None, None
-
-    with open(path) as f:
-        data = json.load(f)
 
     primary_totals, secondary_totals = [], []
     saw_controller = False

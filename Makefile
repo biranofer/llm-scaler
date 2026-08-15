@@ -1040,13 +1040,39 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# image must match the ref whose scripts get copied into the pod.
 	@yq -i '(.scenario[] | select(has("common")) | .common.images.benchmark.tag) = "$(if $(BENCHMARK_IMAGE_TAG),$(BENCHMARK_IMAGE_TAG),$(BENCHMARK_REPO_REF))"' \
 		$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml 2>/dev/null || true
-	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
+	@# Sample replica counts ourselves for the duration of the run.
+	@#
+	@# The harness writes replica_status_timeseries.json, and on every FMA run
+	@# measured it came back with snapshots but NO controllers: collect_metrics.sh
+	@# filters them by comparing LLMDBENCH_HARNESS_STACK_NAME -- a stack name,
+	@# "inference-scheduling-wva" -- against the llm-d.ai/model label,
+	@# "qwen-qwe-...". They never match, so every controller is dropped and the
+	@# run reports no replicas and no cost. It cannot be corrected from here:
+	@# run_only.sh writes that variable into the harness pod from
+	@# endpoint_stack_name, which is also what it passes to --stack.
+	@#
+	@# Without this, a two-variant FMA run yields latency numbers and no way to
+	@# normalise them by the capacity that produced them, which is the only
+	@# comparison worth making.
+	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
+	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
+	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
 		-w $(BENCHMARK_WORKLOAD).yaml \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,) \
 		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT)
+	@# Stopped and filed even when the run above failed -- a run that errored in a
+	@# post-processing step still produced measurements worth reading, and every
+	@# FMA run so far has ended that way.
+	@bash hack/benchmark/sample_replicas.sh stop /tmp/wva_replica_samples.json || true
+	@LATEST=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
+	if [ -n "$$LATEST" ] && [ -s /tmp/wva_replica_samples.json ]; then \
+		mkdir -p "$$LATEST/metrics/processed"; \
+		cp /tmp/wva_replica_samples.json "$$LATEST/metrics/processed/wva_replica_samples.json"; \
+		echo "Replica samples filed in $$LATEST/metrics/processed/wva_replica_samples.json"; \
+	fi
 	@echo ""
 	@echo "========================================="
 	@echo "  Generating benchmark report..."

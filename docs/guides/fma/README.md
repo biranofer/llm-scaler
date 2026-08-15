@@ -406,6 +406,43 @@ as `other_model_variant`. A brief count right after a rebind is expected; a
 sustained one means a pairing pointing at a variant of a model the pod does not
 serve.
 
+### The control loop, not FMA, is the slow part
+
+FMA actuates fast. Measured on pokprod, creation to `Ready`:
+
+| | |
+| --- | --- |
+| decode pod (cold engine) | **90s** |
+| **FMA requester** | **3s** |
+
+The requester holds no GPU and runs no engine — it is a claim on a launcher that
+is already warm, which is the entire point. With 14 launchers resident and none
+bound, capacity was available in seconds.
+
+WVA does not ask for it in seconds:
+
+```
+GLOBAL_OPT_INTERVAL                      60s   one optimization pass a minute
+PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL  30s   metrics up to this stale
+KEDA pollingInterval                      5s
+FMA requester ready                       3s
+```
+
+So up to ~90 seconds passes between load arriving and WVA asking for more, and
+then 3 seconds to get it. **FMA's speed is about 3% of the end-to-end latency;
+the control loop is the rest.**
+
+For a modelservice variant this is proportionate — there is no point deciding
+faster than a 90-second pod start. For an FMA variant it is 30× slower than the
+thing it drives, and the warm pool buys nothing it could not have got by waiting.
+A benchmark measured this directly: an FMA variant stayed at 1–2 replicas through
+a burst while 14 warm launchers sat unbound, and the shortfall showed up as
+shed load rather than as slow pods.
+
+If you are autoscaling an FMA stack, `GLOBAL_OPT_INTERVAL` is the first thing to
+look at. Nothing here is evidence for a particular value — only that the default
+was chosen for cold pods and is the binding constraint once actuation is warm.
+
 ### Sleep mode and the warm pool
 
 An instance survives unbinding. It goes to sleep — weights offloaded, `engine_sleep_state{sleep_state="weights_offloaded"} 1` — and stays resident, which is why the next bind takes seconds instead of minutes.
