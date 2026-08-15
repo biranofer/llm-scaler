@@ -251,6 +251,46 @@ decode startupProbe       ->  /v1/models
 Same cluster, same EPP, same InferencePool mechanics. The difference is only
 which endpoint the probe asks.
 
+**A consumer cannot work around it.** `LauncherConfig.spec.podTemplate` is a full
+pod template and the CRD schema carries `readinessProbe`, so the obvious
+workaround is to set the right one there. It does not work: the controller
+overwrites it.
+
+Tested on this cluster with a separate `LauncherConfig` — a copy of the live one
+with `readinessProbe: /v1/models` on port 8000, and a population policy pinning a
+single launcher to one node:
+
+```
+specified in podTemplate:  /v1/models          on 8000
+probe on the created pod:  /v2/vllm/instances  on 8001
+```
+
+So the default is not a fallback for an unset field, it is applied
+unconditionally, and every consumer inherits it. That is why this needs fixing
+upstream rather than in each caller's config.
+
+**Nor can EPP be configured around it today.** The EPP plugin config is ours to
+write (`wva-plugins.yaml`), so the second obvious workaround is a plugin that
+excludes an endpoint which cannot serve. The configured profile has none:
+
+```yaml
+plugins:
+  - type: queue-scorer
+  - type: kv-cache-utilization-scorer
+  - type: prefix-cache-scorer
+```
+
+Three **scorers** and no **filter**. Scorers rank candidates; they do not remove
+them, so every pool member stays eligible and a sleeping launcher is simply
+scored on absent data. llm-d-benchmark's own FMA scenarios —
+`ocp-wva-fma-hotstart` and `ocp-wva-fma-warmstart` — carry the same three plus
+`no-hit-lru-scorer`, still all scorers. Nothing shipped anywhere treats a
+launcher differently from a model server.
+
+If GAIE offers a filter that drops endpoints failing metrics collection, adding
+it here would mitigate this without an FMA change; that is worth checking before
+assuming the probe fix is the only route.
+
 **Request** — the first is a one-line change and closes it outright:
 
 1. Point the launcher's `readinessProbe` at the bound instance: `/v1/models` on
