@@ -51,7 +51,21 @@ wva_undeploy_watch_namespace_rbac() {
     local watched role binding
     watched="$(kubectl get deploy -n "$WVA_NS" -l app.kubernetes.io/name=workload-variant-autoscaler \
         -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="WVA_WATCH_NAMESPACE")].value}' 2>/dev/null || true)"
-    [ -n "$watched" ] || return 0
+    # The base leaves this as the literal $(POD_NAMESPACE) — Kubernetes expands it
+    # inside the container, so the value ON THE OBJECT is the placeholder, and it
+    # means "the controller's own namespace". Only an install with WVA_WATCH_NS
+    # patches a real name in.
+    #
+    # Without this, the placeholder is non-empty and unequal to WVA_NS, so both
+    # guards below pass: an ordinary self-managing install ran two deletes against
+    # a namespace literally called $(POD_NAMESPACE) and then reported "Removed the
+    # controller's permissions in $(POD_NAMESPACE)". Harmless — nothing of that
+    # name exists — but it read like a bug in the uninstall, which is a poor thing
+    # to be wondering about while uninstalling. Same normalization as
+    # pl_policy_ns_for in physical_limiter.sh.
+    case "$watched" in
+        ''|'$(POD_NAMESPACE)') return 0 ;;
+    esac
     [ "$watched" != "$WVA_NS" ] || return 0
 
     read -r role binding <<< "$(wva_watch_rbac_names)"
