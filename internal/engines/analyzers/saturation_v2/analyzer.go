@@ -119,6 +119,12 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 	// Add scheduler queue demand (requests queued upstream in llm-d flow control).
 	queueDemand := estimateSchedulerQueueDemand(input.SchedulerQueue, input.ReplicaMetrics, activeRoles)
 	totalDemand += queueDemand.total
+	if input.SchedulerQueue != nil {
+		logger.Info("scheduler-queue-demand",
+			"modelID", input.ModelID, "namespace", input.Namespace,
+			"eppQueueSize", input.SchedulerQueue.QueueSize, "eppQueueBytes", input.SchedulerQueue.QueueBytes,
+			"estimatedTokens", queueDemand.total, "byRole", queueDemand.byRole)
+	}
 
 	// Per-role demand attribution (P/D disaggregation); nil when non-disaggregated.
 	// The builder pairs this with the per-role supply it recomputes.
@@ -160,7 +166,8 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 
 	// Compute demand: tokens already resident in KV cache plus the role-aware
 	// footprint of requests still waiting in the local engine queue.
-	replicaDemand := rm.TokensInUse + waitingQueueDemand(rm, role)
+	localQueueDemand := waitingQueueDemand(rm, role)
+	replicaDemand := rm.TokensInUse + localQueueDemand
 
 	// k1: memory-bound capacity
 	k1 := int64(float64(rm.TotalKvCapacityTokens) * config.KvCacheThreshold)
@@ -191,7 +198,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 		"k1MemoryBound", k1, "k2ComputeBound", k2, "k2Source", k2Labels[k2Priority],
 		"effectiveCapacity", effectiveCapacity, "boundBy", bound,
-		"tokensInUse", rm.TokensInUse, "replicaDemand", replicaDemand,
+		"tokensInUse", rm.TokensInUse, "localQueueDemand", localQueueDemand, "replicaDemand", replicaDemand,
 		"queueLength", rm.QueueLength, "queueThreshold", config.QueueLengthThreshold)
 
 	// Update capacity store with live data, preserving EngineParams from any
@@ -271,7 +278,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	//
 	// This is a coarse approximation — KvCacheUsage reflects memory pressure, not
 	// exact token demand — but it's sufficient when token-level metrics are absent.
-	replicaDemand := int64(rm.KvCacheUsage * float64(rec.EffectiveCapacity))
+	kvUsageDemand := int64(rm.KvCacheUsage * float64(rec.EffectiveCapacity))
 
 	// Add the role-aware footprint of requests waiting in the local engine queue,
 	// matching the main path.
@@ -285,13 +292,15 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	// per-request charge lowers the queue depth at which that happens. Tracked
 	// separately; fixing it means pairing the fallback's demand and capacity units,
 	// not adjusting this line.
-	replicaDemand += waitingQueueDemand(rm, role)
+	localQueueDemand := waitingQueueDemand(rm, role)
+	replicaDemand := kvUsageDemand + localQueueDemand
 
 	logger.Info("replica-capacity-no-cache-info",
 		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 		"reason", "no vllm:cache_config_info; using capacity-store record",
 		"storeEffectiveCapacity", rec.EffectiveCapacity, "storeLearnedFrom", rec.LearnedFrom,
-		"kvCacheUsagePct", rm.KvCacheUsage, "effectiveCapacity", effectiveCapacity, "replicaDemand", replicaDemand)
+		"kvCacheUsagePct", rm.KvCacheUsage, "effectiveCapacity", effectiveCapacity,
+		"kvUsageDemand", kvUsageDemand, "localQueueDemand", localQueueDemand, "replicaDemand", replicaDemand)
 
 	return &ReplicaCapacity{
 		PodName:               rm.PodName,
