@@ -77,6 +77,33 @@ launchers with no bound instance, which carry no such annotation.
 > under the same `(instance, pod)` key, and WVA's additive queries would
 > double-count throughput while capacity still looked correct.
 
+#### Why EPP already sees what Prometheus cannot
+
+A fair question at this point: EPP routes to these launchers perfectly well, so
+why does WVA need its own PodMonitor? Because the two find a pod by different
+means, and only one of them needs a declared port.
+
+| | how it finds the launcher | needs a declared container port? |
+| --- | --- | --- |
+| **EPP** (InferencePool) | label selector, then the **pool's** `targetPort` | no — the port is a property of the pool |
+| **Prometheus** (PodMonitor by port *name*) | label selector, then a port **named** on the pod | yes — and a launcher declares none |
+
+FMA stamps `llm-d.ai/model`, `llm-d.ai/inferenceServing=true`, the
+`dual-pods.llm-d.ai/dual` pair label and the `server-port` annotation onto a
+launcher **at bind time**, and removes them at unbind. Those labels are what put
+it in an InferencePool, so EPP picks it up with no port information from the pod
+at all. A port-name PodMonitor gets nothing from the same pod, which is why
+launcher metrics are missing by default and why this file exists.
+
+Measured on a shared cluster: **163 InferencePools, every one of them
+`targetPort: 8000`** — and 48 of them select on `llm-d.ai/model`.
+
+That has a consequence worth knowing before designing around it. The pool's
+target port is one number for the whole pool, not a per-pod value, so **EPP can
+reach exactly one server per launcher pod**. A launcher hosting a second
+instance on another port is unreachable through the InferencePool contract no
+matter what WVA does — see [One launcher, several models](#one-launcher-several-models).
+
 ### 2. Register the workload
 
 ```bash
@@ -277,6 +304,18 @@ instance is ever scraped — the other instances' rows do not exist to attribute
 however good the attribution is. Closing that needs FMA to expose one aggregated
 `/metrics` per launcher, labelled by instance —
 [upstream request 5](../../proposals/fma-upstream-requests.md).
+
+**Routing has the same limit, and it is not WVA's to fix.** An `InferencePool`
+carries one `targetPort` for the whole pool, applied to every endpoint — not a
+per-pod value. Measured on a shared cluster: **163 pools, every one of them
+`targetPort: 8000`**. So EPP can reach exactly one server per launcher pod, and a
+second instance on another port receives no traffic through the pool at all.
+
+That reorders the work. Even with aggregated launcher metrics (upstream request
+5) and the reverse index above, a second instance would be measurable but still
+unroutable — so it would be a replica nothing dispatches to, which is worse than
+not having it. Multi-model-per-launcher needs a change to the InferencePool
+contract before it needs anything from WVA.
 
 So today WVA measures the instance on the annotated port and **under-measures the
 rest**. Rows whose model does not match the pairing are rejected rather than
