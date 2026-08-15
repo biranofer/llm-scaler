@@ -56,6 +56,13 @@ kubectl get pods -A -l app.kubernetes.io/name=workload-variant-autoscaler
 
 <!-- guide:verify.budget start -->
 ```bash
+# The ConfigMap is the fact; the log line is not. "GPU budgets available" is
+# emitted only by the scale-from-zero engine while it judges a wake, so a
+# correctly bounded cluster with nothing parked at zero prints nothing and
+# looks like a failure. Read the policy instead, and treat the log as a
+# bonus when scale-from-zero is in play.
+kubectl get configmap wva-scaling-policy-config -n wva-policy \
+  -o jsonpath='{.data.default}' | grep -A3 limiters
 kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep "GPU budgets available"
 ```
 <!-- guide:verify.budget end -->

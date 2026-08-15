@@ -130,6 +130,22 @@ wva_any_pod_ready() {
     printf '%s\n' "$out" | grep -qx 'True'
 }
 
+# wva_pods_exist reports whether any pod matches selector $2 in namespace $1
+# (-A for cluster-wide), regardless of readiness.
+#
+# Pairs with wva_any_pod_ready to separate "it is here and unhealthy" from "it is
+# not here". Only the first justifies telling someone their cluster is broken;
+# the second usually means we looked in the wrong place.
+wva_pods_exist() {
+    local scope="$1" selector="$2" out
+    if [ "$scope" = "-A" ]; then
+        out=$(kubectl get pods -A -l "$selector" -o name 2>/dev/null) || return 2
+    else
+        out=$(kubectl get pods -n "$scope" -l "$selector" -o name 2>/dev/null) || return 2
+    fi
+    [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ]
+}
+
 # wva_scaler_has_endpoints reports whether the external-scaler Service in $1 has a
 # ready backend -- a controller actually listening, not merely an address that
 # resolves.

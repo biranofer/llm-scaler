@@ -85,23 +85,38 @@ verify_deployment() {
 
     if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
         log_info "Checking Grafana..."
+        # Namespace-scoped on purpose, unlike KEDA: Grafana is not a cluster
+        # singleton, so finding someone else's on a shared cluster would prove
+        # nothing about this install. That does mean it reports only on the
+        # namespace it was told about, so it says which one.
         if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=grafana; then
             log_success "Grafana is running"
-        else
+        elif wva_pods_exist "$MONITORING_NAMESPACE" app.kubernetes.io/name=grafana; then
             log_warning "Grafana is not ready yet"
+        else
+            log_info "No Grafana in $MONITORING_NAMESPACE. On OpenShift the dashboards are elsewhere (often the grafana namespace), and this install did not deploy one."
         fi
     fi
 
     # --- Scaler backend
     if [ "$SCALER_BACKEND" = "keda" ]; then
         log_info "Checking KEDA..."
-        if wva_any_pod_ready "$KEDA_NAMESPACE" "$KEDA_OPERATOR_LABEL_SELECTOR"; then
+        # Cluster-wide, not $KEDA_NAMESPACE. KEDA is a cluster singleton — one
+        # operator owns the external-metrics APIService — and where it lives is
+        # not ours to assume: on OpenShift it is platform-managed and sits in
+        # openshift-keda, while KEDA_NAMESPACE says keda-system. Looking only
+        # there reported "KEDA is not ready" on a cluster whose KEDA had been up
+        # for ten days with six ScaledObjects READY.
+        if wva_any_pod_ready -A "$KEDA_OPERATOR_LABEL_SELECTOR"; then
             log_success "KEDA is running"
-        else
-            # KEDA not being ready is the difference between "installed" and
-            # "scaling", so this says what follows from it rather than only that
-            # it is not up.
+        elif wva_pods_exist -A "$KEDA_OPERATOR_LABEL_SELECTOR"; then
+            # Found and unhealthy. This one has earned the strong wording.
             log_warning "KEDA is not ready yet — until it is, ScaledObjects stay unready and nothing scales."
+        else
+            # Not found is not the same as broken, and saying "nothing scales"
+            # here would be a false alarm on any cluster whose KEDA does not
+            # carry this label.
+            log_info "No KEDA operator matched $KEDA_OPERATOR_LABEL_SELECTOR anywhere on the cluster. A platform-managed KEDA may not carry that label — confirm with: kubectl get scaledobject -A"
         fi
     elif [ "$SCALER_BACKEND" = "none" ]; then
         log_info "Scaler backend skipped (SCALER_BACKEND=none) — assuming external metrics API is pre-installed"

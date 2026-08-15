@@ -90,7 +90,12 @@ owner can then run `make deploy-wva` without you.
 
 <!-- guide:cleanup.undo start -->
 ```bash
-make undeploy-wva
+# Undeploy targets ONE install, and this guide may have created two. Name the
+# namespace each controller runs in — a bare `make undeploy-wva` defaults to
+# workload-variant-autoscaler-system, which is neither of them, and leaves
+# the RBAC it granted in ${NAMESPACE} behind.
+make undeploy-wva WVA_NS=wva-${NAMESPACE}
+make undeploy-wva WVA_NS=${NAMESPACE}
 ```
 <!-- guide:cleanup.undo end -->
 

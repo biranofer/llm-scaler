@@ -20,7 +20,16 @@ verify:
     note: A controller that is not Ready is one this did not reach.
     run: kubectl get pods -A -l app.kubernetes.io/name=workload-variant-autoscaler
   budget:
-    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep "GPU budgets available"
+    note: |
+      The ConfigMap is the fact; the log line is not. "GPU budgets available" is
+      emitted only by the scale-from-zero engine while it judges a wake, so a
+      correctly bounded cluster with nothing parked at zero prints nothing and
+      looks like a failure. Read the policy instead, and treat the log as a
+      bonus when scale-from-zero is in play.
+    run: |
+      kubectl get configmap wva-scaling-policy-config -n wva-policy \
+        -o jsonpath='{.data.default}' | grep -A3 limiters
+      kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep "GPU budgets available"
 
 cleanup:
   disable:
