@@ -57,11 +57,67 @@ print(json.dumps(snap))
 '
 }
 
+# Per-pod timings, so a run can say whether FMA WOKE a sleeping instance or
+# rebuilt one. That distinction is invisible in replica counts -- both look like
+# "a replica arrived" -- and it is the difference between 3s and ~50-80s. We
+# only found it by reading controller logs by hand; measuring it makes it a
+# number in the results table instead.
+#
+# Emitted as JSON lines and deduped at stop, because pods vanish on scale-down:
+# a single collection at the end would miss exactly the replicas we care about.
+_pods_snapshot() {
+    local ns="$1"
+    $KUBECTL --namespace "$ns" get pods -o json 2>/dev/null \
+      | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+
+# Launcher creation times, so we can tell a pre-existing launcher (which COULD
+# have been woken) from one built for this bind (which certainly was not).
+launchers = {}
+for p in data.get("items", []):
+    lb = (p["metadata"].get("labels") or {})
+    if lb.get("app.kubernetes.io/component") == "launcher":
+        launchers[p["metadata"]["name"]] = p["metadata"].get("creationTimestamp")
+
+for p in data.get("items", []):
+    m = p["metadata"]
+    lb = m.get("labels") or {}
+    # Launchers also carry an inference-serving label, but they are not scale
+    # -target replicas -- they are the pool a replica binds INTO. Counting them
+    # here would mix the thing being measured with the thing it waits for.
+    if lb.get("app.kubernetes.io/component") == "launcher":
+        continue
+    serving = lb.get("llm-d.ai/inference-serving") == "true" or lb.get("llm-d.ai/inferenceServing") == "true"
+    requester = lb.get("llm-d.ai/role") == "requester" or lb.get("app") == "dp-app"
+    if not (serving or requester):
+        continue
+    ready = None
+    for c in p.get("status", {}).get("conditions", []):
+        if c.get("type") == "Ready" and c.get("status") == "True":
+            ready = c.get("lastTransitionTime")
+    dual = lb.get("dual-pods.llm-d.ai/dual")
+    print(json.dumps({
+        "name": m.get("name"),
+        "node": p.get("spec", {}).get("nodeName"),
+        "created": m.get("creationTimestamp"),
+        "ready_at": ready,
+        "bound_launcher": dual,
+        "launcher_created": launchers.get(dual) if dual else None,
+        "is_requester": bool(requester),
+    }))
+'
+}
+
 case "$CMD" in
   start)
     NS="${2:?namespace required}"; OUT="${3:?outfile required}"
     mkdir -p "$(dirname "$OUT")"
     printf '{"snapshots":[' > "$OUT"
+    : > "$OUT.pods.jsonl"
     (
       first=1
       while :; do
@@ -71,6 +127,7 @@ case "$CMD" in
           printf '%s' "$snap" >> "$OUT"
           first=0
         fi
+        _pods_snapshot "$NS" >> "$OUT.pods.jsonl" 2>/dev/null || true
         sleep "$INTERVAL"
       done
     ) &
@@ -87,6 +144,39 @@ case "$CMD" in
     # valid JSON. An empty snapshots list reads as "not measured" downstream,
     # which is the honest answer -- unlike a zero replica count.
     printf ']}' >> "$OUT"
+    # Dedupe the pod observations into one record per pod. Keep the observation
+    # that has a Ready time: a pod is seen several times, and only later samples
+    # carry the transition we want.
+    TIMINGS="$(dirname "$OUT")/wva_pod_timings.json"
+    python3 - "$OUT.pods.jsonl" "$TIMINGS" <<'PY' 2>/dev/null || true
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+best = {}
+try:
+    for line in open(src, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        n = r.get("name")
+        if not n:
+            continue
+        prev = best.get(n)
+        # Prefer a record that knows when the pod became Ready, and one that
+        # knows which launcher it bound to -- both appear only after the fact.
+        if (prev is None
+                or (r.get("ready_at") and not prev.get("ready_at"))
+                or (r.get("bound_launcher") and not prev.get("bound_launcher"))):
+            best[n] = r
+except FileNotFoundError:
+    pass
+json.dump({"pods": list(best.values())}, open(dst, "w", encoding="utf-8"))
+print("  pod timings: %d pod(s) -> %s" % (len(best), dst))
+PY
+    rm -f "$OUT.pods.jsonl"
     n=$(python3 -c "
 import json,sys
 try:

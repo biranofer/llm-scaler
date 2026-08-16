@@ -731,6 +731,44 @@ benchmark-patch: ## Reapply our fixes to the llm-d-benchmark clone (idempotent; 
 		echo "benchmark-patch: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
 	fi
 
+BENCHMARK_SPECS_DIR ?= $(CURDIR)/hack/benchmark/scenarios/guides
+
+# How many replicas' worth of FMA warm capacity to keep. 0 disables hot start
+# entirely (the warmup step becomes a no-op), so it costs nothing on non-FMA
+# runs. Deliberately expressed in REPLICAS, not the per-node launcherCount the
+# populator actually enforces: this is the one number that may later be produced
+# by something else -- WVA already computes desired and peak replicas -- and a
+# future producer should not need node topology to say "keep 6 warm".
+# hack/benchmark/warm_pool.sh owns the translation.
+WARM_REPLICAS ?= 0
+
+.PHONY: benchmark-scenarios
+benchmark-scenarios: ## Copy our scenario specs into the llm-d-benchmark clone (idempotent; run automatically by benchmark-run)
+	@# Same reasoning as benchmark-patch, and the same trap the workload
+	@# profiles already avoid: the clone is gitignored and benchmark-install
+	@# re-checks it out to a pinned tag, so a spec edited in place is invisible
+	@# to review and gone on the next install. An unversioned maxReplicas sat in
+	@# that clone for weeks doing nothing, and a wva.enabled=false left over from
+	@# one comparison would have silently disabled autoscaling for every later
+	@# run. Ours are versioned in hack/benchmark/scenarios/guides/ and copied in
+	@# before every run. Edit them there, never in the clone.
+	@if [ ! -d "$(BENCHMARK_REPO_DIR)/config/scenarios/guides" ]; then \
+		echo "benchmark-scenarios: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
+	else \
+		n=0; \
+		for f in $(BENCHMARK_SPECS_DIR)/*.yaml; do \
+			[ -f "$$f" ] || continue; \
+			dest="$(BENCHMARK_REPO_DIR)/config/scenarios/guides/$$(basename $$f)"; \
+			sed 's/__WARM_REPLICAS__/$(WARM_REPLICAS)/g' "$$f" > "$$dest"; \
+			if grep -q '__WARM_REPLICAS__' "$$dest"; then \
+				echo "ERROR: unsubstituted token left in $$dest"; exit 1; \
+			fi; \
+			echo "  installed scenario $$(basename $$f) (WARM_REPLICAS=$(WARM_REPLICAS))"; \
+			n=$$((n+1)); \
+		done; \
+		[ "$$n" -gt 0 ] || echo "  no specs in $(BENCHMARK_SPECS_DIR)"; \
+	fi
+
 .PHONY: benchmark-standup
 benchmark-standup: ## Stand up the benchmark environment, then install WVA from this repo (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, IMG=<your build>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
 	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
@@ -996,6 +1034,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# FAILED, EPP metrics silently "?") reads as a cluster problem, not a
 	@# tooling one.
 	@$(MAKE) --no-print-directory benchmark-patch
+	@$(MAKE) --no-print-directory benchmark-scenarios
 	@mkdir -p "$(BENCHMARK_SCENARIOS_DIR)"
 	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ] && [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD)" ]; then \
 		echo "Injecting external model endpoint for direct-KEDA mode..."; \

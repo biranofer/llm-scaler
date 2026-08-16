@@ -28,7 +28,8 @@ import json
 import os
 import re
 import sys
-from statistics import mean
+from datetime import datetime
+from statistics import mean, median
 
 METRICS = [
     "P95 TTFT (ms)",
@@ -41,6 +42,9 @@ METRICS = [
     "Avg queue depth (EPP)",
     "Error count",
     "Avg pod startup (s)",
+    "Warm binds (woken)",
+    "Cold builds (rebuilt)",
+    "Median replica start (s)",
 ]
 
 # Metrics list used for two-variant runs; replica rows are split per variant
@@ -60,6 +64,9 @@ def _variant_metrics(primary_label, secondary_label):
         "Error count",
         "Avg pod startup (s)",
         "Cost (weighted avg replicas × GPU/hr)",
+        "Warm binds (woken)",
+        "Cold builds (rebuilt)",
+        "Median replica start (s)",
     ]
 
 
@@ -177,6 +184,66 @@ def _extract_replica_stats(results_dir):
     if not totals:
         return None, None
     return mean(totals), max(totals)
+
+
+# A replica that WOKE a sleeping vLLM is ready in about 3s; one that had to
+# build an instance takes ~50-80s (model load). Nothing in between was ever
+# observed, so the threshold is not delicate -- it only has to separate two
+# clusters an order of magnitude apart.
+WARM_BIND_SECONDS = 15
+
+
+def _load_pod_timings(results_dir):
+    """Per-replica start timings recorded by sample_replicas.sh, or None."""
+    path = os.path.join(
+        results_dir, "metrics", "processed", "wva_pod_timings.json"
+    )
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            pods = json.load(f).get("pods") or []
+    except (ValueError, OSError):
+        return None
+    return pods or None
+
+
+def _warm_cold_stats(results_dir):
+    """How many replicas woke a sleeping instance, and how many rebuilt one.
+
+    This is the measurement that distinguishes FMA working from FMA present.
+    Replica counts cannot show it -- both paths end in "a replica arrived" --
+    yet one costs 3s and the other the better part of two minutes. Every
+    comparison we ran before measuring it was silently on the slow path,
+    because FMA only reuses a sleeping instance when the requester reserved the
+    very same GPU, and sleepers created by the launcher-populator never match.
+
+    Returns (warm, cold, median_start_seconds); (None, None, None) if the run
+    predates the sampler or recorded nothing -- reported as "not measured"
+    rather than zero, which would read as "no warm binds".
+    """
+    pods = _load_pod_timings(results_dir)
+    if not pods:
+        return None, None, None
+
+    durations = []
+    for p in pods:
+        created, ready = p.get("created"), p.get("ready_at")
+        if not created or not ready:
+            continue
+        try:
+            c = datetime.strptime(created, "%Y-%m-%dT%H:%M:%SZ")
+            r = datetime.strptime(ready, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            continue
+        d = (r - c).total_seconds()
+        if d >= 0:
+            durations.append(d)
+
+    if not durations:
+        return None, None, None
+    warm = sum(1 for d in durations if d <= WARM_BIND_SECONDS)
+    return warm, len(durations) - warm, median(durations)
 
 
 def _load_replica_timeseries(results_dir):
@@ -347,6 +414,10 @@ def _fmt(metric, value):
         return str(round(value))
     if metric == "Cost (weighted avg replicas × GPU/hr)":
         return f"{value:.2f}"
+    if metric in ("Warm binds (woken)", "Cold builds (rebuilt)"):
+        return f"{int(value)}"
+    if metric == "Median replica start (s)":
+        return f"{value:.0f}"
     return str(value)
 
 
@@ -363,6 +434,7 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
     queue_avg = _extract_queue_depth_avg(results_dir)
     startup_avg = _extract_pod_startup_avg(results_dir)
     error_count = _extract_error_count(results_dir)
+    warm_n, cold_n, start_median = _warm_cold_stats(results_dir)
 
     if secondary_suffix:
         p_avg, p_max, s_avg, s_max = _extract_variant_replica_stats(
@@ -384,6 +456,9 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
             "Error count": error_count,
             "Avg pod startup (s)": startup_avg,
             "Cost (weighted avg replicas × GPU/hr)": cost,
+            "Warm binds (woken)": warm_n,
+            "Cold builds (rebuilt)": cold_n,
+            "Median replica start (s)": start_median,
         }
 
     avg_rep, max_rep = _extract_replica_stats(results_dir)
@@ -398,6 +473,9 @@ def process_one(results_dir, secondary_suffix=None, gpus_per_primary=1,
         "Avg queue depth (EPP)": queue_avg,
         "Error count": error_count,
         "Avg pod startup (s)": startup_avg,
+        "Warm binds (woken)": warm_n,
+        "Cold builds (rebuilt)": cold_n,
+        "Median replica start (s)": start_median,
     }
 
 
