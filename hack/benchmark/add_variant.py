@@ -452,10 +452,11 @@ def make_secondary_scaledobject(primary_so, sec_dep_name, cfg, namespace):
     for t in wva_triggers(sec):
         meta = t.setdefault("metadata", {})
         meta["variantCost"] = cfg["variantCost"]
-        # variantName names the scale target directly. Inherited, it would point
-        # the secondary's registry entry at the PRIMARY's Deployment: two
-        # entries scaling one workload, and the secondary never scaled at all.
-        meta.pop("variantName", None)
+        # Nothing else needs stripping. The scale target is read from each
+        # ScaledObject's own scaleTargetRef and cannot be named in metadata, so a
+        # clone cannot point the secondary's registry entry at the primary's
+        # Deployment. That used to require popping an inherited "variantName";
+        # the key was removed from WVA precisely because it could disagree.
 
     return sec
 
