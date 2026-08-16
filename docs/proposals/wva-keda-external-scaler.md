@@ -65,13 +65,14 @@ Trigger example:
 triggers:
   - type: external            # or external-push
     metadata:
-      scalerAddress: wva-scaler.wva-system.svc:9090
-      inferencePool: my-pool
-      modelName: llama-3-70b
-      engine: vllm
-      scalingPolicy: interactive
-      wvaOwnership: "true"     # managed vs unmanaged (see §6); full metadata schema in §7.2
+      scalerAddress: wva-scaler.wva-system.svc:9090   # KEDA's own key, never read by WVA
+      modelID: llama-3-70b     # REQUIRED — grouping key for every multi-variant decision
+      variantCost: "2.5"       # optional — per-replica cost for cost-aware optimization
+      scalingPolicy: interactive   # optional — named, reusable tier
+      # wvaOwnership: "true"   # PLANNED, not yet shipped (see §6)
 ```
+
+`inferencePool` and `engine` are **not** metadata — both are inferred (see §7.2).
 
 ## 5. Actuation: three mechanisms, three timescales
 
@@ -123,14 +124,20 @@ triggers:
   - type: external                       # or external-push
     metadata:
       scalerAddress: wva-scaler.wva-system.svc:9090
-      inferencePool: my-pool             # grouping + pool-level EPP signals (name; ns defaults to SO ns)
-      modelName: llama-3-70b             # serving-metric key (require >=1 of pool/model; model preferred)
-      engine: vllm                       # REQUIRED — drives query templates (vllm|sglang|…)
-      cost: "2.5"                         # per-replica cost — naturally per-accelerator (this SO = one accelerator)
-      scalingPolicy: interactive         # named, reusable policy (no model_name inside)
-      wvaOwnership: "true"               # managed vs unmanaged (see §6)
+      modelID: llama-3-70b               # REQUIRED — grouping key; a variant that cannot be
+                                         # attributed to a model cannot be optimized against one
+      variantCost: "2.5"                 # per-replica cost — naturally per-accelerator (this SO = one accelerator)
+      scalingPolicy: interactive         # named, reusable tier (no model identity inside)
+      # wvaOwnership: "true"             # PLANNED — managed vs unmanaged (see §6)
+      # inferencePool, engine: NOT set here — inferred (see below)
       # role: NOT set here — inferred from the workload (see §7.4); optional override only
 ```
+
+**Shipped surface.** `modelID` is the only required key; `variantCost` and
+`scalingPolicy` are optional. `wvaOwnership` is designed but not yet
+implemented. The `managed` annotation has no successor and needs none: KEDA only
+calls a scaler its trigger names, so **being called is what being managed
+means**.
 `scaleTargetRef` is **not** in metadata — it is the ScaledObject's own spec field, which WVA reads.
 
 ### 7.3 Placement principle
@@ -139,9 +146,10 @@ triggers:
 
 | Attribute | Where | Scope |
 |---|---|---|
-| `modelID`, `scalingPolicy` ref, `wvaOwnership` | **metadata** | per target |
+| `modelID` (required), `scalingPolicy` ref | **metadata** | per target |
+| `wvaOwnership` | **metadata** — *planned, not yet shipped* | per target |
 | `inferencePool`, `engine` | **inferred** — see the update below | per target |
-| `cost` | **metadata** | per target — per-accelerator by construction |
+| `variantCost` | **metadata** | per target — per-accelerator by construction |
 | `role`, accelerator type, GPU/replica | **inferred** from `scaleTargetRef` workload | per target |
 | `priority` (tier default), scale thresholds, SLO targets, `scaleToZero` | **named policy CM** | per tier (reusable) |
 | `limiters`/`quota`, `enableRescale`, GPU budget, fallbacks | **default/namespace CM** | cluster / tenant |
@@ -326,12 +334,12 @@ spec:
     - type: external
       metadata:
         scalerAddress: wva-scaler.wva-system.svc:9090
-        inferencePool: chat-pool
-        modelName: llama-3-70b
-        engine: vllm                             # selects vLLM query bodies
-        cost: "2.5"                              # per-replica (H100) → per-accelerator by construction
+        modelID: llama-3-70b
+        variantCost: "2.5"                       # per-replica (H100) → per-accelerator by construction
         scalingPolicy: interactive
-        wvaOwnership: "true"
+        # wvaOwnership: "true"                   # PLANNED, not yet shipped
+        # pool + engine NOT set → inferred (pod-template labels vs the InferencePool
+        #   selector; engine from the container image and args)
         # role NOT set → inferred = prefill (from `--disaggregation-mode prefill`)
 ---
 apiVersion: keda.sh/v1alpha1
@@ -345,12 +353,10 @@ spec:
     - type: external
       metadata:
         scalerAddress: wva-scaler.wva-system.svc:9090
-        inferencePool: chat-pool
-        modelName: llama-3-70b
-        engine: vllm
-        cost: "2.5"
+        modelID: llama-3-70b
+        variantCost: "2.5"
         scalingPolicy: interactive
-        wvaOwnership: "true"
+        # wvaOwnership: "true"                   # PLANNED, not yet shipped
         # role inferred = decode
 ```
 
