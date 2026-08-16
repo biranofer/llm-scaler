@@ -50,7 +50,6 @@ takes the variant's identity from that trigger's metadata:
 |---|---|
 | `modelID` | required; groups the two variants under one model |
 | `variantCost` | price; omitted means `10.0`, which is the primary's price here |
-| `variantName` | optional scale-target override — **not** set on either variant here |
 | `scalingPolicy` | optional named policy tier |
 
 Two consequences worth knowing before debugging a run:
@@ -231,9 +230,10 @@ with `variantCost: "5.0"` in the trigger metadata.
 
 The clone inherits the scaler address, polling interval, cooldown and
 `advanced` behaviour the standup chose, and changes only four things: the
-name, what it scales, its replica bounds, and its price. An inherited
-`variantName` is dropped — it would point the secondary's registry entry at
-the primary's `Deployment`.
+name, what it scales, its replica bounds, and its price. The scale target is
+never copied: each variant's target is read from its own ScaledObject's
+`scaleTargetRef`, so a clone cannot point the new variant at the original's
+`Deployment`.
 
 Verify both variants registered:
 

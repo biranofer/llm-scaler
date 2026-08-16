@@ -9,6 +9,7 @@ import (
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	pb "github.com/kedacore/keda/v2/pkg/scalers/externalscaler"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -34,6 +35,15 @@ var _ = Describe("Call-driven discovery", func() {
 	newHandler := func(objs ...client.Object) *scaler.Handler {
 		s := runtime.NewScheme()
 		Expect(kedav1alpha1.AddToScheme(s)).To(Succeed())
+		// The scale target is resolved by READING the ScaledObject; it is not in
+		// trigger metadata, precisely so a hand-written copy cannot disagree with
+		// the spec that decides what KEDA scales. So the object has to exist.
+		objs = append(objs, &kedav1alpha1.ScaledObject{
+			ObjectMeta: metav1.ObjectMeta{Name: "chat-decode", Namespace: testNamespace},
+			Spec: kedav1alpha1.ScaledObjectSpec{
+				ScaleTargetRef: &kedav1alpha1.ScaleTarget{Name: "chat-decode-deploy"},
+			},
+		})
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 		return scaler.NewHandler(c, store, reg)
 	}
@@ -41,8 +51,6 @@ var _ = Describe("Call-driven discovery", func() {
 	triggerMetadata := map[string]string{
 		registry.ModelIDKey:     "default/default",
 		registry.VariantCostKey: "12.5",
-		// Names the target directly, so these specs need no ScaledObject seeded.
-		registry.VariantNameKey: "chat-decode-deploy",
 	}
 
 	BeforeEach(func() {
@@ -121,7 +129,7 @@ var _ = Describe("Call-driven discovery", func() {
 		// better diagnostic than a workload that silently never appears anywhere.
 		h := newHandler()
 		_, err := h.IsActive(ctx, ref("chat-decode", map[string]string{
-			registry.VariantNameKey: "chat-decode-deploy",
+			registry.VariantCostKey: "12.5", // no modelID: this must not parse
 		}))
 		Expect(err).NotTo(HaveOccurred())
 

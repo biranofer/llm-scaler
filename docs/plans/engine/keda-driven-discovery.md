@@ -73,7 +73,6 @@ the whole configuration surface.
 | `llm-d.ai/managed: "true"` | — registration replaces it | — |
 | `llm-d.ai/model-id` | `modelID` | yes |
 | `llm-d.ai/variant-cost` | `variantCost` | no (defaults) |
-| — | `variantName` | no (defaults to `scaleTargetRef.name`) |
 
 ```yaml
 triggers:

@@ -80,6 +80,5 @@ spec:
       modelID: default/default
       # Per-replica cost for cost-aware optimization. Optional; defaults to "10.0".
       variantCost: "10.0"
-      # Optional override: name the scale target directly to skip the ScaledObject read.
-      # Defaults to spec.scaleTargetRef.name resolved from this ScaledObject.
-      # variantName: sample-deployment
+      # The scale target is NOT set here. It is read from this ScaledObject's own
+      # spec.scaleTargetRef, so the two cannot disagree.

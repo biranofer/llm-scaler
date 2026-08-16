@@ -137,21 +137,24 @@ func (h *Handler) honoursDecision(d decision.Decision) bool {
 // targetName resolves the scale-target name for a ScaledObjectRef, cheapest
 // source first.
 //
-//  1. an explicit scalerMetadata["variantName"], which avoids any lookup;
-//  2. the registry, if the enricher has already resolved this entry — the steady
+//  1. the registry, if the enricher has already resolved this entry — the steady
 //     state, and the reason this path costs no API traffic at all; and only then
-//  3. an uncached read of the ScaledObject, for the window between a workload's
+//  2. an uncached read of the ScaledObject, for the window between a workload's
 //     first call and its first enrichment pass.
 //
-// Step 2 matters because step 3 is uncached by necessity: making it cached would
+// Step 1 matters because step 2 is uncached by necessity: making it cached would
 // serve it from a cluster-wide informer, so without the registry hop every KEDA
 // poll of every workload would be a real API request.
+//
+// The scale target is never taken from trigger metadata. ScaledObject.spec
+// .scaleTargetRef is the authority on what a ScaledObject scales, and a second
+// hand-written copy of that name can disagree with it -- silently attributing a
+// variant's metrics to another workload. That is not hypothetical: cloning a
+// ScaledObject to add a variant used to carry the field across and point the new
+// entry at the original's Deployment.
 func (h *Handler) targetName(ctx context.Context, ref *pb.ScaledObjectRef) (string, error) {
 	if ref == nil {
 		return "", status.Error(codes.InvalidArgument, "scaledObjectRef is required")
-	}
-	if v := ref.GetScalerMetadata()[registry.VariantNameKey]; v != "" {
-		return v, nil
 	}
 	if h.registry != nil {
 		if e, ok := h.registry.Get(ref.GetNamespace(), ref.GetName()); ok && e.Target.Name != "" {

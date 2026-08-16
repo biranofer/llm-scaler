@@ -95,15 +95,22 @@ var _ = Describe("External scaler handler", func() {
 			Expect(resp.MetricValues[0].MetricValue).To(Equal(int64(0)))
 		})
 
-		It("honours a variantName override without reading the ScaledObject", func() {
-			h := newHandler() // no ScaledObject present
-			store.Set(testNamespace, "direct-target", 7)
+		It("ignores a scale target named in trigger metadata; the ScaledObject decides", func() {
+			// A second, hand-written copy of scaleTargetRef.name can disagree with
+			// the spec that actually decides what KEDA scales, and then a variant's
+			// metrics are attributed to another workload. Cloning a ScaledObject to
+			// add a variant used to carry such a key across and point the new entry
+			// at the original's Deployment.
+			h := newHandler(scaledObject(testNamespace, "chat-decode", "chat-decode-deploy"))
+			store.Set(testNamespace, "chat-decode-deploy", 7)
+			store.Set(testNamespace, "impostor", 99)
 
 			resp, err := h.GetMetrics(ctx, &pb.GetMetricsRequest{
-				ScaledObjectRef: ref("ignored", map[string]string{"variantName": "direct-target"}),
+				ScaledObjectRef: ref("chat-decode", map[string]string{"variantName": "impostor"}),
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.MetricValues[0].MetricValue).To(Equal(int64(7)))
+			Expect(resp.MetricValues[0].MetricValue).To(Equal(int64(7)),
+				"the metric must come from the ScaledObject's own target")
 		})
 
 		It("errors when the ScaledObject is missing", func() {

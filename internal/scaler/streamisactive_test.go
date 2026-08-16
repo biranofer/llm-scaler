@@ -189,13 +189,14 @@ var _ = Describe("External scaler StreamIsActive", func() {
 		stream.expectNoPush()
 	})
 
-	It("resolves the target from scalerMetadata without reading the ScaledObject", func() {
-		// No ScaledObject seeded: the variantName override must be enough, the
-		// same shortcut the poll path takes.
-		h := newHandler()
+	It("resolves the target from the ScaledObject, never from scalerMetadata", func() {
+		// The stream path resolves the target the same way the poll path does: by
+		// reading the object. Metadata naming a different target is ignored, so a
+		// stale key on a cloned trigger cannot redirect the stream.
+		h := newHandler(scaledObjectFor("chat-decode", "chat-decode-deploy"))
 		store.Set(testNamespace, "chat-decode-deploy", 0)
 
-		stream, stop := runStream(h, ref("chat-decode", map[string]string{"variantName": "chat-decode-deploy"}))
+		stream, stop := runStream(h, ref("chat-decode", map[string]string{"variantName": "impostor"}))
 		defer func() { Expect(stop()).To(Succeed()) }()
 		Expect(stream.nextPush()).To(BeFalse())
 

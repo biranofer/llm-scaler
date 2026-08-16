@@ -22,10 +22,6 @@ const (
 	// Optional; a non-negative decimal string.
 	VariantCostKey = "variantCost"
 
-	// VariantNameKey names the scale target directly, skipping the ScaledObject
-	// read that would otherwise resolve it from scaleTargetRef.name. Optional.
-	VariantNameKey = "variantName"
-
 	// ScalingPolicyKey names the scaling policy — a reusable TIER such as
 	// "interactive", "standard" or "batch" — whose thresholds, analyzer selection
 	// and scale-to-zero settings this variant scales under. Optional; when absent
@@ -61,9 +57,6 @@ type Meta struct {
 	// form because that is what VariantAutoscalingConfigSpec holds; validated
 	// here so no consumer has to.
 	VariantCost string
-	// VariantName overrides the scale-target name, or is empty to resolve it from
-	// the ScaledObject.
-	VariantName string
 	// ScalingPolicy names the reusable policy tier this variant scales under, or
 	// is empty to take the cluster default.
 	ScalingPolicy string
@@ -96,7 +89,6 @@ func ParseMeta(metadata map[string]string) (Meta, error) {
 	return Meta{
 		ModelID:       modelID,
 		VariantCost:   cost,
-		VariantName:   metadata[VariantNameKey],
 		ScalingPolicy: metadata[ScalingPolicyKey],
 	}, nil
 }

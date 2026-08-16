@@ -8,7 +8,7 @@ func TestParseMetaAcceptsAFullTrigger(t *testing.T) {
 		ScalerAddressKey: "wva-external-scaler.wva-system.svc:9090",
 		ModelIDKey:       "default/default",
 		VariantCostKey:   "12.5",
-		VariantNameKey:   "sample-deployment",
+		ScalingPolicyKey: "interactive",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -19,8 +19,25 @@ func TestParseMetaAcceptsAFullTrigger(t *testing.T) {
 	if m.VariantCost != "12.5" {
 		t.Errorf("variantCost: have %q", m.VariantCost)
 	}
-	if m.VariantName != "sample-deployment" {
-		t.Errorf("variantName: have %q", m.VariantName)
+	if m.ScalingPolicy != "interactive" {
+		t.Errorf("scalingPolicy: have %q", m.ScalingPolicy)
+	}
+}
+
+// TestUnknownKeysAreIgnored: the scale target is never taken from metadata, so a
+// stale "variantName" left on a cloned trigger must not resolve to anything.
+// Cloning a ScaledObject used to carry that key across and point the new entry
+// at the original's Deployment.
+func TestUnknownKeysAreIgnored(t *testing.T) {
+	m, err := ParseMeta(map[string]string{
+		ModelIDKey:    "default/default",
+		"variantName": "some-other-deployment",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ModelID != "default/default" {
+		t.Errorf("modelID: have %q", m.ModelID)
 	}
 }
 
@@ -61,13 +78,13 @@ func TestVariantCostIsValidated(t *testing.T) {
 	}
 }
 
-// TestVariantNameIsOptional — it only skips the ScaledObject read.
-func TestVariantNameIsOptional(t *testing.T) {
+// TestScalingPolicyIsOptional — absent, the cluster default applies.
+func TestScalingPolicyIsOptional(t *testing.T) {
 	m, err := ParseMeta(map[string]string{ModelIDKey: "m"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.VariantName != "" {
-		t.Errorf("expected no override, have %q", m.VariantName)
+	if m.ScalingPolicy != "" {
+		t.Errorf("expected no policy, have %q", m.ScalingPolicy)
 	}
 }

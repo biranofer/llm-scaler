@@ -232,11 +232,6 @@ func registrySourcedVariants(ctx context.Context, reg *registry.Registry) []wvav
 		}
 
 		target := entry.Target
-		// variantName names the scale target directly, for a trigger that would
-		// rather not have WVA resolve it.
-		if meta.VariantName != "" {
-			target.Name = meta.VariantName
-		}
 		if target.Name == "" {
 			logger.V(logging.DEBUG).Info("Skipping a registered workload whose scale target is not resolved yet",
 				"namespace", entry.Namespace, "scaledObject", entry.Name)

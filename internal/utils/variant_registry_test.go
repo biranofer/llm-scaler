@@ -79,17 +79,28 @@ func TestUnenrichedEntryIsSkipped(t *testing.T) {
 
 // TestVariantNameMetadataResolvesWithoutEnrichment is the escape hatch: a trigger
 // that names its target directly needs no ScaledObject read to become a variant.
-func TestVariantNameMetadataResolvesWithoutEnrichment(t *testing.T) {
+// TestScaleTargetComesFromEnrichmentNotMetadata: the scale target is resolved by
+// reading the ScaledObject, never declared in trigger metadata. A complete
+// trigger that has not been enriched yet therefore yields nothing — which is the
+// point: a hand-written copy of scaleTargetRef.name can disagree with the spec
+// that actually decides what KEDA scales, and then a variant's metrics are
+// attributed to another workload.
+func TestScaleTargetComesFromEnrichmentNotMetadata(t *testing.T) {
 	ctx := context.Background()
 	reg := registry.New(time.Minute)
 	reg.Observe("ns1", "chat-so", map[string]string{
-		registry.ModelIDKey:     "meta/llama-3-8b",
-		registry.VariantNameKey: "chat-deploy",
+		registry.ModelIDKey: "meta/llama-3-8b",
 	})
+
+	if result := readyVariantAutoscalings(ctx, reg); len(result) != 0 {
+		t.Fatalf("want no variant before enrichment, got %d", len(result))
+	}
+
+	reg.SetTarget("ns1", "chat-so", registry.Target{Name: "chat-deploy"})
 
 	result := readyVariantAutoscalings(ctx, reg)
 	if len(result) != 1 {
-		t.Fatalf("want 1 variant from metadata alone, got %d", len(result))
+		t.Fatalf("want 1 variant after enrichment, got %d", len(result))
 	}
 	if got := result[0].Spec.ScaleTargetRef.Name; got != "chat-deploy" {
 		t.Errorf("scale target: got %q", got)
@@ -108,7 +119,8 @@ func TestVariantNameMetadataResolvesWithoutEnrichment(t *testing.T) {
 func TestUnusableTriggerMetadataIsSkipped(t *testing.T) {
 	ctx := context.Background()
 	reg := registry.New(time.Minute)
-	reg.Observe("ns1", "chat-so", map[string]string{registry.VariantNameKey: "chat-deploy"})
+	reg.Observe("ns1", "chat-so", map[string]string{registry.VariantCostKey: "5.0"})
+	reg.SetTarget("ns1", "chat-so", registry.Target{Name: "chat-deploy"})
 
 	if result := readyVariantAutoscalings(ctx, reg); len(result) != 0 {
 		t.Errorf("want no variant from a trigger with no modelID, got %d", len(result))
