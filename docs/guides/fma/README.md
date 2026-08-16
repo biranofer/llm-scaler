@@ -263,6 +263,97 @@ kubectl logs -n ${WVA_NAMESPACE} -l app.kubernetes.io/name=workload-variant-auto
 | `pairing_unresolved` | a declared pairing that led nowhere — **investigate** |
 | `unresolved` | should be zero in an FMA namespace |
 
+## Benchmarking an FMA stack
+
+### Run this after every standup
+
+```bash
+make benchmark-fma-fixups BENCHMARK_NAMESPACE=<ns>
+```
+
+`benchmark-standup` calls it automatically when FMA is present. Run it by hand
+after any standup done another way. It is idempotent and will not restart
+healthy launchers, so it never discards warm instances.
+
+It repairs two defects the standup reintroduces every time. Neither produces bad
+numbers — together they produce **no** numbers, and the failure looks like a
+load-generator crash rather than an FMA misconfiguration:
+
+```
+launcher SA cannot patch pods (403, retried every 5s forever)
+  -> a launcher whose requester was deleted keeps llm-d.ai/inferenceServing=true
+  -> that dead endpoint stays in the InferencePool
+  -> EPP dispatches to it; ~20% of requests return 503
+  -> guidellm validates its backend ONCE before generating load, and dies
+       RuntimeError: Worker process group startup failed: error_event is set
+  -> no results.json; every metric in the table reads "?"
+```
+
+1. **Launcher RBAC.** The `state-change-reflector` sidecar patches labels onto
+   its own pod, but the standup gives it the namespace `default` ServiceAccount,
+   which cannot patch pods. Check with
+   `kubectl auth can-i patch pods --as=system:serviceaccount:<ns>:default -n <ns>`.
+2. **Controller version.** The standup pins `v0.6.0-alpha.13`, which drops a
+   fresh reconcile notification when the item is already queued with a future
+   `processAfter` from a rate-limited retry (upstream #696). Fix 1's 403s
+   generate exactly those retries, so the unbind that would clear the stale label
+   is swallowed. `FMA_VERSION` defaults to `v0.6.4`.
+
+Both are namespaced: the FMA controllers run with `--namespace=<ns>` and a
+namespaced Role. The CRDs are the only cluster-scoped surface and are not
+touched.
+
+### Measure actuation, not tokens
+
+FMA's claim is that capacity *arrives sooner*, not that tokens are faster. Test
+that directly:
+
+```bash
+make benchmark-actuation BENCHMARK_NAMESPACE=<ns> \
+     ACTUATION_TARGET=<deployment> ACTUATION_TRIALS=5
+```
+
+Scale up, time each replica from creation to Ready, scale back, repeat. No load
+generator, no router, no Prometheus — so none of the failures above can affect
+it, and it runs in minutes. Baseline on pokprod, both variants: **median 90s**,
+0 of 6 woken. A working wake is **2-3s**, so the two are unmistakable.
+
+### Warm pools are not what they look like
+
+A sleeping instance is reusable **only by a requester handed the same GPU** —
+the instance ID is a hash that includes the GPU UUIDs. Two consequences:
+
+- Sleepers the **launcher-populator** creates are keyed to GPUs no requester will
+  reserve, and are never woken. One sat idle through every test and a requester
+  that bound to it still paid 494s.
+- Sleepers created by scaling requesters **up then down** are keyed to GPUs the
+  scheduler actually hands out, and those hit (2s, and 3s on a repeat).
+
+So warm capacity is a by-product of real allocations, not something that can be
+provisioned. And it is fragile: the populator deletes any launcher above
+`launcherCount` **per node** as an "excess launcher pod", warm instance included,
+about 20s after a scale-down. Durable warm capacity is `launcherCount x nodes`.
+
+Check before trusting a run — a pool that is not warm makes every scale-up cost
+~50-80s and the benchmark will silently measure the cold path:
+
+```bash
+WARM_POOL_NS=<ns> bash hack/benchmark/warm_pool.sh verify [n]   # gate
+WARM_POOL_NS=<ns> bash hack/benchmark/warm_pool.sh report       # sleepers + their GPUs
+WARM_POOL_NS=<ns> bash hack/benchmark/warm_pool.sh size <n>     # durable capacity, in REPLICAS
+```
+
+`postprocess.py` reports **Warm binds (woken)**, **Cold builds (rebuilt)** and
+**Median replica start (s)** so a result carries that distinction rather than
+leaving it to inference. `?` means not measured, never zero.
+
+### Do not start a run before the model serves
+
+`benchmark-run` gates on the endpoint the harness itself detects
+(`hack/benchmark/wait_serving.sh`). Deployment `readyReplicas` is not the same
+condition: the EndpointSlice, the InferencePool's view of it and the router all
+sit between them. Set `WAIT_SERVING=false` only for a target with no router.
+
 ## Cleanup
 
 ```bash

@@ -754,6 +754,30 @@ WAIT_SERVING_TIMEOUT  ?= 600
 ACTUATION_TARGET ?=
 ACTUATION_TRIALS ?= 5
 
+# FMA controller version applied by benchmark-fma-fixups. The standup pins
+# v0.6.0-alpha.13, which drops reconcile notifications (upstream #696) and leaves
+# dead endpoints in the InferencePool.
+FMA_VERSION ?= v0.6.4
+
+.PHONY: benchmark-fma-fixups
+benchmark-fma-fixups: ## Re-apply the FMA fixes a standup undoes: launcher RBAC + controller version (set BENCHMARK_NAMESPACE)
+	@# Run this after every FMA standup. Without it, FMA benchmarking does not
+	@# produce bad numbers -- it produces NO numbers, and the failure looks like a
+	@# load-generator crash rather than an FMA misconfiguration:
+	@#
+	@#   launcher SA cannot patch pods (403, retried forever)
+	@#     -> a launcher whose requester was deleted keeps inferenceServing=true
+	@#     -> a dead endpoint stays in the InferencePool
+	@#     -> EPP dispatches to it, ~20% of requests 503
+	@#     -> guidellm fails its one backend-validation probe and every worker dies
+	@#     -> no results.json, every metric "?"
+	@#
+	@# Both fixes are namespaced; the cluster-scoped CRDs are untouched.
+	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
+		echo "ERROR: BENCHMARK_NAMESPACE is required"; exit 1; \
+	fi
+	@bash hack/benchmark/fma_fixups.sh $(BENCHMARK_NAMESPACE) $(FMA_VERSION)
+
 .PHONY: benchmark-actuation
 benchmark-actuation: ## Measure how fast capacity arrives after a scale-up (set ACTUATION_TARGET=<deployment>; BENCHMARK_NAMESPACE required)
 	@# The claim FMA makes is that capacity arrives sooner -- not that tokens are
@@ -989,6 +1013,15 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo "BENCHMARK_WVA_DEPLOY=$(BENCHMARK_WVA_DEPLOY): not installing WVA. The model servers will not be autoscaled."; \
 	else \
 		$(MAKE) benchmark-deploy-wva BENCHMARK_NAMESPACE=$(BENCHMARK_NAMESPACE); \
+	fi
+	@# A standup reinstalls FMA from llm-d-benchmark, which reintroduces both
+	@# defects benchmark-fma-fixups exists to correct: the launcher SA that cannot
+	@# patch pods, and controllers old enough to drop the reconcile that would
+	@# clear the resulting stale binding. Re-apply them here so standing the
+	@# environment up does not quietly restore a configuration in which FMA
+	@# benchmarking yields no data. Skipped when FMA is not present.
+	@if kubectl get deploy -n $(BENCHMARK_NAMESPACE) -o name 2>/dev/null | grep -q dual-pods-controller; then \
+		$(MAKE) --no-print-directory benchmark-fma-fixups BENCHMARK_NAMESPACE=$(BENCHMARK_NAMESPACE); \
 	fi
 
 ## Install WVA from THIS repo into the benchmark namespace and register the model
