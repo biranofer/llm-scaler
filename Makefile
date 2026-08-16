@@ -701,6 +701,35 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 		     echo "  A helm older than the one llm-d-benchmark pins is the usual cause"; \
 		     echo "  (helm $$(helm version --short 2>/dev/null) here)."; }; \
 	helm plugin list 2>/dev/null | awk '$$1=="diff"{print "  installed: helm-diff " $$2}'
+	@$(MAKE) --no-print-directory benchmark-patch
+
+.PHONY: benchmark-patch
+benchmark-patch: ## Reapply our fixes to the llm-d-benchmark clone (idempotent; run automatically by benchmark-install and benchmark-run)
+	@# The clone is gitignored and benchmark-install re-checks it out to a pinned
+	@# tag, so edits made in it are invisible to review and vanish on the next
+	@# install. Our fixes therefore live in hack/benchmark/patch_harness.sh and
+	@# are reapplied here. Two upstream bugs, both present in v0.7.8 AND on
+	@# origin/main, so there is no release to upgrade to:
+	@#
+	@#   process_epp_logs.py  -- EPP writes "ts" as a float epoch; the parser
+	@#     assumes an ISO string and dies on the FIRST entry, discarding the
+	@#     whole log. That is why "Avg queue depth (EPP)" was "?" on every run
+	@#     we ever took. Fixed properly; 127k-200k entries now parse.
+	@#
+	@#   guidellm-analyze_results.sh -- benchmark-report wants a top-level
+	@#     "args" that guidellm no longer emits, so conversion always fails and
+	@#     the pod exits non-zero, marking a perfectly good run FAILED. Made
+	@#     non-fatal, NOT faked: see the script for why aliasing "config" onto
+	@#     "args" would produce a silently wrong report.
+	@#
+	@# This reaches the cluster because step_06 builds the harness ConfigMap
+	@# from the checked-out tree, by design ("so a run can use a new/updated
+	@# harness with an older benchmark image").
+	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
+		bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
+	else \
+		echo "benchmark-patch: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
+	fi
 
 .PHONY: benchmark-standup
 benchmark-standup: ## Stand up the benchmark environment, then install WVA from this repo (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>, IMG=<your build>; BENCHMARK_DIRECT_KEDA=true for controller-free EPP+KEDA autoscaling instead of WVA)
@@ -961,6 +990,12 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-run BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
+	@# Cheap and idempotent, and the clone is gitignored: a checkout done by
+	@# anything other than benchmark-install would otherwise leave a run using
+	@# an unpatched harness, and the symptom of that (a valid run reported
+	@# FAILED, EPP metrics silently "?") reads as a cluster problem, not a
+	@# tooling one.
+	@$(MAKE) --no-print-directory benchmark-patch
 	@mkdir -p "$(BENCHMARK_SCENARIOS_DIR)"
 	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ] && [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD)" ]; then \
 		echo "Injecting external model endpoint for direct-KEDA mode..."; \
