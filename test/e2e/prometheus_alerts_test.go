@@ -73,6 +73,10 @@ var wvaMetricNames = []string{
 	constants.WVAKvCacheTokensUsed,
 	constants.WVAKvCacheTokensCapacity,
 	constants.WVAPodMappingMissTotal,
+	// Referenced by the WVANodeAccessDenied alert. Missing here since the metric
+	// was added, but invisible: this spec only runs with DEPLOY_ALERTING_RULES=true,
+	// which is off by default, and a runtime Skip() reports as SUCCESS.
+	constants.WVANodeAccessDenied,
 }
 
 // queryPrometheusRules queries the in-cluster Prometheus /api/v1/rules endpoint.

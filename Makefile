@@ -51,6 +51,11 @@ NUM_PROMPTS          ?= 3000
 ENVIRONMENT                 ?= kind-emulator
 USE_SIMULATOR               ?= true
 SCALE_TO_ZERO_ENABLED       ?= false
+# Sized for the DEFAULT run, which skips ~46 specs at runtime. Enabling the
+# gates (SCALE_TO_ZERO_ENABLED=true) adds inherently slow scale-from-zero
+# specs and 35m is not enough -- the suite panics with "test timed out"
+# mid-run, which looks like a hang rather than a budget.
+E2E_TIMEOUT                 ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),75m,35m)
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
 LLM_D_ROUTER_VERSION        ?= v0.9.0
@@ -515,7 +520,7 @@ test-e2e-smoke: ## Run smoke e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=keda \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
 		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -540,7 +545,7 @@ test-e2e-full: ## Run full e2e test suite
 	SCALER_BACKEND=keda \
 	KEDA_NAMESPACE=$(E2E_KEDA_NAMESPACE) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
 		-ginkgo.label-filter="full && !smoke && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -575,7 +580,7 @@ test-e2e-multi-controller: ## Run multi-controller e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout 35m -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
 		-ginkgo.label-filter="multi-controller" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -741,6 +746,33 @@ BENCHMARK_SPECS_DIR ?= $(CURDIR)/hack/benchmark/scenarios/guides
 # future producer should not need node topology to say "keep 6 warm".
 # hack/benchmark/warm_pool.sh owns the translation.
 WARM_REPLICAS ?= 0
+
+# Gate benchmark-run on the model actually serving. See hack/benchmark/wait_serving.sh.
+WAIT_SERVING          ?= true
+WAIT_SERVING_TIMEOUT  ?= 600
+
+ACTUATION_TARGET ?=
+ACTUATION_TRIALS ?= 5
+
+.PHONY: benchmark-actuation
+benchmark-actuation: ## Measure how fast capacity arrives after a scale-up (set ACTUATION_TARGET=<deployment>; BENCHMARK_NAMESPACE required)
+	@# The claim FMA makes is that capacity arrives sooner -- not that tokens are
+	@# faster. This measures exactly that and nothing else: scale up, time each
+	@# new replica from creation to Ready, scale back, repeat.
+	@#
+	@# It needs no load generator, no router and no Prometheus, which is the
+	@# point. Every load-benchmark failure we hit came from that surrounding
+	@# stack rather than from the thing under test: a report converter that could
+	@# not read its own input, and a backend still returning 503 when guidellm
+	@# validated it. This runs in minutes and is repeatable, so a regression in
+	@# actuation shows up as a number instead of being inferred from a slow run.
+	@if [ -z "$(BENCHMARK_NAMESPACE)" ] || [ -z "$(ACTUATION_TARGET)" ]; then \
+		echo "ERROR: set BENCHMARK_NAMESPACE and ACTUATION_TARGET=<deployment>"; \
+		echo "  e.g. make benchmark-actuation BENCHMARK_NAMESPACE=ns ACTUATION_TARGET=my-decode"; \
+		exit 1; \
+	fi
+	@ACTUATION_NS=$(BENCHMARK_NAMESPACE) \
+		bash hack/benchmark/actuation.sh $(ACTUATION_TARGET) $(ACTUATION_TRIALS)
 
 .PHONY: benchmark-scenarios
 benchmark-scenarios: ## Copy our scenario specs into the llm-d-benchmark clone (idempotent; run automatically by benchmark-run)
@@ -1128,6 +1160,17 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# Without this, a two-variant FMA run yields latency numbers and no way to
 	@# normalise them by the capacity that produced them, which is the only
 	@# comparison worth making.
+	@# Do not start the load generator before the model is actually servable.
+	@# Deployment readyReplicas is not that condition: the EndpointSlice, the
+	@# InferencePool's view of it and the router all sit between them. guidellm
+	@# validates its backend before generating any load, so a 503 in that window
+	@# kills every worker at once and the run produces NO results.json -- every
+	@# metric then reports "?", which reads as a tooling bug rather than "the
+	@# model was not up yet". That cost two full runs before it was diagnosed.
+	@# WAIT_SERVING=false skips it for a target that has no router.
+	@if [ "$(WAIT_SERVING)" != "false" ]; then \
+		bash hack/benchmark/wait_serving.sh $(BENCHMARK_NAMESPACE) $(WAIT_SERVING_TIMEOUT); \
+	fi
 	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
 	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
