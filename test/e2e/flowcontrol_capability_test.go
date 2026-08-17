@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
 // Scale-from-zero has exactly one input: the EPP flow-control queue. If EPP is
@@ -41,9 +44,47 @@ const (
 	eppMetricsTokenSecret = "wva-epp-metrics-token"
 )
 
-// eppFlowControlAvailable reports whether any EPP pod exports the flow-control
-// queue metric family, and why not when it does not.
+// eppFlowControlAvailable reports whether the flow-control queue metric exists,
+// and why not when it does not.
+//
+// Prometheus is asked first, and is the authority. It scrapes EPP from inside
+// the cluster, which the test host cannot do: pod IPs are not routable from a
+// kind host, so a direct scrape reports "could not scrape" and hides the real
+// answer behind a plumbing failure. Asking Prometheus checks the capability from
+// somewhere that can actually observe it.
+//
+// The direct scrape is kept only as a fallback for environments with no
+// Prometheus reachable from the test host.
 func eppFlowControlAvailable(ctx context.Context, c client.Client, wvaNamespace, poolNamespace string) (bool, string) {
+	if pc := promClientForCheck(); pc != nil {
+		var reachable bool
+		for _, name := range []string{flowControlQueueMetric, flowControlQueueMetricAlias} {
+			// absent() yields 1 when the series does not exist and nothing when it
+			// does. That is the distinction the whole check turns on -- a
+			// value-based query cannot tell "no such metric" from "metric present,
+			// value 0", and conflating those is exactly how this stayed hidden.
+			v, err := pc.QueryWithRetry(ctx, fmt.Sprintf("absent(%s)", name))
+			if err != nil {
+				continue
+			}
+			reachable = true
+			if v == 0 {
+				return true, ""
+			}
+		}
+		if reachable {
+			return false, fmt.Sprintf(
+				"Prometheus has no %s series: EPP is not queueing, so no wake signal "+
+					"can exist -- an EPP/environment gap, not a WVA failure",
+				flowControlQueueMetric)
+		}
+	}
+	return eppFlowControlAvailableByScrape(ctx, c, wvaNamespace, poolNamespace)
+}
+
+// eppFlowControlAvailableByScrape is the fallback: read the metric off an EPP pod
+// directly. Only usable where the test host can reach pod IPs.
+func eppFlowControlAvailableByScrape(ctx context.Context, c client.Client, wvaNamespace, poolNamespace string) (bool, string) {
 	var secret corev1.Secret
 	if err := c.Get(ctx, types.NamespacedName{
 		Name: eppMetricsTokenSecret, Namespace: wvaNamespace,
@@ -88,6 +129,25 @@ func eppFlowControlAvailable(ctx context.Context, c client.Client, wvaNamespace,
 		return false, fmt.Sprintf("no EPP pod with an IP found in %s", poolNamespace)
 	}
 	return false, fmt.Sprintf("could not scrape any of %d EPP pod(s) in %s", tried, poolNamespace)
+}
+
+// promClientForCheck builds a Prometheus client the same way the other e2e
+// helpers do. Returns nil when none can be built, so the caller falls back to a
+// direct scrape rather than failing the suite over a missing convenience.
+func promClientForCheck() *utils.PrometheusClient {
+	url := os.Getenv("PROMETHEUS_URL")
+	if url == "" {
+		url = utils.DefaultPrometheusURL
+	}
+	insecure := true
+	if v := os.Getenv("PROMETHEUS_SKIP_TLS_VERIFY"); v != "" {
+		insecure = strings.EqualFold(v, "true")
+	}
+	pc, err := utils.NewPrometheusClient(url, insecure)
+	if err != nil {
+		return nil
+	}
+	return pc
 }
 
 func scrapeEPPMetrics(ctx context.Context, podIP, token string) (string, error) {
