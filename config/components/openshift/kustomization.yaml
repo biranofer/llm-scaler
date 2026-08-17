@@ -5,9 +5,27 @@ resources:
 # Grant the WVA controller cluster-monitoring-view so it can query Thanos
 # Querier with its own SA token.
 - manager-cluster-monitoring-view-clusterrolebinding.yaml
-# Grant OpenShift's user-workload Prometheus cluster-monitoring-view so it can
-# scrape the controller's secure /metrics endpoint.
-- prometheus-cluster-monitoring-view-clusterrolebinding.yaml
+# NOT a binding for the user-workload Prometheus SA. There was one here, granting
+# it cluster-monitoring-view "so it can scrape the controller's secure /metrics
+# endpoint". It did not do that, and could not: cluster-monitoring-view carries
+# `namespaces get` and `prometheuses/api` and NO nonResourceURLs rule, so it
+# cannot authorize a /metrics scrape under any configuration.
+#
+# What actually makes the scrape work, and none of it is an RBAC grant to
+# Prometheus:
+#   the bearerTokenSecret patch    authenticates the scrape as WVA's OWN SA
+#   the metrics-reader repoint     gives that SA nonResourceURLs: /metrics
+#   UWM's own discovery            with enableUserWorkload: true it scrapes
+#                                  ServiceMonitors in user-defined projects
+#                                  without being told to
+#
+# NOT the user-monitoring label patched onto the Namespace below. In NAMESPACE
+# scope that patch reaches nothing: components/tenant-installable deletes the
+# Namespace object, so the label never lands on the install's namespace at all.
+# It survives only in cluster scope, where the overlay keeps its own Namespace.
+#
+# So the binding handed the UWM Prometheus SA unrestricted platform-API read --
+# every namespace's series -- from a WVA install, for no effect.
 # Long-lived SA token referenced by the ServiceMonitor's bearerTokenSecret.
 - controller-manager-token-secret.yaml
 # Service-ca CA bundle used by the ServiceMonitor to verify the controller's
