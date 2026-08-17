@@ -11,7 +11,7 @@ assignees: ''
 - [Prerequisites](#prerequisites)
 - [Release Process](#release-process)
 - [Announce the Release](#announce-the-release)
-- [Final Steps](#final-steps)
+- [After the llm-d Release](#after-the-llm-d-release)
 
 ## Introduction
 

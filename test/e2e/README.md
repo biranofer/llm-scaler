@@ -347,7 +347,7 @@ Each test follows this pattern:
 
 ## Configuration Reference
 
-See [config.go](config.go:1) for the complete list of configuration options.
+See [config.go](config.go) for the complete list of configuration options.
 
 ### Key Configuration Fields
 
@@ -454,5 +454,5 @@ var _ = Describe("My New Test", Label("full"), Ordered, func() {
 ## See Also
 
 - [Developer Testing Guide](../../docs/developer-guide/testing.md)
-- [Deployment Guide](../../deploy/README.md)
-- [Deploy README — e2e-style stack](../../deploy/README.md#example-2-e2e-style-stack-same-as-make-deploy-e2e-infra)
+- [Deployment Guide](../../deploy/)
+- [e2e infrastructure target](../../deploy/) — `make deploy-e2e-infra`

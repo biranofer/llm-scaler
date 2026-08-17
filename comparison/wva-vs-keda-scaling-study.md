@@ -3,7 +3,7 @@
 **A request threshold, or a capacity model — five runs on a live cluster.**
 
 > Workload Variant Autoscaler · **KEDA is the actuator in every run here.**
-> Every run is one model, one accelerator, one variant. Figures: [`figures/src/`](./figures/src).
+> Every run is one model, one accelerator, one variant. Figures: [`figures/src/`](./figures/src/).
 
 ---
 

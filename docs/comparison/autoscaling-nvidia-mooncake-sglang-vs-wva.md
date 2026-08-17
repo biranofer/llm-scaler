@@ -172,7 +172,7 @@ Two consequences. First, a **~2-minute** provisioning latency is the real-world 
 
 **WVA (baseline)**
 - Repo: https://github.com/llm-d/llm-d-workload-variant-autoscaler
-- HPA/KEDA integration: https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/docs/integrations/hpa-integration.md
+- KEDA integration: [docs/design/wva-external-scaler-proposal.md](../design/wva-external-scaler-proposal.md)
 - Component doc: https://llm-d.ai/docs/architecture/Components/workload-variant-autoscaler
 - Paper (WVA global optimization control plane): https://arxiv.org/abs/2603.09730
 

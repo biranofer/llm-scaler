@@ -81,7 +81,12 @@ def main():
     args = ap.parse_args()
 
     external = {}
-    files = [ROOT / "README.md"] + sorted(ROOT.glob("deploy/**/*.md")) + sorted(ROOT.glob("docs/**/*.md"))
+    # Every tracked markdown file, not a hand-listed subset: test/e2e/README.md and
+    # comparison/ both carried link problems that a docs-only glob never looked at.
+    import subprocess
+    files = [ROOT / f for f in subprocess.run(
+        ["git", "ls-files", "*.md"], capture_output=True, text=True, cwd=ROOT
+    ).stdout.splitlines()]
     bad = 0
     for p in files:
         raw = p.read_text(encoding="utf-8")
@@ -93,6 +98,26 @@ def main():
                     external.setdefault(link, set()).add(str(p.relative_to(ROOT)).replace("\\", "/"))
                 continue
             target, _, anchor = link.partition("#")
+
+            # Link the FOLDER, not its README.md. GitHub picks blob-vs-tree from
+            # what the target is: a file gives
+            # /blob/main/docs/guides/install-in-namespace/README.md, a directory
+            # gives /tree/main/docs/guides/install-in-namespace -- which renders the
+            # same README with guide.yaml and the rest of the directory beside it.
+            # An anchor is exempt: it addresses a heading inside the file.
+            if target.endswith("/README.md") and not anchor:
+                print(f"USE FOLDER    {p.relative_to(ROOT)} -> {link} "
+                      f"(link {target[:-len('README.md')]} so GitHub opens the directory)")
+                bad += 1
+                continue
+
+            # A directory without a trailing slash still resolves, but the slash is
+            # what makes it obvious to a reader that it is a directory.
+            if target and (p.parent / target).is_dir() and not target.endswith("/"):
+                print(f"ADD SLASH     {p.relative_to(ROOT)} -> {link} (target is a directory)")
+                bad += 1
+                continue
+
             if target:
                 f = (p.parent / target).resolve()
                 if not f.exists():
