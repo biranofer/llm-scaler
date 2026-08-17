@@ -15,8 +15,10 @@ to notice: the model is up and serving, and every metric says it should be.
 signal never arrives, so it stays parked. The autoscaler looks healthy — running,
 reconciling, emitting metrics. The model is simply gone.
 
-WVA reports neither. The only related logging is a `V(DEBUG)` line in the
-allocation enforcer naming which branch it took.
+WVA reports neither. `applyScaleToZeroEnforcement` already refuses to park a model
+for **three** distinct reasons — a non-vLLM engine, a variant floor, and the
+activation-retention hold — and every one of them exits through a
+`logger.V(DEBUG)` line. At the default verbosity all three are invisible.
 
 ## 2. That this is not hypothetical
 
@@ -41,24 +43,66 @@ last read its config*, which appears in none of them.
 The same code on pokprod wakes correctly: queue depth 40, `Published
 scale-from-zero activation`, `0/0 -> 1/1` in under 10s.
 
-## 3. Scope
+## 3. Scope, and why not a status condition
 
-WVA does not deploy EPP, so the root cause is not ours to fix (§8). What is ours
-is to **notice, and say so**. The four items below are ordered by cost and by how
-much they depend on anything outside this repo.
+WVA does not deploy EPP, so the root cause is not ours to fix (§9). What is ours
+is to **notice, and say so**.
+
+The idiomatic Kubernetes answer to *"I cannot reach the desired state, and here is
+why"* is a `metav1.Condition` on the reconciled object — machine-readable, visible
+in `kubectl describe`, usable with `kubectl wait`. It is not available here, and
+the reason is structural rather than an oversight:
+
+**WVA owns no API object.** It synthesizes `VariantAutoscaling` values from
+ScaledObjects, the VA CRD is being retired, and a ScaledObject's status belongs to
+KEDA — writing conditions into another controller's status is a fight over
+ownership, not a design. So the reporting surfaces available are metric, Event,
+and log, and everything below is shaped by that constraint.
 
 **Absence is not zero.** An idle queue reports `0`; a queue that does not exist
 reports nothing. Every wrong conclusion reached while diagnosing this came from
 conflating them. `pendingRequestsForModel` already distinguishes the two on every
 tick and discards it — most of what follows is surfacing what is already computed.
 
-## 4. First: say when a model will never park
+## 4. One metric, many reasons
+
+The repo already has `wva_variant_at_max_replicas`: a bespoke gauge for one
+specific "why isn't this where it wants to be" condition. A second such gauge for
+flow control, and a third for the variant floor, is the start of a pattern that
+ends with a metric per discovery — each with its own name, its own alert, and its
+own four-file checklist. `applyScaleToZeroEnforcement` alone would justify three.
+
+Instead, one series with a **reason label** — the conditions pattern expressed in
+Prometheus, and the shape `wva_decisions_limited_total{limited_by}` already uses:
+
+```
+wva_model_scaling_blocked{namespace, model, reason} 1
+```
+
+| `reason` | meaning |
+|---|---|
+| `variant-floor` | a variant has `minReplicas > 0`, so the model cannot reach zero |
+| `policy-forbids-zero` | every variant permits zero, but the model's policy disables scale-to-zero |
+| `engine-unsupported` | a non-vLLM engine, whose request counter the enforcer cannot read |
+| `no-wake-signal` | EPP is not exporting a flow-control queue, so nothing can wake this model |
+
+One metric, one alert (`wva_model_scaling_blocked == 1`), one place to look, and a
+closed enum so cardinality stays bounded. Several reasons can hold at once, which
+emits several series — correct, and more informative than a single winner. A new
+condition later costs a constant, not a metric.
+
+Presence is the signal: a series exists only while its reason holds. That makes
+clearing them part of the contract — on each evaluation, delete this model's
+series and re-set the reasons that still apply, or a resolved condition alerts
+forever.
+
+## 5. First: say when a model will never park
 
 Parking needs **both** halves to permit it:
 
 - `config.ResolveScaleToZeroEnabled(policy)` is true. Scale-to-zero is a
-  **model/tier** property, resolved from the scaling entry (with the
-  `WVA_SCALE_TO_ZERO` fallback); the allocation enforcer is the only consumer.
+  **model/tier** property, resolved from the scaling entry with a
+  `WVA_SCALE_TO_ZERO` fallback.
 - **every** variant of the model has `minReplicas == 0`. A model is at zero only
   when nothing serves it, so one variant with a floor of 1 keeps it up.
 
@@ -73,9 +117,9 @@ configuration that does not do what it looks like it does**:
 The second matters most with a **single variant**, where `minReplicas: 0` reads
 exactly like a deliberate request to park.
 
-Neither is an error and neither should be rejected or alerted on. One condition —
-*can this model reach zero?* — reported with the reason it cannot, as `Normal`
-rather than `Warning`, because nothing is broken:
+Neither is an error and neither should be rejected. Alongside the metric, one
+`Normal`-severity Event and one `logger.Info` on transition, because nothing is
+broken:
 
 ```
 Model %q will not scale to zero: %s.
@@ -84,43 +128,51 @@ Model %q will not scale to zero: %s.
           though scale-to-zero is enabled"
 ```
 
-**Why this is first.** It is the only item with no external dependency: pure
-configuration, evaluated in `internal/config` where the policy is already
-resolved, once per config change. No EPP, no flow control, no wake path, no
-metric join, no hot-path state, and no way for it to cause a spurious wake.
+**Where it is evaluated.** Not in `internal/config`: variant floors come from
+`ScaledObject.spec.minReplicaCount` through the registry, so they are cluster
+state and `internal/config` never sees them. The one place both halves are already
+in hand is `applyScaleToZeroEnforcement` — which resolves the policy, calls
+`hasMinReplicasAboveZero`, and is deliberately the single funnel every optimize
+path goes through, with a test locking that down. The reason strings are computed
+by a pure function over `(scaleToZeroEnabled, []VariantReplicaState)`; only the
+emission lives in the engine.
 
-It also catches a failure **nothing else can see**: a model that will never park
+**Why this is first.** It depends on nothing outside this repo: no EPP, no flow
+control, no wake path, no metric join, and no way for it to cause a spurious wake.
+And it catches a failure **nothing else can see** — a model that will never park
 on a cluster where EPP is perfectly healthy has no symptom to alert on. It is up
 and serving, exactly as every metric says it should be.
 
-## 5. Second: say when the wake signal is absent
+## 6. Second: say when the wake signal is absent
 
-```
-wva_epp_flow_control_available{namespace, model} 1|0
-```
-
-Keyed by **model**. The contract is one model to one InferencePool, so
-pool-keying saves nothing today, and the documented direction is *per-role pools
-for a single model* — one model to many pools — under which pool-keying would
-emit several series for one fact. Model is also the key every other WVA metric
-uses, and the one the reader needs: the question is "can this model wake?". If a
-model ever spans pools, add `pool` as a label rather than promoting it to the
-identity.
-
-Positive polarity, matching `wva_saturation_metrics_up` rather than a
-`..._missing` negative.
+`reason="no-wake-signal"`, keyed by **model**. The contract is one model to one
+InferencePool, so pool-keying saves nothing today, and the documented direction is
+*per-role pools for a single model* — one model to many pools — under which
+pool-keying would emit several series for one fact. Model is also the key every
+other WVA metric uses, and the one the reader needs: the question is "can this
+model wake?". If a model ever spans pools, add `pool` as a label rather than
+promoting it to the identity.
 
 **This is nearly free.** `pendingRequestsForModel` already computes the boolean;
-setting a gauge from it is a few lines. And a gauge needs **no rate limiting** —
-Prometheus gauges are idempotent, so setting one at 10Hz costs nothing. The
-transition tracking in §7 is for logs and events only.
+emitting it is a few lines. A gauge needs **no rate limiting** — Prometheus gauges
+are idempotent, so setting one at 10Hz costs nothing. The transition tracking in
+§8 is for logs and events only.
 
-What it buys is naming the cause quickly. It is a diagnosis accelerator, not a
-detector — §6 is what tells you something is wrong.
+**The cheaper alternative, weighed.** "Does this metric family exist?" is natively
+answerable by Prometheus as `absent(llm_d_epp_flow_control_queue_size)`, as a
+recording rule, with no WVA code at all — and the e2e capability gate already uses
+exactly that query. It is rejected here for one reason: **WVA knows the
+model → pool → EPP mapping and Prometheus does not.** A recording rule would need
+the same fragile `label_replace` join that §7 pays for, and would answer "some EPP
+somewhere is not queueing" rather than "this model cannot wake". WVA resolves the
+mapping internally, where it is authoritative.
 
-## 6. Third: alert on the symptom, not the cause
+What this buys is naming the cause quickly. It is a diagnosis accelerator, not a
+detector — §7 is what tells you something is wrong.
 
-§5 detects one cause. The failure an operator cares about is "my model is parked
+## 7. Third: alert on the symptom, not the cause
+
+§6 detects one cause. The failure an operator cares about is "my model is parked
 and will not wake", which has many: stale EPP, missing gate, RBAC denial, KEDA
 stuck, an engine bug. A cause-specific detector only catches the cause someone
 already thought of — and the one that bit us was invisible for a week precisely
@@ -144,20 +196,23 @@ the alerts spec validates that expressions reference only metrics in
 `wvaMetricNames`, so an alert naming an EPP metric fails until that list allows
 it. That is the same trap that let `wva_node_access_denied` ship broken.
 
-## 7. Reporting surfaces and their conventions
+## 8. Reporting surfaces and their conventions
 
 **Metric** — the only surface that survives a restart, and the one alerts read.
 Adding one touches **four** files and missing the last breaks CI:
 `internal/constants/metrics.go`, `internal/metrics/metrics.go`,
 `config/components/prometheus-alerts/prometheusrule.yaml`, and `wvaMetricNames`
-in `test/e2e/prometheus_alerts_test.go`.
+in `test/e2e/prometheus_alerts_test.go`. §4 is partly an argument for paying this
+once rather than per condition.
 
 **Event on the ScaledObject** — for `kubectl describe`, where an operator
-debugging a stuck workload looks. Use `variant.EventTarget()`: events on the
-synthesized `VariantAutoscaling` are silently dropped with `no kind is registered
-for the type variant.VariantAutoscaling in scheme`, a live bug seen in pokprod
-logs today — a wake succeeded and left no Event behind. Rely on client-go's
-recorder for spam filtering; it already aggregates similar events per object.
+debugging a stuck workload looks. Emitting on another controller's object is
+conventional (KEDA does it too) and is not the ownership problem that writing its
+`status` would be. Use `variant.EventTarget()`: events on the synthesized
+`VariantAutoscaling` are silently dropped with `no kind is registered for the type
+variant.VariantAutoscaling in scheme`, a live bug seen in pokprod logs today — a
+wake succeeded and left no Event behind. Rely on client-go's recorder for spam
+filtering; it already aggregates similar events per object.
 
 **Log** — `logger.Info` at V(0), on transition only. Not "WARN": logr has `Info`
 and `Error` and no Warn, and `internal/logging` defines only `DEBUG = 4` and
@@ -165,7 +220,7 @@ and `Error` and no Warn, and `internal/logging` defines only `DEBUG = 4` and
 registry's `DefaultTTL` (5 minutes), or it retains an entry for every model ever
 seen.
 
-## 8. The root cause, which is not ours
+## 9. The root cause, which is not ours
 
 The stale-config failure is EPP's: it reads `--config-file` once and nothing
 restarts it when the ConfigMap changes. The canonical Kubernetes fix is one
@@ -181,14 +236,14 @@ ConfigMap edit. **File it against the llm-d EPP chart.** It is named here so the
 reader knows where the real fix lives — but WVA cannot land it, and must not
 assume someone else will.
 
-## 9. Deferred: a fallback wake signal
+## 10. Deferred: a fallback wake signal
 
 `llm_d_epp_request_error_total{error_code="ServiceUnavailable"}` is the one
 signal present even when flow control is not: it moved +40 on kind while no queue
 series existed. A fallback would have kept scale-from-zero working through those
 two days.
 
-Deferred, not dismissed — and §8 is why it cannot simply be dismissed: the root
+Deferred, not dismissed — and §9 is why it cannot simply be dismissed: the root
 cause is outside our control, so the trigger may persist.
 
 Against it: `ServiceUnavailable` is not a clean proxy for "capacity is needed". It
@@ -202,11 +257,18 @@ per-model baseline that does not fire on first observation and treats a decrease
 as an EPP restart; and requiring rejections rising across **several consecutive
 ticks**, so a burst of bad requests cannot wake anything.
 
-## 10. Why this is worth building
+## 11. Sequencing
+
+§5 and §6 share the §4 metric but nothing else: §5 is configuration reconciled
+against discovered replica bounds, §6 depends on EPP's metric surface, and §7 is a
+PromQL change with no Go in it. They land independently and in that order — §5
+first, since it has no external dependency at all.
+
+## 12. Why this is worth building
 
 The autoscaler already knows. It distinguishes "exported but zero" from "not
-exported" on every tick and throws it away, and it resolves a scale-to-zero
-policy it never reconciles against the replica bounds. Both failures above are
+exported" on every tick and throws it away; it refuses to park a model for three
+distinct reasons and logs each at a verbosity nobody runs. Every failure above is
 computable from what is already in hand.
 
 The cost of not doing it is measured: a week of red e2e runs, three
