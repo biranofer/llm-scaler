@@ -41,16 +41,28 @@ the environmental difference is, WVA cannot control it — but it can *report* i
 
 Warn when both hold for a model:
 
-1. **scale-to-zero is reachable** — some variant of the model has
-   `minReplicas == 0`. Configuration alone; no cluster state needed.
+1. **the model can reach zero**, by either of the two independent routes:
+   - **WVA parks it** — `config.ResolveScaleToZeroEnabled(policy)` is true for
+     that model. Scale-to-zero is a **model/tier** property, not a per-variant
+     one: it is resolved from the scaling entry (with the
+     `WVA_SCALE_TO_ZERO` fallback), and the allocation enforcer is the only
+     thing that consults it. A variant whose model forbids scale-to-zero must
+     never be parked by WVA, so on its own it is not a reason to warn.
+   - **KEDA parks it** — the ScaledObject carries `minReplicaCount: 0`. KEDA owns
+     the replica bounds and will honour that whatever WVA's policy says, so this
+     route reaches zero without WVA's involvement and still needs a wake signal.
+
+   Checking only the first misses workloads parked by KEDA; checking only the
+   second warns about variants WVA would never park. Both, ORed.
+
 2. **the wake signal is absent** — no flow-control queue series exists for the
    pool serving that model, under either name
    (`llm_d_epp_flow_control_queue_size` or the deprecated
    `inference_extension_flow_control_queue_size`).
 
-Both are already available where the engine runs: the replica bounds come from
-the registry's `Target`, and the metric values are the same `results` slice
-`pendingRequestsForModel` reads.
+All three inputs are available where the engine runs: the policy is already
+resolved per model, the replica bounds come from the registry's `Target`, and the
+metric values are the same `results` slice `pendingRequestsForModel` reads.
 
 **Absence, not zero.** The distinction matters more than it looks: an idle queue
 reports `0` and a queue that does not exist reports nothing at all. Every wrong
@@ -114,21 +126,49 @@ State-change only, held per `(namespace, model)`:
 The engine already holds per-model state under a mutex for the limiter, so this
 adds a map, not a mechanism.
 
-## 7. Deliberately not in scope
+## 7. Hardening: wake without flow control
 
-**Do not** fall back to activating on
-`llm_d_epp_request_error_total{error_code="ServiceUnavailable"}` as part of this
-change. That is a real hardening option — it is the one signal present in both
-environments — but it is a behavioural change to the wake path and deserves its
-own proposal, its own delta-detection design (it is a counter; activating on
-"> 0" would wake a model forever after one historical rejection) and its own
-tests. This proposal only makes the existing failure visible.
+Warning is not enough on its own — a model that cannot wake is still down. So
+add a **fallback signal that does not depend on the feature gate**:
 
-**Do not** try to fix EPP from WVA. The gate is EPP's configuration and the
-difference between environments is not yet understood; reporting it accurately is
-what WVA can honestly do.
+```
+llm_d_epp_request_error_total{error_code="ServiceUnavailable", target_model_name="..."}
+```
 
-## 8. Why this is worth building
+It is the only signal observed in **both** environments. On kind, where flow
+control never runs and no queue series exists, this counter still moved **+40**
+during the failing spec. It is per-model and carries `target_model_name`, the
+label `pendingRequestsForModel` already filters on.
+
+**Primary and fallback, not equals.** Queue depth stays authoritative wherever it
+exists; rejections are consulted only when the queue family is absent. A
+rejection is weaker evidence — requests are refused for reasons other than "no
+capacity" — so it must not override a queue that is present and reporting zero.
+
+**It is a counter, so activate on an increase.** Three consequences the
+implementation must get right, and the reason this is not a one-line change:
+
+- **baseline per (namespace, model)**, held beside the existing limiter state. A
+  first observation establishes the baseline and must NOT activate, or every
+  restart wakes every model that has ever been refused.
+- **counter resets**: EPP restarting drops the value. A decrease is a reset —
+  re-baseline and do not activate.
+- **the 10Hz loop** means the delta window is one tick. Compare against the last
+  observed value, not against a rate over a window the collector may not have.
+
+**Order of work.** The warning (§3–§6) lands first and is independently useful:
+it is read-only, cannot cause a spurious wake, and makes the condition visible
+while the fallback is written and tested. The fallback then removes the outage.
+
+## 8. Deliberately not in scope
+
+**Do not** try to fix EPP from WVA. The gate is EPP's configuration, and the
+difference between environments is still not understood — identical image digest
+(`sha256:873179...af6f5`), identical gate in the loaded config, opposite
+behaviour. Reporting it accurately and waking anyway is what WVA can honestly
+do.
+
+## 9. Why this is worth building
 
 Every hour spent on this problem went to discovering that the signal was absent.
 The autoscaler knew — `pendingRequestsForModel` distinguishes "exported but zero"
