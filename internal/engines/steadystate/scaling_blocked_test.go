@@ -28,6 +28,7 @@ func TestScaleToZeroBlockReasons(t *testing.T) {
 		name            string
 		scaleToZero     bool
 		engineSupported bool
+		recentlyWoken   bool
 		states          []domain.VariantReplicaState
 		want            []string
 	}{
@@ -109,6 +110,40 @@ func TestScaleToZeroBlockReasons(t *testing.T) {
 			want:            []string{constants.ScalingBlockedPolicyForbidsZero},
 		},
 		{
+			// Transient, and the reason this is reported at all: without it a held
+			// model is indistinguishable from one that will never park, because every
+			// skip in the enforcement path logs only at V(DEBUG).
+			name:            "a model just woken from zero is held",
+			scaleToZero:     true,
+			engineSupported: true,
+			recentlyWoken:   true,
+			states:          states(zero),
+			want:            []string{constants.ScalingBlockedActivationRetention},
+		},
+		{
+			// Both at once: an operator chasing the floor must not have the hold
+			// hidden, and vice versa.
+			name:            "a floored model that was also just woken reports both",
+			scaleToZero:     true,
+			engineSupported: true,
+			recentlyWoken:   true,
+			states:          states(one),
+			want: []string{
+				constants.ScalingBlockedVariantFloor,
+				constants.ScalingBlockedActivationRetention,
+			},
+		},
+		{
+			// The hold only matters against a configuration that would otherwise
+			// park; with scale-to-zero off nothing was going to park anyway.
+			name:            "the hold is silent when the policy forbids zero",
+			scaleToZero:     false,
+			engineSupported: true,
+			recentlyWoken:   true,
+			states:          states(one),
+			want:            nil,
+		},
+		{
 			// No variants means nothing is asking for anything. "Every variant
 			// permits zero" is vacuously true here and would report a contradiction
 			// for a model that has not been discovered yet.
@@ -120,7 +155,7 @@ func TestScaleToZeroBlockReasons(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := scaleToZeroBlockReasons(tc.scaleToZero, tc.engineSupported, tc.states)
+			got := scaleToZeroBlockReasons(tc.scaleToZero, tc.engineSupported, tc.recentlyWoken, tc.states)
 			assert.Equal(t, tc.want, got)
 		})
 	}

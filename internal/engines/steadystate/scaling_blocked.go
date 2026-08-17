@@ -83,6 +83,9 @@ func blockedDetail(reasons []string) string {
 		case constants.ScalingBlockedPolicyForbidsZero:
 			details = append(details, "every variant permits zero but this model's scaling policy disables "+
 				"scale-to-zero, so the replica bounds are inert")
+		case constants.ScalingBlockedActivationRetention:
+			details = append(details, "the model was recently woken from zero and is held for its "+
+				"retention period, so the request that woke it is not undone before it is served")
 		case constants.ScalingBlockedEngineUnsupported:
 			details = append(details, "the model runs more than one inference engine, so no single "+
 				"request counter measures its idleness; vLLM and SGLang are each supported alone")
@@ -140,6 +143,11 @@ func (e *Engine) evictAllBlockedModels() {
 //     are inert. Most misleading with a single variant, where minReplicas: 0
 //     reads exactly like a deliberate request to park.
 //
+// recentlyWoken is the activation-retention hold — transient, and the only reason
+// here that clears itself. It is included because the alternative is a model
+// sitting at one replica for minutes with the explanation available only at
+// V(DEBUG).
+//
 // engineSupported folds in the enforcer's own limitation rather than the
 // operator's: a non-vLLM engine cannot be measured for idleness, so WVA declines
 // to park it. It is reported only when the configuration would otherwise park,
@@ -147,7 +155,7 @@ func (e *Engine) evictAllBlockedModels() {
 //
 // Pure, so it is worth testing directly: this is the whole of the judgement, and
 // the caller does nothing but emit the result.
-func scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported bool, states []domain.VariantReplicaState) []string {
+func scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, recentlyWoken bool, states []domain.VariantReplicaState) []string {
 	var reasons []string
 
 	if !scaleToZeroEnabled {
@@ -164,6 +172,12 @@ func scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported bool, states []
 	}
 	if !engineSupported {
 		reasons = append(reasons, constants.ScalingBlockedEngineUnsupported)
+	}
+	// Reported alongside the others rather than instead of them: a model can be
+	// both freshly woken and floored, and an operator chasing one should not have
+	// the other hidden.
+	if recentlyWoken {
+		reasons = append(reasons, constants.ScalingBlockedActivationRetention)
 	}
 	return reasons
 }

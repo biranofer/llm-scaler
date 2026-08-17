@@ -13,6 +13,7 @@ import (
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
@@ -179,6 +180,32 @@ var _ = Describe("applyScaleToZeroEnforcement blocked-reason wiring", func() {
 			decisions(), vllm, permitsZero())
 
 		Expect(publishedReasons(registry)).To(BeEmpty())
+	})
+
+	// The hold is transient, so it is the reason most likely to be dropped by a
+	// refactor without anyone noticing — nothing else reports it, and it clears
+	// itself before anyone looks.
+	It("reports activation-retention while a just-woken model is held", func() {
+		e, registry := engineFor(true)
+		decision.DefaultActivations.Mark(namespace, modelID)
+		DeferCleanup(func() { decision.DefaultActivations.Clear(namespace, modelID) })
+
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			decisions(), vllm, permitsZero())
+
+		Expect(publishedReasons(registry)).To(ConsistOf(constants.ScalingBlockedActivationRetention))
+	})
+
+	It("clears activation-retention once the hold lapses", func() {
+		e, registry := engineFor(true)
+		decision.DefaultActivations.Mark(namespace, modelID)
+		decision.DefaultActivations.Clear(namespace, modelID)
+
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			decisions(), vllm, permitsZero())
+
+		Expect(publishedReasons(registry)).To(BeEmpty(),
+			"a transient reason that never clears is worse than not reporting it")
 	})
 
 	// The enforcer owns only the policy reasons. If it cleared everything, it

@@ -1272,7 +1272,14 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// series is most misleading. The reasons themselves are configuration
 	// reconciled against discovered bounds; they do not depend on there being a
 	// decision to enforce.
-	blockedReasons := scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, variantStates)
+	// Resolved before the reasons are published, not with the gate below, so the
+	// hold appears on wva_model_scaling_blocked rather than only in a V(DEBUG)
+	// line. A model held here is otherwise indistinguishable from one that will
+	// never park.
+	retention := config.ResolveScaleToZeroRetention(&satConfig)
+	recentlyWoken := decision.WithinActivationRetention(namespace, modelID, retention)
+
+	blockedReasons := scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, recentlyWoken, variantStates)
 	metrics.SetModelScalingBlockedReasons(namespace, modelID,
 		constants.ScalingBlockedReasonsPolicy, blockedReasons)
 	if e.recordBlockedModel(namespace, modelID, blockedReasons) {
@@ -1301,8 +1308,7 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// zero for precisely that model — so without this gate the wake is undone
 	// before it can serve the request that asked for it. Hold the model for the
 	// same retention period the operator already configures for idleness.
-	retention := config.ResolveScaleToZeroRetention(&satConfig)
-	if decision.WithinActivationRetention(namespace, modelID, retention) {
+	if recentlyWoken {
 		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model was recently woken from zero and is inside its retention period",
 			"modelID", modelID, "namespace", namespace, "retention", retention, "optimizer", optimizerName)
 		return false

@@ -66,6 +66,7 @@ verify:
       # variant-floor        a variant still has minReplicas > 0
       # policy-forbids-zero  every variant permits zero, the policy does not
       # engine-unsupported   the model runs BOTH vLLM and SGLang
+      # activation-retention just woken from zero and held; clears itself
       # no-wake-signal       EPP exports no flow-control queue: it would not wake
   park:
     note: |

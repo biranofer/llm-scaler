@@ -138,6 +138,7 @@ curl -sk https://localhost:8443/metrics | grep wva_model_scaling_blocked
 # variant-floor        a variant still has minReplicas > 0
 # policy-forbids-zero  every variant permits zero, the policy does not
 # engine-unsupported   the model runs BOTH vLLM and SGLang
+# activation-retention just woken from zero and held; clears itself
 # no-wake-signal       EPP exports no flow-control queue: it would not wake
 ```
 <!-- guide:verify.blocked end -->
@@ -147,6 +148,7 @@ curl -sk https://localhost:8443/metrics | grep wva_model_scaling_blocked
 | `variant-floor` | a variant still has `minReplicaCount > 0` — half two is incomplete |
 | `policy-forbids-zero` | every variant permits zero but the policy does not — half one is incomplete |
 | `engine-unsupported` | the model runs **both** vLLM and SGLang, so no single request counter measures it; either alone is fine |
+| `activation-retention` | transient: just woken from zero and held for `retentionPeriod` so the wake is not undone. Clears itself; nothing to do |
 | `no-wake-signal` | EPP exports no flow-control queue — **fix before letting it park** |
 
 Then watch it park:

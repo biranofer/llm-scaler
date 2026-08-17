@@ -440,6 +440,27 @@ const (
 	// case.
 	ScalingBlockedEngineUnsupported = "engine-unsupported"
 
+	// ScalingBlockedActivationRetention indicates the model was recently woken from
+	// zero and is being held up for its retention period.
+	//
+	// TRANSIENT, unlike the other policy reasons: it clears itself once the hold
+	// lapses, and it is not an error or a misconfiguration. It is reported because
+	// it is otherwise indistinguishable from a model that simply will not park —
+	// the enforcement path declines for several reasons and every one of them logs
+	// only at V(DEBUG), so at the default verbosity an operator sees a model
+	// sitting at one replica with no explanation anywhere.
+	//
+	// The hold exists because a just-woken model has served nothing yet: the
+	// request that woke it is still queued in EPP while the pod pulls and loads,
+	// so the idle counter reads zero for exactly the model that has demand waiting
+	// on it. Without the hold the wake is undone before it can serve the request
+	// that asked for it.
+	//
+	// Deliberately NOT alerted on — WVAModelWillNotScaleToZero matches only
+	// variant-floor and policy-forbids-zero, which are standing configuration
+	// contradictions rather than a few minutes of expected behaviour.
+	ScalingBlockedActivationRetention = "activation-retention"
+
 	// ScalingBlockedNoWakeSignal indicates EPP exports no flow-control queue at
 	// all, so a model parked at zero has nothing that can wake it.
 	//
@@ -461,6 +482,7 @@ var (
 		ScalingBlockedVariantFloor,
 		ScalingBlockedPolicyForbidsZero,
 		ScalingBlockedEngineUnsupported,
+		ScalingBlockedActivationRetention,
 	}
 
 	// ScalingBlockedReasonsWake are decided by the scale-from-zero loop, from
