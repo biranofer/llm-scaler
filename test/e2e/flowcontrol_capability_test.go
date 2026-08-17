@@ -111,7 +111,7 @@ func eppFlowControlAvailableByScrape(ctx context.Context, c client.Client, wvaNa
 	}
 	token := strings.TrimSpace(string(secret.Data["token"]))
 	if token == "" {
-		return false, fmt.Sprintf("%s carries no token", eppMetricsTokenSecret)
+		return false, eppMetricsTokenSecret + " carries no token"
 	}
 
 	var pods corev1.PodList

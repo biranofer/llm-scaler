@@ -46,6 +46,7 @@ var (
 	unattributedGPUs     *prometheus.GaugeVec
 	unmeasuredQueue      *prometheus.GaugeVec
 	variantAtMaxReplicas *prometheus.GaugeVec
+	modelScalingBlocked  *prometheus.GaugeVec
 	currentReplicas      *prometheus.GaugeVec
 	desiredRatio         *prometheus.GaugeVec
 	errorsTotal          *prometheus.CounterVec
@@ -134,6 +135,11 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// on the ScaledObject, so one variant of a model can be pinned while a
 	// sibling has headroom.
 	variantAtMaxLabels := []string{constants.LabelNamespace, constants.LabelVariantName}
+	// modelScalingBlockedLabels: model-level, because reaching zero is a property
+	// of the model — one variant with a floor keeps the whole model up, so there
+	// is no per-variant answer to give. `reason` is a closed enum, so it costs a
+	// bounded number of series rather than a metric per condition.
+	modelScalingBlockedLabels := []string{constants.LabelNamespace, constants.LabelModelName, constants.LabelReason}
 	// analyzerTargetLabels: per-analyzer per-replica target P, per variant.
 	analyzerTargetLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 
@@ -149,6 +155,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 		analyzerTargetLabels = append(analyzerTargetLabels, constants.LabelControllerInstance)
 		unmeasuredQueueLabels = append(unmeasuredQueueLabels, constants.LabelControllerInstance)
 		variantAtMaxLabels = append(variantAtMaxLabels, constants.LabelControllerInstance)
+		modelScalingBlockedLabels = append(modelScalingBlockedLabels, constants.LabelControllerInstance)
 	}
 
 	replicaScalingTotal = prometheus.NewCounterVec(
@@ -294,6 +301,21 @@ func InitMetrics(registry prometheus.Registerer) error {
 				"ceiling measures the ceiling, not the autoscaler.",
 		},
 		variantAtMaxLabels,
+	)
+
+	modelScalingBlocked = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAModelScalingBlocked,
+			Help: "1 for each reason a model cannot reach the scaling state its configuration " +
+				"implies. Present only while the reason holds, so absence means nothing is " +
+				"blocking. Each reason names a CONTRADICTION rather than a setting: " +
+				"scale-to-zero disabled alongside a variant floor is consistent and reports " +
+				"nothing, whereas either half permitting zero while the other forbids it leaves " +
+				"the operator believing something the cluster will never do. variant-floor and " +
+				"policy-forbids-zero cost idle accelerators with no other symptom — the model " +
+				"is up and serving, exactly as every other metric says it should be.",
+		},
+		modelScalingBlockedLabels,
 	)
 
 	unattributedGPUs = prometheus.NewGaugeVec(
@@ -505,6 +527,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	if err := registry.Register(variantAtMaxReplicas); err != nil {
 		return fmt.Errorf("failed to register variantAtMaxReplicas metric: %w", err)
 	}
+	if err := registry.Register(modelScalingBlocked); err != nil {
+		return fmt.Errorf("failed to register modelScalingBlocked metric: %w", err)
+	}
 	if err := registry.Register(unmeasuredQueue); err != nil {
 		return fmt.Errorf("failed to register unmeasuredQueue metric: %w", err)
 	}
@@ -687,6 +712,38 @@ func SetVariantAtMaxReplicas(namespace, variantName string, atMax bool) {
 		value = 1.0
 	}
 	variantAtMaxReplicas.With(labels).Set(value)
+}
+
+// SetModelScalingBlocked records every reason a model cannot reach the scaling
+// state its configuration implies. Call it every cycle for every model, with an
+// empty slice when nothing blocks.
+//
+// Presence is the signal, so the model's existing series are deleted first and
+// only the reasons that still hold are re-set. Setting the resolved ones to 0
+// instead would work for a `== 1` alert but leaves a series per reason ever seen
+// on every model, forever; deleting keeps the surface proportional to what is
+// actually wrong. This is also why an empty slice must still reach here rather
+// than being skipped by the caller — that call is what clears a reason.
+func SetModelScalingBlocked(namespace, modelName string, reasons []string) {
+	if modelScalingBlocked == nil {
+		return
+	}
+	base := prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelName,
+	}
+	if controllerInstance != "" {
+		base[constants.LabelControllerInstance] = controllerInstance
+	}
+	modelScalingBlocked.DeletePartialMatch(base)
+
+	for _, reason := range reasons {
+		labels := prometheus.Labels{constants.LabelReason: reason}
+		for k, v := range base {
+			labels[k] = v
+		}
+		modelScalingBlocked.With(labels).Set(1)
+	}
 }
 
 func SetModelsProcessed(count int) {

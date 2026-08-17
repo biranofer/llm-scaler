@@ -346,6 +346,58 @@ const (
 	// the scale-up threshold means demand is going unserved. At max on its own
 	// is the normal state of a variant sized exactly right.
 	WVAVariantAtMaxReplicas = "wva_variant_at_max_replicas"
+
+	// WVAModelScalingBlocked is a gauge, present and 1 for each reason a model
+	// cannot reach the scaling state its configuration implies.
+	//
+	// Deliberately one metric with a `reason` label rather than a gauge per
+	// condition. The enforcer alone refuses to park a model for three separate
+	// reasons and logs each at V(DEBUG), so a metric per condition ends as a
+	// metric per discovery — each with its own name, its own alert, and its own
+	// entry in wvaMetricNames. This is the same shape wva_decisions_limited_total
+	// already uses for `limited_by`, and it is what a status condition would be if
+	// WVA owned an API object to write one on: it synthesizes VariantAutoscaling
+	// from ScaledObjects, and a ScaledObject's status belongs to KEDA.
+	//
+	// Presence is the signal: a series exists only while its reason holds, so
+	// every emission must clear the model's stale series first (see
+	// SetModelScalingBlocked) or a resolved condition alerts forever. Several
+	// reasons can hold at once, which emits several series — that is correct, and
+	// more useful than picking a winner.
+	//
+	// Labels: namespace, model_name, reason
+	WVAModelScalingBlocked = "wva_model_scaling_blocked"
+)
+
+// Reasons a model cannot reach the scaling state its configuration implies
+// (values for the `reason` label of WVAModelScalingBlocked).
+//
+// Each names a CONTRADICTION, not a setting. Scale-to-zero disabled alongside a
+// variant floor is a consistent configuration and reports nothing; it is the half
+// that permits zero while the other half forbids it that leaves an operator
+// believing something the cluster will never do.
+const (
+	// ScalingBlockedVariantFloor indicates scale-to-zero is enabled for the model
+	// but some variant declares minReplicas > 0. A model is at zero only when
+	// nothing serves it, so one variant with a floor keeps the whole model up and
+	// the scale-to-zero setting is inert — idle accelerators, billed indefinitely,
+	// with no symptom to notice because the model is up and serving exactly as
+	// every other metric says it should be.
+	ScalingBlockedVariantFloor = "variant-floor"
+
+	// ScalingBlockedPolicyForbidsZero indicates every variant permits zero but the
+	// model's resolved policy disables scale-to-zero, so the bounds are inert.
+	//
+	// A valid configuration, reported because the operator's expectation is wrong
+	// and nothing else will tell them. It matters most with a single variant,
+	// where minReplicas: 0 reads exactly like a deliberate request to park.
+	ScalingBlockedPolicyForbidsZero = "policy-forbids-zero"
+
+	// ScalingBlockedEngineUnsupported indicates the model runs a non-vLLM engine.
+	// The enforcer's idle signal is hardcoded to vLLM's request counter, which
+	// reads 0 for any other engine and would be misread as "no traffic", so
+	// scale-to-zero is skipped entirely (see docs/proposals/sglang-backend.md).
+	ScalingBlockedEngineUnsupported = "engine-unsupported"
 )
 
 // Pod-mapping miss reasons (values for the `reason` label of WVAPodMappingMissTotal).

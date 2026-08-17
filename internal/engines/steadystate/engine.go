@@ -1233,7 +1233,22 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	}
 	logger := ctrl.LoggerFrom(ctx)
 
-	if !scaleToZeroSupportedForEngines(scaleTargets) {
+	// The resolved scaling entry carries the whole scale-to-zero policy: enabled
+	// and retention, tiered namespace-local → global and merged with this model's
+	// override. Resolved before the gates below, not after, because the gates are
+	// half of what decides whether this model can ever park and the policy is the
+	// other half — reporting one without the other cannot say which is binding.
+	satConfig := config.ResolveScalingPolicy(e.Config.ScalingPolicyConfigForNamespace(namespace), modelID, namespace)
+	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(&satConfig)
+	engineSupported := scaleToZeroSupportedForEngines(scaleTargets)
+
+	// Emit unconditionally, including with no reasons: this call is what CLEARS a
+	// reason that no longer holds, so skipping it on the healthy path would pin
+	// the last bad answer until the process restarts.
+	metrics.SetModelScalingBlocked(namespace, modelID,
+		scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, variantStates))
+
+	if !engineSupported {
 		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model runs a non-vLLM engine; engine-aware request counting is not yet wired through the enforcer (see docs/proposals/sglang-backend.md Phase 2)",
 			"modelID", modelID, "optimizer", optimizerName)
 		return false
@@ -1243,11 +1258,6 @@ func (e *Engine) applyScaleToZeroEnforcement(
 			"modelID", modelID, "optimizer", optimizerName)
 		return false
 	}
-
-	// The resolved scaling entry carries the whole scale-to-zero policy: enabled
-	// and retention, tiered namespace-local → global and merged with this model's
-	// override. Resolved once here and used for both.
-	satConfig := config.ResolveScalingPolicy(e.Config.ScalingPolicyConfigForNamespace(namespace), modelID, namespace)
 
 	// A model just woken from zero has served nothing yet: the request that woke
 	// it is still queued in the EPP while the pod pulls and loads. The enforcer's

@@ -67,6 +67,7 @@ var wvaMetricNames = []string{
 	constants.WVAMetricsCollectionErrorsTotal,
 	constants.WVAMetricsPodsDiscovered,
 	constants.WVAMetricsFreshnessStatus,
+	constants.WVAModelScalingBlocked,
 	constants.WVASaturationUtilization,
 	constants.WVASpareCapacity,
 	constants.WVARequiredCapacity,
