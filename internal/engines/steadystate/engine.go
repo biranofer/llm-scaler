@@ -1308,6 +1308,23 @@ func (e *Engine) applyScaleToZeroEnforcement(
 		return false
 	}
 
+	// The idle query reads PROMETHEUS HISTORY, so a model that was already quiet is
+	// parkable the instant WVA starts — on the strength of a window WVA was not
+	// running for. Every other autoscaler starts its idle clock when it starts
+	// observing (KEDA's cooldownPeriod from the trigger going inactive, Knative's
+	// from its own metric window, HPA's from its stabilization window); this gives
+	// WVA the same property.
+	//
+	// A floor, not an addend: it delays the FIRST park to roughly
+	// max(initialCooldown, retention) and leaves steady-state timing alone.
+	initialCooldown := config.ResolveScaleToZeroInitialCooldown(&satConfig)
+	if withinInitialCooldown(e.watchedSince(namespace, modelID), time.Now(), initialCooldown) {
+		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: WVA has not watched this model long enough to trust that it is idle",
+			"modelID", modelID, "namespace", namespace,
+			"initialCooldownPeriod", initialCooldown, "optimizer", optimizerName)
+		return false
+	}
+
 	scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicyOnDecisions(
 		ctx, modelID, namespace, decisions, &satConfig, optimizerName, modelEngine,
 	)

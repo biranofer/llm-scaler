@@ -159,6 +159,31 @@ type ScaleToZeroEnvelope struct {
 	// zero for exactly that model). A duration string, e.g. "5m". Empty inherits,
 	// ending at DefaultScaleToZeroRetentionPeriod.
 	RetentionPeriod string `yaml:"retentionPeriod,omitempty"`
+
+	// InitialCooldownPeriod is how long WVA must have been WATCHING a model before
+	// it may park it. A duration string, e.g. "5m"; "0" disables the hold. Empty
+	// inherits, ending at DefaultScaleToZeroInitialCooldown.
+	//
+	// It exists because the idle check reads PROMETHEUS HISTORY, not WVA's own
+	// observations. A model that has been quiet for the retention window is
+	// parkable the instant WVA starts, so installing or restarting the controller
+	// on an idle fleet parks it within one optimize interval — using a window WVA
+	// was not present for. Every other autoscaler starts its idle clock when IT
+	// starts observing: KEDA's cooldownPeriod runs from the trigger going
+	// inactive, Knative's from its own metric window, HPA's from its stabilization
+	// window. This gives WVA the same property.
+	//
+	// It is a FLOOR, not an addend: it gates the earliest permitted park rather
+	// than extending the steady-state path, so the first park after startup lands
+	// at about max(initialCooldownPeriod, retentionPeriod) rather than their sum.
+	// Steady-state timing is unchanged.
+	//
+	// Note this is NOT KEDA's default for the same field name — KEDA's
+	// initialCooldownPeriod defaults to 0, which would reproduce exactly the
+	// surprise described above. The default here matches KEDA's cooldownPeriod
+	// (300s), which is the value that actually protects a fresh controller. Set
+	// "0" for the old behaviour.
+	InitialCooldownPeriod string `yaml:"initialCooldownPeriod,omitempty"`
 }
 
 // ScaleFromZeroEnvelope is the inline scale-from-zero setting on a scaling entry.

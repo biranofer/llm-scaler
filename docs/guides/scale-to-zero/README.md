@@ -72,7 +72,10 @@ kubectl edit configmap wva-scaling-policy-config -n <wva-namespace>
 # under the entry this model resolves to (its scalingPolicy tier, or default):
 #   scaleToZero:
 #     enabled: true
-#     retentionPeriod: 10m
+#     retentionPeriod: 10m          # idle time before parking
+#     initialCooldownPeriod: 300s   # how long WVA watches before it may park
+#
+# Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence.
 ```
 <!-- guide:deploy.policy end -->
 
@@ -130,7 +133,7 @@ kubectl port-forward -n <wva-namespace> svc/wva-controller-manager-metrics-servi
 curl -sk https://localhost:8443/metrics | grep wva_model_scaling_blocked
 # variant-floor        a variant still has minReplicas > 0
 # policy-forbids-zero  every variant permits zero, the policy does not
-# engine-unsupported   not vLLM
+# engine-unsupported   the model runs BOTH vLLM and SGLang
 # no-wake-signal       EPP exports no flow-control queue: it would not wake
 ```
 <!-- guide:verify.blocked end -->
@@ -239,8 +242,44 @@ replicas*.
 | --- | --- | --- |
 | `scaleToZero.enabled` | inherits `WVA_SCALE_TO_ZERO` | `true` |
 | `scaleToZero.retentionPeriod` | `10m` | `5m` |
+| `scaleToZero.initialCooldownPeriod` | `300s` | `0` to disable the hold |
 | `scaleFromZero.requirePrefill` | `false` | `true` |
 | ScaledObject `minReplicaCount` | `1` | `0` — required on **every** variant |
+| ScaledObject `cooldownPeriod` (KEDA) | `300s` | `30s` |
+
+## How long parking actually takes
+
+**Two timers run in sequence, and they add up.** This is the single most common
+reason a fleet looks like it "will not park":
+
+```
+last request ──┬─ retentionPeriod ─┬─ ≤1 optimize interval ─┬─ cooldownPeriod ─┬─ 0 replicas
+               │ (WVA decides)     │ (trigger goes inactive)│ (KEDA acts)      │
+```
+
+WVA reports the KEDA trigger active *until* it decides the model needs zero, and
+it only decides that once the idle query over `retentionPeriod` reads zero. So
+KEDA's cooldown cannot even begin until WVA is already done waiting. With both
+defaults that is **10m + 300s ≈ 15 minutes** from the last request. Halving one
+timer halves only its own share.
+
+**And WVA will not park a model it has only just met.** The idle check reads
+Prometheus *history*, not WVA's own observations — so a model that was already
+quiet is parkable the instant WVA starts, on the strength of a window WVA was not
+running for. Installing or restarting the controller on an idle fleet would
+otherwise park it within one optimize interval.
+
+`initialCooldownPeriod` (default `300s`) is the hold that prevents that: WVA must
+have watched a model for that long before parking it. The clock is per model and
+per process, so a restart restarts it. It is a **floor, not an addend** — the
+first park lands at about `max(initialCooldownPeriod, retentionPeriod)`, and
+steady-state timing is unchanged.
+
+Every other autoscaler already behaves this way, measuring idleness from when it
+started observing: KEDA from the trigger going inactive, Knative from its own
+metric window, HPA from its stabilization window. Note the default is *not* KEDA's
+`initialCooldownPeriod`, which is `0` — that would reproduce the very surprise
+this prevents. Set `"0"` if you want the old behaviour.
 
 `retentionPeriod` does double duty: it is how long a model must be idle before it
 parks, and how long a just-woken model is held before the idle check may park it

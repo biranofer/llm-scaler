@@ -32,7 +32,10 @@ deploy:
       # under the entry this model resolves to (its scalingPolicy tier, or default):
       #   scaleToZero:
       #     enabled: true
-      #     retentionPeriod: 10m
+      #     retentionPeriod: 10m          # idle time before parking
+      #     initialCooldownPeriod: 300s   # how long WVA watches before it may park
+      #
+      # Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence.
   bounds:
     note: |
       Half two: let every variant reach zero. A model is at zero only when
@@ -61,7 +64,7 @@ verify:
       curl -sk https://localhost:8443/metrics | grep wva_model_scaling_blocked
       # variant-floor        a variant still has minReplicas > 0
       # policy-forbids-zero  every variant permits zero, the policy does not
-      # engine-unsupported   not vLLM
+      # engine-unsupported   the model runs BOTH vLLM and SGLang
       # no-wake-signal       EPP exports no flow-control queue: it would not wake
   park:
     note: |

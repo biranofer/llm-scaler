@@ -15,6 +15,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
 
@@ -59,8 +60,9 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 				Enabled: ptrTo(true), RetentionPeriod: "10m",
 			}},
 		})
-		return &Engine{
-			Config: cfg,
+		e := &Engine{
+			Config:            cfg,
+			lastBlockedModels: make(map[string]blockedModelRef),
 			ScaleToZeroEnforcer: allocation.NewEnforcer(
 				func(context.Context, inferenceengine.Engine, string, string, time.Duration) (float64, error) {
 					return 0, nil // idle: enforcer would scale to zero unless gated off
@@ -68,6 +70,16 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 				nil,
 			),
 		}
+		// These specs assert STEADY-STATE behaviour, so the engine must already have
+		// been watching this model — otherwise every one of them would be answered by
+		// the initial-cooldown hold instead of by the gate it is testing. The hold has
+		// its own spec below.
+		e.lastBlockedModels[utils.GetNamespacedKey(namespace, modelID)] = blockedModelRef{
+			namespace: namespace,
+			modelID:   modelID,
+			firstSeen: time.Now().Add(-time.Hour),
+		}
+		return e
 	}
 
 	decisions := func() []domain.VariantDecision {
@@ -182,6 +194,41 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
 		Expect(scaledToZero).To(BeFalse())
 		Expect(d[0].TargetReplicas).To(Equal(2), "a per-model scaleToZero:false must override the default entry")
+	})
+
+	// The hold that stops a freshly started controller parking an already-idle
+	// fleet on the strength of a Prometheus window it never observed. This engine
+	// has NOT been watching the model, which is the state right after startup.
+	It("does NOT zero a model it has only just started watching", func() {
+		e := engineWithIdleEnforcer()
+		delete(e.lastBlockedModels, utils.GetNamespacedKey(namespace, modelID))
+
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+
+		Expect(scaledToZero).To(BeFalse())
+		Expect(d[0].TargetReplicas).To(Equal(2),
+			"the idle query reads Prometheus history, so a model WVA has not watched "+
+				"must not be parked on the strength of a window WVA was not running for")
+	})
+
+	It("zeroes it once the initial cooldown is explicitly disabled", func() {
+		// The opt-out has to work, or an operator cannot get the previous behaviour.
+		e := engineWithIdleEnforcer()
+		delete(e.lastBlockedModels, utils.GetNamespacedKey(namespace, modelID))
+		e.Config.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m", InitialCooldownPeriod: "0",
+			}},
+		})
+
+		d := decisions()
+		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("vllm/vllm-openai:latest")}, nil)
+
+		Expect(scaledToZero).To(BeTrue())
+		Expect(d[0].TargetReplicas).To(Equal(0))
 	})
 })
 

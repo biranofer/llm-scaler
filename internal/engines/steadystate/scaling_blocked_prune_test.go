@@ -2,6 +2,7 @@ package steadystate
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
@@ -153,4 +154,60 @@ func TestPruneBlockedModels_ClearsAnotherProducersReason(t *testing.T) {
 	e.pruneBlockedModels(map[string]bool{utils.GetNamespacedKey("ns", "other"): true})
 
 	assert.Empty(t, blockedModels(t, registry))
+}
+
+// The initial-cooldown hold: WVA declines to park a model it has not watched long
+// enough, because the idle query reads Prometheus history rather than WVA's own
+// observations. Pure, so the rule is pinned directly — it is easy to get backwards.
+func TestWithinInitialCooldown(t *testing.T) {
+	now := time.Now()
+	const cooldown = 5 * time.Minute
+
+	assert.True(t, withinInitialCooldown(now.Add(-1*time.Minute), now, cooldown),
+		"a model seen a minute ago is still inside a five-minute hold")
+	assert.False(t, withinInitialCooldown(now.Add(-6*time.Minute), now, cooldown),
+		"past the hold, parking is allowed again")
+	assert.False(t, withinInitialCooldown(now.Add(-cooldown), now, cooldown),
+		"exactly at the boundary the hold is over")
+
+	// An operator asking for the previous behaviour must be able to have it.
+	assert.False(t, withinInitialCooldown(now, now, 0),
+		"a zero cooldown disables the hold outright")
+
+	// The first cycle: the model has not been recorded yet. Unknown must not be
+	// read as "long enough", or the hold would never apply to the very case it
+	// exists for.
+	assert.True(t, withinInitialCooldown(time.Time{}, now, cooldown),
+		"an unseen model is held, not parked")
+	assert.False(t, withinInitialCooldown(time.Time{}, now, 0))
+}
+
+// firstSeen must survive the reason updates that happen every cycle, or the hold
+// would restart on each pass and the model could never park at all.
+func TestRecordBlockedModel_KeepsFirstSeenStable(t *testing.T) {
+	e, _ := blockedEngine(t)
+
+	e.recordBlockedModel("ns", "m", nil)
+	first := e.watchedSince("ns", "m")
+	require.False(t, first.IsZero(), "the first sighting must be stamped")
+
+	e.recordBlockedModel("ns", "m", []string{constants.ScalingBlockedVariantFloor})
+	e.recordBlockedModel("ns", "m", nil)
+
+	assert.Equal(t, first, e.watchedSince("ns", "m"),
+		"changing reasons must not restart the initial-cooldown clock")
+}
+
+// A model that departs and returns is watched afresh: the controller has no
+// standing observation of it either.
+func TestWatchedSince_ResetsAfterPrune(t *testing.T) {
+	e, _ := blockedEngine(t)
+
+	e.recordBlockedModel("ns", "m", nil)
+	require.False(t, e.watchedSince("ns", "m").IsZero())
+
+	e.pruneBlockedModels(map[string]bool{utils.GetNamespacedKey("ns", "other"): true})
+
+	assert.True(t, e.watchedSince("ns", "m").IsZero(),
+		"a departed model is unknown again, so its hold starts over when it returns")
 }

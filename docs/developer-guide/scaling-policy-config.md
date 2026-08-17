@@ -67,12 +67,53 @@ for it:
 scaleToZero:
   enabled: false
   retentionPeriod: 5m
+  initialCooldownPeriod: 5m
 ```
 
 | field | absent means | ends at |
 | --- | --- | --- |
 | `enabled` | inherit | the `WVA_SCALE_TO_ZERO` deployment flag |
 | `retentionPeriod` | inherit | 10m (`DefaultScaleToZeroRetentionPeriod`) |
+| `initialCooldownPeriod` | inherit | 300s (`DefaultScaleToZeroInitialCooldown`) |
+
+#### How long until a model actually reaches zero
+
+**`retentionPeriod` and KEDA's `cooldownPeriod` add up.** They are sequential, not
+overlapping, and neither knob alone predicts the result:
+
+```
+last request ──┬─ retentionPeriod ─┬─ ≤1 optimize interval ─┬─ cooldownPeriod ─┬─ 0 replicas
+               │ (WVA's idle query)│ (WVA publishes 0, the  │ (KEDA)           │
+               │                   │  trigger goes inactive)│                  │
+```
+
+WVA's external scaler reports the trigger active *unless WVA has decided the model
+needs zero replicas*, so KEDA's cooldown clock cannot start until WVA has already
+decided to park — and WVA decides that only once `increase(...[retentionPeriod])`
+reads zero. With both defaults that is **10m + 300s ≈ 15 minutes**, plus up to one
+`GLOBAL_OPT_INTERVAL` (15s). A fleet that "will not park" is often just this sum.
+
+#### `initialCooldownPeriod`, and why its default is not KEDA's
+
+The idle check reads **Prometheus history**, not WVA's own observations. A model
+already quiet for the retention window is therefore parkable the instant WVA
+starts — so installing or restarting the controller on an idle fleet would park it
+within one optimize interval, acting on a window WVA was never running for.
+
+Every other autoscaler starts its idle clock when *it* starts observing: KEDA's
+`cooldownPeriod` runs from the trigger going inactive, Knative's from its own
+metric window, HPA's from its stabilization window. `initialCooldownPeriod` gives
+WVA the same property — it refuses to park a model until it has watched it that
+long. The clock is per model and per process, so a restart restarts it: a
+restarted controller has once again not seen the window it is about to act on.
+
+It is a **floor, not an addend**. It gates the earliest permitted park rather than
+extending the steady-state path, so the first park lands at about
+`max(initialCooldownPeriod, retentionPeriod)` and ordinary timing is unchanged.
+
+The default is **300s, matching KEDA's `cooldownPeriod`** — deliberately *not*
+KEDA's own `initialCooldownPeriod`, which defaults to `0` and would reproduce
+exactly the surprise this exists to prevent. Set `"0"` for the previous behaviour.
 
 Both fields resolve through the entry, so both get namespace tiering and per-model
 overrides: the entry is resolved namespace-local → global and merged with its
