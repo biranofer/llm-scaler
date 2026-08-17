@@ -25,13 +25,20 @@ type Enforcer struct {
 	// Injected for testability.
 	requestCountFunc RequestCountFuncType
 	metricsEmitter   *metrics.MetricsEmitter
+	// cfg supplies the DEPLOYMENT-level scale-to-zero default, for models whose
+	// scaling entry says nothing. Held as the live Config rather than a snapshot
+	// bool so a ConfigMap edit takes effect without a restart, the same way every
+	// other setting here does. Nil is tolerated: the resolver then falls back to
+	// the environment, which is what tests construct.
+	cfg *config.Config
 }
 
 // NewEnforcer creates a new scale-to-zero enforcer.
-func NewEnforcer(requestCountFunc RequestCountFuncType) *Enforcer {
+func NewEnforcer(requestCountFunc RequestCountFuncType, cfg *config.Config) *Enforcer {
 	return &Enforcer{
 		requestCountFunc: requestCountFunc,
 		metricsEmitter:   metrics.NewMetricsEmitter(),
+		cfg:              cfg,
 	}
 }
 
@@ -52,7 +59,7 @@ func (e *Enforcer) EnforcePolicyOnDecisions(
 	// satConfig is the resolved scaling entry: namespace-local → global, merged
 	// with this model's override. It carries the whole scale-to-zero policy now,
 	// so there is no second config to reconcile it against.
-	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(satConfig)
+	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(e.cfg, satConfig)
 
 	if scaleToZeroEnabled {
 		applied := e.applyScaleToZeroOnDecisions(ctx, modelID, namespace, decisions, satConfig, optimizerName)

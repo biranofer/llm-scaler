@@ -67,6 +67,7 @@ var _ = Describe("applyScaleToZeroEnforcement blocked-reason wiring", func() {
 				func(context.Context, string, string, time.Duration) (float64, error) {
 					return 0, nil // idle
 				},
+				nil,
 			),
 		}, registry
 	}

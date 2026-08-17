@@ -39,7 +39,7 @@ var _ = Describe("Enforcer", func() {
 				It("should set all matching decisions to zero", func() {
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
-					})
+					}, nil)
 					decisions := []domain.VariantDecision{
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2, Action: domain.ActionNoChange},
 						{VariantName: "variant-b", ModelID: "test-model", Namespace: "test-ns", Cost: 2.0, CurrentReplicas: 1, TargetReplicas: 3, Action: domain.ActionScaleUp},
@@ -62,7 +62,7 @@ var _ = Describe("Enforcer", func() {
 				It("should keep decisions unchanged", func() {
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 10, nil
-					})
+					}, nil)
 					decision := domain.VariantDecision{
 						VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 3, Action: domain.ActionScaleUp,
 					}
@@ -89,7 +89,7 @@ var _ = Describe("Enforcer", func() {
 
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, errors.New("prometheus unavailable")
-					})
+					}, nil)
 					decisions := []domain.VariantDecision{
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 					}
@@ -115,7 +115,7 @@ var _ = Describe("Enforcer", func() {
 				It("should preserve minimum replica on the cheapest variant", func() {
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
-					})
+					}, nil)
 					decisions := []domain.VariantDecision{
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 2.0, CurrentReplicas: 0, TargetReplicas: 0},
 						{VariantName: "variant-b", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
@@ -136,7 +136,7 @@ var _ = Describe("Enforcer", func() {
 				It("should keep decisions unchanged", func() {
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
-					})
+					}, nil)
 					decision1 := domain.VariantDecision{
 						VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 2.0, CurrentReplicas: 2, TargetReplicas: 2, Action: domain.ActionNoChange,
 					}
@@ -161,7 +161,7 @@ var _ = Describe("Enforcer", func() {
 				It("should use alphabetical order as tiebreaker", func() {
 					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
-					})
+					}, nil)
 					decisions := []domain.VariantDecision{
 						{VariantName: "variant-z", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 						{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
@@ -183,7 +183,7 @@ var _ = Describe("Enforcer", func() {
 			It("should only modify decisions matching modelID and namespace", func() {
 				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
-				})
+				}, nil)
 				d1 := domain.VariantDecision{
 					VariantName: "v1", ModelID: "model-1", Namespace: "ns-1", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 3, Action: domain.ActionScaleUp,
 				}
@@ -223,7 +223,7 @@ var _ = Describe("Enforcer", func() {
 			It("should include optimizer name in enforced reason", func() {
 				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
-				})
+				}, nil)
 				decisions := []domain.VariantDecision{
 					{VariantName: "v1", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 				}
@@ -253,7 +253,7 @@ var _ = Describe("Enforcer", func() {
 			It("should emit metric when enforcing scale-to-zero", func() {
 				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
-				})
+				}, nil)
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 2},
 				}
@@ -291,7 +291,7 @@ var _ = Describe("Enforcer", func() {
 			It("should emit metric when enforcing minimum replica", func() {
 				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
-				})
+				}, nil)
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 0, TargetReplicas: 0},
 				}
@@ -327,7 +327,7 @@ var _ = Describe("Enforcer", func() {
 			It("should not emit metric when no enforcement is needed", func() {
 				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 10, nil // Has requests
-				})
+				}, nil)
 				decisions := []domain.VariantDecision{
 					{VariantName: "variant-a", ModelID: "test-model", Namespace: "test-ns", Cost: 1.0, CurrentReplicas: 2, TargetReplicas: 3},
 				}

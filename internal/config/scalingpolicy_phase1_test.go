@@ -212,16 +212,16 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 
 	It("uses the inline setting when present", func() {
 		sat := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
-		Expect(ResolveScaleToZeroEnabled(sat)).To(BeTrue())
+		Expect(ResolveScaleToZeroEnabled(nil, sat)).To(BeTrue())
 
 		sat.ScaleToZero.Enabled = p1BoolPtr(false)
-		Expect(ResolveScaleToZeroEnabled(sat)).To(BeFalse())
+		Expect(ResolveScaleToZeroEnabled(nil, sat)).To(BeFalse())
 	})
 
 	It("falls back to the deployment flag when the entry says nothing", func() {
 		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
-		Expect(ResolveScaleToZeroEnabled(&ScalingPolicy{})).To(BeTrue())
-		Expect(ResolveScaleToZeroEnabled(nil)).To(BeTrue())
+		Expect(ResolveScaleToZeroEnabled(nil, &ScalingPolicy{})).To(BeTrue())
+		Expect(ResolveScaleToZeroEnabled(nil, nil)).To(BeTrue())
 	})
 
 	It("lets an explicit false beat the deployment flag", func() {
@@ -229,7 +229,7 @@ var _ = Describe("ResolveScaleToZeroEnabled / ResolveScaleToZeroRetention", func
 		// not collapse, or a model could never opt out of a cluster-wide default.
 		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
 		sat := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)}}
-		Expect(ResolveScaleToZeroEnabled(sat)).To(BeFalse())
+		Expect(ResolveScaleToZeroEnabled(nil, sat)).To(BeFalse())
 	})
 
 	It("resolves the retention period, defaulting when absent or unparseable", func() {
@@ -389,5 +389,43 @@ var _ = Describe("Config.EffectiveLimiterMode / EffectiveQuotaEntries", func() {
 			Expect(c.EffectiveLimiterMode()).To(Equal(LimiterTypeQuota))
 			Expect(c.EffectiveQuotaEntries()).To(HaveLen(1))
 		}
+	})
+})
+
+// The deployment flag is delivered in the manager ConfigMap, which the Deployment
+// mounts as a FILE with no environment variable. Reading os.Getenv for the
+// fallback therefore returned "" on every shipped install and the flag was
+// permanently false -- while wva_config_info reported it as true, because that
+// reads the loaded config. These pin the fallback to the loaded config, and pin
+// the precedence the fix must not disturb.
+var _ = Describe("ResolveScaleToZeroEnabled reads the loaded config", func() {
+	AfterEach(func() { _ = os.Unsetenv("WVA_SCALE_TO_ZERO") })
+
+	enabled := func(v bool) *Config {
+		c := NewTestConfig()
+		c.features.scaleToZeroEnabled = v
+		return c
+	}
+
+	It("falls back to the flag as loaded from the ConfigMap file", func() {
+		// No environment variable at all -- exactly the shipped deployment.
+		Expect(os.Getenv("WVA_SCALE_TO_ZERO")).To(BeEmpty())
+		Expect(ResolveScaleToZeroEnabled(enabled(true), &ScalingPolicy{})).To(BeTrue(),
+			"the ConfigMap value must reach the enforcer, not just wva_config_info")
+		Expect(ResolveScaleToZeroEnabled(enabled(false), &ScalingPolicy{})).To(BeFalse())
+	})
+
+	It("still lets the entry win over the flag, in both directions", func() {
+		off := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(false)}}
+		on := &ScalingPolicy{ScaleToZero: &ScaleToZeroEnvelope{Enabled: p1BoolPtr(true)}}
+		Expect(ResolveScaleToZeroEnabled(enabled(true), off)).To(BeFalse(),
+			"a model must be able to opt out of a cluster-wide default")
+		Expect(ResolveScaleToZeroEnabled(enabled(false), on)).To(BeTrue(),
+			"and opt in where the cluster default is off")
+	})
+
+	It("keeps the environment fallback when there is no loaded config", func() {
+		Expect(os.Setenv("WVA_SCALE_TO_ZERO", "true")).To(Succeed())
+		Expect(ResolveScaleToZeroEnabled(nil, &ScalingPolicy{})).To(BeTrue())
 	})
 })

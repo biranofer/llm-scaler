@@ -61,6 +61,7 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 				func(context.Context, string, string, time.Duration) (float64, error) {
 					return 0, nil // idle: enforcer would scale to zero unless gated off
 				},
+				nil,
 			),
 		}
 	}

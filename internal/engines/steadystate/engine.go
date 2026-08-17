@@ -244,7 +244,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		Recorder:                recorder,
 		Config:                  cfg,
 		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, recorder, podLocator),
-		ScaleToZeroEnforcer:     allocation.NewEnforcer(requestCountFunc),
+		ScaleToZeroEnforcer:     allocation.NewEnforcer(requestCountFunc, cfg),
 		GPULimiter:              gpuLimiter,
 		policies:                newPolicyReporter(),
 		metricsRegistry:         metricsRegistry,
@@ -1252,7 +1252,7 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// half of what decides whether this model can ever park and the policy is the
 	// other half — reporting one without the other cannot say which is binding.
 	satConfig := config.ResolveScalingPolicy(e.Config.ScalingPolicyConfigForNamespace(namespace), modelID, namespace)
-	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(&satConfig)
+	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(e.Config, &satConfig)
 	engineSupported := scaleToZeroSupportedForEngines(scaleTargets)
 
 	// Reported before the empty-decision return below, and unconditionally,
