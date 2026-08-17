@@ -115,13 +115,23 @@ Three surfaces, because each reaches a different reader.
 **Metric** — for alerting, and the only surface that survives a restart:
 
 ```
-wva_epp_flow_control_available{namespace, pool} 1|0
+wva_epp_flow_control_available{namespace, model} 1|0
 ```
 
-Keyed by **pool, not model**. Flow control is an EPP setting, so one EPP serving
-five models yields one fact, not five; keying by model would inflate cardinality
-and imply a per-model cause that does not exist. Positive polarity, matching the
-existing `wva_saturation_metrics_up` rather than a `..._missing` negative.
+Keyed by **model**. The project's contract is one model to one InferencePool, so
+pool-keying saves nothing today — the two have identical cardinality — and the
+documented direction is *per-role pools for a single model*, i.e. one model to
+many pools. Under that, keying by pool would emit several series for one fact,
+which is the opposite of the intent. Model is the stable key in both the current
+contract and the direction of travel.
+
+It is also the key the reader needs: the question being answered is "can this
+model wake?", and every other WVA metric is keyed by model and namespace. If a
+model ever does span pools, add `pool` as an extra label for correlation rather
+than promoting it to the identity.
+
+Positive polarity, matching the existing `wva_saturation_metrics_up` rather than
+a `..._missing` negative.
 
 A gauge, not a counter: the condition is a state and the operator needs to know
 it is true *now*.
