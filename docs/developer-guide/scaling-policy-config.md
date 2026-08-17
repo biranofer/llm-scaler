@@ -67,14 +67,12 @@ for it:
 scaleToZero:
   enabled: false
   retentionPeriod: 5m
-  initialCooldownPeriod: 5m
 ```
 
 | field | absent means | ends at |
 | --- | --- | --- |
 | `enabled` | inherit | the `WVA_SCALE_TO_ZERO` deployment flag |
 | `retentionPeriod` | inherit | 10m (`DefaultScaleToZeroRetentionPeriod`) |
-| `initialCooldownPeriod` | inherit | 300s (`DefaultScaleToZeroInitialCooldown`) |
 
 #### How long until a model actually reaches zero
 
@@ -93,44 +91,14 @@ decided to park — and WVA decides that only once `increase(...[retentionPeriod
 reads zero. With both defaults that is **10m + 300s ≈ 15 minutes**, plus up to one
 `GLOBAL_OPT_INTERVAL` (15s). A fleet that "will not park" is often just this sum.
 
-#### `initialCooldownPeriod`, and why its default is not KEDA's
+This applies to the **deactivation step only** — the final drop to
+`minReplicaCount`/`idleReplicaCount` once the trigger reports inactive. An ordinary
+scale-down while the trigger is still active (10 → 3) goes through the HPA and is
+governed by its own stabilization behaviour; neither KEDA cooldown is consulted.
 
-The idle check reads **Prometheus history**, not WVA's own observations. A model
-already quiet for the retention window is therefore parkable the instant WVA
-starts — so installing or restarting the controller on an idle fleet would park it
-within one optimize interval, acting on a window WVA was never running for.
-
-Every other autoscaler starts its idle clock when *it* starts observing: KEDA's
-`cooldownPeriod` runs from the trigger going inactive, Knative's from its own
-metric window, HPA's from its stabilization window. `initialCooldownPeriod` gives
-WVA the same property — it refuses to park a model until it has watched it that
-long. The clock is per model and per process, so a restart restarts it: a
-restarted controller has once again not seen the window it is about to act on.
-
-It is a **floor, not an addend**. It gates the earliest permitted park rather than
-extending the steady-state path, so the first park lands at about
-`max(initialCooldownPeriod, retentionPeriod)` and ordinary timing is unchanged.
-
-The default is **300s, matching KEDA's `cooldownPeriod`** — deliberately *not*
-KEDA's own `initialCooldownPeriod`, which defaults to `0` and would reproduce
-exactly the surprise this exists to prevent. Set `"0"` for the previous behaviour.
-
-Both fields resolve through the entry, so both get namespace tiering and per-model
-overrides: the entry is resolved namespace-local → global and merged with its
-per-model override entry before either is read. The envelope merges
-**field by field**, so an override that sets only `retentionPeriod` keeps an
-inherited `enabled`.
-
-`enabled` is a pointer internally so "not set" and "set to false" stay distinct —
-without that, a model could never opt out of a cluster-wide default.
-
-> **Changed:** this used to be split across a separate
-> `wva-model-scale-to-zero-config` ConfigMap (per-model `enable_scale_to_zero` and
-> `retention_period`), the inline field here, and the env flag — three places to
-> look and a precedence rule to remember, with retention available in only one of
-> them. That ConfigMap is gone. `WVA_SCALE_TO_ZERO` remains as the deployment-level
-> switch: it answers "may this cluster scale anything to zero", not "should this
-> model".
+WVA adds no hold of its own here. KEDA already guards that one transition, per
+ScaledObject, from cluster state — the same reason WVA reads `minReplicaCount`
+off the object rather than duplicating it into trigger metadata.
 
 ### `scaleFromZero`
 

@@ -17,20 +17,10 @@ const (
 	// but no explicit retention period is specified.
 	DefaultScaleToZeroRetentionPeriod = 10 * time.Minute
 
-	// DefaultScaleToZeroInitialCooldown is how long WVA watches a model before it
-	// may park it for the first time.
-	//
-	// 300s, matching KEDA's cooldownPeriod default rather than its
-	// initialCooldownPeriod default of 0. Zero is the behaviour this exists to
-	// fix: the idle query reads Prometheus history, so without a hold a freshly
-	// started controller parks an already-idle fleet on its first cycle, acting on
-	// a window it never observed.
-	DefaultScaleToZeroInitialCooldown = 300 * time.Second
-
 	// GlobalDefaultsKey is the "default" entry key shared by the scaling-policy
-	// ConfigMap: the entry every model inherits before its own
-	// per-model override is merged over it. An override is the entry whose BODY
-	// names this model; its key is arbitrary.
+	// ConfigMap: the entry every model inherits before its own per-model override
+	// is merged over it. An override is the entry whose BODY names this model; its
+	// key is arbitrary.
 	GlobalDefaultsKey = "default"
 )
 
@@ -82,27 +72,6 @@ func ResolveScaleToZeroEnabled(cfg *Config, sat *ScalingPolicy) bool {
 // than failing the cycle: a typo in a duration must not stop scaling decisions,
 // and silently treating it as zero would scale a model down the instant it went
 // idle.
-// ResolveScaleToZeroInitialCooldown returns how long WVA must have been watching
-// a model before it may park it.
-//
-// "0" is honoured as a deliberate opt-out, which is why this cannot reuse the
-// empty-string-means-default shape alone: an operator who wants the pre-existing
-// behaviour has to be able to ask for it.
-func ResolveScaleToZeroInitialCooldown(sat *ScalingPolicy) time.Duration {
-	if sat == nil || sat.ScaleToZero == nil || sat.ScaleToZero.InitialCooldownPeriod == "" {
-		return DefaultScaleToZeroInitialCooldown
-	}
-	duration, err := time.ParseDuration(sat.ScaleToZero.InitialCooldownPeriod)
-	if err != nil || duration < 0 {
-		ctrl.Log.Info("Invalid scaleToZero.initialCooldownPeriod, using the system default",
-			"initialCooldownPeriod", sat.ScaleToZero.InitialCooldownPeriod,
-			"default", DefaultScaleToZeroInitialCooldown,
-			"error", err)
-		return DefaultScaleToZeroInitialCooldown
-	}
-	return duration
-}
-
 func ResolveScaleToZeroRetention(sat *ScalingPolicy) time.Duration {
 	if sat == nil || sat.ScaleToZero == nil || sat.ScaleToZero.RetentionPeriod == "" {
 		return DefaultScaleToZeroRetentionPeriod

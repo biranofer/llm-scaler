@@ -32,10 +32,10 @@ deploy:
       # under the entry this model resolves to (its scalingPolicy tier, or default):
       #   scaleToZero:
       #     enabled: true
-      #     retentionPeriod: 10m          # idle time before parking
-      #     initialCooldownPeriod: 300s   # how long WVA watches before it may park
+      #     retentionPeriod: 10m   # idle time before parking
       #
-      # Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence.
+      # Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence, and
+      # applies to the final drop out of service only.
   bounds:
     note: |
       Half two: let every variant reach zero. A model is at zero only when

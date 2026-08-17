@@ -48,10 +48,7 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		scalerBase   = "scale-to-zero"
 		variantName  = "scale-to-zero-so"
 		retention    = "1m"
-		// Short so the suite does not wait out the 300s default; still non-zero so
-		// the hold is genuinely exercised rather than switched off.
-		initialCooldown = "15s"
-		loadRequests    = 40
+		loadRequests = 40
 		// retention (1m) + KEDA cooldownPeriod (30s in the fixture) + an optimize
 		// interval, and the two timers are SEQUENTIAL rather than overlapping.
 		//
@@ -98,16 +95,9 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		// The override is what makes this model parkable on a test's timescale. It
 		// also makes the suite independent of how the deployment flag happens to be
 		// set, which matters because the entry always wins over the flag.
-		// initialCooldownPeriod is set SHORT rather than to "0". WVA refuses to park
-		// a model it has not watched for that long, and the 300s default outlasts
-		// this suite — but disabling the hold would leave its wiring unexercised on a
-		// real cluster, and it resolves through the entry exactly like retentionPeriod
-		// does. A few seconds is enough: the clock starts when WVA first sees the
-		// workload, which is well before the load has finished running.
 		modelEntry := buildSaturationConfigYAMLWithModel(
 			"saturation", 0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
-		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n  initialCooldownPeriod: %s\n",
-			retention, initialCooldown)
+		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n", retention)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, "scale-to-zero-model", modelEntry)).To(Succeed())
 
 		By("Creating the model service, SERVING (not parked)")

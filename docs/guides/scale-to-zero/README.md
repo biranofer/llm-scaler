@@ -72,10 +72,10 @@ kubectl edit configmap wva-scaling-policy-config -n <wva-namespace>
 # under the entry this model resolves to (its scalingPolicy tier, or default):
 #   scaleToZero:
 #     enabled: true
-#     retentionPeriod: 10m          # idle time before parking
-#     initialCooldownPeriod: 300s   # how long WVA watches before it may park
+#     retentionPeriod: 10m   # idle time before parking
 #
-# Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence.
+# Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence, and
+# applies to the final drop out of service only.
 ```
 <!-- guide:deploy.policy end -->
 
@@ -246,7 +246,6 @@ replicas*.
 | --- | --- | --- |
 | `scaleToZero.enabled` | inherits `WVA_SCALE_TO_ZERO` | `true` |
 | `scaleToZero.retentionPeriod` | `10m` | `5m` |
-| `scaleToZero.initialCooldownPeriod` | `300s` | `0` to disable the hold |
 | `scaleFromZero.requirePrefill` | `false` | `true` |
 | ScaledObject `minReplicaCount` | `1` | `0` — required on **every** variant |
 | ScaledObject `cooldownPeriod` (KEDA) | `300s` | `30s` |
@@ -267,23 +266,11 @@ KEDA's cooldown cannot even begin until WVA is already done waiting. With both
 defaults that is **10m + 300s ≈ 15 minutes** from the last request. Halving one
 timer halves only its own share.
 
-**And WVA will not park a model it has only just met.** The idle check reads
-Prometheus *history*, not WVA's own observations — so a model that was already
-quiet is parkable the instant WVA starts, on the strength of a window WVA was not
-running for. Installing or restarting the controller on an idle fleet would
-otherwise park it within one optimize interval.
-
-`initialCooldownPeriod` (default `300s`) is the hold that prevents that: WVA must
-have watched a model for that long before parking it. The clock is per model and
-per process, so a restart restarts it. It is a **floor, not an addend** — the
-first park lands at about `max(initialCooldownPeriod, retentionPeriod)`, and
-steady-state timing is unchanged.
-
-Every other autoscaler already behaves this way, measuring idleness from when it
-started observing: KEDA from the trigger going inactive, Knative from its own
-metric window, HPA from its stabilization window. Note the default is *not* KEDA's
-`initialCooldownPeriod`, which is `0` — that would reproduce the very surprise
-this prevents. Set `"0"` if you want the old behaviour.
+Both apply to the **final drop out of service** only. An ordinary scale-down while
+the model is still serving (10 → 3) goes through the HPA and is not held by either
+timer. WVA adds no hold of its own: KEDA already guards that transition per
+ScaledObject, from cluster state, so a second WVA-side timer could only disagree
+with it.
 
 `retentionPeriod` does double duty: it is how long a model must be idle before it
 parks, and how long a just-woken model is held before the idle check may park it

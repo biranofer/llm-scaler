@@ -41,10 +41,12 @@ spec:
   # trigger active until then — so the time from the last request to zero is
   # scaleToZero.retentionPeriod (WVA, default 10m) PLUS this, in sequence.
   #
-  # Not to be confused with scaleToZero.initialCooldownPeriod in the scaling
-  # policy: that one is how long WVA must WATCH a model before it may park it at
-  # all, and it is a floor rather than an addend. KEDA's initialCooldownPeriod
-  # below is measured from ScaledObject creation.
+  # Both gate the DEACTIVATION step only -- the drop to minReplicaCount once the
+  # trigger reports inactive. An ordinary scale-down while active goes through the
+  # HPA and is not held by either. initialCooldownPeriod is measured from
+  # ScaledObject creation and consulted only while a trigger has never once been
+  # active, so it does nothing for an adopted object, whose creationTimestamp is
+  # older than the adoption.
   cooldownPeriod: 30
   initialCooldownPeriod: 30
   # Park the workload at zero when WVA decides it needs no replicas; activation

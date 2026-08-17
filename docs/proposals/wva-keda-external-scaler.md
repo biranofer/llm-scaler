@@ -154,8 +154,7 @@ means**.
 | `priority` (tier default), scale thresholds, SLO targets, `scaleToZero` | **named policy CM** | per tier (reusable) |
 | `limiters`/`quota`, `enableRescale`, GPU budget, fallbacks | **default/namespace CM** | cluster / tenant |
 
-> **Update (2026-08-11):** `scaleToZero` is now
-> `{enabled, retentionPeriod, initialCooldownPeriod}` on the
+> **Update (2026-08-11):** `scaleToZero` is now `{enabled, retentionPeriod}` on the
 > scaling entry and is the only per-model surface for it — the separate
 > `wva-model-scale-to-zero-config` ConfigMap is gone. It belongs in the **named
 > policy** row: whether a tier is allowed to idle to zero, and how long it must be

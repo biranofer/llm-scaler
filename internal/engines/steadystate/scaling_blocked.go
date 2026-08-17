@@ -3,7 +3,6 @@ package steadystate
 import (
 	"context"
 	"strings"
-	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -21,11 +20,6 @@ type blockedModelRef struct {
 	modelID   string
 	// reasons is the last published set, joined, purely for comparison.
 	reasons string
-	// firstSeen is when THIS PROCESS first considered the model, which is what the
-	// initial-cooldown hold measures from. Deliberately not persisted: a restart
-	// restarts the hold, because a restarted controller has once again not
-	// observed the window it is about to act on.
-	firstSeen time.Time
 }
 
 // recordBlockedModel notes that this engine has published reasons for a model,
@@ -44,10 +38,6 @@ func (e *Engine) recordBlockedModel(namespace, modelID string, reasons []string)
 	joined := strings.Join(reasons, ",")
 
 	prev, seen := e.lastBlockedModels[key]
-	firstSeen := prev.firstSeen
-	if firstSeen.IsZero() {
-		firstSeen = time.Now()
-	}
 	// A model observed for the first time is a change only if something is
 	// actually blocking it — otherwise every restart would log a line per healthy
 	// model to say nothing is wrong.
@@ -57,7 +47,6 @@ func (e *Engine) recordBlockedModel(namespace, modelID string, reasons []string)
 		namespace: namespace,
 		modelID:   modelID,
 		reasons:   joined,
-		firstSeen: firstSeen,
 	}
 	return changed
 }
@@ -177,30 +166,4 @@ func scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported bool, states []
 		reasons = append(reasons, constants.ScalingBlockedEngineUnsupported)
 	}
 	return reasons
-}
-
-// withinInitialCooldown reports whether a model is still inside the window during
-// which WVA declines to park it.
-//
-// Pure, because the rule is the whole point and it is easy to get backwards. A
-// zero cooldown disables the hold outright — an operator asking for the previous
-// behaviour must be able to have it. A zero firstSeen means the model has not been
-// recorded yet, which is the first cycle: hold, rather than treat "unknown" as
-// "long enough".
-func withinInitialCooldown(firstSeen, now time.Time, cooldown time.Duration) bool {
-	if cooldown <= 0 {
-		return false
-	}
-	if firstSeen.IsZero() {
-		return true
-	}
-	return now.Sub(firstSeen) < cooldown
-}
-
-// watchedSince reports when this process first considered a model.
-func (e *Engine) watchedSince(namespace, modelID string) time.Time {
-	if e.lastBlockedModels == nil {
-		return time.Time{}
-	}
-	return e.lastBlockedModels[utils.GetNamespacedKey(namespace, modelID)].firstSeen
 }
