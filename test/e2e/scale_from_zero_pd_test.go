@@ -79,6 +79,10 @@ var _ = Describe("Scale-From-Zero for a P/D-disaggregated model", Serial, Label(
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: set SCALE_TO_ZERO_ENABLED=true")
 		}
+		if ok, why := eppFlowControlAvailable(ctx, crClient,
+			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
+			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)
+		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()

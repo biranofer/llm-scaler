@@ -345,6 +345,10 @@ var _ = Describe("Scale-From-Zero Feature", Serial, Label("full"), Ordered, func
 			Skip("This suite requires EPP flow-control queuing: " +
 				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
+		if ok, why := eppFlowControlAvailable(ctx, crClient,
+			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
+			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)
+		}
 
 		By("Cleaning up any existing scale-from-zero test resources")
 		cleanupScaleFromZeroResources()
@@ -784,6 +788,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet", Serial, Label("
 			Skip("This suite requires EPP flow-control queuing: " +
 				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
 		}
+		if ok, why := eppFlowControlAvailable(ctx, crClient,
+			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
+			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)
+		}
 
 		// The LWS suites create a LeaderWorkerSet; without the CRD that is a
 		// hard failure rather than an honest skip.
@@ -1156,6 +1164,10 @@ var _ = Describe("Scale-From-Zero Feature with LeaderWorkerSet (single-node)", S
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: " +
 				"set SCALE_TO_ZERO_ENABLED=true (required for EPP flow-control queuing)")
+		}
+		if ok, why := eppFlowControlAvailable(ctx, crClient,
+			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
+			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)
 		}
 
 		// The LWS suites create a LeaderWorkerSet; without the CRD that is a

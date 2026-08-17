@@ -79,6 +79,10 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: set SCALE_TO_ZERO_ENABLED=true")
 		}
+		if ok, why := eppFlowControlAvailable(ctx, crClient,
+			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
+			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)
+		}
 
 		// This suite asserts a REFUSAL, so it needs a limiter — and the shipped
 		// ConfigMap declares none, because a GPU-aware optimizer cannot allocate to
