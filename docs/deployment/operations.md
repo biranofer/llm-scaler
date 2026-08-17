@@ -2,7 +2,7 @@
 
 Verifying WVA works, watching what it decides, and the first things to check when it does not.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
+> Part of the [WVA deployment guide](../../deploy/).
 
 ## Verifying the install
 
@@ -278,7 +278,7 @@ while the queue grows.
 
 The whole story — how attribution works, how to size `maxReplicas` from the
 launcher pool, why GPU accounting is a lower bound, and what to check — is in
-[WVA with Fast Model Actuation](../guides/fma/README.md).
+[WVA with Fast Model Actuation](../guides/fma/).
 
 First stop for any of these:
 

@@ -2,7 +2,7 @@
 
 Every option `deploy/install.sh` reads. Verified against the script: each entry here is read by something, and every `VAR=${VAR:-default}` in `install.sh` and `deploy/lib/*.sh` appears below.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
+> Part of the [WVA deployment guide](../../deploy/).
 
 ## Required
 
@@ -15,10 +15,10 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/README.md). Every `make` target sets this from `SCOPE`, which is `namespace` on both platforms; the platform-derived default below applies only when `deploy/install.sh` is run directly | `namespace` (`SCOPE=cluster` to change it) |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/). Every `make` target sets this from `SCOPE`, which is `namespace` on both platforms; the platform-derived default below applies only when `deploy/install.sh` is run directly | `namespace` (`SCOPE=cluster` to change it) |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
-| `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller) \| `all`. **Usually leave it unset**: an install that is not told picks the half left to do — `wva` when the caller cannot create cluster-scoped objects, or when the admin half is already in place. `make setup-prereqs` is the `prereqs` phase — see [deploy/README.md](../../deploy/README.md) | auto |
+| `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller) \| `all`. **Usually leave it unset**: an install that is not told picks the half left to do — `wva` when the caller cannot create cluster-scoped objects, or when the admin half is already in place. `make setup-prereqs` is the `prereqs` phase — see [deploy/](../../deploy/) | auto |
 | `WVA_PROJECT` | Repository root the script installs from | `$PWD` |
 
 ## Image
@@ -304,7 +304,7 @@ job; removing what WVA was pointed at is a separate decision, and an explicit on
 **A second WVA is refused.** Their workloads would be separate — a workload
 registers with the scaler address its trigger names — but their GPU budgets would
 not. See
-[One WVA per cluster](../guides/install-cluster-wide/README.md).
+[One WVA per cluster](../guides/install-cluster-wide/).
 
 ## Adding a model later
 

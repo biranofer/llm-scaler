@@ -9,7 +9,7 @@ emit vLLM metrics without a GPU.
 
 For a real cluster, install llm-d from its own
 [guides](https://github.com/llm-d/llm-d/tree/main/guides) and then follow
-[Install WVA in a namespace](../install-in-namespace/README.md). WVA does not
+[Install WVA in a namespace](../install-in-namespace/). WVA does not
 install llm-d: which model, which accelerator and whose HuggingFace token are the
 deployment decision, not an autoscaler's.
 
@@ -98,4 +98,4 @@ export CLUSTER_GPU_TYPE=nvidia-mix CLUSTER_NODES=3 CLUSTER_GPUS=4
 ## Next
 
 - [Testing](../../developer-guide/testing.md) — the suites, their labels and flags
-- [Benchmark WVA](../benchmarking/README.md)
+- [Benchmark WVA](../benchmarking/)

@@ -2,7 +2,7 @@
 
 Automated deployment script for WVA, llm-d infrastructure, Prometheus, and HPA on Kubernetes clusters.
 
-> **Note**: This guide covers Kubernetes-specific deployment details. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../README.md).
+> **Note**: This guide covers Kubernetes-specific deployment details. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../).
 
 ## Table of Contents
 

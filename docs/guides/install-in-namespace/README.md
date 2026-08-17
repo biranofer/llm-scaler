@@ -9,7 +9,7 @@ to KEDA, which owns the HPA and does the scaling.
 
 It is the common path, and it works the same whether llm-d is already serving or
 you have just deployed it. A cluster admin runs one command first, once — see
-[Cluster-admin setup](../admin-cluster-setup/README.md) — after which the
+[Cluster-admin setup](../admin-cluster-setup/) — after which the
 namespace's owner installs and upgrades the controller themselves.
 
 ## Prerequisites
@@ -59,7 +59,7 @@ make setup-prereqs
 
 Once per namespace, not once per upgrade. It creates the namespace, the
 cluster-scoped RBAC and the ServiceMonitor: the objects a namespace admin is not
-allowed to create. See [Cluster-admin setup](../admin-cluster-setup/README.md)
+allowed to create. See [Cluster-admin setup](../admin-cluster-setup/)
 for what each one is and why it needs an admin.
 
 Already done for your namespace? `make check-prereqs` above names anything still
@@ -117,7 +117,7 @@ not be read is written as `no` with the reason, and never created without one.
 > **Running Fast Model Actuation?** The plan can carry a second entry for the
 > same model — the FMA half — switched off by default, and an entry can arrive as
 > `apply: no` until the launcher pods are scraped. See
-> [WVA with Fast Model Actuation](../fma/README.md).
+> [WVA with Fast Model Actuation](../fma/).
 
 ## Verification
 
@@ -209,6 +209,6 @@ Full list: [Configuration reference](../../deployment/configuration.md).
 ## Next
 
 - [After the install](../../deployment/operations.md)
-- [Bound every WVA by real GPUs](../admin-gpu-bounding/README.md) — otherwise
+- [Bound every WVA by real GPUs](../admin-gpu-bounding/) — otherwise
   scaling is bounded only by each workload's `maxReplicaCount`
 - [Scaling policy](../../developer-guide/scaling-policy-config.md)

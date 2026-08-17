@@ -110,6 +110,6 @@ The namespace, Prometheus, KEDA and EPP stay.
 
 ## Next
 
-- [Bounding GPU usage](../admin-gpu-bounding/README.md)
-- [Install WVA in a namespace](../install-in-namespace/README.md) — what you are
+- [Bounding GPU usage](../admin-gpu-bounding/)
+- [Install WVA in a namespace](../install-in-namespace/) — what you are
   enabling someone else to do

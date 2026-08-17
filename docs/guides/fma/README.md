@@ -30,8 +30,8 @@ are attributed to the requester's ScaledObject. Design detail:
 
 ## Prerequisites
 
-- WVA installed ([in a namespace](../install-in-namespace/README.md) or
-  [cluster-wide](../install-cluster-wide/README.md))
+- WVA installed ([in a namespace](../install-in-namespace/) or
+  [cluster-wide](../install-cluster-wide/))
 - an FMA stack in the workload namespace: a `LauncherConfig`, a
   `LauncherPopulationPolicy`, an `InferenceServerConfig`, and a requester
   Deployment

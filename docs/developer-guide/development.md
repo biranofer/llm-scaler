@@ -231,7 +231,7 @@ make test-e2e-smoke
 FOCUS="Basic VA lifecycle" make test-e2e-smoke
 ```
 
-See [Testing Guide](testing.md) and [E2E Test Suite README](../../test/e2e/README.md) for infra-only setup and configuration. For OpenShift, set `ENVIRONMENT=openshift` and use the same targets.
+See [Testing Guide](testing.md) and [E2E Test Suite README](../../test/e2e/) for infra-only setup and configuration. For OpenShift, set `ENVIRONMENT=openshift` and use the same targets.
 
 ### Manual Testing
 
