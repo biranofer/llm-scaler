@@ -78,7 +78,10 @@ data:
   # Example per-model override for llama model in production namespace
   # Shows partial override (only some fields specified, rest inherit from default)
   # Uses the plugin envelope for the analyzer and an inline scale-to-zero setting
-  # (scaleToZero is the only per-model surface: enabled + retentionPeriod).
+  # (scaleToZero is the only per-model surface: enabled, retentionPeriod and
+  # initialCooldownPeriod). Time to zero is retentionPeriod + KEDA's
+  # cooldownPeriod, in sequence; initialCooldownPeriod (default 300s) is how long
+  # WVA must watch a model before it may park it at all.
   # llama-70b-prod: |
   #   model_id: meta/llama-70b
   #   namespace: production

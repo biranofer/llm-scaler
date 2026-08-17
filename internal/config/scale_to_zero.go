@@ -29,7 +29,8 @@ const (
 
 	// GlobalDefaultsKey is the "default" entry key shared by the scaling-policy
 	// ConfigMap: the entry every model inherits before its own
-	// "{modelID}#{namespace}" override is merged over it.
+	// per-model override is merged over it. An override is the entry whose BODY
+	// names this model; its key is arbitrary.
 	GlobalDefaultsKey = "default"
 )
 
@@ -37,7 +38,8 @@ const (
 // resolved scaling entry.
 //
 // The entry is the ONLY per-model surface: it arrives already resolved
-// namespace-local → global and merged with its "{modelID}#{namespace}" override,
+// namespace-local → global, then the named policy tier, then any per-model
+// override — which is matched on the modelID/namespace in its BODY, not its key —
 // so tiering and per-model precedence are settled before this is called. A
 // separate wva-model-scale-to-zero-config ConfigMap used to carry the same
 // setting, which meant three places to look and a precedence rule to remember.

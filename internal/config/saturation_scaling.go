@@ -144,7 +144,10 @@ type ScalingPolicy struct {
 // rule to remember and no single answer to "is it on for this model?". Living on
 // the scaling entry also gives retention the namespace tiering and per-model
 // overrides it never had: the entry is resolved namespace-local → global and
-// merged with its "{modelID}#{namespace}" override before either field is read.
+// merged with any per-model override before either field is read. An override is
+// identified by the modelID/namespace in its BODY, not by its key: the old
+// {modelID}#{namespace} key form is not writable as a ConfigMap key at all (see
+// PolicyEntryKey).
 type ScaleToZeroEnvelope struct {
 	// Enabled turns scale-to-zero on for the entry. A pointer so an absent field
 	// (nil) means "inherit": from the merged default entry, and finally from the

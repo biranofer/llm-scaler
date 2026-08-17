@@ -163,7 +163,7 @@ The ScaledObject now serves dual duty: it carries WVA annotations (discovery + c
 
 ### Saturation Configuration
 
-The saturation scaling ConfigMap (`saturation-scaling-config`) continues to work as-is. Per-model overrides use the same `{modelID}#{namespace}` key format. WVA resolves the model ID from the `llm-d.ai/model-id` annotation on the ScaledObject/HPA instead of from the VA CRD's `spec.modelID` field.
+The saturation scaling ConfigMap (`saturation-scaling-config`) continues to work as-is. Per-model overrides are identified by the `model_id`/`namespace` fields in the entry BODY; the ConfigMap key is arbitrary (the old `{modelID}#{namespace}` key form is not a legal ConfigMap key). WVA resolves the model ID from the `llm-d.ai/model-id` annotation on the ScaledObject/HPA instead of from the VA CRD's `spec.modelID` field.
 
 ---
 

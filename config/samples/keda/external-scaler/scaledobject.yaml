@@ -36,6 +36,15 @@ spec:
     kind: Deployment
     name: sample-deployment
   pollingInterval: 5
+  # KEDA's own timers, and they are NOT the whole story. cooldownPeriod runs only
+  # AFTER WVA has already decided to park, because the external scaler reports the
+  # trigger active until then — so the time from the last request to zero is
+  # scaleToZero.retentionPeriod (WVA, default 10m) PLUS this, in sequence.
+  #
+  # Not to be confused with scaleToZero.initialCooldownPeriod in the scaling
+  # policy: that one is how long WVA must WATCH a model before it may park it at
+  # all, and it is a floor rather than an addend. KEDA's initialCooldownPeriod
+  # below is measured from ScaledObject creation.
   cooldownPeriod: 30
   initialCooldownPeriod: 30
   # Park the workload at zero when WVA decides it needs no replicas; activation

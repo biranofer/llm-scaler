@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
 
 // Parking a SERVING model, which nothing else covered.
@@ -41,14 +42,27 @@ import (
 // the request counter alone, so the suite does not depend on the wake path.
 var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Label("full"), Ordered, func() {
 	const (
-		modelSvcName  = "scale-to-zero-ms"
-		decodeDeploy  = "scale-to-zero-ms-decode"
-		poolName      = "scale-to-zero-pool"
-		scalerBase    = "scale-to-zero"
-		variantName   = "scale-to-zero-so"
-		retention     = "1m"
-		loadRequests  = 40
-		parkingBudget = 5 * time.Minute
+		modelSvcName = "scale-to-zero-ms"
+		decodeDeploy = "scale-to-zero-ms-decode"
+		poolName     = "scale-to-zero-pool"
+		scalerBase   = "scale-to-zero"
+		variantName  = "scale-to-zero-so"
+		retention    = "1m"
+		// Short so the suite does not wait out the 300s default; still non-zero so
+		// the hold is genuinely exercised rather than switched off.
+		initialCooldown = "15s"
+		loadRequests    = 40
+		// retention (1m) + KEDA cooldownPeriod (30s in the fixture) + an optimize
+		// interval, and the two timers are SEQUENTIAL rather than overlapping.
+		//
+		// Generous on purpose. Six minutes passed against a controller that was
+		// already warm and FAILED against one the deploy had just restarted: from
+		// cold, discovery, enrichment and the Prometheus metrics cache (fresh 1m,
+		// stale 2m) all start empty, so the first idle evaluation lands minutes
+		// later. The feature was working in both cases — only the budget was wrong,
+		// and a budget that fits exactly one of those two states is a flake waiting
+		// to happen.
+		parkingBudget = 12 * time.Minute
 	)
 
 	var (
@@ -84,9 +98,16 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		// The override is what makes this model parkable on a test's timescale. It
 		// also makes the suite independent of how the deployment flag happens to be
 		// set, which matters because the entry always wins over the flag.
+		// initialCooldownPeriod is set SHORT rather than to "0". WVA refuses to park
+		// a model it has not watched for that long, and the 300s default outlasts
+		// this suite — but disabling the hold would leave its wiring unexercised on a
+		// real cluster, and it resolves through the entry exactly like retentionPeriod
+		// does. A few seconds is enough: the clock starts when WVA first sees the
+		// workload, which is well before the load has finished running.
 		modelEntry := buildSaturationConfigYAMLWithModel(
 			"saturation", 0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
-		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n", retention)
+		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n  initialCooldownPeriod: %s\n",
+			retention, initialCooldown)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, "scale-to-zero-model", modelEntry)).To(Succeed())
 
 		By("Creating the model service, SERVING (not parked)")
@@ -109,9 +130,10 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Registering the workload with minReplicaCount=0 so it is ALLOWED to reach zero")
-		// A fresh ScaledObject, so KEDA builds its HPA with minReplicas: 0. An HPA
-		// created while minReplicaCount was 1 keeps minReplicas: 1 for life, and the
-		// workload then cannot reach zero however the ScaledObject reads afterwards.
+		// minReplicaCount on the SCALEDOBJECT is what permits zero. Do not assert on
+		// the HPA KEDA derives from it: KEDA always gives that HPA minReplicas: 1,
+		// because the HPA API cannot express 0, and drives 1->0 itself. A healthy
+		// parked workload therefore sits behind an HPA reading minReplicas: 1.
 		_ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBase)
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBase,
 			decodeDeploy, variantName, 0, 10, cfg.MonitoringNS,
@@ -136,9 +158,39 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 	})
 
+	// Prometheus lives in the cluster and utils.DefaultPrometheusURL is
+	// https://localhost:9090 — i.e. a PORT-FORWARD this suite does not create. On a
+	// host without one every query errors, which is a broken transport rather than a
+	// failed assertion. The metric checks below therefore skip when it is
+	// unreachable, and the assertion that actually proves the feature — the
+	// deployment reaching zero — deliberately needs no Prometheus at all.
+	reachableProm := func() *utils.PrometheusClient {
+		pc := promClientForCheck()
+		if pc == nil {
+			Skip("no Prometheus client could be built")
+		}
+		if _, err := pc.QueryWithRetry(ctx, "vector(1)"); err != nil {
+			Skip("Prometheus is not reachable from the test host: " + err.Error() +
+				" (port-forward svc/kube-prometheus-stack-prometheus 9090:9090 for the metric assertions)")
+		}
+		return pc
+	}
+
 	It("serves traffic, so the idle signal exists at all", func() {
 		By("Driving requests through the model service")
-		target := fmt.Sprintf("http://%s.%s.svc.cluster.local:8000", modelSvcName, cfg.LLMDNamespace)
+		// Two things this URL has to get right, and both fail SILENTLY:
+		//
+		//   - EnsureService names the Service "<base>-service". The base name
+		//     resolves to nothing, and the generator retries until the spec times out.
+		//   - The PATH must be /v1/chat/completions. The generator POSTs a chat
+		//     payload to whatever it is given, discards the response (-o /dev/null),
+		//     swallows the exit code (|| true) and counts requests SENT — so against
+		//     the bare host every request 404s and it still reports "Completed all 40
+		//     requests". Its health check probes /v1/models on the stripped base URL,
+		//     which succeeds either way, so the run looks entirely healthy while no
+		//     request is ever served and vllm:request_success_total never appears.
+		target := fmt.Sprintf("http://%s-service.%s.svc.cluster.local:8000/v1/chat/completions",
+			modelSvcName, cfg.LLMDNamespace)
 		Expect(fixtures.EnsureBurstLoadJob(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, target,
 			fixtures.LoadConfig{
 				Strategy:     "synthetic",
@@ -151,10 +203,7 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		// The counter existing is the precondition for everything below, so assert it
 		// rather than assuming the load landed. Absent here means the rest of the
 		// suite would be testing the cold-start guard, not parking.
-		pc := promClientForCheck()
-		if pc == nil {
-			Skip("no Prometheus reachable from the test host; the idle signal cannot be confirmed")
-		}
+		pc := reachableProm()
 		query := fmt.Sprintf(`count(vllm:request_success_total{namespace=%q,model_name=%q})`,
 			cfg.LLMDNamespace, modelID)
 		Eventually(func(g Gomega) {
@@ -185,10 +234,7 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 	})
 
 	It("reports the parked model as serving nothing", func() {
-		pc := promClientForCheck()
-		if pc == nil {
-			Skip("no Prometheus reachable from the test host")
-		}
+		pc := reachableProm()
 
 		// wva_model_replicas is what the symptom alert reads, and 0 is the value two
 		// earlier implementations made unreachable. exported_namespace, not namespace:
@@ -204,10 +250,7 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 	})
 
 	It("does not report a configuration contradiction for this model", func() {
-		pc := promClientForCheck()
-		if pc == nil {
-			Skip("no Prometheus reachable from the test host")
-		}
+		pc := reachableProm()
 
 		// Both halves agree here — the policy enables zero and every variant permits
 		// it — so wva_model_scaling_blocked must be silent. A variant-floor or

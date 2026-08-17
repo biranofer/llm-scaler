@@ -82,8 +82,11 @@ data:
   #   model_id: granite-premium
   #   namespace: production
   #   priority: 2.0
-  #   # scaleToZero is the only per-model surface for it: enabled + retentionPeriod,
-  #   # inherited from the `default` entry unless set here.
+  #   # scaleToZero is the only per-model surface for it: enabled, retentionPeriod
+  #   # and initialCooldownPeriod, inherited from the `default` entry unless set
+  #   # here. Time to zero is retentionPeriod + KEDA's cooldownPeriod, in sequence;
+  #   # initialCooldownPeriod (default 300s) is how long WVA must watch a model
+  #   # before it may park it at all.
   #   scaleToZero: { enabled: false }
   #   analyzers:
   #     - type: saturation

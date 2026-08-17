@@ -102,23 +102,27 @@ policy above then does nothing at all.
 
 <!-- guide:deploy.hpa start -->
 ```bash
-# THE TRAP. KEDA derives the HPA from the ScaledObject ONCE. An HPA created
-# while minReplicaCount was 1 keeps minReplicas: 1 forever, so the workload
-# cannot reach zero no matter what the ScaledObject says afterwards. Editing
-# the ScaledObject in place is not enough — delete it and let KEDA rebuild
-# the HPA.
+# Read the SCALEDOBJECT, not the HPA. KEDA always gives the derived HPA
+# minReplicas: 1 — the HPA API cannot express 0 — and drives 1->0 itself, so a
+# perfectly healthy parked workload sits behind an HPA reading 1. Only
+# spec.minReplicaCount on the ScaledObject decides whether zero is permitted.
+# If you changed it after KEDA built the HPA and nothing parks, delete the
+# ScaledObject and let KEDA rebuild rather than editing in place.
+kubectl get scaledobject -n <llmd-namespace>         -o custom-columns=NAME:.metadata.name,MIN:.spec.minReplicaCount
+# minReplicas: 1 on the derived HPA below is EXPECTED, not a fault:
 kubectl get hpa -n <llmd-namespace> -o custom-columns=NAME:.metadata.name,MIN:.spec.minReplicas
-# any MIN of 1 for a variant you set to 0:
-#   kubectl delete scaledobject -n <llmd-namespace> <name> && kubectl apply -f <its manifest>
 ```
 <!-- guide:deploy.hpa end -->
 
-KEDA builds the HPA from the ScaledObject once. An HPA created while
-`minReplicaCount` was `1` keeps `minReplicas: 1` for the rest of its life, so the
-workload cannot reach zero however the ScaledObject reads afterwards. Editing the
-ScaledObject in place does not fix it; delete and re-apply so KEDA rebuilds the
-HPA. Four separate attempts at this failed here and were misread as "WVA is
-holding the model active".
+**`minReplicas: 1` on the derived HPA is normal.** KEDA always sets it — the HPA
+API has no way to express 0 — and drives the last step to zero itself. A healthy,
+parked workload sits behind an HPA reading `1`, so that number tells you nothing
+about whether scale-to-zero is working. Verified on a cluster: a model observed at
+zero replicas had `minReplicas: 1` on its HPA throughout.
+
+What decides it is `spec.minReplicaCount` on the **ScaledObject**. If you changed
+that after KEDA had already built the HPA and nothing parks, delete the
+ScaledObject and let KEDA rebuild it rather than editing in place.
 
 ## Verification
 
