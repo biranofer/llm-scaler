@@ -208,6 +208,51 @@ so_plan_rows() {
 # to autoscale.
 readonly SO_SERVING_MARKER='llm-d.ai/inferenceServing=true'
 
+# ...and llm-d's own guides do not set that label at all.
+#
+# guides/recipes/modelserver/base/single-host/default/decode-deployment.yaml sets
+# `llm-d.ai/role: decode` and nothing else; guides/optimized-baseline adds
+# llm-d.ai/model, llm-d.ai/guide and the accelerator pair. inferenceServing
+# appears nowhere in that render path, so on a namespace built from the guide the
+# WVA install guide points readers at, discovery matched NOTHING: preflight said
+# "holds NO llm-d model servers", the plan came out empty, and the install
+# reported healthy while scaling nothing. The label does exist on workloads from
+# other deployment paths, which is why this went unnoticed.
+#
+# The role IS the reliable marker, and llm-d sets it deliberately -- the same
+# reasoning SO_FMA_ROLE_MARKER already relies on one label below.
+#
+# Only the two roles that hold an engine and serve. `requester` is deliberately
+# absent: an FMA requester holds no engine, and so_discover_fma_requesters
+# handles it separately and on purpose.
+readonly SO_SERVING_ROLE_MARKERS='llm-d.ai/role=decode llm-d.ai/role=prefill'
+
+# so_serving_markers echoes every label that marks a workload as an llm-d model
+# server, one per line. ANY one of them is enough.
+so_serving_markers() {
+    printf '%s\n' "$SO_SERVING_MARKER"
+    printf '%s\n' $SO_SERVING_ROLE_MARKERS
+}
+
+# so_serving_markers_json is the same list as a JSON array, for the jq scans.
+so_serving_markers_json() {
+    so_serving_markers | jq -R . | jq -s -c .
+}
+
+# so_is_serving succeeds when any marker appears in the labels it is given.
+# Takes the label strings already flattened to "k=v k=v" by the callers.
+so_is_serving() {
+    local labels=" $* " marker
+    while IFS= read -r marker; do
+        case "$labels" in
+            *" $marker "*) return 0 ;;
+        esac
+    done <<EOF
+$(so_serving_markers)
+EOF
+    return 1
+}
+
 # Fast Model Actuation splits a model server across two pods: a REQUESTER
 # Deployment that carries the llm-d identity, and LAUNCHER pods -- owned by a
 # LauncherConfig -- that hold the GPU and run vLLM. The dual-pods controller
@@ -345,13 +390,15 @@ so_serving_workload_for_model() {
             resource='leaderworkersets'; pod="$SO_POD_PATH_LWS"
         fi
         kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
-          | jq -r --argjson p "$pod" --arg m "$model_label" --arg marker "$SO_SERVING_MARKER" '
-              ($marker | split("=")) as $mk
-              | .items[]
+          | jq -r --argjson p "$pod" --arg m "$model_label" \
+                 --argjson markers "$(so_serving_markers_json)" '
+              .items[]
               | . as $o
               | (getpath($p) // {}) as $t
               | (($t.metadata.labels // {}) + ($o.metadata.labels // {})) as $l
-              | select(($l[$mk[0]] | tostring) == $mk[1])
+              | select($l | to_entries
+                       | any(.key + "=" + (.value|tostring) as $kv
+                             | ($markers | index($kv)) != null))
               | select(($l["llm-d.ai/model"] // "") == $m)
               | $o.metadata.name'
     done | head -1
@@ -516,12 +563,13 @@ so_namespaces_of() {
     # silence. Not finding namespaces is a legitimate answer here; the caller
     # decides what it means.
     kubectl get "$resource" -A -o json 2>/dev/null \
-        | jq -r --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
+        | jq -r --argjson p "$pod" --argjson markers "$(so_serving_markers_json)" '
             .items[]
             | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
               as $labels
             | select($labels | to_entries
-                     | any(.key + "=" + (.value|tostring) == $marker))
+                     | any(.key + "=" + (.value|tostring) as $kv
+                           | ($markers | index($kv)) != null))
             | .metadata.namespace' 2>/dev/null || true
 }
 
@@ -588,10 +636,7 @@ so_discover() {
                 # from $labels, which is POD labels only: so_pool matches those
                 # against InferencePool selectors, and folding the object's in
                 # could claim a pool that does not actually select these pods.
-                case " $labels $objlabels " in
-                    *" $SO_SERVING_MARKER "*) : ;;
-                    *) continue ;;
-                esac
+                so_is_serving "$labels" "$objlabels" || continue
                 apply=yes; note=""
                 min="${WVA_DEFAULT_SO_MIN:-1}"; max="${WVA_DEFAULT_SO_MAX:-10}"
                 # Reset every per-workload variable here, not only the ones this
@@ -972,7 +1017,7 @@ install_default_scaledobjects() {
     so_discover > "$plan"
 
     if ! so_plan_rows "$plan" | grep -q .; then
-        log_warning "No llm-d model servers found (label llm-d.ai/inferenceServing=true) in: $(so_target_namespaces | tr '\n' ' '). Deploy them first, then run 'make scaledobjects-apply'. Until a ScaledObject exists, WVA is never called and scales nothing."
+        log_warning "No llm-d model servers found (label $SO_SERVING_MARKER, or $(printf '%s' "$SO_SERVING_ROLE_MARKERS" | tr ' ' '/')) in: $(so_target_namespaces | tr '\n' ' '). Deploy them first, then run 'make scaledobjects-apply'. Until a ScaledObject exists, WVA is never called and scales nothing."
         return 0
     fi
 
