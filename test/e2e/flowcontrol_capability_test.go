@@ -11,7 +11,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/utils"
 )
@@ -56,6 +59,21 @@ const (
 // The direct scrape is kept only as a fallback for environments with no
 // Prometheus reachable from the test host.
 func eppFlowControlAvailable(ctx context.Context, c client.Client, wvaNamespace, poolNamespace string) (bool, string) {
+	// Ask the EPP process what it actually loaded, via its logs. This is the most
+	// reliable of the three checks and the only one that works everywhere: the
+	// API server proxies logs, whereas pod IPs are not routable from a kind host
+	// and Prometheus needs a port-forward the suite does not set up.
+	//
+	// It also catches the failure that motivated this gate, which neither of the
+	// others can: EPP reads --config-file ONCE at startup, so a ConfigMap that
+	// gains featureGates: [flowControl] does not reach a pod already running.
+	// Observed on kind -- the ConfigMap said flowControl, the process had parsed
+	// no featureGates at all, and three separate investigations blamed WVA for
+	// the missing wake signal. Comparing the ConfigMap to the pod proves nothing;
+	// only the process's own account of its config does.
+	if ok, why := eppFlowControlFromLogs(ctx, c, poolNamespace); why != "" {
+		return ok, why
+	}
 	if pc := promClientForCheck(); pc != nil {
 		var reachable bool
 		for _, name := range []string{flowControlQueueMetric, flowControlQueueMetricAlias} {
@@ -125,10 +143,74 @@ func eppFlowControlAvailableByScrape(ctx context.Context, c client.Client, wvaNa
 				"this is an EPP/environment gap, not a WVA failure",
 			p.Name, len(body))
 	}
-	if tried == 0 {
-		return false, fmt.Sprintf("no EPP pod with an IP found in %s", poolNamespace)
+	// Could not determine it. Fail OPEN: run the specs.
+	//
+	// Skipping on ignorance is the wrong default and was actively harmful here --
+	// none of the three checks can reach EPP from a kind test host (pod IPs are
+	// not routable, Prometheus needs a port-forward the suite does not create,
+	// and the startup log line may have rotated), so a working cluster reported
+	// "could not scrape" and skipped all 49 specs while flow control was in fact
+	// running. A spec that runs and fails leaves diagnostics; a spec that skips
+	// leaves nothing, and reports SUCCESS while testing nothing.
+	//
+	// Skip only on positive evidence of absence -- which the log check above
+	// provides when it can see the parsed config.
+	_ = tried
+	return true, ""
+}
+
+// eppFlowControlFromLogs reads the EPP's own account of the config it parsed.
+//
+// Returns ("", "") when it cannot tell -- no EPP pod, logs unavailable, or the
+// startup line has already rotated out -- so the caller falls through to the
+// other checks rather than skipping on a failure to look.
+func eppFlowControlFromLogs(ctx context.Context, c client.Client, poolNamespace string) (bool, string) {
+	cs, err := kubernetes.NewForConfig(ctrlconfig.GetConfigOrDie())
+	if err != nil {
+		return false, ""
 	}
-	return false, fmt.Sprintf("could not scrape any of %d EPP pod(s) in %s", tried, poolNamespace)
+	var pods corev1.PodList
+	if err := c.List(ctx, &pods, client.InNamespace(poolNamespace)); err != nil {
+		return false, ""
+	}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if !strings.Contains(p.Name, "epp") || p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		req := cs.CoreV1().Pods(poolNamespace).GetLogs(p.Name, &corev1.PodLogOptions{
+			Container: "epp",
+			// Read from the START, capped -- the config line is the first thing
+			// EPP logs. TailLines would be wrong: EPP is extremely chatty (121k
+			// lines in a few seconds under load), so the startup line scrolls out
+			// of any tail window almost immediately, and the check then reports
+			// "cannot tell" on a perfectly healthy EPP.
+			LimitBytes: ptr.To(int64(512 * 1024)),
+		})
+		stream, err := req.Stream(ctx)
+		if err != nil {
+			continue
+		}
+		body, readErr := io.ReadAll(stream)
+		_ = stream.Close()
+		if readErr != nil {
+			continue
+		}
+		text := string(body)
+		switch {
+		case strings.Contains(text, `"flowControl"`), strings.Contains(text, "flow-control"):
+			return true, ""
+		case strings.Contains(text, "Raw config after phase one"):
+			// It logged its config and flowControl was not in it. That is
+			// conclusive, and almost always a pod older than the ConfigMap.
+			return false, fmt.Sprintf(
+				"EPP %s parsed no flowControl feature gate, so it is not queueing. "+
+					"If the ConfigMap does enable it, the pod predates that edit -- EPP "+
+					"reads --config-file once at startup. Restart the EPP deployment",
+				p.Name)
+		}
+	}
+	return false, ""
 }
 
 // promClientForCheck builds a Prometheus client the same way the other e2e
