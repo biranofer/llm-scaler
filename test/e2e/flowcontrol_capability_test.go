@@ -71,11 +71,18 @@ func eppFlowControlAvailable(ctx context.Context, c client.Client, wvaNamespace,
 	// no featureGates at all, and three separate investigations blamed WVA for
 	// the missing wake signal. Comparing the ConfigMap to the pod proves nothing;
 	// only the process's own account of its config does.
-	if ok, why := eppFlowControlFromLogs(ctx, c, poolNamespace); why != "" {
+	//
+	// Its verdict is honoured in BOTH directions. Gating only on `why != ""` made a
+	// positive finding fall through to the checks below, so the most reliable check
+	// could only ever cause a skip and never prevent one — and the Prometheus check
+	// then skipped a healthy cluster, because llm_d_epp_flow_control_queue_size is
+	// created per flow, on demand, and so does not exist until something has
+	// actually queued. Running one scale-from-zero suite on its own was enough to
+	// hit that: 0 specs ran, and the run reported SUCCESS.
+	if ok, why := eppFlowControlFromLogs(ctx, c, poolNamespace); ok || why != "" {
 		return ok, why
 	}
 	if pc := promClientForCheck(); pc != nil {
-		var reachable bool
 		for _, name := range []string{flowControlQueueMetric, flowControlQueueMetricAlias} {
 			// absent() yields 1 when the series does not exist and nothing when it
 			// does. That is the distinction the whole check turns on -- a
@@ -85,17 +92,17 @@ func eppFlowControlAvailable(ctx context.Context, c client.Client, wvaNamespace,
 			if err != nil {
 				continue
 			}
-			reachable = true
 			if v == 0 {
 				return true, ""
 			}
 		}
-		if reachable {
-			return false, fmt.Sprintf(
-				"Prometheus has no %s series: EPP is not queueing, so no wake signal "+
-					"can exist -- an EPP/environment gap, not a WVA failure",
-				flowControlQueueMetric)
-		}
+		// An absent series is NOT evidence that flow control is off, and treating it
+		// as such used to skip healthy clusters: llm_d_epp_flow_control_queue_size is
+		// created per flow, on demand, so before anything has queued it does not
+		// exist on an EPP that is queueing perfectly well. That is the ordinary state
+		// at the start of a run, and it gated every scale-from-zero suite. Reaching
+		// here means the logs could not tell either, so fall through to the scrape
+		// rather than skip on a failure to look.
 	}
 	return eppFlowControlAvailableByScrape(ctx, c, wvaNamespace, poolNamespace)
 }
