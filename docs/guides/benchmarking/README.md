@@ -8,7 +8,7 @@ replica counts and cost per run.
 
 Use it to compare scaling behaviour across configurations — thresholds, limiters,
 one variant against two. It needs real GPUs; for correctness work without them,
-see [Test WVA against a full llm-d stack](../testing-with-llm-d/README.md).
+see [Test WVA against a full llm-d stack](../testing-with-llm-d/).
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ Two things follow for the numbers you get:
 - The launcher pool does not grow with the benchmark. It is a declared count per
   matching node, so load does not expand it.
 
-Both are explained in [Autoscale a Fast Model Actuation stack](../fma/README.md).
+Both are explained in [Autoscale a Fast Model Actuation stack](../fma/).
 
 ## Installation Instructions
 

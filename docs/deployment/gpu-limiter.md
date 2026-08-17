@@ -3,7 +3,7 @@
 WVA scales without a GPU budget unless you give it one. This is how, and what has
 to be true first.
 
-> Part of the [WVA deployment guide](../../deploy/README.md).
+> Part of the [WVA deployment guide](../../deploy/).
 
 ## Turning it on
 

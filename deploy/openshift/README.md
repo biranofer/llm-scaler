@@ -2,7 +2,7 @@
 
 Automated deployment script for WVA and llm-d infrastructure on OpenShift clusters.
 
-> **Note**: This guide covers OpenShift-specific deployment details. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../README.md).
+> **Note**: This guide covers OpenShift-specific deployment details. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../).
 
 ## Table of Contents
 

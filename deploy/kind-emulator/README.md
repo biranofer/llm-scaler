@@ -2,7 +2,7 @@
 
 Quick start guide for local development using Kind (Kubernetes in Docker) with emulated GPU resources.
 
-> **Note**: This guide covers Kind-specific deployment for local testing. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../README.md).
+> **Note**: This guide covers Kind-specific deployment for local testing. For a complete overview of deployment methods and the full configuration reference, see the [main deployment guide](../).
 
 ## Table of Contents
 
@@ -236,7 +236,7 @@ make test-e2e-smoke    # quick validation
 make test-e2e-full     # full suite (`full && !flaky`)
 ```
 
-See [Testing Guide](../../docs/developer-guide/testing.md) and [E2E Test Suite README](../../test/e2e/README.md).
+See [Testing Guide](../../docs/developer-guide/testing.md) and [E2E Test Suite README](../../test/e2e/).
 
 ### 4. Generate Load
 
