@@ -229,7 +229,13 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 		// sibling of this suite once "passed" that way in 15 seconds. increase() over
 		// the retention window cannot fall to zero before that window has elapsed, so
 		// anything faster is stale state rather than a decision.
-		Expect(time.Since(idleSince)).To(BeNumerically(">=", time.Minute),
+		//
+		// The grace is not slack for its own sake. idleSince is stamped when the load
+		// job is DELETED, which is at or after its last request, so the measured
+		// elapsed can undershoot the true window; the round-trip suite once cleared an
+		// exact 1m floor by 44ms. The floor only has to separate a real park from a
+		// leftover decision that lands in seconds, and 45s still does that.
+		Expect(time.Since(idleSince)).To(BeNumerically(">=", 45*time.Second),
 			"parked sooner than the 1m retention window could have elapsed: this is "+
 				"leftover state from an earlier run, not an idle-driven decision")
 	})
