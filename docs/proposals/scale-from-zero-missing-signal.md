@@ -1,6 +1,7 @@
 # Say when a model will not park, and when it cannot wake
 
-**Status:** proposal
+**Status:** §4–§6 and §8 implemented; §7 blocked on a missing label (see below);
+§9 filed upstream; §10 deferred.
 
 ## 1. Two silent failures
 
@@ -86,15 +87,32 @@ wva_model_scaling_blocked{namespace, model, reason} 1
 | `engine-unsupported` | a non-vLLM engine, whose request counter the enforcer cannot read |
 | `no-wake-signal` | EPP is not exporting a flow-control queue, so nothing can wake this model |
 
-One metric, one alert (`wva_model_scaling_blocked == 1`), one place to look, and a
-closed enum so cardinality stays bounded. Several reasons can hold at once, which
-emits several series — correct, and more informative than a single winner. A new
-condition later costs a constant, not a metric.
+One metric, one place to look, and a closed enum so cardinality stays bounded.
+Several reasons can hold at once, which emits several series — correct, and more
+informative than a single winner. A new condition later costs a constant, not a
+metric.
 
 Presence is the signal: a series exists only while its reason holds. That makes
-clearing them part of the contract — on each evaluation, delete this model's
-series and re-set the reasons that still apply, or a resolved condition alerts
-forever.
+clearing them part of the contract, and implementation turned up two ways to get
+it wrong that are worth stating as part of the design.
+
+**Reasons have owners.** Two engines write this metric — the steady-state
+enforcer decides the policy reasons, the scale-from-zero loop decides the wake
+reason — and they run at different rates. A "delete every series for this model,
+then set mine" implementation has them taking turns erasing each other's answers,
+at 10Hz, producing a metric that flaps for reasons having nothing to do with the
+cluster. So each producer declares the reasons it owns and clears only those, and
+setting a reason it does not own is a no-op rather than an orphan nothing can
+ever clear.
+
+**A departed model has no producer left.** Its last reason keeps asserting that a
+workload which no longer exists will never park, and alerts forever. Nothing else
+notices, because the code that would clear it never runs for that model again. So
+the engine tracks which models it has published for and prunes them against the
+active set — the same shape `pruneAnalyzerSeries` already uses, and for the same
+underlying reason: a Prometheus GaugeVec cannot enumerate its own children. The
+empty-fleet cycle evicts everything, on the path that has already proved the
+model list succeeded rather than on a transient one.
 
 ## 5. First: say when a model will never park
 
@@ -178,7 +196,7 @@ stuck, an engine bug. A cause-specific detector only catches the cause someone
 already thought of — and the one that bit us was invisible for a week precisely
 because nobody had.
 
-Both halves already exist as metrics:
+Both halves look like they already exist as metrics:
 
 ```
 wva_current_replicas == 0
@@ -186,15 +204,38 @@ rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m]) > 0
 ```
 
 A model at zero while requests are being refused is broken **whatever the
-reason**, and this needs no engine code at all.
+reason**, and this appeared to need no engine code at all.
 
-**Two real costs, not to be waved away.** The families do not share labels — WVA
-uses `variant_name`/`exported_namespace`, EPP uses `model_name`/
-`target_model_name`, and EPP's pool metrics carry no namespace — so the join
-needs `label_replace` and depends on modelID and variant naming lining up. And
-the alerts spec validates that expressions reference only metrics in
+**It cannot be written.** The join has no key. `wva_current_replicas` carries
+`variant_name`, `namespace` and `accelerator_type` — and **no `model_name`**,
+because it is a per-variant series. EPP's error counter carries `model_name` /
+`target_model_name` and no namespace. `label_replace` can rewrite a label; it
+cannot derive a model from a variant name, and nothing in Prometheus knows that
+mapping. The earlier draft called this a "friction" to be paid with
+`label_replace`. That was wrong — it is not expensive, it is impossible with the
+metrics as they stand.
+
+Two ways forward, neither free:
+
+1. **Emit a model-level replica total** — `wva_model_replicas{namespace,
+   model_name}`, which WVA can produce because it is the one component that knows
+   which variants serve which model. The alert then joins on
+   `(namespace, model_name)`. Costs one metric, and it is a value rather than a
+   condition, so it does not reopen the §4 sprawl argument.
+2. **Let WVA emit the symptom itself** as another reason. The scale-from-zero
+   loop already scrapes EPP, so it could read the error counter on the same
+   scrape and skip the join entirely. But this is §10's signal wearing a
+   different hat, and inherits every ambiguity §10 defers it for — a mistyped
+   model name refuses requests exactly like a parked model does.
+
+Option 1 is the honest one, and is the recommendation. It is deferred here rather
+than smuggled in, because it is a new metric with its own emission points and
+belongs in its own change.
+
+There is also a second, smaller cost that **was** real and is now paid: the
+alerts spec validates that expressions reference only metrics in
 `wvaMetricNames`, so an alert naming an EPP metric fails until that list allows
-it. That is the same trap that let `wva_node_access_denied` ship broken.
+it — the same trap that let `wva_node_access_denied` ship broken.
 
 ## 8. Reporting surfaces and their conventions
 
@@ -211,14 +252,22 @@ conventional (KEDA does it too) and is not the ownership problem that writing it
 `status` would be. Use `variant.EventTarget()`: events on the synthesized
 `VariantAutoscaling` are silently dropped with `no kind is registered for the type
 variant.VariantAutoscaling in scheme`, a live bug seen in pokprod logs today — a
-wake succeeded and left no Event behind. Rely on client-go's recorder for spam
-filtering; it already aggregates similar events per object.
+wake succeeded and left no Event behind.
+
+**Not used for these conditions**, though, and the reason is worth recording:
+Events attach to an object, and every condition here is a property of a MODEL. A
+model has N variants and therefore N ScaledObjects, so "this model will never
+park" either duplicates onto all of them or picks one arbitrarily. Neither is
+right. The Event surface fits variant-scoped facts; the metric and the log carry
+the model-scoped ones. A variant-scoped reason added later can and should use it.
 
 **Log** — `logger.Info` at V(0), on transition only. Not "WARN": logr has `Info`
 and `Error` and no Warn, and `internal/logging` defines only `DEBUG = 4` and
-`TRACE = 5`. Any transition state held per model must be evicted in step with the
-registry's `DefaultTTL` (5 minutes), or it retains an entry for every model ever
-seen.
+`TRACE = 5`. The transition state rides on the prune bookkeeping above rather than
+living in a map of its own, so it is evicted by the same code that clears the
+series — a separate map would need its own eviction on a process that runs for
+weeks. A model seen for the first time with nothing blocking it logs nothing, or
+every restart would emit a line per healthy model to report that all is well.
 
 ## 9. The root cause, which is not ours
 
@@ -257,12 +306,29 @@ per-model baseline that does not fire on first observation and treats a decrease
 as an EPP restart; and requiring rejections rising across **several consecutive
 ticks**, so a burst of bad requests cannot wake anything.
 
-## 11. Sequencing
+## 11. Sequencing, and what shipped
 
-§5 and §6 share the §4 metric but nothing else: §5 is configuration reconciled
-against discovered replica bounds, §6 depends on EPP's metric surface, and §7 is a
-PromQL change with no Go in it. They land independently and in that order — §5
+§5 and §6 share the §4 metric but nothing else, and landed in that order — §5
 first, since it has no external dependency at all.
+
+Shipped: the metric with four reasons; the transition log; three alerts
+(`WVAModelWillNotScaleToZero` at info, `WVAModelHasNoWakeSignal` at warning,
+`WVAModelScalingBlockedUnsupportedEngine` at info); two operational-dashboard
+panels; and a fix to `extractMetricNames` in the alerts spec, which treated the
+contents of a label matcher as metric names — `reason=~"variant-floor|..."`
+yielded `variant`, `policy`, `forbids` and `zero` as four unknown metrics and
+failed a correct alert. No shipped alert had used a string-valued matcher before,
+so the bug was latent; §7 would have hit it too.
+
+Not shipped, with reasons above: the symptom alert (§7, no join key), the Event
+surface (§8, model-scoped conditions do not fit object-scoped events), and the
+fallback wake signal (§10, deferred on purpose).
+
+One thing to know when reading these alerts: the "alerts reference only known
+metrics" spec lives in `test/e2e`, which `make test` excludes. It runs only
+against a live cluster, so a broken alert expression ships and is caught late.
+That is how `wva_node_access_denied` shipped broken. Validate alert changes
+against the extractor before pushing.
 
 ## 12. Why this is worth building
 

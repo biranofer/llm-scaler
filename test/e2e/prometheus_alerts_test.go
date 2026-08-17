@@ -129,6 +129,15 @@ func queryPrometheusRules() (*PrometheusRulesResponse, error) {
 // extractMetricNames extracts metric names from a PromQL expression.
 // It uses a simple regex to find metric identifiers (word characters, colons, underscores).
 func extractMetricNames(expr string) []string {
+	// Strip label matchers and any remaining quoted strings first. Their CONTENTS
+	// are values, not metric names, and the identifier pattern below cannot tell
+	// the difference: reason=~"variant-floor|policy-forbids-zero" yields "variant",
+	// "policy", "forbids" and "zero" as four unknown "metrics", failing an alert
+	// that is perfectly correct. The keyword list papered over this only because
+	// no alert had used a string-valued matcher yet.
+	expr = regexp.MustCompile(`\{[^}]*\}`).ReplaceAllString(expr, "")
+	expr = regexp.MustCompile(`"[^"]*"`).ReplaceAllString(expr, "")
+
 	// Match metric names: alphanumeric, underscores, colons (for vllm:* metrics if any)
 	// This pattern matches Prometheus metric naming conventions
 	metricPattern := regexp.MustCompile(`\b([a-zA-Z_:][a-zA-Z0-9_:]*)\b`)

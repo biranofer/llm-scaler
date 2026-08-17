@@ -151,6 +151,16 @@ type Engine struct {
 	// sequentially in one goroutine and models are processed serially.
 	lastAnalyzerSeries map[string]analyzerSeries
 
+	// lastBlockedModels records, keyed identically, every model this engine has
+	// published wva_model_scaling_blocked reasons for. Same reason as
+	// lastAnalyzerSeries — a GaugeVec cannot enumerate its own children — but the
+	// consequence is sharper: a reason series is PRESENT only while it holds, so
+	// a model that goes away leaves a series asserting that a workload which no
+	// longer exists will never park, and it alerts forever. Nothing else can clear
+	// it, because the producer that would clear it never runs for that model
+	// again. See pruneBlockedModels.
+	lastBlockedModels map[string]blockedModelRef
+
 	// analyzers is the engine's analyzer registry, mutated only during setup
 	// (NewEngine + RegisterAnalyzer). After StartOptimizeLoop it is frozen —
 	// further RegisterAnalyzer calls return an error. The optimize goroutine reads
@@ -242,6 +252,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		capacityStore:           capacityStore,
 		lastGoodAnalysis:        make(map[string]map[string]time.Time),
 		lastAnalyzerSeries:      make(map[string]analyzerSeries),
+		lastBlockedModels:       make(map[string]blockedModelRef),
 		optimizer:               scalingOptimizer,
 		metricsEmitter:          metrics.NewMetricsEmitter(),
 		analyzers: []analyzerEntry{
@@ -567,6 +578,10 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// failed list returns above, so reaching here means there really are no
 		// active models.
 		e.evictAllAnalyzerSeries()
+		// Same argument, sharper consequence: a blocked-reason series asserts that
+		// a named model will never park. With no models left, every such assertion
+		// is about a workload that is gone.
+		e.evictAllBlockedModels()
 
 		// The PHYSICAL picture is not published from here — internal/gpuusage
 		// discovers it independently, precisely so a parked fleet still has one.
@@ -950,6 +965,7 @@ func (e *Engine) optimizeV2(
 	}
 	e.pruneLastGoodAnalysis(activeKeys)
 	e.pruneAnalyzerSeries(activeKeys)
+	e.pruneBlockedModels(activeKeys)
 
 	// Stage 1: Collect ModelScalingRequests for all models
 	requests := make([]allocation.ModelScalingRequest, 0, len(modelGroups))
@@ -1228,9 +1244,6 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
 	variantStates []domain.VariantReplicaState,
 ) bool {
-	if len(decisions) == 0 {
-		return false
-	}
 	logger := ctrl.LoggerFrom(ctx)
 
 	// The resolved scaling entry carries the whole scale-to-zero policy: enabled
@@ -1242,11 +1255,23 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(&satConfig)
 	engineSupported := scaleToZeroSupportedForEngines(scaleTargets)
 
-	// Emit unconditionally, including with no reasons: this call is what CLEARS a
-	// reason that no longer holds, so skipping it on the healthy path would pin
-	// the last bad answer until the process restarts.
-	metrics.SetModelScalingBlocked(namespace, modelID,
-		scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, variantStates))
+	// Reported before the empty-decision return below, and unconditionally,
+	// including with no reasons. This call is what CLEARS a reason that no longer
+	// holds, so any path that skips it pins the last bad answer — and a cycle that
+	// produced no decisions at all is precisely when a stale "will never park"
+	// series is most misleading. The reasons themselves are configuration
+	// reconciled against discovered bounds; they do not depend on there being a
+	// decision to enforce.
+	blockedReasons := scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, variantStates)
+	metrics.SetModelScalingBlockedReasons(namespace, modelID,
+		constants.ScalingBlockedReasonsPolicy, blockedReasons)
+	if e.recordBlockedModel(namespace, modelID, blockedReasons) {
+		logBlockedTransition(ctx, namespace, modelID, blockedReasons)
+	}
+
+	if len(decisions) == 0 {
+		return false
+	}
 
 	if !engineSupported {
 		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model runs a non-vLLM engine; engine-aware request counting is not yet wired through the enforcer (see docs/proposals/sglang-backend.md Phase 2)",

@@ -398,6 +398,35 @@ const (
 	// reads 0 for any other engine and would be misread as "no traffic", so
 	// scale-to-zero is skipped entirely (see docs/proposals/sglang-backend.md).
 	ScalingBlockedEngineUnsupported = "engine-unsupported"
+
+	// ScalingBlockedNoWakeSignal indicates EPP exports no flow-control queue at
+	// all, so a model parked at zero has nothing that can wake it.
+	//
+	// Absence of the family, not a queue reading zero — an idle queue reports 0
+	// and a queue that does not exist reports nothing, and conflating those is how
+	// this failure hid for a week. The usual cause is an EPP pod older than the
+	// ConfigMap that enabled flowControl: EPP reads --config-file once at startup.
+	ScalingBlockedNoWakeSignal = "no-wake-signal"
+)
+
+// Reason ownership. Two engines write WVAModelScalingBlocked — the steady-state
+// enforcer and the scale-from-zero loop — so each declares the reasons it owns
+// and clears only those. Without this a 10Hz producer and a per-interval producer
+// would take turns deleting each other's series.
+var (
+	// ScalingBlockedReasonsPolicy are decided by the steady-state enforcer, from
+	// configuration reconciled against discovered replica bounds.
+	ScalingBlockedReasonsPolicy = []string{
+		ScalingBlockedVariantFloor,
+		ScalingBlockedPolicyForbidsZero,
+		ScalingBlockedEngineUnsupported,
+	}
+
+	// ScalingBlockedReasonsWake are decided by the scale-from-zero loop, from
+	// what EPP actually exports.
+	ScalingBlockedReasonsWake = []string{
+		ScalingBlockedNoWakeSignal,
+	}
 )
 
 // Pod-mapping miss reasons (values for the `reason` label of WVAPodMappingMissTotal).

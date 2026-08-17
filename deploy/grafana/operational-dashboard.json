@@ -1215,7 +1215,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above — a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1670,7 +1670,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds ÷ 30 seconds), then the average is 36 ÷ 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
+      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds \u00f7 30 seconds), then the average is 36 \u00f7 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2068,6 +2068,122 @@
               },
               {
                 "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 61,
+      "type": "stat",
+      "title": "Models blocked from scaling",
+      "description": "Models that cannot reach the scaling state their configuration implies, counted by reason. Zero is the normal state. Non-zero is not necessarily an error: 'variant-floor' and 'policy-forbids-zero' are valid configurations whose two halves contradict each other, so the model quietly never parks and the accelerators are billed indefinitely with no other symptom. 'no-wake-signal' IS a fault - EPP exports no flow-control queue, so a parked model can never be woken. See the by-reason panel for which.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(wva_model_scaling_blocked == 1) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "Models that will not scale, by reason",
+      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: a non-vLLM engine, whose request counter WVA cannot read. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_scaling_blocked{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}} - {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
                 "value": 1
               }
             ]

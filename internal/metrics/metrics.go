@@ -714,36 +714,70 @@ func SetVariantAtMaxReplicas(namespace, variantName string, atMax bool) {
 	variantAtMaxReplicas.With(labels).Set(value)
 }
 
-// SetModelScalingBlocked records every reason a model cannot reach the scaling
-// state its configuration implies. Call it every cycle for every model, with an
-// empty slice when nothing blocks.
+// modelScalingBlockedLabels builds the label set for one (model, reason) series.
+func modelScalingBlockedSeries(namespace, modelName, reason string) prometheus.Labels {
+	labels := prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelName,
+		constants.LabelReason:    reason,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	return labels
+}
+
+// SetModelScalingBlockedReasons records which of the reasons a producer OWNS
+// currently hold for a model: every reason in owned is either set to 1 or
+// deleted, and reasons outside owned are left alone.
 //
-// Presence is the signal, so the model's existing series are deleted first and
-// only the reasons that still hold are re-set. Setting the resolved ones to 0
-// instead would work for a `== 1` alert but leaves a series per reason ever seen
-// on every model, forever; deleting keeps the surface proportional to what is
-// actually wrong. This is also why an empty slice must still reach here rather
-// than being skipped by the caller — that call is what clears a reason.
-func SetModelScalingBlocked(namespace, modelName string, reasons []string) {
+// The ownership split is not ceremony. Two engines write this metric — the
+// steady-state enforcer decides the policy reasons, the scale-from-zero loop
+// decides the wake reasons — and they run at different rates. A "delete every
+// series for this model, then set mine" implementation would have them take turns
+// erasing each other's answers, at 10Hz, producing a metric that flaps for
+// reasons having nothing to do with the cluster.
+//
+// Presence is the signal, so a reason that no longer holds is DELETED rather than
+// set to 0. Setting it to 0 would satisfy a `== 1` alert but leave a series per
+// reason ever seen on every model, forever; deleting keeps the surface
+// proportional to what is actually wrong. That is also why callers must invoke
+// this every cycle even when nothing is blocking — this call is what clears a
+// reason, so skipping it on the healthy path pins the last bad answer.
+func SetModelScalingBlockedReasons(namespace, modelName string, owned, active []string) {
 	if modelScalingBlocked == nil {
 		return
 	}
-	base := prometheus.Labels{
+	activeSet := make(map[string]struct{}, len(active))
+	for _, reason := range active {
+		activeSet[reason] = struct{}{}
+	}
+	for _, reason := range owned {
+		labels := modelScalingBlockedSeries(namespace, modelName, reason)
+		if _, on := activeSet[reason]; on {
+			modelScalingBlocked.With(labels).Set(1)
+			continue
+		}
+		modelScalingBlocked.Delete(labels)
+	}
+}
+
+// ClearModelScalingBlocked removes every reason series for a model, whoever set
+// them. For a model that has gone away entirely — no producer will run for it
+// again, so nothing else can clear it, and its last reason would otherwise alert
+// forever about a workload that no longer exists.
+func ClearModelScalingBlocked(namespace, modelName string) {
+	if modelScalingBlocked == nil {
+		return
+	}
+	match := prometheus.Labels{
 		constants.LabelNamespace: namespace,
 		constants.LabelModelName: modelName,
 	}
 	if controllerInstance != "" {
-		base[constants.LabelControllerInstance] = controllerInstance
+		match[constants.LabelControllerInstance] = controllerInstance
 	}
-	modelScalingBlocked.DeletePartialMatch(base)
-
-	for _, reason := range reasons {
-		labels := prometheus.Labels{constants.LabelReason: reason}
-		for k, v := range base {
-			labels[k] = v
-		}
-		modelScalingBlocked.With(labels).Set(1)
-	}
+	modelScalingBlocked.DeletePartialMatch(match)
 }
 
 func SetModelsProcessed(count int) {

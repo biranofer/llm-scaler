@@ -79,7 +79,15 @@ var targetEPPMetricNames = []string{
 // that the EPP actually exports. The deprecated family mirrors the preferred one,
 // so once the preferred family is present its verdict is authoritative and
 // falling through to the alias would only double-count.
-func pendingRequestsForModel(values []source.MetricValue, modelID string) (source.MetricValue, bool) {
+//
+// familyExported separates the two states that look identical in the return
+// value and are not the same thing at all. An idle queue reports 0 and the model
+// is fine; a queue that does not exist reports nothing and the model can never be
+// woken. This function has always distinguished them internally — the `exported`
+// flag is the whole reason the loop is shaped this way — and used to discard the
+// answer at the boundary, which is how an EPP running without flow control looked
+// exactly like an EPP with nothing queued for a week of red e2e runs.
+func pendingRequestsForModel(values []source.MetricValue, modelID string) (pending source.MetricValue, hasPending, familyExported bool) {
 	for _, name := range targetEPPMetricNames {
 		exported := false
 		for _, value := range values {
@@ -88,14 +96,14 @@ func pendingRequestsForModel(values []source.MetricValue, modelID string) (sourc
 			}
 			exported = true
 			if value.Value > 0 && value.Labels[targetEPPMetricLabel] == modelID {
-				return value, true
+				return value, true, true
 			}
 		}
 		if exported {
-			return source.MetricValue{}, false
+			return source.MetricValue{}, false, true
 		}
 	}
-	return source.MetricValue{}, false
+	return source.MetricValue{}, false, false
 }
 
 type Engine struct {
@@ -441,10 +449,27 @@ func (e *Engine) processInactiveModel(
 
 	// Check for pending requests using EPP flowcontrol queue size metrics
 	pending, pendingRequestExist := fallbackPending, fallbackHasPending
+	// On the fallback path Prometheus answered, which is itself proof the family
+	// exists somewhere; only the direct scrape can testify that EPP exports none.
+	queueFamilyExported := true
 	if !onFallback {
 		result := results["all_metrics"]
-		pending, pendingRequestExist = pendingRequestsForModel(result.Values, group.modelID)
+		pending, pendingRequestExist, queueFamilyExported = pendingRequestsForModel(result.Values, group.modelID)
 	}
+
+	// Report whether this model has a wake signal at all. Emitted every tick,
+	// including when nothing is wrong, because this call is what clears the reason
+	// once EPP starts exporting the family again.
+	//
+	// Only the wake reason is touched — the enforcer owns the policy reasons and
+	// runs on its own schedule, and a 10Hz producer clearing another producer's
+	// answers would make the metric flap for reasons unrelated to the cluster.
+	var wakeBlocked []string
+	if !queueFamilyExported {
+		wakeBlocked = []string{constants.ScalingBlockedNoWakeSignal}
+	}
+	metrics.SetModelScalingBlockedReasons(group.namespace, group.modelID,
+		constants.ScalingBlockedReasonsWake, wakeBlocked)
 	if !pendingRequestExist && !catchUpWanted {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",

@@ -54,20 +54,28 @@ func TestPendingRequestsForModel(t *testing.T) {
 		// rather than passing on the alias.
 		wantMetricName string
 		wantValue      float64
+		// wantQueueFamily is whether EPP exported the flow-control queue family at
+		// all — the distinction between "nothing is queued" and "nothing can ever
+		// wake this model". Every wantFound: false case below is one or the other,
+		// and they demand opposite responses from an operator, so the table states
+		// it explicitly rather than leaving it to the zero value.
+		wantQueueFamily bool
 	}{
 		{
-			name:           "current metric name with queued requests",
-			values:         []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 3)},
-			wantFound:      true,
-			wantMetricName: constants.EPPFlowControlQueueSize,
-			wantValue:      3,
+			name:            "current metric name with queued requests",
+			values:          []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 3)},
+			wantFound:       true,
+			wantMetricName:  constants.EPPFlowControlQueueSize,
+			wantValue:       3,
+			wantQueueFamily: true,
 		},
 		{
-			name:           "deprecated metric name alone is still honoured",
-			values:         []source.MetricValue{queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 2)},
-			wantFound:      true,
-			wantMetricName: constants.SchedulerFlowControlQueueSize,
-			wantValue:      2,
+			name:            "deprecated metric name alone is still honoured",
+			values:          []source.MetricValue{queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 2)},
+			wantFound:       true,
+			wantMetricName:  constants.SchedulerFlowControlQueueSize,
+			wantValue:       2,
+			wantQueueFamily: true,
 		},
 		{
 			name: "both families exported: the current one is read",
@@ -75,9 +83,10 @@ func TestPendingRequestsForModel(t *testing.T) {
 				queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 5),
 				queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 5),
 			},
-			wantFound:      true,
-			wantMetricName: constants.EPPFlowControlQueueSize,
-			wantValue:      5,
+			wantFound:       true,
+			wantMetricName:  constants.EPPFlowControlQueueSize,
+			wantValue:       5,
+			wantQueueFamily: true,
 		},
 		{
 			name: "current family exported and empty: the deprecated alias must not override it",
@@ -86,17 +95,20 @@ func TestPendingRequestsForModel(t *testing.T) {
 				// A stale alias sample would wake the workload with nothing queued.
 				queueSample(constants.SchedulerFlowControlQueueSize, pendingTestModelID, 4),
 			},
-			wantFound: false,
+			wantFound:       false,
+			wantQueueFamily: true,
 		},
 		{
-			name:      "queue empty",
-			values:    []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 0)},
-			wantFound: false,
+			name:            "queue empty",
+			values:          []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 0)},
+			wantFound:       false,
+			wantQueueFamily: true,
 		},
 		{
-			name:      "queued requests belong to another model",
-			values:    []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, "other/model", 7)},
-			wantFound: false,
+			name:            "queued requests belong to another model",
+			values:          []source.MetricValue{queueSample(constants.EPPFlowControlQueueSize, "other/model", 7)},
+			wantFound:       false,
+			wantQueueFamily: true,
 		},
 		{
 			name: "this model's queue is picked out of a mixed set",
@@ -104,9 +116,10 @@ func TestPendingRequestsForModel(t *testing.T) {
 				queueSample(constants.EPPFlowControlQueueSize, "other/model", 7),
 				queueSample(constants.EPPFlowControlQueueSize, pendingTestModelID, 1),
 			},
-			wantFound:      true,
-			wantMetricName: constants.EPPFlowControlQueueSize,
-			wantValue:      1,
+			wantFound:       true,
+			wantMetricName:  constants.EPPFlowControlQueueSize,
+			wantValue:       1,
+			wantQueueFamily: true,
 		},
 		{
 			name: "unrelated EPP metrics are ignored",
@@ -131,8 +144,10 @@ func TestPendingRequestsForModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, found := pendingRequestsForModel(tt.values, pendingTestModelID)
+			got, found, familyExported := pendingRequestsForModel(tt.values, pendingTestModelID)
 			require.Equal(t, tt.wantFound, found)
+			assert.Equal(t, tt.wantQueueFamily, familyExported,
+				"an absent queue family means the model cannot be woken; an empty queue means it has nothing to serve")
 			if !tt.wantFound {
 				return
 			}
@@ -160,6 +175,10 @@ func TestPendingRequestsForModelMatchesDeployedEPPLabels(t *testing.T) {
 		},
 	}
 
-	_, found := pendingRequestsForModel(upstreamShape, pendingTestModelID)
+	_, found, familyExported := pendingRequestsForModel(upstreamShape, pendingTestModelID)
 	assert.False(t, found, "a queue sample with no target_model_name must not match a specific model")
+	// The family IS exported here — flow control is running, it just labels the
+	// sample in a way this engine cannot attribute. That is a very different
+	// problem from EPP not queueing at all, and must not be reported as one.
+	assert.True(t, familyExported)
 }
