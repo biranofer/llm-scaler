@@ -358,8 +358,19 @@ so_serving_workload_for_model() {
 }
 
 # so_model_id echoes the model a serving container runs: --served-model-name where
-# the workload sets one (it is the name clients and the EPP use), else --model.
+# the workload sets one (it is the name clients and the EPP use), else --model,
+# else the POSITIONAL model of `vllm serve <model>`.
 # Both "--flag value" and "--flag=value" are accepted; both appear in the wild.
+#
+# The positional form is not an edge case: it is what llm-d's own guides emit.
+# guides/optimized-baseline renders
+#
+#     command: ["vllm", "serve"]
+#     args: ["Qwen/Qwen3-32B", "--tensor-parallel-size=2", ...]
+#
+# so neither flag is present, and reading flags alone returned empty for the
+# flagship guide -- every workload in the plan written `apply: no`, "the model
+# could not be read", on a namespace where the model is perfectly well defined.
 #
 # Empty output means the model could not be determined. The caller must record that
 # and skip rather than guess: a ScaledObject with the wrong modelID groups a
@@ -381,6 +392,30 @@ so_model_id() {
                 "$flag")   take=1 ;;
             esac
         done
+    done
+    # The token after `serve`, for the shape where the whole command line is
+    # inside the args -- `sh -c "vllm serve <model> ..."`, which the llm-d
+    # modelservice chart emits. Tried BEFORE the bare first token, because there
+    # the first token is `-c` and the model is several words in.
+    take=""
+    for tok in $args; do
+        if [ -n "$take" ]; then
+            case "$tok" in
+                -*) : ;;
+                *) echo "$tok"; return ;;
+            esac
+            take=""
+        fi
+        [ "$tok" = "serve" ] && take=1
+    done
+    # `command: ["vllm", "serve"]` with the model first in args. Only when that
+    # first token is not a flag: args that open with one carry no positional
+    # model, and guessing here is what the empty return exists to prevent.
+    for tok in $args; do
+        case "$tok" in
+            -*) return ;;
+            *)  echo "$tok"; return ;;
+        esac
     done
 }
 
@@ -567,7 +602,7 @@ so_discover() {
                 model=$(so_model_id "$args")
                 if [ -z "$model" ]; then
                     apply=no
-                    note="no --served-model-name or --model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+                    note="no --served-model-name, --model, or positional model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
                 fi
                 # FMA: report it, do NOT retarget.
                 #
@@ -842,7 +877,7 @@ so_apply_plan() {
         # without it registers a variant of a model nobody runs, and WVA then sizes
         # a group that does not exist. Guessing is worse than refusing.
         if [ -z "$model" ]; then
-            log_warning "  $ns/$name: apply: $apply, but modelID is empty — NOT creating anything for it. Set the model the container serves (--served-model-name, else --model) and run this again."
+            log_warning "  $ns/$name: apply: $apply, but modelID is empty — NOT creating anything for it. Set the model the container serves (--served-model-name, else --model, else the positional model of 'vllm serve <model>') and run this again."
             unresolved=$((unresolved + 1)); skipped=$((skipped + 1)); continue
         fi
         # Bounds are edited by hand, and reach kubectl as JSON numbers. Anything
