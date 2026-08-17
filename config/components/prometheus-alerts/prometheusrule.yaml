@@ -70,7 +70,7 @@ spec:
       labels:
         severity: info
       annotations:
-        summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} cannot reach zero ({{ $labels.reason }})"
+        summary: "Model {{ $labels.exported_namespace }}/{{ $labels.model_name }} cannot reach zero ({{ $labels.reason }})"
         description: "Half of this model's configuration asks it to park and the other half forbids it, so it never will. reason 'variant-floor': scale-to-zero is enabled, but a variant declares minReplicas > 0 — a model is at zero only when nothing serves it, so that one floor keeps the whole model up and the accelerators are billed indefinitely. reason 'policy-forbids-zero': every variant permits zero, but the model's resolved scaling policy disables scale-to-zero, so the bounds are inert; most misleading with a single variant, where minReplicas: 0 reads exactly like a deliberate request to park. Neither is an error and neither breaks serving — which is why nothing else reports them: the model is up and healthy, exactly as every other metric says it should be. Either set every variant's minReplicas to 0, or disable scale-to-zero for the model, so the configuration says what it does."
 
     - alert: WVAModelHasNoWakeSignal
@@ -79,7 +79,7 @@ spec:
       labels:
         severity: warning
       annotations:
-        summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} has no wake signal"
+        summary: "Model {{ $labels.exported_namespace }}/{{ $labels.model_name }} has no wake signal"
         description: "EPP is exporting no flow-control queue metric at all for this model, so a request arriving while it is parked has nothing that can wake it. This is the ABSENCE of the metric family, not a queue reading zero — an idle queue reports 0 and is healthy. The usual cause is an EPP pod older than the ConfigMap that enabled the flowControl feature gate: EPP reads --config-file once at startup, so enabling the gate does not reach a process already running, and every artifact (image digest, ConfigMap, feature gate, auth) still matches. Check the EPP pod's own startup log for the config it parsed rather than comparing it to the ConfigMap, then restart the EPP deployment. Until this clears, a model that scales to zero will stay there."
 
 # There is deliberately NO alert on reason="engine-unsupported". It is a standing
@@ -90,10 +90,10 @@ spec:
 # permanent condition belongs.
 
     - alert: WVAModelParkedWhileRequestsRefused
-      expr: (sum by (namespace, model_name) (wva_model_replicas) == 0) and on (model_name) (sum by (model_name) (rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m])) > 0)
+      expr: (sum by (exported_namespace, model_name) (wva_model_replicas) == 0) and on (model_name) (sum by (model_name) (rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m])) > 0)
       for: 5m
       labels:
         severity: critical
       annotations:
-        summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} is at zero replicas while requests are being refused"
-        description: "Nothing is serving this model and EPP is returning ServiceUnavailable for it, so traffic is being dropped and the autoscaler has not brought it back. This alerts on the SYMPTOM, so it fires whatever the cause: no wake signal (see WVAModelHasNoWakeSignal, which names that specific cause), an EPP that cannot be scraped, KEDA not delivering the activation, an admission or quota refusal on the scale-up, or a bug. Start with wva_model_scaling_blocked for this model — if a reason is present it is the likely cause. Note the join is on model_name alone because EPP's metrics carry no namespace, so two namespaces serving the same modelID cannot be told apart here; the namespace shown comes from WVA's side."
+        summary: "Model {{ $labels.exported_namespace }}/{{ $labels.model_name }} is at zero replicas while requests are being refused"
+        description: "Grouped by exported_namespace, not namespace: Prometheus renames a scraped `namespace` label to `exported_namespace` because the scrape job already carries one, so plain `namespace` here is the CONTROLLER's namespace and would name the wrong place. Nothing is serving this model and EPP is returning ServiceUnavailable for it, so traffic is being dropped and the autoscaler has not brought it back. This alerts on the SYMPTOM, so it fires whatever the cause: no wake signal (see WVAModelHasNoWakeSignal, which names that specific cause), an EPP that cannot be scraped, KEDA not delivering the activation, an admission or quota refusal on the scale-up, or a bug. Start with wva_model_scaling_blocked for this model — if a reason is present it is the likely cause. Note the join is on model_name alone because EPP's metrics carry no namespace, so two namespaces serving the same modelID cannot be told apart here; the namespace shown comes from WVA's side."
