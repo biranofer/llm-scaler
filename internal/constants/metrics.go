@@ -367,6 +367,27 @@ const (
 	//
 	// Labels: namespace, model_name, reason
 	WVAModelScalingBlocked = "wva_model_scaling_blocked"
+
+	// WVAModelReplicas is a gauge carrying the total replicas currently serving a
+	// model, summed across its variants.
+	//
+	// It exists to make one alert expressible. The failure an operator cares about
+	// is "my model is parked and requests are being refused", whose two halves are
+	// wva_current_replicas and EPP's llm_d_epp_request_error_total — and they
+	// cannot be joined. wva_current_replicas is per VARIANT and carries
+	// variant_name/namespace/accelerator_type with no model_name; EPP's counter
+	// carries model_name and target_model_name with no namespace. PromQL can
+	// rewrite a label, not derive a model from a variant name, and nothing in
+	// Prometheus knows that mapping. WVA is the one component that does.
+	//
+	// So this is the join key, not a convenience: model_name matches EPP's, and
+	// the sum answers "is anything serving this model at all", which is the
+	// question a parked model poses. Do NOT add accelerator_type or variant_name —
+	// that would put the series back on the per-variant side of the join it exists
+	// to bridge.
+	//
+	// Labels: namespace, model_name
+	WVAModelReplicas = "wva_model_replicas"
 )
 
 // Reasons a model cannot reach the scaling state its configuration implies

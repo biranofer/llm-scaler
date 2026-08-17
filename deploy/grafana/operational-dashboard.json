@@ -2197,6 +2197,64 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Models at zero replicas",
+      "description": "Total replicas serving each model, summed across its variants. Zero is normal for an idle model that scaled to zero, and a fault only when demand exists - which is what the WVAModelParkedWhileRequestsRefused alert joins against, using this series as the key. EPP's request metrics carry model_name and no namespace, and the per-variant wva_current_replicas carries no model_name, so this is the only series the two sides can be joined on. A line sitting flat at zero while traffic arrives is a stranded model.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_replicas{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "refresh": "",

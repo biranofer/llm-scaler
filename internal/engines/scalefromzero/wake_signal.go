@@ -27,6 +27,15 @@ import (
 // nothing an operator can perceive.
 const wakeSignalTTL = 30 * time.Second
 
+// wakeSignalRetry is when to try again after a sweep that could determine
+// nothing at all — every pool unreadable, or none resolvable yet.
+//
+// Distinct from the TTL because the two mean different things: the TTL is how
+// long a real answer stays good, and this is how long to wait after failing to
+// get one. Reusing the TTL would make a cluster that is still coming up take 30
+// seconds per attempt to notice it has finished.
+const wakeSignalRetry = 5 * time.Second
+
 // poolWakeVerdict is one pool's answer and when it was obtained.
 type poolWakeVerdict struct {
 	exported bool
@@ -46,7 +55,10 @@ type wakeSignalState struct {
 	mu       sync.Mutex
 	verdicts map[string]poolWakeVerdict
 	reported map[string]wakeModelRef
-	lastAt   time.Time
+	// nextAt is when the sweep may run again. Held as a deadline rather than as
+	// "when it last ran" so a sweep that determined nothing can ask to be retried
+	// sooner without pretending it never ran.
+	nextAt time.Time
 }
 
 // recordPoolWakeVerdict caches what a scrape has already proved.
@@ -118,20 +130,29 @@ func (e *Engine) reportWakeSignal(
 	logger := log.FromContext(ctx)
 
 	e.wakeSignal.mu.Lock()
-	due := e.wakeSignal.lastAt.IsZero() || now.Sub(e.wakeSignal.lastAt) >= wakeSignalTTL
-	if due {
-		e.wakeSignal.lastAt = now
-	}
+	due := e.wakeSignal.nextAt.IsZero() || !now.Before(e.wakeSignal.nextAt)
 	e.wakeSignal.mu.Unlock()
 	if !due {
 		return
 	}
 
+	// refs is FLEET MEMBERSHIP, and carries an empty pool for a model whose pool
+	// cannot be resolved yet. That distinction is the point: an unresolvable pool
+	// means "cannot tell", and a model WVA cannot currently tell about is not the
+	// same as a model that has gone away. Dropping it from refs would have the
+	// prune below clear its reason, which is an answer, from a sweep that has none.
 	refs := make(map[string]wakeModelRef)
 	e.collectWakeRefs(ctx, refs, inactiveVAs, inactiveTargets)
 	e.collectWakeRefs(ctx, refs, activeVAs, activeTargets)
 
+	var attempted, determined int
 	for _, ref := range refs {
+		if ref.pool == "" {
+			// Bootstrap: no pool yet. Hold whatever was last said.
+			continue
+		}
+		attempted++
+
 		exported, fresh := e.cachedPoolWakeVerdict(ref.pool, now)
 		if !fresh {
 			var ok bool
@@ -139,12 +160,15 @@ func (e *Engine) reportWakeSignal(
 			if !ok {
 				// Could not look. Say nothing rather than assert an absence we have
 				// not observed — a false no-wake-signal sends an operator to restart
-				// a healthy EPP.
+				// a healthy EPP. Same treatment as an unresolvable pool above: both
+				// are "cannot tell", and they must not differ in what they leave
+				// behind.
 				logger.V(logging.DEBUG).Info("Wake-signal check skipped: pool not readable",
 					"pool", ref.pool, "modelID", ref.modelID)
 				continue
 			}
 		}
+		determined++
 
 		var reasons []string
 		if !exported {
@@ -155,11 +179,26 @@ func (e *Engine) reportWakeSignal(
 	}
 
 	e.pruneWakeReports(refs)
+
+	// A sweep that answered nothing at all asks to be retried soon rather than in
+	// a full TTL: that is a cluster still coming up, not a settled answer.
+	next := now.Add(wakeSignalTTL)
+	if attempted > 0 && determined == 0 {
+		next = now.Add(wakeSignalRetry)
+	}
+	e.wakeSignal.mu.Lock()
+	e.wakeSignal.nextAt = next
+	e.wakeSignal.mu.Unlock()
 }
 
 // collectWakeRefs adds one entry per model, resolving the pool from the first
 // variant whose workload resolves one. Variants of a model serve the same model
 // behind the same EPP, so they share a queue.
+//
+// A model whose pool does not resolve is still recorded, with an empty pool: the
+// entry means "WVA has this model", and the pool means "and here is where its
+// queue would be". Conflating the two would make a bootstrapping model look
+// departed.
 func (e *Engine) collectWakeRefs(
 	ctx context.Context,
 	into map[string]wakeModelRef,
@@ -172,11 +211,11 @@ func (e *Engine) collectWakeRefs(
 		if existing, ok := into[key]; ok && existing.pool != "" {
 			continue
 		}
-		pool := e.poolNameForVariant(ctx, va, targets)
-		if pool == "" {
-			continue
+		into[key] = wakeModelRef{
+			namespace: va.Namespace,
+			modelID:   va.Spec.ModelID,
+			pool:      e.poolNameForVariant(ctx, va, targets),
 		}
-		into[key] = wakeModelRef{namespace: va.Namespace, modelID: va.Spec.ModelID, pool: pool}
 	}
 }
 

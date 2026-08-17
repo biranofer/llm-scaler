@@ -1262,6 +1262,18 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// series is most misleading. The reasons themselves are configuration
 	// reconciled against discovered bounds; they do not depend on there being a
 	// decision to enforce.
+	// The model-level replica count, which exists so "this model is parked while
+	// requests are refused" can be written at all — see constants.WVAModelReplicas.
+	// Guarded on having states: a model whose variants have not been discovered
+	// yet is unknown, not at zero, and emitting 0 would claim it is parked.
+	if len(variantStates) > 0 {
+		total := 0
+		for _, state := range variantStates {
+			total += state.CurrentReplicas
+		}
+		metrics.SetModelReplicas(namespace, modelID, total)
+	}
+
 	blockedReasons := scaleToZeroBlockReasons(scaleToZeroEnabled, engineSupported, variantStates)
 	metrics.SetModelScalingBlockedReasons(namespace, modelID,
 		constants.ScalingBlockedReasonsPolicy, blockedReasons)

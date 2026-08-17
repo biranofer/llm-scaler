@@ -312,3 +312,77 @@ func TestReportWakeSignal_ClearsDepartedModels(t *testing.T) {
 	assert.Contains(t, got, "model-a")
 	assert.NotContains(t, got, "model-b", "a departed model must not keep alerting")
 }
+
+// "Cannot tell" must not look like "resolved". Both failure modes — an
+// unresolvable pool and an unreadable one — used to differ: the first dropped the
+// model from the ref set, which the prune then read as "departed" and cleared its
+// reason. Clearing is an answer, and a sweep that determined nothing has none.
+func TestReportWakeSignal_UnresolvablePoolHoldsThePreviousAnswer(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+	inactive := []wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}
+	targets := wakeTargets("parked")
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil, start)
+	require.Equal(t, constants.ScalingBlockedNoWakeSignal, wakeReasons(t, registry)[wakeModel])
+
+	// The pool stops resolving — a datastore resync, a bootstrap window.
+	e.Datastore.(*wakeDatastore).noPool = true
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(wakeSignalTTL+time.Second))
+
+	assert.Equal(t, constants.ScalingBlockedNoWakeSignal, wakeReasons(t, registry)[wakeModel],
+		"a model WVA cannot currently resolve has not gone away, and its last answer stands")
+}
+
+func TestReportWakeSignal_UnreadablePoolHoldsThePreviousAnswer(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+	inactive := []wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}
+	targets := wakeTargets("parked")
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil, start)
+	require.Equal(t, constants.ScalingBlockedNoWakeSignal, wakeReasons(t, registry)[wakeModel])
+
+	src.err = assertErrNotSynced
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(wakeSignalTTL+time.Second))
+
+	assert.Equal(t, constants.ScalingBlockedNoWakeSignal, wakeReasons(t, registry)[wakeModel],
+		"failing to look must leave the same trace as failing to resolve")
+}
+
+// A sweep that answered nothing is a cluster still coming up, not a settled
+// answer, so it must not wait a full TTL to try again.
+func TestReportWakeSignal_RetriesSoonerAfterDeterminingNothing(t *testing.T) {
+	src := &wakeSource{err: assertErrNotSynced}
+	e, _ := wakeEngine(t, src)
+	inactive := []wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}
+	targets := wakeTargets("parked")
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil, start)
+	require.Equal(t, 1, src.scrapes)
+
+	// Still inside the short retry window: no second attempt.
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(wakeSignalRetry/2))
+	assert.Equal(t, 1, src.scrapes)
+
+	// Past it, and well short of the full TTL.
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(wakeSignalRetry+time.Second))
+	assert.Equal(t, 2, src.scrapes, "a failed sweep retries on the short clock, not the TTL")
+
+	// Once it succeeds, the long clock applies again.
+	src.err = nil
+	src.values = queueValues()
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(2*wakeSignalRetry+2*time.Second))
+	before := src.scrapes
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(2*wakeSignalRetry+3*time.Second))
+	assert.Equal(t, before, src.scrapes, "a determined answer holds for the full TTL")
+}

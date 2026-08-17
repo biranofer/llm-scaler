@@ -47,6 +47,7 @@ var (
 	unmeasuredQueue      *prometheus.GaugeVec
 	variantAtMaxReplicas *prometheus.GaugeVec
 	modelScalingBlocked  *prometheus.GaugeVec
+	modelReplicas        *prometheus.GaugeVec
 	currentReplicas      *prometheus.GaugeVec
 	desiredRatio         *prometheus.GaugeVec
 	errorsTotal          *prometheus.CounterVec
@@ -140,6 +141,11 @@ func InitMetrics(registry prometheus.Registerer) error {
 	// is no per-variant answer to give. `reason` is a closed enum, so it costs a
 	// bounded number of series rather than a metric per condition.
 	modelScalingBlockedLabels := []string{constants.LabelNamespace, constants.LabelModelName, constants.LabelReason}
+	// modelReplicasLabels: model_name is deliberately the only identity beyond
+	// namespace. This series exists to be joined against EPP metrics, which carry
+	// model_name and no namespace; adding variant_name or accelerator_type would
+	// put it back on the per-variant side of the join it exists to bridge.
+	modelReplicasLabels := []string{constants.LabelNamespace, constants.LabelModelName}
 	// analyzerTargetLabels: per-analyzer per-replica target P, per variant.
 	analyzerTargetLabels := []string{constants.LabelAnalyzerName, constants.LabelNamespace, constants.LabelModelName, constants.LabelVariantName}
 
@@ -156,6 +162,7 @@ func InitMetrics(registry prometheus.Registerer) error {
 		unmeasuredQueueLabels = append(unmeasuredQueueLabels, constants.LabelControllerInstance)
 		variantAtMaxLabels = append(variantAtMaxLabels, constants.LabelControllerInstance)
 		modelScalingBlockedLabels = append(modelScalingBlockedLabels, constants.LabelControllerInstance)
+		modelReplicasLabels = append(modelReplicasLabels, constants.LabelControllerInstance)
 	}
 
 	replicaScalingTotal = prometheus.NewCounterVec(
@@ -316,6 +323,19 @@ func InitMetrics(registry prometheus.Registerer) error {
 				"is up and serving, exactly as every other metric says it should be.",
 		},
 		modelScalingBlockedLabels,
+	)
+
+	modelReplicas = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: constants.WVAModelReplicas,
+			Help: "Replicas currently serving a model, summed across its variants. Exists to be " +
+				"JOINED: the per-variant wva_current_replicas carries no model_name and EPP's " +
+				"request metrics carry no namespace, so \"this model is parked while requests " +
+				"are refused\" cannot be expressed without a model-keyed replica count. Zero " +
+				"means nothing is serving the model, which is normal for an idle model that " +
+				"scaled to zero and a fault only when demand exists.",
+		},
+		modelReplicasLabels,
 	)
 
 	unattributedGPUs = prometheus.NewGaugeVec(
@@ -529,6 +549,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	}
 	if err := registry.Register(modelScalingBlocked); err != nil {
 		return fmt.Errorf("failed to register modelScalingBlocked metric: %w", err)
+	}
+	if err := registry.Register(modelReplicas); err != nil {
+		return fmt.Errorf("failed to register modelReplicas metric: %w", err)
 	}
 	if err := registry.Register(unmeasuredQueue); err != nil {
 		return fmt.Errorf("failed to register unmeasuredQueue metric: %w", err)
@@ -778,6 +801,41 @@ func ClearModelScalingBlocked(namespace, modelName string) {
 		match[constants.LabelControllerInstance] = controllerInstance
 	}
 	modelScalingBlocked.DeletePartialMatch(match)
+}
+
+// SetModelReplicas records how many replicas are serving a model in total.
+//
+// Call it every cycle for every model, INCLUDING with zero. Zero is the whole
+// point of the series -- a model at zero while requests are being refused is the
+// failure this exists to make expressible -- so a caller that skips the zero case
+// removes exactly the sample the alert reads.
+func SetModelReplicas(namespace, modelName string, replicas int) {
+	if modelReplicas == nil {
+		return
+	}
+	modelReplicas.With(modelSeriesLabels(namespace, modelName)).Set(float64(replicas))
+}
+
+// ClearModelReplicas drops a model's replica series, for a model that has gone
+// away. Distinct from setting it to zero, which asserts the model exists and is
+// parked -- and would keep the symptom alert live for a deleted workload.
+func ClearModelReplicas(namespace, modelName string) {
+	if modelReplicas == nil {
+		return
+	}
+	modelReplicas.Delete(modelSeriesLabels(namespace, modelName))
+}
+
+// modelSeriesLabels builds the label set for a model-keyed series.
+func modelSeriesLabels(namespace, modelName string) prometheus.Labels {
+	labels := prometheus.Labels{
+		constants.LabelNamespace: namespace,
+		constants.LabelModelName: modelName,
+	}
+	if controllerInstance != "" {
+		labels[constants.LabelControllerInstance] = controllerInstance
+	}
+	return labels
 }
 
 func SetModelsProcessed(count int) {

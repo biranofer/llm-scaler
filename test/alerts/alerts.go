@@ -87,11 +87,31 @@ func ExtractMetricNames(expr string) []string {
 	return out
 }
 
+// ExternalMetrics are metrics WVA does not emit but deliberately alerts on.
+//
+// Kept as an explicit, short list rather than a blanket exemption for anything
+// non-wva_. Each entry is a dependency on another component's metric surface: if
+// EPP renames or drops one, our alert silently matches nothing and fires never,
+// which is indistinguishable from a healthy cluster. Naming them here at least
+// makes the dependency greppable.
+var ExternalMetrics = map[string]bool{
+	// EPP's request error counter. Labels observed on a real EPP scrape:
+	// {error_code, fairness_id, model_name, priority, target_model_name} — note
+	// there is no namespace, which is why the join partner has to be a
+	// model-keyed WVA series (see constants.WVAModelReplicas).
+	"llm_d_epp_request_error_total": true,
+}
+
 // IsKnown reports whether name is a defined metric, allowing for the suffixes the
 // Prometheus client library appends to counters and histograms.
 func IsKnown(name string, known map[string]bool) bool {
-	if known[name] {
+	if known[name] || ExternalMetrics[name] {
 		return true
+	}
+	for _, suffix := range []string{"_total", "_count", "_sum", "_bucket"} {
+		if base, found := strings.CutSuffix(name, suffix); found && ExternalMetrics[base] {
+			return true
+		}
 	}
 	for _, suffix := range []string{"_total", "_count", "_sum", "_bucket"} {
 		if base, found := strings.CutSuffix(name, suffix); found && known[base] {

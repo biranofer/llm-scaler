@@ -178,3 +178,114 @@ var _ = Describe("applyScaleToZeroEnforcement blocked-reason wiring", func() {
 		Expect(publishedReasons(registry)).To(ConsistOf(constants.ScalingBlockedNoWakeSignal))
 	})
 })
+
+// wva_model_replicas is the join key the symptom alert needs, so the wiring
+// matters as much as the metric: an omitted sample is an alert that never fires.
+var _ = Describe("applyScaleToZeroEnforcement model replica wiring", func() {
+	const (
+		modelID   = "replica-model"
+		namespace = "replica-ns"
+	)
+
+	var ctx = context.Background()
+
+	vllm := map[string]scaletarget.ScaleTargetAccessor{
+		"a": scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{Name: "server", Image: "vllm/vllm-openai:latest"}},
+					},
+				},
+			},
+		}),
+	}
+
+	engine := func() (*Engine, *prometheus.Registry) {
+		registry := prometheus.NewRegistry()
+		Expect(metrics.InitMetrics(registry)).To(Succeed())
+		cfg := config.NewTestConfig()
+		cfg.UpdateScalingPolicyConfigForNamespace(namespace, map[string]config.ScalingPolicy{
+			"default": {ScaleToZero: &config.ScaleToZeroEnvelope{
+				Enabled: ptrTo(true), RetentionPeriod: "10m",
+			}},
+		})
+		return &Engine{
+			Config:            cfg,
+			lastBlockedModels: make(map[string]blockedModelRef),
+			ScaleToZeroEnforcer: allocation.NewEnforcer(
+				func(context.Context, string, string, time.Duration) (float64, error) {
+					return 1, nil // busy: leave the decisions alone
+				},
+			),
+		}, registry
+	}
+
+	replicaSamples := func(registry *prometheus.Registry) []float64 {
+		mfs, err := registry.Gather()
+		Expect(err).NotTo(HaveOccurred())
+		var out []float64
+		for _, mf := range mfs {
+			if mf.GetName() != constants.WVAModelReplicas {
+				continue
+			}
+			for _, m := range mf.GetMetric() {
+				out = append(out, m.GetGauge().GetValue())
+			}
+		}
+		return out
+	}
+
+	states := func(replicas ...int) []domain.VariantReplicaState {
+		out := make([]domain.VariantReplicaState, 0, len(replicas))
+		for i, r := range replicas {
+			min := 0
+			out = append(out, domain.VariantReplicaState{
+				VariantName:     string(rune('a' + i)),
+				CurrentReplicas: r,
+				MinReplicas:     &min,
+			})
+		}
+		return out
+	}
+
+	It("sums replicas across a model's variants", func() {
+		e, registry := engine()
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			nil, vllm, states(2, 3))
+
+		Expect(replicaSamples(registry)).To(ConsistOf(float64(5)))
+	})
+
+	It("publishes zero for a parked model", func() {
+		e, registry := engine()
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			nil, vllm, states(0, 0))
+
+		Expect(replicaSamples(registry)).To(ConsistOf(float64(0)),
+			"zero is the sample the symptom alert reads; omitting it disables the alert")
+	})
+
+	// A model whose variants have not been discovered yet is UNKNOWN, not at zero.
+	// Publishing 0 would claim it is parked, and the symptom alert would fire for a
+	// model that is merely still being discovered.
+	It("says nothing when no variant state is known", func() {
+		e, registry := engine()
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			nil, vllm, nil)
+
+		Expect(replicaSamples(registry)).To(BeEmpty())
+	})
+
+	It("clears the series when the model goes away", func() {
+		e, registry := engine()
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			nil, vllm, states(1))
+		Expect(replicaSamples(registry)).NotTo(BeEmpty())
+
+		e.pruneBlockedModels(map[string]bool{"other-ns/other-model": true})
+
+		Expect(replicaSamples(registry)).To(BeEmpty(),
+			"a deleted workload must not keep a parked-at-zero sample alive")
+	})
+})

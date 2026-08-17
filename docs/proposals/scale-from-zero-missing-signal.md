@@ -1,7 +1,7 @@
 # Say when a model will not park, and when it cannot wake
 
-**Status:** §4–§6 and §8 implemented; §7 blocked on a missing label (see below);
-§9 filed upstream; §10 deferred.
+**Status:** §4–§8 implemented, including §7 once WVA emitted the join key it needed;
+§9 to file upstream; §10 deferred. Not yet exercised on a cluster.
 
 ## 1. Two silent failures
 
@@ -227,36 +227,52 @@ rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m]) > 0
 A model at zero while requests are being refused is broken **whatever the
 reason**, and this appeared to need no engine code at all.
 
-**It cannot be written.** The join has no key. `wva_current_replicas` carries
-`variant_name`, `namespace` and `accelerator_type` — and **no `model_name`**,
-because it is a per-variant series. EPP's error counter carries `model_name` /
-`target_model_name` and no namespace. `label_replace` can rewrite a label; it
-cannot derive a model from a variant name, and nothing in Prometheus knows that
-mapping. The earlier draft called this a "friction" to be paid with
-`label_replace`. That was wrong — it is not expensive, it is impossible with the
-metrics as they stand.
+**As written, it had no join key.** `wva_current_replicas` carries `variant_name`,
+`namespace` and `accelerator_type` — and **no `model_name`**, because it is a
+per-variant series. EPP's counter, from a real scrape, is
+`llm_d_epp_request_error_total{error_code, fairness_id, model_name, priority,
+target_model_name}` — `model_name` and **no namespace**. `label_replace` can
+rewrite a label; it cannot derive a model from a variant name, and nothing in
+Prometheus knows that mapping. An earlier draft called this a "friction" to be
+paid with `label_replace`. That was wrong: not expensive, impossible.
 
-Two ways forward, neither free:
+**So WVA emits the key.** `wva_model_replicas{namespace, model_name}` — replicas
+serving a model, summed across its variants. WVA is the one component that knows
+which variants serve which model, which is exactly why the join is unwritable
+without it. It is a value rather than a condition, so it does not reopen the §4
+sprawl argument, and its labels are deliberately minimal: adding `variant_name` or
+`accelerator_type` would put the series back on the per-variant side of the join
+it exists to bridge.
 
-1. **Emit a model-level replica total** — `wva_model_replicas{namespace,
-   model_name}`, which WVA can produce because it is the one component that knows
-   which variants serve which model. The alert then joins on
-   `(namespace, model_name)`. Costs one metric, and it is a value rather than a
-   condition, so it does not reopen the §4 sprawl argument.
-2. **Let WVA emit the symptom itself** as another reason. The scale-from-zero
-   loop already scrapes EPP, so it could read the error counter on the same
-   scrape and skip the join entirely. But this is §10's signal wearing a
-   different hat, and inherits every ambiguity §10 defers it for — a mistyped
-   model name refuses requests exactly like a parked model does.
+```
+(sum by (namespace, model_name) (wva_model_replicas) == 0)
+  and on (model_name)
+(sum by (model_name) (rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m])) > 0)
+```
 
-Option 1 is the honest one, and is the recommendation. It is deferred here rather
-than smuggled in, because it is a new metric with its own emission points and
-belongs in its own change.
+Two properties worth stating plainly. **Zero must be published**, not omitted — a
+model at zero is the entire subject of the alert, so a caller that skips the zero
+case disables it. But **unknown is not zero**: a model whose variants have not
+been discovered yet publishes nothing, because emitting 0 would claim it is
+parked. And a departed model's series is **deleted** rather than set to 0, which
+would keep the alert live for a workload that no longer exists.
 
-There is also a second, smaller cost that **was** real and is now paid: the
-alerts spec validates that expressions reference only metrics in
-`wvaMetricNames`, so an alert naming an EPP metric fails until that list allows
-it — the same trap that let `wva_node_access_denied` ship broken.
+The join is on `model_name` alone, since EPP carries no namespace — so two
+namespaces serving the same modelID cannot be told apart in the join, and the
+namespace shown comes from WVA's side. That is a real limitation of EPP's label
+surface, not something PromQL can fix.
+
+The rejected alternative was to let WVA emit the symptom as another reason: the
+scale-from-zero loop already scrapes EPP and could read the error counter on the
+same scrape, skipping the join. But that is §10's signal wearing a different hat,
+and inherits every ambiguity §10 defers it for — a mistyped model name refuses
+requests exactly like a parked model does. Behind an alert a human reads, that
+ambiguity is tolerable; behind a wake decision that spends GPUs, it is not.
+
+The second cost was real and is now paid: the alerts spec rejects any metric it
+does not know, so `llm_d_epp_request_error_total` needed an explicit external
+allowance — kept as a short named list rather than a blanket exemption, because
+if EPP renames it our alert silently matches nothing and fires never.
 
 ## 8. Reporting surfaces and their conventions
 
@@ -343,9 +359,9 @@ operators learn to route to /dev/null, and it would take the two alerts above
 with it. The reason stays on the metric and on the dashboard, which is where a
 permanent condition belongs.
 
-Not shipped, with reasons above: the symptom alert (§7, no join key), the Event
-surface (§8, model-scoped conditions do not fit object-scoped events), and the
-fallback wake signal (§10, deferred on purpose).
+Not shipped, with reasons above: the Event surface (§8, model-scoped conditions do
+not fit object-scoped events) and the fallback wake signal (§10, deferred on
+purpose).
 
 **Alert validation moved out of `test/e2e`.** The "alerts reference only known
 metrics" check lived there, and `make test` runs

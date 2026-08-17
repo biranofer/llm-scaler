@@ -179,3 +179,71 @@ var _ = Describe("ClearModelScalingBlocked", func() {
 		Expect(func() { ClearModelScalingBlocked("ns", "m") }).NotTo(Panic())
 	})
 })
+
+var _ = Describe("SetModelReplicas", func() {
+	series := func(registry *prometheus.Registry) []*dto.Metric {
+		mfs, err := registry.Gather()
+		Expect(err).NotTo(HaveOccurred())
+		for _, mf := range mfs {
+			if mf.GetName() == constants.WVAModelReplicas {
+				return mf.GetMetric()
+			}
+		}
+		return nil
+	}
+
+	// Zero is the whole point of this series: a model at zero while requests are
+	// refused is the failure it exists to make expressible. A caller that skips
+	// the zero case removes exactly the sample the alert reads.
+	It("records zero rather than omitting it", func() {
+		registry := prometheus.NewRegistry()
+		Expect(InitMetrics(registry)).To(Succeed())
+
+		SetModelReplicas("ns-a", "m", 0)
+
+		got := series(registry)
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].GetGauge().GetValue()).To(BeZero())
+		Expect(getLabelValue(got[0], constants.LabelModelName)).To(Equal("m"))
+	})
+
+	It("keys by model and namespace only, so it can join EPP series", func() {
+		registry := prometheus.NewRegistry()
+		Expect(InitMetrics(registry)).To(Succeed())
+
+		SetModelReplicas("ns-a", "m", 3)
+
+		got := series(registry)
+		Expect(got).To(HaveLen(1))
+		labels := got[0].GetLabel()
+		names := make([]string, 0, len(labels))
+		for _, l := range labels {
+			names = append(names, l.GetName())
+		}
+		Expect(names).To(ConsistOf(constants.LabelNamespace, constants.LabelModelName),
+			"an extra label here would put the series back on the per-variant side of the join")
+	})
+
+	// Deleting is not the same as setting zero: zero asserts the model exists and
+	// is parked, which would keep the symptom alert live for a deleted workload.
+	It("clears a departed model rather than leaving it at zero", func() {
+		registry := prometheus.NewRegistry()
+		Expect(InitMetrics(registry)).To(Succeed())
+
+		SetModelReplicas("ns-a", "gone", 0)
+		SetModelReplicas("ns-a", "stays", 2)
+		ClearModelReplicas("ns-a", "gone")
+
+		got := series(registry)
+		Expect(got).To(HaveLen(1))
+		Expect(getLabelValue(got[0], constants.LabelModelName)).To(Equal("stays"))
+	})
+
+	It("is a no-op before InitMetrics rather than a panic", func() {
+		modelReplicas = nil
+		Expect(func() {
+			SetModelReplicas("ns", "m", 1)
+			ClearModelReplicas("ns", "m")
+		}).NotTo(Panic())
+	})
+})

@@ -88,3 +88,12 @@ spec:
 # operators learn to route to /dev/null — taking the two alerts above with it. The
 # reason is still on the metric and on the operational dashboard, which is where a
 # permanent condition belongs.
+
+    - alert: WVAModelParkedWhileRequestsRefused
+      expr: (sum by (namespace, model_name) (wva_model_replicas) == 0) and on (model_name) (sum by (model_name) (rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m])) > 0)
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} is at zero replicas while requests are being refused"
+        description: "Nothing is serving this model and EPP is returning ServiceUnavailable for it, so traffic is being dropped and the autoscaler has not brought it back. This alerts on the SYMPTOM, so it fires whatever the cause: no wake signal (see WVAModelHasNoWakeSignal, which names that specific cause), an EPP that cannot be scraped, KEDA not delivering the activation, an admission or quota refusal on the scale-up, or a bug. Start with wva_model_scaling_blocked for this model — if a reason is present it is the likely cause. Note the join is on model_name alone because EPP's metrics carry no namespace, so two namespaces serving the same modelID cannot be told apart here; the namespace shown comes from WVA's side."
