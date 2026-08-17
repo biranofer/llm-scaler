@@ -108,7 +108,6 @@ func (e *Engine) pruneBlockedModels(activeKeys map[string]bool) {
 	for modelKey, ref := range e.lastBlockedModels {
 		if !activeKeys[modelKey] {
 			metrics.ClearModelScalingBlocked(ref.namespace, ref.modelID)
-			metrics.ClearModelReplicas(ref.namespace, ref.modelID)
 			delete(e.lastBlockedModels, modelKey)
 		}
 	}
@@ -120,7 +119,6 @@ func (e *Engine) pruneBlockedModels(activeKeys map[string]bool) {
 func (e *Engine) evictAllBlockedModels() {
 	for modelKey, ref := range e.lastBlockedModels {
 		metrics.ClearModelScalingBlocked(ref.namespace, ref.modelID)
-		metrics.ClearModelReplicas(ref.namespace, ref.modelID)
 		delete(e.lastBlockedModels, modelKey)
 	}
 }

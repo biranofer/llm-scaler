@@ -42,11 +42,14 @@ type poolWakeVerdict struct {
 	at       time.Time
 }
 
-// wakeModelRef is a model and the EPP pool whose queue would wake it.
+// wakeModelRef is a model, the EPP pool whose queue would wake it, and how many
+// replicas are ready to serve it.
 type wakeModelRef struct {
 	namespace string
 	modelID   string
 	pool      string
+	// readyReplicas is summed across every variant of the model, parked or not.
+	readyReplicas int
 }
 
 // wakeSignalState caches per-pool verdicts and remembers which models were last
@@ -147,6 +150,15 @@ func (e *Engine) reportWakeSignal(
 
 	var attempted, determined int
 	for _, ref := range refs {
+		// The model-level replica count, published from HERE because this is the
+		// only place that sees the whole fleet. The steady-state engine cannot
+		// publish it: it lists variants with isActive, meaning spec replicas > 0, so
+		// a PARKED model never enters that engine at all — and a parked model is the
+		// entire subject of wva_model_replicas == 0. Emitted there, the series would
+		// only ever have held counts of 1 or more, and the symptom alert would have
+		// been unreachable while looking perfectly well-formed.
+		metrics.SetModelReplicas(ref.namespace, ref.modelID, ref.readyReplicas)
+
 		if ref.pool == "" {
 			// Bootstrap: no pool yet. Hold whatever was last said.
 			continue
@@ -208,34 +220,43 @@ func (e *Engine) collectWakeRefs(
 	for i := range vas {
 		va := vas[i]
 		key := utils.GetNamespacedKey(va.Namespace, va.Spec.ModelID)
-		if existing, ok := into[key]; ok && existing.pool != "" {
-			continue
+
+		ref, seen := into[key]
+		if !seen {
+			ref = wakeModelRef{namespace: va.Namespace, modelID: va.Spec.ModelID}
 		}
-		into[key] = wakeModelRef{
-			namespace: va.Namespace,
-			modelID:   va.Spec.ModelID,
-			pool:      e.poolNameForVariant(ctx, va, targets),
+
+		scaleTarget, err := e.resolveScaleTarget(ctx, targets, va)
+		if err == nil && scaleTarget != nil {
+			// READY, not spec: the question is whether anything is actually serving
+			// this model, and a workload scaled to 3 whose pods are all pending
+			// serves nothing. Accumulated across BOTH calls — a model's variants are
+			// split between the inactive and active lists, so neither alone is the
+			// model's total.
+			ref.readyReplicas += int(scaleTarget.GetStatusReadyReplicas())
+			if ref.pool == "" {
+				ref.pool = e.poolNameForScaleTarget(va.Namespace, scaleTarget)
+			}
 		}
+		into[key] = ref
 	}
 }
 
-// poolNameForVariant resolves the namespaced EPP pool name behind a variant's
+// poolNameForScaleTarget resolves the namespaced EPP pool name behind a
 // workload, or "" when it cannot be resolved — the normal bootstrap state, and
 // not something to report a missing wake signal for.
-func (e *Engine) poolNameForVariant(
-	ctx context.Context,
-	va wvav1alpha1.VariantAutoscaling,
-	targets map[string]scaletarget.ScaleTargetAccessor,
+func (e *Engine) poolNameForScaleTarget(
+	namespace string,
+	scaleTarget scaletarget.ScaleTargetAccessor,
 ) string {
-	scaleTarget, err := e.resolveScaleTarget(ctx, targets, va)
-	if err != nil || scaleTarget == nil {
+	if scaleTarget == nil {
 		return ""
 	}
 	podTemplateSpec := scaleTarget.GetLeaderPodTemplateSpec()
 	if podTemplateSpec == nil || podTemplateSpec.Labels == nil {
 		return ""
 	}
-	pool, err := e.Datastore.PoolGetFromLabels(va.Namespace, podTemplateSpec.Labels)
+	pool, err := e.Datastore.PoolGetFromLabels(namespace, podTemplateSpec.Labels)
 	if err != nil || pool == nil {
 		return ""
 	}
@@ -285,5 +306,8 @@ func (e *Engine) pruneWakeReports(current map[string]wakeModelRef) {
 		}
 		metrics.SetModelScalingBlockedReasons(ref.namespace, ref.modelID,
 			constants.ScalingBlockedReasonsWake, nil)
+		// Deleted, not set to zero: zero asserts the model exists and is parked,
+		// which would keep the symptom alert firing for a workload that is gone.
+		metrics.ClearModelReplicas(ref.namespace, ref.modelID)
 	}
 }

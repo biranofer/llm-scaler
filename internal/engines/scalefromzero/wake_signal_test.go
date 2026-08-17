@@ -12,6 +12,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
@@ -119,6 +120,12 @@ func wakeVA(name, modelID string) wvav1alpha1.VariantAutoscaling {
 }
 
 func wakeTargets(names ...string) map[string]scaletarget.ScaleTargetAccessor {
+	return wakeTargetsReady(0, names...)
+}
+
+// wakeTargetsReady builds scale targets reporting a given number of READY
+// replicas each.
+func wakeTargetsReady(ready int32, names ...string) map[string]scaletarget.ScaleTargetAccessor {
 	out := make(map[string]scaletarget.ScaleTargetAccessor, len(names))
 	for _, n := range names {
 		out[wakeNS+"/"+n] = scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
@@ -129,6 +136,7 @@ func wakeTargets(names ...string) map[string]scaletarget.ScaleTargetAccessor {
 					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "server"}}},
 				},
 			},
+			Status: appsv1.DeploymentStatus{Replicas: ready, ReadyReplicas: ready},
 		})
 	}
 	return out
@@ -385,4 +393,108 @@ func TestReportWakeSignal_RetriesSoonerAfterDeterminingNothing(t *testing.T) {
 	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
 		start.Add(2*wakeSignalRetry+3*time.Second))
 	assert.Equal(t, before, src.scrapes, "a determined answer holds for the full TTL")
+}
+
+// modelReplicas reads the model -> replica-count series.
+func modelReplicas(t *testing.T, registry *prometheus.Registry) map[string]float64 {
+	t.Helper()
+	mfs, err := registry.Gather()
+	require.NoError(t, err)
+	out := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != constants.WVAModelReplicas {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == constants.LabelModelName {
+					out[l.GetValue()] = m.GetGauge().GetValue()
+				}
+			}
+		}
+	}
+	return out
+}
+
+// The bug this placement exists to avoid. wva_model_replicas == 0 is the whole
+// subject of the symptom alert, and the steady-state engine cannot produce it:
+// that engine lists variants with isActive, meaning spec replicas > 0, so a
+// PARKED model never enters it. Emitted there, the series would only ever hold
+// counts of 1 or more and the alert would be unreachable while looking correct.
+func TestReportWakeSignal_PublishesZeroForAParkedModel(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, wakeTargetsReady(0, "parked"),
+		nil, nil, time.Now())
+
+	got := modelReplicas(t, registry)
+	require.Contains(t, got, wakeModel, "a parked model must still publish a replica count")
+	assert.Zero(t, got[wakeModel], "zero is the sample the symptom alert reads")
+}
+
+// A model's variants are split between the inactive and active lists, so neither
+// alone is the model's total.
+func TestReportWakeSignal_SumsReplicasAcrossBothLists(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+
+	parked := wakeVA("parked", wakeModel)
+	serving := wakeVA("serving", wakeModel)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{parked}, wakeTargetsReady(0, "parked"),
+		[]wvav1alpha1.VariantAutoscaling{serving}, wakeTargetsReady(3, "serving"),
+		time.Now())
+
+	assert.Equal(t, float64(3), modelReplicas(t, registry)[wakeModel])
+}
+
+// Ready, not spec: a workload scaled up whose pods are all pending serves
+// nothing, and reporting the spec count would hide exactly that outage.
+func TestReportWakeSignal_CountsReadyNotSpecReplicas(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+
+	targets := map[string]scaletarget.ScaleTargetAccessor{
+		wakeNS + "/parked": scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "parked", Namespace: wakeNS},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(int32(4)),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "parked"}},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "server"}}},
+				},
+			},
+			Status: appsv1.DeploymentStatus{Replicas: 4, ReadyReplicas: 0},
+		}),
+	}
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, targets,
+		nil, nil, time.Now())
+
+	assert.Zero(t, modelReplicas(t, registry)[wakeModel],
+		"four replicas that are not ready serve nothing")
+}
+
+func TestReportWakeSignal_ClearsReplicasForDepartedModels(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("a", "model-a"), wakeVA("b", "model-b")},
+		wakeTargetsReady(0, "a", "b"), nil, nil, start)
+	require.Len(t, modelReplicas(t, registry), 2)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("a", "model-a")}, wakeTargetsReady(0, "a"),
+		nil, nil, start.Add(wakeSignalTTL+time.Second))
+
+	got := modelReplicas(t, registry)
+	assert.Contains(t, got, "model-a")
+	assert.NotContains(t, got, "model-b",
+		"a deleted workload must not keep a parked-at-zero sample alive")
 }
