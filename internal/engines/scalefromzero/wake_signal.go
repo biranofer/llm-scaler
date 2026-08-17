@@ -135,30 +135,46 @@ func (e *Engine) reportWakeSignal(
 	e.wakeSignal.mu.Lock()
 	due := e.wakeSignal.nextAt.IsZero() || !now.Before(e.wakeSignal.nextAt)
 	e.wakeSignal.mu.Unlock()
-	if !due {
-		return
-	}
 
 	// refs is FLEET MEMBERSHIP, and carries an empty pool for a model whose pool
 	// cannot be resolved yet. That distinction is the point: an unresolvable pool
 	// means "cannot tell", and a model WVA cannot currently tell about is not the
 	// same as a model that has gone away. Dropping it from refs would have the
 	// prune below clear its reason, which is an answer, from a sweep that has none.
+	//
+	// Pool resolution is skipped unless a wake check is due: it scans the datastore
+	// for every model, and this runs on the 100ms loop. Replica counts come off the
+	// scale targets already in hand and cost nothing, so they are NOT throttled.
 	refs := make(map[string]wakeModelRef)
-	e.collectWakeRefs(ctx, refs, inactiveVAs, inactiveTargets)
-	e.collectWakeRefs(ctx, refs, activeVAs, activeTargets)
+	e.collectWakeRefs(ctx, refs, inactiveVAs, inactiveTargets, due)
+	e.collectWakeRefs(ctx, refs, activeVAs, activeTargets, due)
+
+	// The model-level replica count, published from HERE because this is the only
+	// place that sees the whole fleet. The steady-state engine cannot publish it:
+	// it lists variants with isActive, meaning spec replicas > 0, so a PARKED model
+	// never enters that engine at all — and a parked model is the entire subject of
+	// wva_model_replicas == 0. Emitted there, the series would only ever have held
+	// counts of 1 or more, and the symptom alert would have been unreachable while
+	// looking perfectly well-formed.
+	//
+	// Every cycle, not on the wake clock: this is the current state of the fleet,
+	// and it is what the symptom alert reads. Holding it behind the 30s throttle
+	// would have made "is anything serving this model" up to 30 seconds stale for
+	// no saving — nothing here is scraped.
+	for _, ref := range refs {
+		metrics.SetModelReplicas(ref.namespace, ref.modelID, ref.readyReplicas)
+	}
+
+	// Departures are handled every cycle too, so a deleted workload stops
+	// reporting promptly rather than at the next wake check.
+	e.pruneWakeReports(refs)
+
+	if !due {
+		return
+	}
 
 	var attempted, determined int
 	for _, ref := range refs {
-		// The model-level replica count, published from HERE because this is the
-		// only place that sees the whole fleet. The steady-state engine cannot
-		// publish it: it lists variants with isActive, meaning spec replicas > 0, so
-		// a PARKED model never enters that engine at all — and a parked model is the
-		// entire subject of wva_model_replicas == 0. Emitted there, the series would
-		// only ever have held counts of 1 or more, and the symptom alert would have
-		// been unreachable while looking perfectly well-formed.
-		metrics.SetModelReplicas(ref.namespace, ref.modelID, ref.readyReplicas)
-
 		if ref.pool == "" {
 			// Bootstrap: no pool yet. Hold whatever was last said.
 			continue
@@ -190,8 +206,6 @@ func (e *Engine) reportWakeSignal(
 			constants.ScalingBlockedReasonsWake, reasons)
 	}
 
-	e.pruneWakeReports(refs)
-
 	// A sweep that answered nothing at all asks to be retried soon rather than in
 	// a full TTL: that is a cluster still coming up, not a settled answer.
 	next := now.Add(wakeSignalTTL)
@@ -216,6 +230,7 @@ func (e *Engine) collectWakeRefs(
 	into map[string]wakeModelRef,
 	vas []wvav1alpha1.VariantAutoscaling,
 	targets map[string]scaletarget.ScaleTargetAccessor,
+	resolvePool bool,
 ) {
 	for i := range vas {
 		va := vas[i]
@@ -234,7 +249,7 @@ func (e *Engine) collectWakeRefs(
 			// split between the inactive and active lists, so neither alone is the
 			// model's total.
 			ref.readyReplicas += int(scaleTarget.GetStatusReadyReplicas())
-			if ref.pool == "" {
+			if resolvePool && ref.pool == "" {
 				ref.pool = e.poolNameForScaleTarget(va.Namespace, scaleTarget)
 			}
 		}

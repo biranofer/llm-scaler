@@ -52,9 +52,12 @@ type wakeDatastore struct {
 	pool   *poolutil.EndpointPool
 	src    source.MetricsSource
 	noPool bool
+	// poolLookups counts label-based pool resolutions, which scan the store.
+	poolLookups int
 }
 
 func (d *wakeDatastore) PoolGetFromLabels(string, map[string]string) (*poolutil.EndpointPool, error) {
+	d.poolLookups++
 	if d.noPool {
 		return nil, assertErrNotSynced
 	}
@@ -497,4 +500,48 @@ func TestReportWakeSignal_ClearsReplicasForDepartedModels(t *testing.T) {
 	assert.Contains(t, got, "model-a")
 	assert.NotContains(t, got, "model-b",
 		"a deleted workload must not keep a parked-at-zero sample alive")
+}
+
+// Replica counts are the current state of the fleet and cost nothing to compute
+// — the scale targets are already in hand. Holding them behind the wake-check
+// throttle made "is anything serving this model" up to 30 seconds stale for no
+// saving, on the series the symptom alert reads.
+func TestReportWakeSignal_ReplicaCountsAreNotThrottled(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+	vas := []wvav1alpha1.VariantAutoscaling{wakeVA("v", wakeModel)}
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(), vas, wakeTargetsReady(2, "v"), nil, nil, start)
+	require.Equal(t, float64(2), modelReplicas(t, registry)[wakeModel])
+
+	// Well inside the wake-check TTL: the verdict is not rechecked, but the fleet
+	// has changed and the series must say so.
+	e.reportWakeSignal(context.Background(), vas, wakeTargetsReady(0, "v"), nil, nil,
+		start.Add(200*time.Millisecond))
+
+	assert.Zero(t, modelReplicas(t, registry)[wakeModel],
+		"a model that just parked must report zero now, not in 30 seconds")
+	assert.Equal(t, 1, src.scrapes, "and it must not have cost a scrape")
+}
+
+// The throttle still has to bite where it matters: pool resolution scans the
+// datastore for every model, on the 100ms loop.
+func TestReportWakeSignal_SkipsPoolResolutionWhenNotDue(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, _ := wakeEngine(t, src)
+	ds := e.Datastore.(*wakeDatastore)
+	vas := []wvav1alpha1.VariantAutoscaling{wakeVA("v", wakeModel)}
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(), vas, wakeTargets("v"), nil, nil, start)
+	before := ds.poolLookups
+
+	for i := 1; i <= 5; i++ {
+		e.reportWakeSignal(context.Background(), vas, wakeTargets("v"), nil, nil,
+			start.Add(time.Duration(i)*100*time.Millisecond))
+	}
+
+	assert.Equal(t, before, ds.poolLookups,
+		"ticks inside the TTL must not re-scan the datastore for every model")
 }

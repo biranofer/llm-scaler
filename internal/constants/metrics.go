@@ -345,6 +345,18 @@ const (
 	// Worth alerting on only in combination: at max AND utilization still above
 	// the scale-up threshold means demand is going unserved. At max on its own
 	// is the normal state of a variant sized exactly right.
+	//
+	// Kept as its own gauge rather than folded into WVAModelScalingBlocked, which
+	// is the reason-labeled metric every other "why isn't this where it wants to
+	// be" condition goes on. The two have different SCOPES: this one is per
+	// variant, and the reason metric is per model precisely so it can be joined
+	// against EPP series and so it can answer "can this model reach zero", a
+	// question no single variant can. Adding variant_name there would break both.
+	//
+	// If a SECOND variant-scoped condition ever appears, convert this into
+	// wva_variant_scaling_blocked{variant_name, reason} at that point — the
+	// argument in docs/proposals/scale-from-zero-missing-signal.md §4 applies to
+	// every scope, but a reason enum with one member is ceremony, not design.
 	WVAVariantAtMaxReplicas = "wva_variant_at_max_replicas"
 
 	// WVAModelScalingBlocked is a gauge, present and 1 for each reason a model

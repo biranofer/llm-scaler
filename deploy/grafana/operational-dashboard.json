@@ -2255,6 +2255,65 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Variants pinned at their ceiling",
+      "description": "1 while a variant's target sits on its own maxReplicas. On its own this is unremarkable - a correctly sized variant sits at its ceiling under load. It matters together with utilization above the scale-up threshold, which is demand going unserved: the remedy there is to raise maxReplicas, NOT to add accelerators (that is wva_decisions_limited_total, which means GPUs ran out). Also read it when interpreting a benchmark - a run pinned at its ceiling measures the ceiling, not the autoscaler.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_variant_at_max_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}",
+          "legendFormat": "{{$namespace_label}}/{{variant_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     }
   ],
   "refresh": "",
