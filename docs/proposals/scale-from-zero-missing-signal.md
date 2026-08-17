@@ -1,7 +1,18 @@
 # Say when a model will not park, and when it cannot wake
 
 **Status:** §4–§8 implemented, including §7 once WVA emitted the join key it needed;
-§9 to file upstream; §10 deferred. Not yet exercised on a cluster.
+§9 to file upstream; §10 deferred. Exercised on kind: e2e smoke 21/21 and the
+scale-from-zero specs 6/6, all nine alert rules loading `health=ok`, and every
+dashboard panel query valid against a live Prometheus.
+
+That cluster run found a defect nothing offline could. WVA series reach Prometheus
+with the model's namespace as **`exported_namespace`** — the ServiceMonitor job
+attaches its own `namespace`, which is the CONTROLLER's, and Prometheus renames
+the scraped one. Every alert here grouped by and displayed `namespace`, so an
+operator paged about a model in `llm-d-sim` would have been sent to
+`workload-variant-autoscaler-system`. The dashboards already knew this and used a
+`$namespace_label` variable; the alerts did not. The offline check in
+`test/alerts` cannot catch it — it validates metric NAMES, not label semantics.
 
 ## 1. Two silent failures
 
