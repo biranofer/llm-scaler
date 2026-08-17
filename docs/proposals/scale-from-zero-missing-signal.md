@@ -171,10 +171,31 @@ other WVA metric uses, and the one the reader needs: the question is "can this
 model wake?". If a model ever spans pools, add `pool` as a label rather than
 promoting it to the identity.
 
-**This is nearly free.** `pendingRequestsForModel` already computes the boolean;
-emitting it is a few lines. A gauge needs **no rate limiting** — Prometheus gauges
-are idempotent, so setting one at 10Hz costs nothing. The transition tracking in
-§8 is for logs and events only.
+**Reported for serving models too, not only parked ones.** The first version
+emitted this from the wake path, which only ever considers models already at zero
+— so a model learned it could not be woken at the moment it needed waking. That
+is reporting after the trap has closed, and the trap is worth naming: a model
+behind a flow-control-less EPP is parked by the enforcer on the **vLLM request
+counter**, which has nothing to do with flow control. WVA will strand it, then
+discover it cannot get it back.
+
+So the check runs on its own 30-second clock over every model WVA knows about,
+parked or serving. Family presence is a property of the EPP, not of a model, and
+it changes when EPP restarts — not ten times a second. It also runs **after** the
+wake loop, so every pool with something parked has just been scraped and its
+verdict is already cached; the sweep pays only for pools nothing is parked on.
+Running it first cost a second scrape per model per tick, which is the exact cost
+the per-model grouping was introduced to remove.
+
+Keeping it off the per-model path matters for a second reason. That function
+returns early on half a dozen bootstrap conditions — no pool in the datastore, no
+resolvable candidates, no EPP metrics source, a scrape failure with no fallback —
+and an emission below those returns silently stops updating, leaving whatever it
+last said standing. A sweep on its own clock cannot be skipped by any of them.
+
+**A failure to look is not an observation of absence.** An unreadable pool, an
+unresolvable one, a failed scrape: all report nothing. A false `no-wake-signal`
+sends an operator to restart a healthy EPP.
 
 **The cheaper alternative, weighed.** "Does this metric family exist?" is natively
 answerable by Prometheus as `absent(llm_d_epp_flow_control_queue_size)`, as a
@@ -311,24 +332,43 @@ ticks**, so a burst of bad requests cannot wake anything.
 §5 and §6 share the §4 metric but nothing else, and landed in that order — §5
 first, since it has no external dependency at all.
 
-Shipped: the metric with four reasons; the transition log; three alerts
-(`WVAModelWillNotScaleToZero` at info, `WVAModelHasNoWakeSignal` at warning,
-`WVAModelScalingBlockedUnsupportedEngine` at info); two operational-dashboard
-panels; and a fix to `extractMetricNames` in the alerts spec, which treated the
-contents of a label matcher as metric names — `reason=~"variant-floor|..."`
-yielded `variant`, `policy`, `forbids` and `zero` as four unknown metrics and
-failed a correct alert. No shipped alert had used a string-valued matcher before,
-so the bug was latent; §7 would have hit it too.
+Shipped: the metric with four reasons; the transition log; two alerts
+(`WVAModelWillNotScaleToZero` at info, `WVAModelHasNoWakeSignal` at warning); two
+operational-dashboard panels.
+
+**There is deliberately no alert on `engine-unsupported`.** It is a standing
+property of running a non-vLLM engine, not an event: it would fire the day the
+model is deployed and never clear. An alert that is always firing is one
+operators learn to route to /dev/null, and it would take the two alerts above
+with it. The reason stays on the metric and on the dashboard, which is where a
+permanent condition belongs.
 
 Not shipped, with reasons above: the symptom alert (§7, no join key), the Event
 surface (§8, model-scoped conditions do not fit object-scoped events), and the
 fallback wake signal (§10, deferred on purpose).
 
-One thing to know when reading these alerts: the "alerts reference only known
-metrics" spec lives in `test/e2e`, which `make test` excludes. It runs only
-against a live cluster, so a broken alert expression ships and is caught late.
-That is how `wva_node_access_denied` shipped broken. Validate alert changes
-against the extractor before pushing.
+**Alert validation moved out of `test/e2e`.** The "alerts reference only known
+metrics" check lived there, and `make test` runs
+`go list ./... | grep -v /e2e` — so it ran only against a live cluster, which is
+how `wva_node_access_denied` shipped broken and stayed hidden behind a runtime
+skip. `test/alerts` now validates the rule as WRITTEN at unit-test speed, and the
+e2e spec still validates it as DEPLOYED, both through the same helpers.
+
+Two hand-maintained lists went with it, because both had already drifted:
+
+- the known-metric list is now derived from the constants that define the metrics,
+  so adding a metric does not require a second edit elsewhere to use it in an
+  alert;
+- the expected-alert-names list is now read from the manifest we ship. It asserted
+  five names against a manifest that had shipped six since the commit adding both,
+  so it could never have passed — unseen because that spec is labelled `smoke`,
+  which `test-e2e-full` excludes.
+
+The extractor itself was also wrong: it treated the contents of a label matcher as
+metric names, so `reason=~"variant-floor|..."` yielded `variant`, `policy`,
+`forbids` and `zero` as four unknown metrics and failed a correct alert. No
+shipped alert had used a string-valued matcher before, so the bug was latent —
+and §7 would have hit it too.
 
 ## 12. Why this is worth building
 

@@ -1,0 +1,314 @@
+package scalefromzero
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/collector/source"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
+	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
+	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/variant"
+)
+
+// --- doubles -----------------------------------------------------------------
+
+// wakeSource is an EPP metrics source that returns a fixed sample set and counts
+// how many times it was scraped, so the throttle can be asserted rather than
+// assumed.
+type wakeSource struct {
+	values  []source.MetricValue
+	err     error
+	scrapes int
+}
+
+func (s *wakeSource) QueryList() *source.QueryList { return nil }
+func (s *wakeSource) Get(string, map[string]string) *source.CachedValue {
+	return nil
+}
+func (s *wakeSource) Refresh(context.Context, source.RefreshSpec) (map[string]*source.MetricResult, error) {
+	s.scrapes++
+	if s.err != nil {
+		return nil, s.err
+	}
+	return map[string]*source.MetricResult{"all_metrics": {Values: s.values}}, nil
+}
+
+// wakeDatastore resolves every variant to one pool and hands back one source.
+type wakeDatastore struct {
+	pool   *poolutil.EndpointPool
+	src    source.MetricsSource
+	noPool bool
+}
+
+func (d *wakeDatastore) PoolGetFromLabels(string, map[string]string) (*poolutil.EndpointPool, error) {
+	if d.noPool {
+		return nil, assertErrNotSynced
+	}
+	return d.pool, nil
+}
+func (d *wakeDatastore) PoolGetMetricsSource(string) source.MetricsSource { return d.src }
+func (d *wakeDatastore) PoolGet(string) (*poolutil.EndpointPool, error)   { return d.pool, nil }
+func (d *wakeDatastore) PoolList() []*poolutil.EndpointPool               { return []*poolutil.EndpointPool{d.pool} }
+func (d *wakeDatastore) PoolSet(context.Context, client.Client, *poolutil.EndpointPool) error {
+	return nil
+}
+func (d *wakeDatastore) PoolDelete(string)               {}
+func (d *wakeDatastore) Clear()                          {}
+func (d *wakeDatastore) NamespaceTrack(_, _, _ string)   {}
+func (d *wakeDatastore) NamespaceUntrack(_, _, _ string) {}
+func (d *wakeDatastore) IsNamespaceTracked(string) bool  { return true }
+func (d *wakeDatastore) ListTrackedNamespaces() []string { return nil }
+
+var assertErrNotSynced = errPoolNotSyncedForTest{}
+
+type errPoolNotSyncedForTest struct{}
+
+func (errPoolNotSyncedForTest) Error() string { return "pool not synced" }
+
+// --- fixtures ----------------------------------------------------------------
+
+const (
+	wakeNS    = "wake-ns"
+	wakePool  = "wake-ns/pool-a"
+	wakeModel = "meta/model-a"
+)
+
+func queueValues() []source.MetricValue {
+	return []source.MetricValue{
+		{Value: 0, Labels: map[string]string{
+			metricNameLabel:      constants.EPPFlowControlQueueSize,
+			targetEPPMetricLabel: wakeModel,
+		}},
+	}
+}
+
+// noQueueValues is an EPP that is up and exporting, just not flow control. This
+// is the failure being detected: an idle queue reports 0, a queue that does not
+// exist reports nothing, and only the second means nothing can wake the model.
+func noQueueValues() []source.MetricValue {
+	return []source.MetricValue{
+		{Value: 3, Labels: map[string]string{metricNameLabel: "llm_d_epp_request_error_total"}},
+	}
+}
+
+func wakeVA(name, modelID string) wvav1alpha1.VariantAutoscaling {
+	return wvav1alpha1.VariantAutoscaling{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: wakeNS},
+		Spec: wvav1alpha1.VariantAutoscalingSpec{
+			ModelID: modelID,
+			// The scale target must be named and present in the map below:
+			// resolveScaleTarget falls back to a live API fetch on a miss.
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				Kind: "Deployment", Name: name, APIVersion: "apps/v1",
+			},
+		},
+	}
+}
+
+func wakeTargets(names ...string) map[string]scaletarget.ScaleTargetAccessor {
+	out := make(map[string]scaletarget.ScaleTargetAccessor, len(names))
+	for _, n := range names {
+		out[wakeNS+"/"+n] = scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: n, Namespace: wakeNS},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": n}},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "server"}}},
+				},
+			},
+		})
+	}
+	return out
+}
+
+func wakeEngine(t *testing.T, src source.MetricsSource) (*Engine, *prometheus.Registry) {
+	t.Helper()
+	registry := prometheus.NewRegistry()
+	require.NoError(t, metrics.InitMetrics(registry))
+	return &Engine{
+		config: config.NewTestConfig(),
+		Datastore: &wakeDatastore{
+			pool: &poolutil.EndpointPool{Name: "pool-a", Namespace: wakeNS},
+			src:  src,
+		},
+	}, registry
+}
+
+func wakeReasons(t *testing.T, registry *prometheus.Registry) map[string]string {
+	t.Helper()
+	mfs, err := registry.Gather()
+	require.NoError(t, err)
+	out := map[string]string{}
+	for _, mf := range mfs {
+		if mf.GetName() != constants.WVAModelScalingBlocked {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var model, reason string
+			for _, l := range m.GetLabel() {
+				switch l.GetName() {
+				case constants.LabelModelName:
+					model = l.GetValue()
+				case constants.LabelReason:
+					reason = l.GetValue()
+				}
+			}
+			out[model] = reason
+		}
+	}
+	return out
+}
+
+// --- tests -------------------------------------------------------------------
+
+func TestQueueFamilyExported(t *testing.T) {
+	assert.True(t, queueFamilyExported(queueValues()),
+		"a queue reading 0 still proves the family exists")
+	assert.False(t, queueFamilyExported(noQueueValues()),
+		"an EPP exporting other families but no queue cannot wake anything")
+	assert.False(t, queueFamilyExported(nil))
+}
+
+// The point of moving this off the per-model path: a model that is SERVING right
+// now, behind an EPP with no flow control, is the dangerous case. The enforcer
+// will park it on the vLLM request counter — which has nothing to do with flow
+// control — and only then is it unwakeable. Reporting when it parks reports after
+// the trap has closed.
+func TestReportWakeSignal_CoversServingModelsToo(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", "model-parked")}, wakeTargets("parked"),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("serving", "model-serving")}, wakeTargets("serving"),
+		time.Now())
+
+	got := wakeReasons(t, registry)
+	assert.Equal(t, constants.ScalingBlockedNoWakeSignal, got["model-parked"])
+	assert.Equal(t, constants.ScalingBlockedNoWakeSignal, got["model-serving"],
+		"a serving model behind a flow-control-less EPP is the case worth warning about early")
+}
+
+func TestReportWakeSignal_SaysNothingWhenTheQueueExists(t *testing.T) {
+	src := &wakeSource{values: queueValues()}
+	e, registry := wakeEngine(t, src)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, wakeTargets("parked"),
+		nil, nil, time.Now())
+
+	assert.Empty(t, wakeReasons(t, registry))
+}
+
+// A failure to LOOK is not an observation of absence. Reporting one would send an
+// operator to restart a perfectly healthy EPP.
+func TestReportWakeSignal_UnreadablePoolReportsNothing(t *testing.T) {
+	src := &wakeSource{err: assertErrNotSynced}
+	e, registry := wakeEngine(t, src)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, wakeTargets("parked"),
+		nil, nil, time.Now())
+
+	assert.Empty(t, wakeReasons(t, registry))
+}
+
+// An unresolvable pool is the normal bootstrap state, not a missing wake signal.
+func TestReportWakeSignal_UnresolvedPoolReportsNothing(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+	e.Datastore.(*wakeDatastore).noPool = true
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, wakeTargets("parked"),
+		nil, nil, time.Now())
+
+	assert.Empty(t, wakeReasons(t, registry))
+	assert.Zero(t, src.scrapes, "an unresolvable pool must not be scraped")
+}
+
+// The sweep runs off the 100ms wake loop, so it must not scrape on every tick.
+// EPP's answer changes when EPP restarts, not ten times a second.
+func TestReportWakeSignal_ThrottlesScrapes(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, _ := wakeEngine(t, src)
+	inactive := []wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}
+	targets := wakeTargets("parked")
+
+	start := time.Now()
+	for i := 0; i < 20; i++ {
+		e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+			start.Add(time.Duration(i)*100*time.Millisecond))
+	}
+	assert.Equal(t, 1, src.scrapes, "twenty ticks inside the TTL is one scrape")
+
+	e.reportWakeSignal(context.Background(), inactive, targets, nil, nil,
+		start.Add(wakeSignalTTL+time.Second))
+	assert.Equal(t, 2, src.scrapes, "past the TTL it checks again")
+}
+
+// A pool with something parked is scraped by the wake path anyway, so the sweep
+// must reuse that verdict rather than paying for a second scrape.
+func TestReportWakeSignal_ReusesTheWakePathVerdict(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+	now := time.Now()
+
+	e.recordPoolWakeVerdict(wakePool, false, now)
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("parked", wakeModel)}, wakeTargets("parked"),
+		nil, nil, now)
+
+	assert.Zero(t, src.scrapes, "the wake path already proved this")
+	assert.Equal(t, constants.ScalingBlockedNoWakeSignal, wakeReasons(t, registry)[wakeModel])
+}
+
+func TestCachedPoolWakeVerdict_Expires(t *testing.T) {
+	e, _ := wakeEngine(t, &wakeSource{})
+	now := time.Now()
+
+	e.recordPoolWakeVerdict(wakePool, true, now)
+	exported, fresh := e.cachedPoolWakeVerdict(wakePool, now.Add(time.Second))
+	assert.True(t, fresh)
+	assert.True(t, exported)
+
+	_, fresh = e.cachedPoolWakeVerdict(wakePool, now.Add(wakeSignalTTL+time.Second))
+	assert.False(t, fresh, "a stale verdict must be re-checked, not trusted")
+
+	_, fresh = e.cachedPoolWakeVerdict("wake-ns/never-seen", now)
+	assert.False(t, fresh)
+}
+
+// A model that leaves the fleet keeps its reason until something clears it, and
+// only this producer may clear its own reason.
+func TestReportWakeSignal_ClearsDepartedModels(t *testing.T) {
+	src := &wakeSource{values: noQueueValues()}
+	e, registry := wakeEngine(t, src)
+	start := time.Now()
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("a", "model-a"), wakeVA("b", "model-b")},
+		wakeTargets("a", "b"), nil, nil, start)
+	require.Len(t, wakeReasons(t, registry), 2)
+
+	e.reportWakeSignal(context.Background(),
+		[]wvav1alpha1.VariantAutoscaling{wakeVA("a", "model-a")}, wakeTargets("a"),
+		nil, nil, start.Add(wakeSignalTTL+time.Second))
+
+	got := wakeReasons(t, registry)
+	assert.Contains(t, got, "model-a")
+	assert.NotContains(t, got, "model-b", "a departed model must not keep alerting")
+}

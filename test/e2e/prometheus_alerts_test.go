@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"regexp"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,7 +14,7 @@ import (
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/alerts"
 )
 
 const (
@@ -47,37 +45,16 @@ type PrometheusRule struct {
 	Type   string `json:"type"`
 }
 
-// wvaMetricNames contains all WVA output metrics that should be referenced in alerts.
-// This list is derived from internal/constants/metrics.go (WVA Output Metrics section).
-var wvaMetricNames = []string{
-	constants.WVAReplicaScalingTotal,
-	constants.WVADesiredReplicas,
-	constants.WVACurrentReplicas,
-	constants.WVADesiredRatio,
-	constants.WVAOptimizationDurationSeconds,
-	constants.WVAModelsProcessed,
-	constants.WVADecisionsLimitedTotal,
-	constants.WVAAvailableGpus,
-	constants.WVAEnforcerModificationsTotal,
-	constants.WVAOptimizerActive,
-	constants.WVAErrorsTotal,
-	constants.WVAConfigInfo,
-	constants.WVAConfigOptimizationIntervalSeconds,
-	constants.WVAMetricsCollectionDurationSeconds,
-	constants.WVAMetricsCollectionErrorsTotal,
-	constants.WVAMetricsPodsDiscovered,
-	constants.WVAMetricsFreshnessStatus,
-	constants.WVAModelScalingBlocked,
-	constants.WVASaturationUtilization,
-	constants.WVASpareCapacity,
-	constants.WVARequiredCapacity,
-	constants.WVAKvCacheTokensUsed,
-	constants.WVAKvCacheTokensCapacity,
-	constants.WVAPodMappingMissTotal,
-	// Referenced by the WVANodeAccessDenied alert. Missing here since the metric
-	// was added, but invisible: this spec only runs with DEPLOY_ALERTING_RULES=true,
-	// which is off by default, and a runtime Skip() reports as SUCCESS.
-	constants.WVANodeAccessDenied,
+// wvaMetricNames is derived from the constants that define the metrics, by the
+// same helper the offline check in test/alerts uses. It used to be a slice
+// maintained by hand, which is a second place to remember: wva_node_access_denied
+// was missing from it from the day the metric was added, and the omission stayed
+// invisible because this spec only runs with DEPLOY_ALERTING_RULES=true and a
+// runtime Skip() reports as SUCCESS.
+func wvaMetricNames() map[string]bool {
+	known, err := alerts.WVAMetricNames()
+	Expect(err).NotTo(HaveOccurred(), "could not read the metric constants")
+	return known
 }
 
 // queryPrometheusRules queries the in-cluster Prometheus /api/v1/rules endpoint.
@@ -126,89 +103,6 @@ func queryPrometheusRules() (*PrometheusRulesResponse, error) {
 	return &rulesResp, nil
 }
 
-// extractMetricNames extracts metric names from a PromQL expression.
-// It uses a simple regex to find metric identifiers (word characters, colons, underscores).
-func extractMetricNames(expr string) []string {
-	// Strip label matchers and any remaining quoted strings first. Their CONTENTS
-	// are values, not metric names, and the identifier pattern below cannot tell
-	// the difference: reason=~"variant-floor|policy-forbids-zero" yields "variant",
-	// "policy", "forbids" and "zero" as four unknown "metrics", failing an alert
-	// that is perfectly correct. The keyword list papered over this only because
-	// no alert had used a string-valued matcher yet.
-	expr = regexp.MustCompile(`\{[^}]*\}`).ReplaceAllString(expr, "")
-	expr = regexp.MustCompile(`"[^"]*"`).ReplaceAllString(expr, "")
-
-	// Match metric names: alphanumeric, underscores, colons (for vllm:* metrics if any)
-	// This pattern matches Prometheus metric naming conventions
-	metricPattern := regexp.MustCompile(`\b([a-zA-Z_:][a-zA-Z0-9_:]*)\b`)
-	matches := metricPattern.FindAllString(expr, -1)
-
-	// Filter out PromQL keywords, functions, and common label names
-	promqlKeywords := map[string]bool{
-		// Functions
-		"rate": true, "irate": true, "sum": true, "avg": true, "min": true, "max": true,
-		"count": true, "count_values": true, "stddev": true, "stdvar": true, "group": true,
-		"topk": true, "bottomk": true, "quantile": true,
-		"max_over_time": true, "min_over_time": true, "avg_over_time": true,
-		"sum_over_time": true, "count_over_time": true, "quantile_over_time": true,
-		"stddev_over_time": true, "stdvar_over_time": true,
-		"last_over_time": true, "present_over_time": true,
-		"absent": true, "absent_over_time": true,
-		"increase": true, "delta": true, "idelta": true, "deriv": true,
-		"changes": true, "resets": true, "predict_linear": true, "holt_winters": true,
-		"histogram_quantile": true, "label_replace": true, "label_join": true,
-		"vector": true, "scalar": true, "time": true, "timestamp": true,
-		"sort": true, "sort_desc": true, "clamp": true, "clamp_min": true, "clamp_max": true,
-		"round": true, "ceil": true, "floor": true, "abs": true, "sgn": true,
-		"exp": true, "ln": true, "log2": true, "log10": true, "sqrt": true,
-		// Keywords
-		"by": true, "without": true, "and": true, "or": true, "unless": true,
-		"on": true, "ignoring": true, "group_left": true, "group_right": true,
-		"bool": true, "offset": true,
-		// Common label names (not metrics)
-		"namespace": true, "variant_name": true, "model_name": true,
-		"component": true, "error_type": true, "status": true,
-		"query_type": true, "reason": true,
-		"accelerator_type": true, "accelerator_vendor": true, "accelerator_model": true,
-		"controller_instance": true,
-	}
-
-	var metrics []string
-	seen := make(map[string]bool)
-	for _, match := range matches {
-		lower := strings.ToLower(match)
-		if !promqlKeywords[lower] && !seen[match] {
-			metrics = append(metrics, match)
-			seen[match] = true
-		}
-	}
-	return metrics
-}
-
-// isValidWVAMetric checks if a metric name is a valid WVA metric, accounting for
-// Prometheus auto-generated suffixes (_total, _count, _sum, _bucket).
-func isValidWVAMetric(metricName string, validMetrics map[string]bool) bool {
-	// Check exact match first
-	if validMetrics[metricName] {
-		return true
-	}
-
-	// Check with common Prometheus suffixes removed
-	// Counters: _total (auto-added by client library)
-	// Histograms: _count, _sum, _bucket
-	// Summaries: _count, _sum
-	suffixes := []string{"_total", "_count", "_sum", "_bucket"}
-	for _, suffix := range suffixes {
-		if baseMetric, found := strings.CutSuffix(metricName, suffix); found {
-			if validMetrics[baseMetric] {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // PrometheusAlerts test suite validates the deployed PrometheusRule resource.
 // This test:
 // - Verifies PrometheusRule exists (deployed via install.sh)
@@ -255,23 +149,21 @@ var _ = Describe("PrometheusAlerts", Label("smoke"), Label("prometheus-alerts"),
 		Expect(prometheusRule.Spec.Groups).To(HaveLen(1), "Should have 1 rule group")
 		Expect(prometheusRule.Spec.Groups[0].Name).To(Equal("wva.rules"))
 
-		// The alert NAMES, not a count. This assertion asked for 5 rules against
-		// a manifest that has shipped 6 since the same commit added both, so it
-		// could never have passed — and it went unseen because it is labelled
-		// `smoke`, which `test-e2e-full` excludes (the label sets are disjoint).
-		// Naming them says which alert appeared or vanished, instead of "6 != 5".
+		// The alert NAMES, read from the manifest we ship rather than written out
+		// here. A hand-written list is a third place to remember an alert exists, and
+		// it had already drifted: it asserted five names against a manifest that had
+		// shipped six since the commit adding both, so it could never have passed —
+		// unseen because this spec is labelled `smoke`, which `test-e2e-full`
+		// excludes. Comparing against the manifest asserts the thing worth asserting:
+		// the cluster has what we ship.
+		expectedAlerts, alertsErr := alerts.AlertNames()
+		Expect(alertsErr).NotTo(HaveOccurred())
 		alertNames := make([]string, 0, len(prometheusRule.Spec.Groups[0].Rules))
 		for _, rule := range prometheusRule.Spec.Groups[0].Rules {
 			alertNames = append(alertNames, rule.Alert)
 		}
-		Expect(alertNames).To(ConsistOf(
-			"WVAHighErrorRate",
-			"WVAOptimizationLoopStalled",
-			"WVAMetricsCollectionFailing",
-			"WVANodeAccessDenied",
-			"WVAGPUResourceExhausted",
-			"WVAReplicaScalingThrashing",
-		), "alert set must match config/components/prometheus-alerts/prometheusrule.yaml")
+		Expect(alertNames).To(ConsistOf(expectedAlerts),
+			"deployed alerts must match config/components/prometheus-alerts/prometheusrule.yaml")
 		GinkgoWriter.Println("✓ PrometheusRule structure is valid")
 	})
 
@@ -432,10 +324,7 @@ var _ = Describe("PrometheusAlerts", Label("smoke"), Label("prometheus-alerts"),
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Building a map of valid WVA metric names")
-		validMetrics := make(map[string]bool)
-		for _, metric := range wvaMetricNames {
-			validMetrics[metric] = true
-		}
+		validMetrics := wvaMetricNames()
 
 		By("Validating each alert expression references only known metrics")
 		rules := prometheusRule.Spec.Groups[0].Rules
@@ -445,14 +334,14 @@ var _ = Describe("PrometheusAlerts", Label("smoke"), Label("prometheus-alerts"),
 			}
 
 			expr := rule.Expr.String()
-			referencedMetrics := extractMetricNames(expr)
+			referencedMetrics := alerts.ExtractMetricNames(expr)
 
 			GinkgoWriter.Printf("  Checking alert '%s':\n", rule.Alert)
 			GinkgoWriter.Printf("    Expression: %s\n", expr)
 			GinkgoWriter.Printf("    Referenced metrics: %v\n", referencedMetrics)
 
 			for _, metric := range referencedMetrics {
-				Expect(isValidWVAMetric(metric, validMetrics)).To(BeTrue(),
+				Expect(alerts.IsKnown(metric, validMetrics)).To(BeTrue(),
 					"Alert '%s' references unknown metric '%s'. "+
 						"If this is a new WVA metric, add it to internal/constants/metrics.go and wvaMetricNames in this test. "+
 						"If this is a typo or renamed metric, update the alert expression. "+

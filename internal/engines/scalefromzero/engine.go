@@ -156,6 +156,12 @@ type Engine struct {
 	// the engine then behaves exactly as it did before the fallback existed. See
 	// queue_fallback.go for why one metric needs two transports.
 	QueueFallback *QueueFallback
+	// wakeSignal caches, per EPP pool, whether a flow-control queue is exported at
+	// all, and which models that verdict has been reported for. See
+	// wake_signal.go: this is reported for SERVING models too, because a model
+	// behind an EPP without flow control is parked by the enforcer on a signal
+	// that has nothing to do with flow control, and is only then unwakeable.
+	wakeSignal wakeSignalState
 }
 
 // SetGPULimiter injects the limiter whose constraints bound a wake, so the
@@ -347,6 +353,18 @@ modelLoop:
 	// Wait for error aggregation to complete
 	errorWg.Wait()
 
+	// Whether each model has a wake signal at all, on its own 30-second clock and
+	// covering serving models as well as parked ones. Off the per-model path
+	// deliberately (see reportWakeSignal), and AFTER the wake loop rather than
+	// before it: every pool with something parked has just been scraped, so its
+	// verdict is already cached and the sweep pays only for pools that nothing is
+	// parked on. Running it first would have cost a second scrape per model per
+	// tick, which is exactly the cost the per-model grouping was introduced to
+	// remove.
+	if ctx.Err() == nil {
+		e.reportWakeSignal(ctx, inactiveVAs, scaleTargets, activeVAs, activeTargets, time.Now())
+	}
+
 	// After all work is done, if the context was cancelled, return that error
 	if err := ctx.Err(); err != nil {
 		return err
@@ -457,19 +475,14 @@ func (e *Engine) processInactiveModel(
 		pending, pendingRequestExist, queueFamilyExported = pendingRequestsForModel(result.Values, group.modelID)
 	}
 
-	// Report whether this model has a wake signal at all. Emitted every tick,
-	// including when nothing is wrong, because this call is what clears the reason
-	// once EPP starts exporting the family again.
-	//
-	// Only the wake reason is touched — the enforcer owns the policy reasons and
-	// runs on its own schedule, and a 10Hz producer clearing another producer's
-	// answers would make the metric flap for reasons unrelated to the cluster.
-	var wakeBlocked []string
-	if !queueFamilyExported {
-		wakeBlocked = []string{constants.ScalingBlockedNoWakeSignal}
+	// Hand the verdict to the wake-signal cache rather than reporting it here.
+	// This scrape has already proved the answer, so any pool with something parked
+	// keeps its verdict current for free and the periodic sweep only pays for pools
+	// nothing is parked on. Reporting from here instead would be skipped by every
+	// early return above it — which is exactly the bug this replaced.
+	if !onFallback {
+		e.recordPoolWakeVerdict(namespacedPoolName, queueFamilyExported, time.Now())
 	}
-	metrics.SetModelScalingBlockedReasons(group.namespace, group.modelID,
-		constants.ScalingBlockedReasonsWake, wakeBlocked)
 	if !pendingRequestExist && !catchUpWanted {
 		// Scale-from-zero loop runs every 100ms; log at DEBUG to avoid flooding.
 		logger.V(logging.DEBUG).Info("Scale-from-zero: skipping model, no pending requests in flow control queue",

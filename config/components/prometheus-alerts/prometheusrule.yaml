@@ -82,11 +82,9 @@ spec:
         summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} has no wake signal"
         description: "EPP is exporting no flow-control queue metric at all for this model, so a request arriving while it is parked has nothing that can wake it. This is the ABSENCE of the metric family, not a queue reading zero — an idle queue reports 0 and is healthy. The usual cause is an EPP pod older than the ConfigMap that enabled the flowControl feature gate: EPP reads --config-file once at startup, so enabling the gate does not reach a process already running, and every artifact (image digest, ConfigMap, feature gate, auth) still matches. Check the EPP pod's own startup log for the config it parsed rather than comparing it to the ConfigMap, then restart the EPP deployment. Until this clears, a model that scales to zero will stay there."
 
-    - alert: WVAModelScalingBlockedUnsupportedEngine
-      expr: wva_model_scaling_blocked{reason="engine-unsupported"} == 1
-      for: 30m
-      labels:
-        severity: info
-      annotations:
-        summary: "Model {{ $labels.namespace }}/{{ $labels.model_name }} will not scale to zero: unsupported engine"
-        description: "This model runs a non-vLLM inference engine. WVA's idle signal is hardcoded to vLLM's request counter, which reads 0 for any other engine and would be misread as 'no traffic', so scale-to-zero is skipped rather than risk parking a model that is actively serving. Expected and safe — raised only so the accelerator cost is attributed to a known limitation rather than looking like a misconfiguration. Tracked in docs/proposals/sglang-backend.md."
+# There is deliberately NO alert on reason="engine-unsupported". It is a standing
+# property of running a non-vLLM engine, not an event: it would fire on the day
+# the model is deployed and never clear, and an alert that is always firing is one
+# operators learn to route to /dev/null — taking the two alerts above with it. The
+# reason is still on the metric and on the operational dashboard, which is where a
+# permanent condition belongs.
