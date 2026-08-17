@@ -24,7 +24,7 @@ the bill.
 ## Prerequisites
 
 A model already serving under WVA — follow
-[Install WVA in a namespace](../install-in-namespace/) first.
+[Install WVA in a namespace](../install-in-namespace/README.md) first.
 
 Then the wake signal, which is the precondition worth checking before any other:
 

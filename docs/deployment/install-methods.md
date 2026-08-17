@@ -1,6 +1,6 @@
 # Install methods and platform notes
 
-How the installer is invoked, for cases the [guides](../guides/) do not
+How the installer is invoked, for cases the [guides](../guides/README.md) do not
 cover: GitOps, a direct Kustomize apply, or reading exactly what the script does.
 
 > The guides are the supported paths. This page is reference.
@@ -118,7 +118,7 @@ export DEPLOY_LWS=true
 
 The overlays are plain Kustomize, so you can apply them yourself — for Argo CD or
 Flux, or to review exactly what lands. Scope, namespace and limiter are the same
-decisions as above; see [Choosing your install](../guides/).
+decisions as above; see [Choosing your install](../guides/README.md).
 
 **The overlays alone are not a complete install.** `deploy/install.sh` does four
 things around them that the raw apply does not, and each one has bitten somebody:
@@ -185,9 +185,9 @@ Or just use `./deploy/install.sh --undeploy`, which does exactly this.
 
 For platform-specific instructions and considerations:
 
-- **[Kubernetes Guide](../../deploy/kubernetes/)**: Detailed Kubernetes-specific instructions including kube-prometheus-stack setup, GPU operator installation, and ServiceMonitor configuration
-- **[OpenShift Guide](../../deploy/openshift/)**: OpenShift-specific instructions including User Workload Monitoring (Thanos), Routes, Security Context Constraints (SCC), and GPU operator on OpenShift
-- **[Kind Guide (Local Testing)](../../deploy/kind-emulator/)**: Local development and testing with Kind clusters and emulated GPUs
+- **[Kubernetes Guide](../../deploy/kubernetes/README.md)**: Detailed Kubernetes-specific instructions including kube-prometheus-stack setup, GPU operator installation, and ServiceMonitor configuration
+- **[OpenShift Guide](../../deploy/openshift/README.md)**: OpenShift-specific instructions including User Workload Monitoring (Thanos), Routes, Security Context Constraints (SCC), and GPU operator on OpenShift
+- **[Kind Guide (Local Testing)](../../deploy/kind-emulator/README.md)**: Local development and testing with Kind clusters and emulated GPUs
 
 Each guide includes platform-specific examples, troubleshooting, and quick start commands. All guides use the same [Configuration Reference](configuration.md) documented below.
 

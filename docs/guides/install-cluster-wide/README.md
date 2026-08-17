@@ -8,7 +8,7 @@ and hands the decision to KEDA, which owns the HPA and does the scaling.
 
 Use it when one team runs the cluster. Where namespaces belong to different
 teams, prefer one controller per namespace — see
-[Install WVA in a namespace](../install-in-namespace/) — which keeps
+[Install WVA in a namespace](../install-in-namespace/README.md) — which keeps
 failure domains, policy and upgrades separate.
 
 ## Prerequisites
@@ -35,7 +35,7 @@ make deploy-wva SCOPE=cluster
 <!-- guide:deploy.all end -->
 
 One command, because at this scope the cluster-admin half and the install half are
-the same person: it runs [`setup-prereqs`](../admin-cluster-setup/) —
+the same person: it runs [`setup-prereqs`](../admin-cluster-setup/README.md) —
 cluster-scoped RBAC, the namespace, the ServiceMonitor — and then the controller.
 Where those are separate people, the namespace guide splits them into two steps.
 
@@ -113,7 +113,7 @@ Full list: [Configuration reference](../../deployment/configuration.md).
 
 ## Next
 
-- [Bound every WVA by real GPUs](../admin-gpu-bounding/)
+- [Bound every WVA by real GPUs](../admin-gpu-bounding/README.md)
 - [After the install](../../deployment/operations.md)
 - [Install methods](../../deployment/install-methods.md) — GitOps, direct
   Kustomize, and what the script does

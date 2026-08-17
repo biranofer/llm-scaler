@@ -196,7 +196,7 @@ make deploy-e2e-infra
 make test-e2e-full
 ```
 
-See the [E2E Test Suite README](../../test/e2e/) for full configuration options and examples.
+See the [E2E Test Suite README](../../test/e2e/README.md) for full configuration options and examples.
 
 ### Quick Start
 
@@ -224,7 +224,7 @@ FOCUS="Basic VA lifecycle" make test-e2e-smoke
 
 ### Configuration
 
-Key environment variables (see [E2E Test Suite README](../../test/e2e/) for the full list):
+Key environment variables (see [E2E Test Suite README](../../test/e2e/README.md) for the full list):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -599,5 +599,5 @@ When contributing, please ensure:
 ## Related Documentation
 
 - [Development Guide](development.md) - Development environment setup
-- [E2E Test Suite README](../../test/e2e/) - Consolidated E2E tests (Kind, OpenShift, infra-only setup)
+- [E2E Test Suite README](../../test/e2e/README.md) - Consolidated E2E tests (Kind, OpenShift, infra-only setup)
 - [Contributing Guide](../../CONTRIBUTING.md) - Contribution guidelines

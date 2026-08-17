@@ -47,15 +47,15 @@ it is running and idle.
 
 | Then | |
 | --- | --- |
-| Full install guide | [deploy/](deploy/) |
-| Installing WVA | [docs/guides/](docs/guides/) — pick a path |
+| Full install guide | [deploy/README.md](deploy/README.md) |
+| Installing WVA | [docs/guides/](docs/guides/README.md) — pick a path |
 | Running it day to day | [operations.md](docs/deployment/operations.md) |
 
 ## Documentation
 
 See the [architecture and autoscaling design](https://llm-d.ai/docs/architecture/advanced/autoscaling) docs for high-level algorithm details.
 
-See the [docs](docs/) directory for design docs, developer guide, and more.
+See the [docs](docs/README.md) directory for design docs, developer guide, and more.
 
 ## How It Works
 
@@ -109,7 +109,7 @@ You do not have to write this by hand: `make scaledobjects-plan` reads `modelID`
 off each container's `--served-model-name`, which is the one field nothing else
 can check for you — a `modelID` that does not match what the container serves
 groups the workload with a model it does not run, and mis-scales both. See
-[the guides](docs/guides/).
+[the guides](docs/guides/README.md).
 
 More examples in [config/samples/keda/](config/samples/keda/).
 

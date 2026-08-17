@@ -7,7 +7,7 @@ Welcome to the WVA documentation! This directory contains comprehensive guides f
 ### User Guide
 
 
-- **[Guides](guides/)** - Installing WVA, and the tasks you do after
+- **[Guides](guides/README.md)** - Installing WVA, and the tasks you do after
 - **[Configuration](deployment/configuration.md)** - Every variable the installer reads
 - **[Scaling policy configuration](developer-guide/scaling-policy-config.md)** - Thresholds, tiers, scale-to-zero, limiters
 - **[After the install](deployment/operations.md)** - What to watch, first-line troubleshooting
@@ -27,7 +27,7 @@ Welcome to the WVA documentation! This directory contains comprehensive guides f
 - **[Queue Model Analyzer](developer-guide/slo-queuemodel.md)** - SLO-aware queueing model
 - **[Pod Scraping Source](developer-guide/pod-scraping-source.md)** - Direct pod metric scraping
 - **[Prometheus Integration](developer-guide/prometheus.md)** - Prometheus metrics and configuration
-- **[WVA with Fast Model Actuation](guides/fma/)** - Running WVA in a namespace that uses FMA: scraping the launchers, what the plan targets, sizing from the launcher pool
+- **[WVA with Fast Model Actuation](guides/fma/README.md)** - Running WVA in a namespace that uses FMA: scraping the launchers, what the plan targets, sizing from the launcher pool
 - **[FMA-aware attribution](proposals/fma-aware-attribution.md)** - How WVA measures a Fast Model Actuation variant, whose engine runs in a pod no ScaledObject owns
 - **[Requests to Fast Model Actuation](proposals/fma-upstream-requests.md)** - Findings and change requests for the FMA project
 
@@ -44,10 +44,10 @@ Welcome to the WVA documentation! This directory contains comprehensive guides f
 
 ## Quick Links
 
-- [Main README](../)
-- [Kubernetes Deployment](../deploy/kubernetes/)
-- [OpenShift Deployment](../deploy/openshift/)
-- [Local Development with Kind Emulator](../deploy/kind-emulator/)
+- [Main README](../README.md)
+- [Kubernetes Deployment](../deploy/kubernetes/README.md)
+- [OpenShift Deployment](../deploy/openshift/README.md)
+- [Local Development with Kind Emulator](../deploy/kind-emulator/README.md)
 
 
 ## Need Help?
