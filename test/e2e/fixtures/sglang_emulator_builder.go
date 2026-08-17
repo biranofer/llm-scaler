@@ -3,6 +3,7 @@ package fixtures
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,14 +28,26 @@ const (
 // so rate()/increase() are non-zero; gauges hold a fixed saturated operating
 // point. The served model name is read from the MODEL env var so it matches the
 // model ID annotation on the annotated scaler.
+//
+// IDLE_AFTER freezes the counters that many seconds in, which is what lets a
+// suite emulate a model that SERVED AND THEN WENT QUIET. Without it the counters
+// grow for as long as the pod lives, so increase() never reaches zero and such a
+// model can never be seen as idle — it could never be parked, and a scale-to-zero
+// test against it could never pass. Unset (the default) keeps the original
+// grow-forever behaviour every other suite relies on.
 const sglangEmitterScript = `import os, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 START = time.time()
 MODEL = os.environ.get("MODEL", "sglang-emulator-model")
+IDLE_AFTER = float(os.environ.get("IDLE_AFTER", "0"))
 
 def render():
     el = max(time.time() - START, 0.001)
+    # Freeze the counters once the serving window is over: a counter that stops
+    # advancing is exactly what an idle model looks like to increase().
+    if IDLE_AFTER > 0:
+        el = min(el, IDLE_AFTER)
     L = 'model_name="%s"' % MODEL
     out = []
     def s(n, v):
@@ -86,7 +99,16 @@ HTTPServer(("0.0.0.0", 8000), H).serve_forever()
 //
 // Pair it with CreateService/EnsureServiceMonitor (appLabel "<name>-decode").
 // (pass "" to skip). The emitted metrics carry model_name == modelID.
+// CreateSGLangEmulator deploys the emulator with counters that grow for the life
+// of the pod.
 func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID string) error {
+	return CreateSGLangEmulatorIdleAfter(ctx, k8sClient, namespace, name, modelID, 0)
+}
+
+// CreateSGLangEmulatorIdleAfter is CreateSGLangEmulator with a serving window:
+// after idleAfterSeconds the counters stop advancing, so the model reads as idle.
+// Zero means never idle.
+func CreateSGLangEmulatorIdleAfter(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, modelID string, idleAfterSeconds int) error {
 	appLabel := name + decodeNameSuffix
 	cmName := name + sglangScriptSuffix
 
@@ -135,7 +157,7 @@ func CreateSGLangEmulator(ctx context.Context, k8sClient *kubernetes.Clientset, 
 								"--context-length=8192",
 								"--disable-cuda-graph",
 							},
-							Env: []corev1.EnvVar{{Name: "MODEL", Value: modelID}},
+							Env: []corev1.EnvVar{{Name: "MODEL", Value: modelID}, {Name: "IDLE_AFTER", Value: strconv.Itoa(idleAfterSeconds)}},
 							Ports: []corev1.ContainerPort{
 								{Name: defaultServicePortName, ContainerPort: defaultModelServiceContainerPort, Protocol: corev1.ProtocolTCP},
 							},

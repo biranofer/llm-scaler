@@ -207,6 +207,7 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 	It("parks the model once it goes idle", func() {
 		By("Stopping the load")
 		Expect(fixtures.DeleteBurstLoadJob(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)).To(Succeed())
+		idleSince := time.Now()
 
 		// After the last request, increase() over the retention window takes that
 		// window to fall to zero; then the enforcer parks on its next cycle and KEDA
@@ -221,6 +222,16 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 					"zero must be parked; if it is not, resolve scaleToZero for this model and "+
 					"check wva_model_scaling_blocked for the reason")
 		}, parkingBudget, 10*time.Second).Should(Succeed())
+
+		// A zero reached too fast is not this feature working. The variant name is
+		// deterministic, so a parked decision left in Prometheus by an earlier run
+		// makes KEDA deactivate the fresh deployment within seconds — the SGLang
+		// sibling of this suite once "passed" that way in 15 seconds. increase() over
+		// the retention window cannot fall to zero before that window has elapsed, so
+		// anything faster is stale state rather than a decision.
+		Expect(time.Since(idleSince)).To(BeNumerically(">=", time.Minute),
+			"parked sooner than the 1m retention window could have elapsed: this is "+
+				"leftover state from an earlier run, not an idle-driven decision")
 	})
 
 	It("reports the parked model as serving nothing", func() {
