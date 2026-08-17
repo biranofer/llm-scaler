@@ -52,9 +52,10 @@ carries no `checksum/config` annotation to restart it.
 
 <!-- guide:prerequisites.engine start -->
 ```bash
-# vLLM only. The idle signal is vLLM's request counter, which reads 0 for any
-# other engine — WVA would misread that as "no traffic" and park a model that
-# is actively serving, so it declines to park non-vLLM models at all.
+# One engine per model. Idleness is read from that engine's request counter —
+# vllm:request_success_total or sglang:num_requests_total — and WVA asks for
+# the one matching the engine it detects. A model running BOTH would need both
+# counters summed, so it is refused rather than measured with half its traffic.
 kubectl get deploy -n <llmd-namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
 ```
 <!-- guide:prerequisites.engine end -->
@@ -138,7 +139,7 @@ curl -sk https://localhost:8443/metrics | grep wva_model_scaling_blocked
 | --- | --- |
 | `variant-floor` | a variant still has `minReplicaCount > 0` — half two is incomplete |
 | `policy-forbids-zero` | every variant permits zero but the policy does not — half one is incomplete |
-| `engine-unsupported` | not vLLM; nothing to fix, the model will not park |
+| `engine-unsupported` | the model runs **both** vLLM and SGLang, so no single request counter measures it; either alone is fine |
 | `no-wake-signal` | EPP exports no flow-control queue — **fix before letting it park** |
 
 Then watch it park:

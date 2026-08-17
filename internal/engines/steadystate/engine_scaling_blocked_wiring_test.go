@@ -15,6 +15,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
@@ -64,7 +65,7 @@ var _ = Describe("applyScaleToZeroEnforcement blocked-reason wiring", func() {
 			Config:            cfg,
 			lastBlockedModels: make(map[string]blockedModelRef),
 			ScaleToZeroEnforcer: allocation.NewEnforcer(
-				func(context.Context, string, string, time.Duration) (float64, error) {
+				func(context.Context, inferenceengine.Engine, string, string, time.Duration) (float64, error) {
 					return 0, nil // idle
 				},
 				nil,
@@ -123,12 +124,27 @@ var _ = Describe("applyScaleToZeroEnforcement blocked-reason wiring", func() {
 		Expect(publishedReasons(registry)).To(ConsistOf(constants.ScalingBlockedPolicyForbidsZero))
 	})
 
-	It("reports engine-unsupported for a non-vLLM model that would otherwise park", func() {
+	// engine-unsupported now means MORE THAN ONE engine, not "not vLLM": a single
+	// SGLang model is measurable on sglang:num_requests_total and reports nothing.
+	It("reports engine-unsupported for a model running two engines", func() {
+		e, registry := engineFor(true)
+		mixed := map[string]scaletarget.ScaleTargetAccessor{
+			"a": target("vllm/vllm-openai:latest"),
+			"b": target("lmsysorg/sglang:latest"),
+		}
+		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
+			decisions(), mixed, permitsZero())
+
+		Expect(publishedReasons(registry)).To(ConsistOf(constants.ScalingBlockedEngineUnsupported))
+	})
+
+	It("reports nothing for a single-engine SGLang model", func() {
 		e, registry := engineFor(true)
 		e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
 			decisions(), sglang, permitsZero())
 
-		Expect(publishedReasons(registry)).To(ConsistOf(constants.ScalingBlockedEngineUnsupported))
+		Expect(publishedReasons(registry)).To(BeEmpty(),
+			"SGLang alone has its own request counter, so nothing blocks it")
 	})
 
 	It("publishes nothing for a coherent configuration", func() {

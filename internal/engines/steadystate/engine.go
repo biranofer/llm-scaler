@@ -215,8 +215,8 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 	promSource := metricsRegistry.Get("prometheus") // assume prometheus source is registered
 
 	// Create request count function wrapper for scale-to-zero enforcer
-	requestCountFunc := func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
-		return registration.CollectModelRequestCount(ctx, promSource, modelID, namespace, retentionPeriod)
+	requestCountFunc := func(ctx context.Context, engine inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+		return registration.CollectModelRequestCountForEngine(ctx, promSource, engine, modelID, namespace, retentionPeriod)
 	}
 
 	capacityStore := saturation_v2.NewCapacityKnowledgeStore()
@@ -1207,29 +1207,39 @@ func hasMinReplicasAboveZero(states []domain.VariantReplicaState) bool {
 	return false
 }
 
-// scaleToZeroSupportedForEngines reports whether scale-to-zero enforcement is safe
-// for a model running the given set of scale targets. Scale-to-zero relies on
-// CollectModelRequestCount, which is currently hardcoded to vLLM's request counter
-// (vllm:request_success_total); routing the per-engine counter through the enforcer
-// is the deferred Phase 2 work (see docs/proposals/sglang-backend.md). For any
-// non-vLLM engine that counter returns 0, which the enforcer would misread as
-// "no traffic" and scale the model to zero. Until the engine is threaded through,
-// scale-to-zero is skipped for models that run a non-vLLM engine.
-func scaleToZeroSupportedForEngines(scaleTargets map[string]scaletarget.ScaleTargetAccessor) bool {
-	for _, eng := range inferenceengine.Present(scaleTargets) {
-		if eng != inferenceengine.EngineVLLM {
-			return false
-		}
+// soleEngineFor returns the one engine a model's scale targets run, and whether
+// there is exactly one.
+//
+// Idleness is measured with a single counter, and the counter is engine-specific:
+// vllm:request_success_total or sglang:num_requests_total. Either alone is fine —
+// ask for the matching one. A model running BOTH would need both counters summed,
+// and asking for one of them would see only part of its traffic and could park a
+// model that is still serving through the other engine. That is a real
+// (if unusual) topology, so it is refused rather than guessed at.
+//
+// Present() returns vLLM for an empty set, so a model with no resolvable targets
+// yields a single engine and the absent-series guard downstream keeps it safe.
+func soleEngineFor(scaleTargets map[string]scaletarget.ScaleTargetAccessor) (inferenceengine.Engine, bool) {
+	engines := inferenceengine.Present(scaleTargets)
+	if len(engines) != 1 {
+		return inferenceengine.EngineVLLM, false
 	}
-	return true
+	return engines[0], true
 }
 
 // applyScaleToZeroEnforcement runs scale-to-zero / minimum-replica enforcement for a
 // single model's decisions, unless a safety gate skips it:
-//   - the model runs a non-vLLM engine — CollectModelRequestCount is hardcoded to
-//     vLLM's request counter, so an active SGLang model would falsely read as idle
-//     and be zeroed (see scaleToZeroSupportedForEngines); or
+//   - the model runs MORE THAN ONE engine, so no single request counter measures
+//     its idleness (see soleEngineFor); or
 //   - any variant declares minReplicas > 0 (hasMinReplicasAboveZero).
+//
+// A single non-vLLM engine is now supported. It used to be refused outright,
+// because the enforcer asked for vllm:request_success_total whatever the model
+// ran, and an SGLang model has no such series — reading as idle and getting
+// zeroed. The engine-specific query already existed
+// (sglang:num_requests_total, registered beside the vLLM one); it simply was not
+// reached. The engine is detected here and passed to the enforcer, which asks for
+// the counter that matches.
 //
 // Decisions are mutated in place; returns true if the model was scaled to zero.
 //
@@ -1253,7 +1263,7 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	// other half — reporting one without the other cannot say which is binding.
 	satConfig := config.ResolveScalingPolicy(e.Config.ScalingPolicyConfigForNamespace(namespace), modelID, namespace)
 	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(e.Config, &satConfig)
-	engineSupported := scaleToZeroSupportedForEngines(scaleTargets)
+	modelEngine, engineSupported := soleEngineFor(scaleTargets)
 
 	// Reported before the empty-decision return below, and unconditionally,
 	// including with no reasons. This call is what CLEARS a reason that no longer
@@ -1274,8 +1284,9 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	}
 
 	if !engineSupported {
-		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model runs a non-vLLM engine; engine-aware request counting is not yet wired through the enforcer (see docs/proposals/sglang-backend.md Phase 2)",
-			"modelID", modelID, "optimizer", optimizerName)
+		logger.V(logging.DEBUG).Info("Skipping scale-to-zero enforcement: model runs more than one inference engine, so no single request counter measures its idleness",
+			"modelID", modelID, "optimizer", optimizerName,
+			"engines", inferenceengine.Present(scaleTargets))
 		return false
 	}
 	if hasMinReplicasAboveZero(variantStates) {
@@ -1298,7 +1309,7 @@ func (e *Engine) applyScaleToZeroEnforcement(
 	}
 
 	scaledToZero := e.ScaleToZeroEnforcer.EnforcePolicyOnDecisions(
-		ctx, modelID, namespace, decisions, &satConfig, optimizerName,
+		ctx, modelID, namespace, decisions, &satConfig, optimizerName, modelEngine,
 	)
 	if scaledToZero {
 		logger.Info("Scale-to-zero enforcement applied",

@@ -2143,7 +2143,7 @@
       "id": 62,
       "type": "timeseries",
       "title": "Models that will not scale, by reason",
-      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: a non-vLLM engine, whose request counter WVA cannot read. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
+      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: the model runs both vLLM and SGLang, so no single request counter measures its idleness (either alone is supported). no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource_uid}"

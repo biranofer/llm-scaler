@@ -10,6 +10,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 )
@@ -17,7 +18,12 @@ import (
 // RequestCountFuncType is the signature for functions that retrieve the total request count
 // for a model over a specified retention period. This type alias improves readability
 // and makes the function signature reusable across the codebase.
-type RequestCountFuncType func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error)
+//
+// The ENGINE is a parameter because the counter differs by engine —
+// vllm:request_success_total vs sglang:num_requests_total — and asking the wrong
+// one returns no series. That used to be handled by refusing to park anything
+// non-vLLM at all; the query for SGLang already existed and simply was not reached.
+type RequestCountFuncType func(ctx context.Context, engine inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error)
 
 // Enforcer applies scale-to-zero and minimum replica enforcement after saturation analysis.
 type Enforcer struct {
@@ -53,6 +59,7 @@ func (e *Enforcer) EnforcePolicyOnDecisions(
 	decisions []domain.VariantDecision,
 	satConfig *config.ScalingPolicy,
 	optimizerName string,
+	engine inferenceengine.Engine,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -62,7 +69,7 @@ func (e *Enforcer) EnforcePolicyOnDecisions(
 	scaleToZeroEnabled := config.ResolveScaleToZeroEnabled(e.cfg, satConfig)
 
 	if scaleToZeroEnabled {
-		applied := e.applyScaleToZeroOnDecisions(ctx, modelID, namespace, decisions, satConfig, optimizerName)
+		applied := e.applyScaleToZeroOnDecisions(ctx, modelID, namespace, decisions, satConfig, optimizerName, engine)
 		logger.V(logging.DEBUG).Info("Scale-to-zero policy enforced",
 			"modelID", modelID,
 			"optimizer", optimizerName,
@@ -90,12 +97,13 @@ func (e *Enforcer) applyScaleToZeroOnDecisions(
 	decisions []domain.VariantDecision,
 	satConfig *config.ScalingPolicy,
 	optimizerName string,
+	engine inferenceengine.Engine,
 ) bool {
 	logger := ctrl.LoggerFrom(ctx)
 
 	retentionPeriod := config.ResolveScaleToZeroRetention(satConfig)
 
-	requestCount, err := e.requestCountFunc(ctx, modelID, namespace, retentionPeriod)
+	requestCount, err := e.requestCountFunc(ctx, engine, modelID, namespace, retentionPeriod)
 	if err != nil {
 		errorType := "Failed to get request count, keeping current decisions"
 		logger.Error(err, errorType,

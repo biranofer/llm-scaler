@@ -16,9 +16,10 @@ prerequisites:
       #   kubectl rollout restart -n <llmd-namespace> deploy/<epp-deployment>
   engine:
     note: |
-      vLLM only. The idle signal is vLLM's request counter, which reads 0 for any
-      other engine — WVA would misread that as "no traffic" and park a model that
-      is actively serving, so it declines to park non-vLLM models at all.
+      One engine per model. Idleness is read from that engine's request counter —
+      vllm:request_success_total or sglang:num_requests_total — and WVA asks for
+      the one matching the engine it detects. A model running BOTH would need both
+      counters summed, so it is refused rather than measured with half its traffic.
     run: kubectl get deploy -n <llmd-namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
 
 deploy:

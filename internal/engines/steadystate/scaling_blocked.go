@@ -84,8 +84,8 @@ func blockedDetail(reasons []string) string {
 			details = append(details, "every variant permits zero but this model's scaling policy disables "+
 				"scale-to-zero, so the replica bounds are inert")
 		case constants.ScalingBlockedEngineUnsupported:
-			details = append(details, "the model runs a non-vLLM engine, whose request counter the idle "+
-				"check cannot read (see docs/proposals/sglang-backend.md)")
+			details = append(details, "the model runs more than one inference engine, so no single "+
+				"request counter measures its idleness; vLLM and SGLang are each supported alone")
 		default:
 			details = append(details, reason)
 		}

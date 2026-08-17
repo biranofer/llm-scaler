@@ -12,6 +12,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/testutil"
 )
@@ -37,7 +38,7 @@ var _ = Describe("Enforcer", func() {
 
 			Context("and there are no requests", func() {
 				It("should set all matching decisions to zero", func() {
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
 					}, nil)
 					decisions := []domain.VariantDecision{
@@ -48,7 +49,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
-					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(applied).To(BeTrue())
 					Expect(decisions[0].TargetReplicas).To(Equal(0))
@@ -60,7 +61,7 @@ var _ = Describe("Enforcer", func() {
 
 			Context("and there are requests", func() {
 				It("should keep decisions unchanged", func() {
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 10, nil
 					}, nil)
 					decision := domain.VariantDecision{
@@ -72,7 +73,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
-					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(applied).To(BeFalse())
 					Expect(decisions[0].TargetReplicas).To(Equal(3))
@@ -87,7 +88,7 @@ var _ = Describe("Enforcer", func() {
 					registry := prometheus.NewRegistry()
 					Expect(metrics.InitMetrics(registry)).To(Succeed())
 
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, errors.New("prometheus unavailable")
 					}, nil)
 					decisions := []domain.VariantDecision{
@@ -97,7 +98,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(true), RetentionPeriod: "10m",
 					}}
 
-					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					applied := enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(applied).To(BeFalse())
 					Expect(decisions[0].TargetReplicas).To(Equal(2))
@@ -113,7 +114,7 @@ var _ = Describe("Enforcer", func() {
 
 			Context("and all targets are zero", func() {
 				It("should preserve minimum replica on the cheapest variant", func() {
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
 					}, nil)
 					decisions := []domain.VariantDecision{
@@ -124,7 +125,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(false),
 					}}
 
-					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(decisions[0].TargetReplicas).To(Equal(0)) // expensive
 					Expect(decisions[1].TargetReplicas).To(Equal(1)) // cheapest gets 1
@@ -134,7 +135,7 @@ var _ = Describe("Enforcer", func() {
 
 			Context("and some targets have replicas", func() {
 				It("should keep decisions unchanged", func() {
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
 					}, nil)
 					decision1 := domain.VariantDecision{
@@ -149,7 +150,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(false),
 					}}
 
-					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(decisions[0].TargetReplicas).To(Equal(2))
 					Expect(decisions[0].Reason()).To(Equal(string(domain.DecisionReasonTest)))
@@ -159,7 +160,7 @@ var _ = Describe("Enforcer", func() {
 
 			Context("and variants have equal cost", func() {
 				It("should use alphabetical order as tiebreaker", func() {
-					enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+					enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 						return 0, nil
 					}, nil)
 					decisions := []domain.VariantDecision{
@@ -170,7 +171,7 @@ var _ = Describe("Enforcer", func() {
 						Enabled: boolPtr(false),
 					}}
 
-					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+					enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 					Expect(decisions[0].TargetReplicas).To(Equal(0)) // variant-z
 					Expect(decisions[1].TargetReplicas).To(Equal(1)) // variant-a (alphabetically first)
@@ -181,7 +182,7 @@ var _ = Describe("Enforcer", func() {
 		Context("model filtering", func() {
 
 			It("should only modify decisions matching modelID and namespace", func() {
-				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+				enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
 				}, nil)
 				d1 := domain.VariantDecision{
@@ -201,7 +202,7 @@ var _ = Describe("Enforcer", func() {
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
-				applied := enforcer.EnforcePolicyOnDecisions(ctx, "model-1", "ns-1", decisions, satConfig, "cost-aware")
+				applied := enforcer.EnforcePolicyOnDecisions(ctx, "model-1", "ns-1", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 				Expect(applied).To(BeTrue())
 				// model-1/ns-1 → scaled to zero
@@ -221,7 +222,7 @@ var _ = Describe("Enforcer", func() {
 		Context("reason strings", func() {
 
 			It("should include optimizer name in enforced reason", func() {
-				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+				enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
 				}, nil)
 				decisions := []domain.VariantDecision{
@@ -231,7 +232,7 @@ var _ = Describe("Enforcer", func() {
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
-				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "greedy-by-score")
+				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "greedy-by-score", inferenceengine.EngineVLLM)
 
 				Expect(decisions[0].Reason()).To(ContainSubstring("greedy-by-score"))
 				Expect(decisions[0].Reason()).To(ContainSubstring("enforced"))
@@ -251,7 +252,7 @@ var _ = Describe("Enforcer", func() {
 			})
 
 			It("should emit metric when enforcing scale-to-zero", func() {
-				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+				enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
 				}, nil)
 				decisions := []domain.VariantDecision{
@@ -261,7 +262,7 @@ var _ = Describe("Enforcer", func() {
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
-				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 				// Verify metric was emitted
 				metricFamilies, err := registry.Gather()
@@ -289,7 +290,7 @@ var _ = Describe("Enforcer", func() {
 			})
 
 			It("should emit metric when enforcing minimum replica", func() {
-				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+				enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 0, nil
 				}, nil)
 				decisions := []domain.VariantDecision{
@@ -299,7 +300,7 @@ var _ = Describe("Enforcer", func() {
 					Enabled: boolPtr(false),
 				}}
 
-				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 				// Verify metric was emitted
 				metricFamilies, err := registry.Gather()
@@ -325,7 +326,7 @@ var _ = Describe("Enforcer", func() {
 			})
 
 			It("should not emit metric when no enforcement is needed", func() {
-				enforcer = NewEnforcer(func(ctx context.Context, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
+				enforcer = NewEnforcer(func(ctx context.Context, _ inferenceengine.Engine, modelID, namespace string, retentionPeriod time.Duration) (float64, error) {
 					return 10, nil // Has requests
 				}, nil)
 				decisions := []domain.VariantDecision{
@@ -335,7 +336,7 @@ var _ = Describe("Enforcer", func() {
 					Enabled: boolPtr(true), RetentionPeriod: "10m",
 				}}
 
-				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware")
+				enforcer.EnforcePolicyOnDecisions(ctx, "test-model", "test-ns", decisions, satConfig, "cost-aware", inferenceengine.EngineVLLM)
 
 				// Verify no metric was emitted (counter should be empty or zero)
 				metricFamilies, err := registry.Gather()

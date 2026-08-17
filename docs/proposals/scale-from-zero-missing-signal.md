@@ -95,7 +95,7 @@ wva_model_scaling_blocked{namespace, model, reason} 1
 |---|---|
 | `variant-floor` | a variant has `minReplicas > 0`, so the model cannot reach zero |
 | `policy-forbids-zero` | every variant permits zero, but the model's policy disables scale-to-zero |
-| `engine-unsupported` | a non-vLLM engine, whose request counter the enforcer cannot read |
+| `engine-unsupported` | the model runs more than one engine, so no single request counter measures it |
 | `no-wake-signal` | EPP is not exporting a flow-control queue, so nothing can wake this model |
 
 One metric, one place to look, and a closed enum so cardinality stays bounded.

@@ -7,14 +7,24 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
 
-// scaleToZeroSupportedForEngines is the safety gate that prevents an active
-// non-vLLM model from being scaled to zero by the vLLM-hardcoded request counter
-// (see CollectModelRequestCount). These specs lock in its behavior: only an
-// all-vLLM (or empty/unknown) target set may be scaled to zero.
-var _ = Describe("scaleToZeroSupportedForEngines", func() {
+// soleEngineFor decides which request counter measures a model's idleness, and
+// whether one counter can measure it at all.
+//
+// These specs replace the ones for scaleToZeroSupportedForEngines, and the
+// expectation for SGLang is deliberately INVERTED. That gate refused to park any
+// non-vLLM model because the enforcer asked for vllm:request_success_total
+// whatever the model ran, so an SGLang model looked permanently idle. The
+// engine-specific query already existed — sglang:num_requests_total, registered
+// beside the vLLM one — and simply was not reached. Now the engine is detected and
+// passed to the enforcer, so a single-engine SGLang model parks on its own counter.
+//
+// What is still refused is a model running BOTH engines: one counter would see
+// only half its traffic and could park a model still serving through the other.
+var _ = Describe("soleEngineFor", func() {
 	target := func(image string) scaletarget.ScaleTargetAccessor {
 		return scaletarget.NewDeploymentAccessor(&appsv1.Deployment{
 			Spec: appsv1.DeploymentSpec{
@@ -29,24 +39,34 @@ var _ = Describe("scaleToZeroSupportedForEngines", func() {
 	vllm := target("vllm/vllm-openai:latest")
 	sglang := target("lmsysorg/sglang:latest")
 
-	It("supports scale-to-zero for an all-vLLM model", func() {
-		Expect(scaleToZeroSupportedForEngines(
-			map[string]scaletarget.ScaleTargetAccessor{"a": vllm, "b": vllm})).To(BeTrue())
+	It("resolves vLLM for an all-vLLM model", func() {
+		engine, ok := soleEngineFor(map[string]scaletarget.ScaleTargetAccessor{"a": vllm, "b": vllm})
+		Expect(ok).To(BeTrue())
+		Expect(engine).To(Equal(inferenceengine.EngineVLLM))
 	})
 
-	It("supports scale-to-zero for an empty or nil target set (defaults to vLLM)", func() {
-		Expect(scaleToZeroSupportedForEngines(nil)).To(BeTrue())
-		Expect(scaleToZeroSupportedForEngines(
-			map[string]scaletarget.ScaleTargetAccessor{})).To(BeTrue())
+	// The behaviour change. This used to be BeFalse().
+	It("resolves SGLang for an all-SGLang model, which may now park", func() {
+		engine, ok := soleEngineFor(map[string]scaletarget.ScaleTargetAccessor{"a": sglang, "b": sglang})
+		Expect(ok).To(BeTrue(), "an SGLang model has its own request counter and can be measured")
+		Expect(engine).To(Equal(inferenceengine.EngineSGLang),
+			"and the enforcer must ask for sglang:num_requests_total, not the vLLM counter")
 	})
 
-	It("gates scale-to-zero off when any variant runs SGLang", func() {
-		Expect(scaleToZeroSupportedForEngines(
-			map[string]scaletarget.ScaleTargetAccessor{"a": sglang})).To(BeFalse())
+	It("defaults to vLLM for an empty or nil target set", func() {
+		engine, ok := soleEngineFor(nil)
+		Expect(ok).To(BeTrue())
+		Expect(engine).To(Equal(inferenceengine.EngineVLLM))
+
+		engine, ok = soleEngineFor(map[string]scaletarget.ScaleTargetAccessor{})
+		Expect(ok).To(BeTrue())
+		Expect(engine).To(Equal(inferenceengine.EngineVLLM))
 	})
 
-	It("gates scale-to-zero off for a mixed vLLM+SGLang model", func() {
-		Expect(scaleToZeroSupportedForEngines(
-			map[string]scaletarget.ScaleTargetAccessor{"a": vllm, "b": sglang})).To(BeFalse())
+	// Not a guess-one-and-hope: with two counters in play, asking for either sees
+	// part of the traffic, and the part it cannot see may be the part still serving.
+	It("refuses a mixed vLLM+SGLang model, because no single counter measures it", func() {
+		_, ok := soleEngineFor(map[string]scaletarget.ScaleTargetAccessor{"a": vllm, "b": sglang})
+		Expect(ok).To(BeFalse())
 	})
 })

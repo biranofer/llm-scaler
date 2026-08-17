@@ -426,10 +426,18 @@ const (
 	// where minReplicas: 0 reads exactly like a deliberate request to park.
 	ScalingBlockedPolicyForbidsZero = "policy-forbids-zero"
 
-	// ScalingBlockedEngineUnsupported indicates the model runs a non-vLLM engine.
-	// The enforcer's idle signal is hardcoded to vLLM's request counter, which
-	// reads 0 for any other engine and would be misread as "no traffic", so
-	// scale-to-zero is skipped entirely (see docs/proposals/sglang-backend.md).
+	// ScalingBlockedEngineUnsupported indicates the model runs MORE THAN ONE
+	// inference engine, so no single request counter measures its idleness.
+	//
+	// vLLM and SGLang are each supported alone: the enforcer asks for the counter
+	// matching the detected engine (vllm:request_success_total or
+	// sglang:num_requests_total). A model running both would need them summed, and
+	// asking for one would see only part of its traffic — possibly parking a model
+	// still serving through the other engine. That is refused rather than guessed.
+	//
+	// This reason previously meant "not vLLM", when the enforcer asked for the vLLM
+	// counter whatever the model ran. It is now the narrower, genuinely ambiguous
+	// case.
 	ScalingBlockedEngineUnsupported = "engine-unsupported"
 
 	// ScalingBlockedNoWakeSignal indicates EPP exports no flow-control queue at

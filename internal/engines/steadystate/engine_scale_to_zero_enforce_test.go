@@ -14,15 +14,19 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/scaletarget"
 )
 
 // applyScaleToZeroEnforcement is the single seam every optimize path (V1, V2,
 // queueing-model) routes its enforcement through. These specs drive that seam with
-// a real, idle (request count 0) Enforcer and assert the gate's outcome end-to-end:
-// an SGLang model is left untouched while an otherwise-identical vLLM model is zeroed.
-// The vLLM case is the canary — it proves the SGLang case isn't passing simply because
-// the enforcer never ran; inverting the engine gate would flip both and fail here.
+// a real, idle (request count 0) Enforcer and assert each gate's outcome end to end.
+//
+// A single-engine model parks whether it runs vLLM or SGLang — each has its own
+// request counter, and the enforcer asks for the one matching the detected engine.
+// What is left untouched is a model running BOTH, where one counter would see only
+// part of its traffic. The all-vLLM case is the canary: it proves the refusals are
+// not passing merely because the enforcer never ran.
 var _ = Describe("applyScaleToZeroEnforcement", func() {
 	const (
 		modelID   = "test-model"
@@ -58,7 +62,7 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		return &Engine{
 			Config: cfg,
 			ScaleToZeroEnforcer: allocation.NewEnforcer(
-				func(context.Context, string, string, time.Duration) (float64, error) {
+				func(context.Context, inferenceengine.Engine, string, string, time.Duration) (float64, error) {
 					return 0, nil // idle: enforcer would scale to zero unless gated off
 				},
 				nil,
@@ -112,15 +116,23 @@ var _ = Describe("applyScaleToZeroEnforcement", func() {
 		Expect(d[0].TargetReplicas).To(Equal(0))
 	})
 
-	It("does NOT zero an idle SGLang model (engine gate skips the enforcer)", func() {
+	// Deliberately inverted. This spec used to assert an idle SGLang model was NOT
+	// zeroed, which was correct only because the enforcer asked for
+	// vllm:request_success_total whatever the model ran, so SGLang could not be
+	// measured at all. The engine is now detected and passed down, and the SGLang
+	// query already existed — so an idle SGLang model parks on its own counter.
+	It("zeroes an idle SGLang model, measured by its own request counter", func() {
 		e := engineWithIdleEnforcer()
 		d := decisions()
 		scaledToZero := e.applyScaleToZeroEnforcement(ctx, modelID, namespace, "v2-saturation",
 			d, map[string]scaletarget.ScaleTargetAccessor{"a": target("lmsysorg/sglang:latest")}, nil)
-		Expect(scaledToZero).To(BeFalse())
-		Expect(d[0].TargetReplicas).To(Equal(2), "SGLang model must not be scaled to zero by the vLLM-hardcoded counter")
+		Expect(scaledToZero).To(BeTrue(), "SGLang has sglang:num_requests_total and can be measured")
+		Expect(d[0].TargetReplicas).To(Equal(0))
 	})
 
+	// Still refused, and this is the case the engine-unsupported reason now names:
+	// one counter would see only part of the model's traffic, and the part it cannot
+	// see may be the part still serving.
 	It("does NOT zero a mixed vLLM+SGLang model", func() {
 		e := engineWithIdleEnforcer()
 		d := decisions()
