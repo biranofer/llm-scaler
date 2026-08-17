@@ -5,7 +5,7 @@ Fenced code blocks are skipped: Go generics like `lru.New[podKey, chainNode](siz
 read as a markdown link to any regex that does not know where the fences are, and
 a checker that cries wolf gets ignored, which is worse than not having one.
 """
-import re, sys, pathlib
+import argparse, re, sys, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -24,7 +24,63 @@ def slugs(text):
     return {re.sub(r"\s", "-", re.sub(r"[^\w\s-]", "", m.group(2).strip().lower()))
             for m in (re.match(r"^(#{1,6})\s+(.*)$", l) for l in text.splitlines()) if m}
 
+# Hosts that answer 404 to an unauthenticated client on DEEP paths while serving
+# the repository root perfectly well. GitHub does this to anything that looks like
+# scraping, so a naive external check reports ai-dynamo/dynamo/releases as broken —
+# a page that plainly exists. Verified by hand: repo roots return 200 while every
+# /issues, /blob and /releases path under them returns 404 from the same client.
+#
+# Checking these would produce enough false positives to bury the real ones, so the
+# external check skips them and says how many it skipped rather than pretending to
+# have covered them.
+UNVERIFIABLE_HOSTS = ("github.com",)
+
+
+def check_external(links):
+    """Resolve external links over the network. Opt-in: CI has no egress guarantee."""
+    import ssl
+    import urllib.error
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    ctx = ssl.create_default_context()
+    checkable = {u: srcs for u, srcs in links.items()
+                 if not any(h in u.split("/")[2] for h in UNVERIFIABLE_HOSTS)}
+    skipped = len(links) - len(checkable)
+
+    def probe(url):
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (doc-link-check)"})
+        try:
+            with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
+                return url, r.status
+        except urllib.error.HTTPError as e:
+            return url, e.code
+        except Exception as e:  # DNS, TLS, timeout
+            return url, type(e).__name__
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = dict(ex.map(probe, checkable))
+
+    bad = 0
+    for url, status in sorted(results.items(), key=lambda kv: str(kv[1])):
+        if isinstance(status, int) and 200 <= status < 400:
+            continue
+        bad += 1
+        print(f"BROKEN [{status}] {url}", file=sys.stderr)
+        for src in sorted(checkable[url]):
+            print(f"         <- {src}", file=sys.stderr)
+    print(f"{len(results)} external links checked, {bad} broken "
+          f"({skipped} skipped on hosts that 404 unauthenticated deep paths)")
+    return bad
+
+
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--external", action="store_true",
+                    help="also resolve http(s) links over the network")
+    args = ap.parse_args()
+
+    external = {}
     files = [ROOT / "README.md"] + sorted(ROOT.glob("deploy/**/*.md")) + sorted(ROOT.glob("docs/**/*.md"))
     bad = 0
     for p in files:
@@ -33,6 +89,8 @@ def main():
         own = slugs(raw)
         for link in re.findall(r"\]\(([^)\s]+)\)", prose):
             if link.startswith(("http", "mailto:")):
+                if link.startswith("http"):
+                    external.setdefault(link, set()).add(str(p.relative_to(ROOT)).replace("\\", "/"))
                 continue
             target, _, anchor = link.partition("#")
             if target:
@@ -44,6 +102,10 @@ def main():
             elif anchor and anchor not in own:
                 print(f"BROKEN ANCHOR {p.relative_to(ROOT)} -> #{anchor}"); bad += 1
     print(f"{len(files)} files checked, {bad} broken")
+
+    if args.external:
+        bad += check_external(external)
+
     return 1 if bad else 0
 
 if __name__ == "__main__":

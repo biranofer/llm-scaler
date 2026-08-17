@@ -268,6 +268,10 @@ guides-check: ## Fail if any guide README is out of date with its guide.yaml, or
 	python3 hack/render-guides.py --check
 	python3 hack/check-doc-links.py
 
+.PHONY: docs-links-external
+docs-links-external: ## Resolve every external doc link over the network (not in CI: needs egress).
+	python3 hack/check-doc-links.py --external
+
 ##@ Cluster-admin actions (advanced; they affect every WVA on the cluster)
 
 # Where cluster policy is published. The default is the name the controller looks

@@ -7,15 +7,17 @@ Welcome to the WVA documentation! This directory contains comprehensive guides f
 ### User Guide
 
 
-- **[Installation Guide](https://llm-d.ai/docs/guides/workload-autoscaling)** - Installing WVA on your cluster
-- **[Configuration](https://llm-d.ai/docs/architecture/advanced/autoscaling/workload-variant-autoscaling#configuration)** - Configuring WVA for your workloads
-- **[Architecture](https://llm-d.ai/docs/architecture/advanced/autoscaling)** - Understanding how WVA works under the hood
+- **[Guides](guides/README.md)** - Installing WVA, and the tasks you do after
+- **[Configuration](deployment/configuration.md)** - Every variable the installer reads
+- **[Scaling policy configuration](developer-guide/scaling-policy-config.md)** - Thresholds, tiers, scale-to-zero, limiters
+- **[After the install](deployment/operations.md)** - What to watch, first-line troubleshooting
+- **[Architecture](https://llm-d.ai/docs/architecture/advanced/autoscaling)** - Where WVA sits among llm-d's autoscaling paths
 
 ### Design
 
 - **[Modeling & Optimization](design/modeling-optimization.md)** - Queue theory models and optimization algorithms
 - **[Controller Behavior](design/controller-behavior.md)** - Event handling and reconciliation behavior (outdated)
-- **[Architecture Diagrams](https://llm-d.ai/docs/architecture/advanced/autoscaling/workload-variant-autoscaling#design)** - System architecture and workflows
+- **[External scaler design](design/wva-external-scaler-proposal.md)** - How WVA drives KEDA, and why
 - **[Unified Configuration System](developer-guide/configuration.md)** - Configuration reference for all WVA components
 - **[Metrics & Health Monitoring](developer-guide/metrics-health-monitoring.md)** - Exposed metrics and health check endpoints
 - **[Saturation Scaling Configuration](developer-guide/scaling-policy-config.md)** - Tuning the saturation-based scaling algorithm

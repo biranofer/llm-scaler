@@ -36,6 +36,16 @@ except ImportError:  # pragma: no cover
 
 GUIDES_DIR = Path(__file__).resolve().parent.parent / "docs" / "guides"
 
+# Guides that are deliberately hand-written, with the reason. Everything else must
+# carry a guide.yaml so its commands are generated rather than retyped.
+HAND_WRITTEN = {
+    # FMA's commands are interleaved with long explanatory prose and several are
+    # illustrative rather than runnable (editing a plan file, inspecting a
+    # launcher). Converting it would either lose that or fill the YAML with steps
+    # nobody runs. Revisit if its runnable path is ever separated out.
+    "fma",
+}
+
 # <!-- guide:some.path start --> ... <!-- guide:some.path end -->
 MARKER = re.compile(
     r"(?P<start><!--\s*guide:(?P<path>[\w.\-]+)\s+start\s*-->\n)"
@@ -106,6 +116,35 @@ def main():
 
     if not GUIDES_DIR.is_dir():
         print(f"No guides directory at {GUIDES_DIR}", file=sys.stderr)
+        return 1
+
+    # A guide with no guide.yaml is not checked by anything: the glob below skips
+    # it, so its commands drift freely and the two-file convention silently stops
+    # being a convention. Fail on the reverse case the glob cannot see.
+    #
+    # HAND_WRITTEN is the deliberate, visible exception list. Adding to it is a
+    # choice someone has to make in a diff; forgetting a guide.yaml is not.
+    missing = [
+        d.name
+        for d in sorted(GUIDES_DIR.iterdir())
+        if d.is_dir()
+        and (d / "README.md").is_file()
+        and not (d / "guide.yaml").is_file()
+        and d.name not in HAND_WRITTEN
+    ]
+    if missing:
+        print(
+            "These guides have a README.md but no guide.yaml, so their commands are "
+            "rendered by nobody and checked by nothing:",
+            file=sys.stderr,
+        )
+        for name in missing:
+            print(f"  docs/guides/{name}", file=sys.stderr)
+        print(
+            "Add a guide.yaml (see docs/guides/README.md), or add the name to "
+            "HAND_WRITTEN in this script with a reason.",
+            file=sys.stderr,
+        )
         return 1
 
     stale, rendered = [], 0

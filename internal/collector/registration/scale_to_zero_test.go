@@ -369,3 +369,93 @@ var _ = Describe("CollectModelRequestCountForEngine", func() {
 		Expect(capturedQuery).NotTo(ContainSubstring("sglang:"))
 	})
 })
+
+// The cold-start guarantee, pinned.
+//
+// A fresh controller, a fresh workload, or a Prometheus that has not scraped the
+// model yet all produce the SAME thing: no series. If that were reported as a
+// request count of 0, the enforcer would read it as "no traffic" and park a model
+// that may be serving — every model on the cluster, on the first cycle after a
+// restart. It is reported as an ERROR instead, and the enforcer's first branch on
+// error is to keep the current decisions.
+//
+// This is the "absence is not zero" rule at its most consequential, so it is
+// tested at the boundary rather than trusted to the query.
+var _ = Describe("CollectModelRequestCount treats absence as unknown, never as zero", func() {
+	var (
+		ctx      context.Context
+		registry *source.SourceRegistry
+	)
+
+	sourceReturning := func(v model.Value) source.MetricsSource {
+		mockAPI := &mockPrometheusAPI{
+			queryFunc: func(_ context.Context, _ string, _ time.Time, _ ...v1.Option) (model.Value, v1.Warnings, error) {
+				return v, nil, nil
+			},
+		}
+		s := prometheus.NewPrometheusSource(ctx, mockAPI, prometheus.DefaultPrometheusSourceConfig())
+		Expect(registry.Register("prometheus", s)).NotTo(HaveOccurred())
+		RegisterScaleToZeroQueries(registry)
+		return s
+	}
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		registry = source.NewSourceRegistry()
+	})
+
+	// sum() over a vector that matches nothing yields NO result, which is what a
+	// model Prometheus has never seen looks like.
+	It("errors when the model has no series at all", func() {
+		s := sourceReturning(model.Vector{})
+
+		count, err := CollectModelRequestCount(ctx, s, "never-seen", "ns", 10*time.Minute)
+
+		Expect(err).To(HaveOccurred(),
+			"an unseen model must not be reported as having served zero requests")
+		Expect(count).To(BeZero(), "and the value must not be trusted either way")
+	})
+
+	// A model that HAS served and is now quiet is a different fact, and must park.
+	It("reports a real zero when the series exists and the count is zero", func() {
+		s := sourceReturning(&model.Scalar{Value: 0, Timestamp: model.TimeFromUnix(0)})
+
+		count, err := CollectModelRequestCount(ctx, s, "idle-model", "ns", 10*time.Minute)
+
+		Expect(err).NotTo(HaveOccurred(),
+			"an existing series reading zero is genuine idleness, not missing data")
+		Expect(count).To(BeZero())
+	})
+
+	It("reports traffic when there is some", func() {
+		s := sourceReturning(&model.Scalar{Value: 42, Timestamp: model.TimeFromUnix(0)})
+
+		count, err := CollectModelRequestCount(ctx, s, "busy-model", "ns", 10*time.Minute)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(float64(42)))
+	})
+})
+
+// The guarantee above is only as good as the query behind it. `or vector(0)` or a
+// similar "helpful" default would turn an absent series into a real 0 and silently
+// convert the cold-start guard into a cold-start hazard — with every test above
+// still passing, because they mock the RESULT rather than Prometheus itself.
+var _ = Describe("the request-count query must not manufacture a zero", func() {
+	It("has no absent-to-zero fallback", func() {
+		ctx := context.Background()
+		registry := source.NewSourceRegistry()
+		s := prometheus.NewPrometheusSource(ctx, &mockPrometheusAPI{}, prometheus.DefaultPrometheusSourceConfig())
+		Expect(registry.Register("prometheus", s)).NotTo(HaveOccurred())
+		RegisterScaleToZeroQueries(registry)
+
+		tmpl := registry.Get("prometheus").QueryList().Get(QueryModelRequestCount)
+		Expect(tmpl).NotTo(BeNil())
+
+		Expect(tmpl.Template).To(ContainSubstring("increase("))
+		Expect(tmpl.Template).NotTo(ContainSubstring("or vector("),
+			"an absent series must stay absent: `or vector(0)` here would make a "+
+				"never-scraped model look idle and park it")
+		Expect(tmpl.Template).NotTo(ContainSubstring("or on()"))
+	})
+})
