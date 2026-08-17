@@ -280,8 +280,13 @@ data:
     limiters:
       - type: gpu-inventory
     priority: 1.0
-  # optional per-model override:
-  "my-model#my-namespace": |
+  # optional per-model override. model_id and namespace in the BODY are what bind
+  # it to a model — the key is only a label, and must be a legal ConfigMap key
+  # ([-._a-zA-Z0-9] only, so no "/" or "#"). An entry that names no model is
+  # registered as a named policy tier instead.
+  my-model.my-namespace: |
+    model_id: my-model
+    namespace: my-namespace
     scaleUpThreshold: 0.90       # let this model run hotter before scaling
 ```
 

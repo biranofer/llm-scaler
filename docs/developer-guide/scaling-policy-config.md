@@ -709,7 +709,70 @@ kubectl apply -f deploy/configmap-saturation-scaling.yaml
 2. Triggers reconciliation of all VariantAutoscaling resources
 3. Applies the new configuration without requiring pod restart
 
-### 3. Per-Model Overrides
+### 3. Named Policy Tiers
+
+A tier is a reusable entry — `interactive`, `standard`, `batch` — that a variant
+selects **by name** from its ScaledObject. A tier carries no model identity, which
+is the whole point: one tier serves many models, and retuning the tier retunes all
+of them at once. Per-model entries cannot express that, because they bind settings
+to identity, so a fleet-wide change becomes an edit per model.
+
+An entry is a tier when its key is not `default` and its body sets no `model_id`
+(`PolicyEntryKey`).
+
+```yaml
+data:
+  default: |
+    analyzers:
+      - name: saturation
+        score: 1.0
+    scaleUpThreshold: 0.85
+    scaleDownBoundary: 0.70
+    priority: 1.0
+    defaultPolicy: standard      # tier applied to variants that name none
+
+  interactive: |
+    priority: 5.0
+    scaleUpThreshold: 0.75
+
+  batch: |
+    priority: 0.5
+```
+
+A variant selects its tier through KEDA trigger metadata — the trigger is already
+the registration, so this needs nothing watched, listed, or matched:
+
+```yaml
+triggers:
+  - type: external-push
+    metadata:
+      scalerAddress: wva-external-scaler.<wva-namespace>.svc.cluster.local:9090
+      modelID: ibm/granite-13b
+      scalingPolicy: interactive
+```
+
+**Resolution order** — most specific wins (`ResolveScalingPolicyForTier`):
+
+| layer | source | scope |
+| --- | --- | --- |
+| `default` entry | the ConfigMap's `default` key | fleet-wide fallback |
+| named tier | the variant's `scalingPolicy`, else `default.defaultPolicy` | a class of workloads |
+| per-model override | an entry whose body names this model | one model in one namespace |
+
+`defaultPolicy` is read from the `default` entry only: a fallback chosen by a tier
+or by a per-model entry would be that entry choosing for everyone but itself.
+
+Two failure modes are resolved deterministically rather than silently, and both
+are reported:
+
+- **Unknown tier** — a `scalingPolicy` naming no entry falls back to `default`.
+  That is the right outcome and the wrong silence, so it is logged against the
+  variants that asked for it, listing the tiers that do exist.
+- **Disagreeing variants** — when variants of one model name different tiers, the
+  lexicographically smallest wins, so the allocation resolves the same way on
+  every cycle and every replica rather than flipping with map order.
+
+### 4. Per-Model Overrides
 
 Add model-specific configuration entries to override defaults for specific model/namespace pairs.
 
@@ -737,14 +800,29 @@ data:
   # Override for granite model in production namespace. Overrides inherit the
   # default's analyzer selection (V2) via field-level merge, so they only list the
   # thresholds they change.
-  "ibm/granite-13b#production": |
+  ibm_granite-13b.production: |
+    model_id: ibm/granite-13b
+    namespace: production
     kvCacheThreshold: 0.85
 
   # Override for llama model in lab namespace
-  "meta/llama-70b#lab": |
+  meta_llama-70b.lab: |
+    model_id: meta/llama-70b
+    namespace: lab
     kvCacheThreshold: 0.80
     queueLengthThreshold: 20
 ```
+
+> **The `model_id` and `namespace` lines are not decoration — they are what makes
+> this an override.** An entry whose body names no model is registered as a named
+> policy *tier* instead (`PolicyEntryKey` in `internal/config/scaling_policy.go`),
+> so it will never apply to the model you meant and will silently be selectable by
+> any variant that names its key.
+>
+> Nor can identity live in the key: a ConfigMap data key admits only
+> `[-._a-zA-Z0-9]`, so the `{modelID}#{namespace}` form earlier versions of this
+> document showed — `"ibm/granite-13b#production"` — is rejected by the API server
+> and could never be applied. `ModelOverrideKey()` suggests a legal, readable key.
 
 **Key points:**
 - An override entry is identified by its **body**: set `model_id` and `namespace`. Its ConfigMap key is arbitrary — pick something readable
@@ -752,7 +830,7 @@ data:
 - Overrides use **field-level merge**: only non-zero fields in the override replace the corresponding values from `default`; any field you omit (or set to its zero value) inherits from `default`. See `Merge()` in `internal/config/saturation_scaling.go`.
 - Multiple overrides can exist for different model/namespace combinations
 
-### 4. Per-Model Overrides — Field-Level Inheritance
+### 5. Per-Model Overrides — Field-Level Inheritance
 
 Overrides are merged onto `default` field by field: only non-zero fields in the override
 replace values from `default`, and any field you omit inherits from `default`. To change
@@ -760,7 +838,9 @@ just one threshold, specify only that field:
 
 ```yaml
   # Inherits queueLengthThreshold from `default`
-  "my-org/my-model#my-namespace": |
+  my-org_my-model.my-namespace: |
+    model_id: my-org/my-model
+    namespace: my-namespace
     kvCacheThreshold: 0.90
 ```
 
@@ -998,13 +1078,18 @@ data:
 
   # High-priority production workload - scale aggressively.
   # Per-model overrides inherit the default's analyzer selection (V2 here) via
-  # field-level merge, so they need only the thresholds they change.
-  "ibm/granite-13b#production": |
+  # field-level merge, so they need only the thresholds they change. model_id and
+  # namespace are what bind the entry to a model; the key is only a label.
+  ibm_granite-13b.production: |
+    model_id: ibm/granite-13b
+    namespace: production
     kvCacheThreshold: 0.70
     queueLengthThreshold: 3
 
   # Development workload - allow higher saturation
-  "meta/llama-70b#development": |
+  meta_llama-70b.development: |
+    model_id: meta/llama-70b
+    namespace: development
     kvCacheThreshold: 0.90
     queueLengthThreshold: 15
 ```
