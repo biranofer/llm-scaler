@@ -56,13 +56,13 @@ spec:
         description: "WVA sees zero allocatable {{ $labels.accelerator_vendor }} {{ $labels.accelerator_model }} ({{ $labels.accelerator_type }}) GPUs for 5+ minutes. Note: this reflects node *allocatable* capacity (not free/schedulable GPUs), and wva_available_gpus is only emitted when a gpu-inventory limiter is declared in the saturation config's limiters list. A GPU-labeled node advertising zero allocatable accelerators usually means it is NotReady or its device plugin/driver is not installed — check GPU node status and device-plugin pods."
 
     - alert: WVAReplicaScalingThrashing
-      expr: sum by (namespace, variant_name) (rate(wva_replica_scaling_total[10m])) > 0.033
+      expr: sum by (exported_namespace, variant_name) (rate(wva_replica_scaling_total[10m])) > 0.033
       for: 10m
       labels:
         severity: warning
       annotations:
-        summary: "WVA scaling thrashing detected for {{ $labels.namespace }}/{{ $labels.variant_name }}"
-        description: "Variant {{ $labels.namespace }}/{{ $labels.variant_name }} scaling at {{ $value | printf \"%.3f\" }}/sec (>2/min threshold) sustained for 10+ minutes, indicating possible thrashing. Review scaling thresholds and consider adjusting stabilization window or thresholds."
+        summary: "WVA scaling thrashing detected for {{ $labels.exported_namespace }}/{{ $labels.variant_name }}"
+        description: "Variant {{ $labels.exported_namespace }}/{{ $labels.variant_name }} scaling at {{ $value | printf \"%.3f\" }}/sec (>2/min threshold) sustained for 10+ minutes, indicating possible thrashing. Review scaling thresholds and consider adjusting stabilization window or thresholds."
 
     - alert: WVAModelWillNotScaleToZero
       expr: wva_model_scaling_blocked{reason=~"variant-floor|policy-forbids-zero"} == 1
