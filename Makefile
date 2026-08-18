@@ -787,6 +787,20 @@ benchmark-fma-fixups: ## Re-apply the FMA fixes a standup undoes: launcher RBAC 
 	fi
 	@bash hack/benchmark/fma_fixups.sh $(BENCHMARK_NAMESPACE) $(FMA_VERSION)
 
+.PHONY: benchmark-fma-verify
+benchmark-fma-verify: ## Report where FMA launchers and requesters actually landed, and fail if the scenario's placement is inert (set BENCHMARK_NAMESPACE)
+	@# The question this answers is "will the next scale-up wake a sleeper or
+	@# rebuild from scratch", and it is a placement question: dual-pods binds
+	@# node-locally, so a requester on a node with no launcher is a ~50-90s cold
+	@# build rather than a ~3s wake. Run it against an FMA somebody else stood up
+	@# -- benchmark-run does the same check automatically for its own stack.
+	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
+		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-fma-verify BENCHMARK_NAMESPACE=<namespace>"; \
+		exit 1; \
+	fi
+	@bash hack/benchmark/fma_placement.sh verify $(BENCHMARK_NAMESPACE) \
+		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
+
 .PHONY: benchmark-actuation
 benchmark-actuation: ## Measure how fast capacity arrives after a scale-up (set ACTUATION_TARGET=<deployment>; BENCHMARK_NAMESPACE required)
 	@# The claim FMA makes is that capacity arrives sooner -- not that tokens are
@@ -887,6 +901,18 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo ""; \
 		exit 1; \
 	fi
+	@# FMA placement that cannot take effect. Everything under `fma:` is read by
+	@# code that first checks whether FMA is a deployed method (standup step_06)
+	@# or reads fma.enabled directly (run step_02a_fma_warmup_hotstart), so a
+	@# placement or warmup setting under fma.enabled=false is decoration -- and
+	@# the run then measures the COLD path (~50-90s per wake) while reporting a
+	@# warm config. That is not hypothetical: `launcherNodeSelection.enabled:
+	@# true` sat under `enabled: false` in our own scenario, and every
+	@# FMA-vs-non-FMA number taken before 2026-08-18 is cold-path because of it.
+	@# Checked here, before anything is applied, because the cost of finding out
+	@# afterwards is a whole benchmark run.
+	@bash hack/benchmark/fma_placement.sh check \
+		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
 	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ]; then \
 		echo "Direct-KEDA mode: this feature isn't in a released llm-d-benchmark tag yet — upgrading the llm-d-benchmark checkout to '$(BENCHMARK_REPO_REF)' (unreleased)..."; \
 		if ! kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then \
@@ -1265,6 +1291,14 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@if [ "$(WAIT_SERVING)" != "false" ]; then \
 		bash hack/benchmark/wait_serving.sh $(BENCHMARK_NAMESPACE) $(WAIT_SERVING_TIMEOUT); \
 	fi
+	@# Placement decides warm vs cold, so check it against the CLUSTER before
+	@# generating load -- the static check at standup cannot see whether a node
+	@# actually carries the pin label or whether the requesters landed beside the
+	@# warm pool. A selector matching zero nodes constrains nothing and reports
+	@# success, which is how a cold run masquerades as a warm one. No-op when the
+	@# namespace runs no launchers.
+	@bash hack/benchmark/fma_placement.sh verify $(BENCHMARK_NAMESPACE) \
+		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
 	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
 	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
