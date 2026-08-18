@@ -238,22 +238,35 @@ Two corrections to earlier drafts of this document fall out:
   suggested it held ~81 GiB; that was other tenants' memory on a shared cluster.
   The container sees only its own PID: **1386 MiB**. `is_sleeping` returns true
   and the weights really are offloaded.
-- **The ~19 s figure is NOT representative, and the error was mine.** It is
-  dominated by `torch.compile` (12.35 s) — but that compilation happened only
-  because the test instance MISSED the shared compile cache. FMA already hosts
-  pre-compiled artifacts: `/model-cache/vllm/torch_compile_cache/` is on the
-  ReadWriteMany PVC and is reused across launchers. The test passed
-  `--gpu-memory-utilization 0.30` instead of the standard `0.95`, and a different
-  config is a different cache key, so it compiled from scratch and wrote a second
-  key — the directory is stamped with the test's start time and the cache grew
-  from 32 MB to 63 MB during the run.
+- **A cold start with the ISC's own config takes ~41 s, end to end.** Measured
+  by creating an instance with the *same* options as the running one (only the
+  port differs) and polling the ENGINE, not the launcher's process status:
 
-  **A real bind, with the ISC's own config, hits that cache and skips the 12.35
-  s.** The true cold start for a matching config is therefore well under 19 s and
-  has not been measured. This matters to the whole case: the value of a sleeper is
-  the gap between a warm wake (~2 s) and a cache-hitting cold start, not the gap
-  to a cache-missing one. **Measure that gap before operating on it** — the
-  argument for a large sleeper pool is proportionally weaker.
+  ```
+  ENGINE READY at 40954 ms
+  ```
+
+  The shared compile cache **hit**, confirmed three ways: the log says
+  `Directly load the compiled graph(s) ... from the cache, took 0.851 s` and
+  `Directly load AOT compilation from /model-cache/vllm/torch_compile_cache/...`;
+  `torch.compile` fell from 12.35 s to **3.08 s**; and the cache neither gained a
+  key nor grew (still two keys, 63 MB).
+
+  | | cache MISS (wrong config) | cache HIT (ISC config) |
+  | --- | --- | --- |
+  | `torch.compile` | 12.35 s | **3.08 s** |
+  | `init engine` | 18.75 s | **9.29 s** |
+  | engine ready, end to end | not measured | **~41 s** |
+
+  So FMA does host pre-compiled models, and it works — an earlier run in this
+  document compiled from scratch only because it passed
+  `--gpu-memory-utilization 0.30` instead of `0.95`, and a different config is a
+  different cache key. That correction stands.
+
+  **But it does not weaken the case, it strengthens it.** Compilation was never
+  the bulk: with the cache hit, `torch.compile` is 3 s of a 41 s start. The other
+  ~32 s is process spawn, vLLM import, weight load, profiling, warmup and API
+  startup — none of which a cache removes, and all of which sleep mode skips.
 
 ### 4. Multiple instances per launcher: confirmed, and it is the answer
 
@@ -282,8 +295,9 @@ The economics now have numbers:
 - The binding constraint is **`--sleeper-limit`**, a controller flag, default 1,
   set to 2 here — and it is **controller-global rather than per pool**, which is
   upstream ask 4 of `fma-warm-pool-wva.md`.
-- What a warm hit saves is **~19 s of engine init**, most of it compilation — not
-  weight loading, which is shared and cheap.
+- What a warm hit saves is the **~41 s** an instance takes to reach serving, versus
+  ~2 s to wake a sleeper: roughly **38 s**, and compilation is only 3 s of it, so
+  the shared compile cache does not erode the case.
 - Only one instance per GPU can be *awake* at a realistic
   `gpu-memory-utilization`, so a GPU covers N models warm and serves one at a
   time.
@@ -321,10 +335,10 @@ outside FMA's code.
   `sleeper-limit=2` is per GPU and permits it, but it has not been demonstrated.
 - **Hit rate as a function of `sleeper-limit`**, which is the number that decides
   whether this is worth operating.
-- **Cold start with the ISC's OWN config**, so the shared compile cache is hit.
-  This is the number the whole case rests on and the one measurement here got
-  wrong. Until it exists, the benefit of a sleeper is unquantified: it is the gap
-  from ~2 s to *that* figure, not to the 19 s a cache miss costs.
+- **Warm wake latency on THIS cluster.** The ~2 s figure comes from
+  `fma-warm-pool-wva.md` §2, measured on a different day. The saving claimed
+  above (~38 s) is a cold start measured here against a wake measured there, and
+  should be re-measured as a pair.
 
 ## Scale-to/from-zero is a first-class tenant
 
