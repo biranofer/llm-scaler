@@ -232,3 +232,49 @@ func TestLocate_PairingCostsOnlyThePartnerLookup(t *testing.T) {
 		t.Errorf("pairing cost %d Get(s), want 4 (launcher, requester, rs, deployment)", gets)
 	}
 }
+
+// A launcher must stop resolving once its partner is deleted, even though an
+// earlier Locate already cached that partner's chain.
+//
+// The resolution cache is correct "for the lifetime of the cached pod" — the
+// immutability it relies on is ownerReferences, not continued existence. Every
+// ordinary caller resolves the pod it was handed, so the distinction never shows.
+// The pairing hop resolves somebody ELSE's pod on the strength of a label, and
+// that partner can go while the label still names it.
+//
+// Left uninvalidated, the cached chain answers forever: the launcher stays
+// attributed to a variant that has no requester. For a PARKED model that reads as
+// serving, and scale-from-zero declines to wake a model whose decode it believes
+// is covered — parked, unwakeable, reported healthy. The first Locate here is not
+// scene-setting; it is what populates the cache that made this wrong.
+func TestLocate_FMAPairing_PartnerDeletedAfterCaching(t *testing.T) {
+	ns := testNamespace
+	objs := requesterChain(paired("launcher", "qwen-0-6b"))
+	objs = append(objs, launcherPod("launcher", paired("requester", "qwen-0-6b")))
+
+	cl := newClients(t, objs...)
+	loc, _ := locator.New(cl, variantsOf(registered(ns, "Deployment", "req-deploy")))
+
+	got, err := loc.Locate(context.Background(), ns, "launcher")
+	if err != nil {
+		t.Fatalf("Locate before delete: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("precondition failed: the bound launcher did not resolve, so nothing was cached")
+	}
+
+	if err := cl.Delete(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "requester", Namespace: ns},
+	}); err != nil {
+		t.Fatalf("delete requester: %v", err)
+	}
+
+	got, err = loc.Locate(context.Background(), ns, "launcher")
+	if err != nil {
+		t.Fatalf("Locate after delete: %v", err)
+	}
+	if got != nil {
+		t.Errorf("launcher still attributed to %v after its requester was deleted; the partner's "+
+			"cached chain is being trusted, so a parked FMA model would read as serving", got)
+	}
+}

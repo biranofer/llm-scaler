@@ -176,6 +176,21 @@ func (l *podLocator) locateViaPairing(ctx context.Context, namespace, podName st
 	// names each other resolves or fails rather than recursing. The partner is
 	// looked up in this pod's own namespace — the label carries a bare name, and
 	// a pairing that crossed namespaces would not be one FMA created.
+	//
+	// The partner's cached entry is dropped first, so this always re-reads it.
+	// The resolution cache is correct for the lifetime of the pod it describes,
+	// and here we are resolving somebody ELSE's pod on the strength of a label:
+	// the partner can be deleted while the launcher still names it. Trusting the
+	// cache then keeps a launcher attributed to a variant whose requester is
+	// gone — and for a PARKED model that means it reads as serving, so
+	// scale-from-zero declines to wake a model whose decode it believes is
+	// already covered. Parked, unwakeable, and reported healthy.
+	//
+	// This costs one GET per bound launcher per cycle, which is exactly what this
+	// hop's cost was specified to be (docs/proposals/fma-aware-attribution.md,
+	// "the traversal we add", step 4). Pods that are not FMA launchers never
+	// reach here, so the common path is untouched.
+	l.cache.remove(podKey{Namespace: namespace, Name: partner})
 	partnerTarget, err := l.resolveTarget(ctx, namespace, partner)
 	if err != nil {
 		return nil, err
