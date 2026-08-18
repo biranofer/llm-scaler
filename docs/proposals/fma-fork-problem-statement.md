@@ -140,6 +140,76 @@ per cluster.
 - **Do not add WVA concepts.** Which models deserve warm slots is an allocation
   decision and belongs in WVA. FMA should expose mechanism and state.
 
+## Two defects that were already found and FIXED — do not re-file them
+
+Both were diagnosed in earlier sessions and are repaired by
+`make benchmark-fma-fixups`. Verified on pokprod 2026-08-18 as **no longer
+present**: controller image `v0.6.4`, launcher ServiceAccount *can* patch pods,
+zero 403s in the reflector, and no unbound launcher carrying a stale serving
+label. They are recorded because the standup reintroduces them, and because
+together they produce **no** numbers rather than bad ones:
+
+```
+launcher SA cannot patch pods (403, retried every 5s forever)
+  -> a launcher whose requester was deleted keeps llm-d.ai/inferenceServing=true
+  -> that dead endpoint stays in the InferencePool
+  -> EPP dispatches to it; ~20% of requests return 503
+  -> guidellm validates its backend once, dies, and no results.json is written
+  -> every metric in the table reads "?"
+```
+
+1. **Launcher RBAC.** The `state-change-reflector` sidecar patches labels onto its
+   own pod but is given the namespace `default` ServiceAccount. Check with
+   `kubectl auth can-i patch pods --as=system:serviceaccount:<ns>:default -n <ns>`.
+2. **Controller version — upstream #696.** `v0.6.0-alpha.13` drops a fresh
+   reconcile notification when the item is already queued with a future
+   `processAfter` from a rate-limited retry. Defect 1's 403s generate exactly
+   those retries, so the unbind that would clear the stale label is swallowed.
+   `FMA_VERSION` defaults to `v0.6.4`, which is fixed.
+
+**So neither is the remaining problem.** What is left is the GPU-alignment
+non-determinism above.
+
+## How to measure a wake — the method matters, and the obvious way does not work
+
+`kubectl scale` on the requester **does nothing**: the deployment is owned by a
+KEDA ScaledObject (`<requester>-wva`, `external-push`, min 1 max 5) and the
+derived HPA restores the replica count within seconds. An attempt on 2026-08-18
+sat at `readyReplicas=1` for 4.6 minutes with no second pod ever created, and the
+cause was this, not FMA.
+
+Two further conditions must hold or a scale-up cannot wake anything, whatever the
+code does:
+
+- **A sleeper must exist on the node the requester lands on** — binding is
+  node-local.
+- **That sleeper must be keyed to the GPU the requester was allocated** — the
+  instance ID hashes the GPU UUIDs.
+
+The pool is `launcherCount × nodes`, so requesters must spread one per node or the
+surplus uses on-demand launchers the populator then reaps as excess. Left alone,
+3 of 4 requesters once packed onto a single node.
+
+The working sequence, from `scratchpad/spread_and_warm.sh`:
+
+1. Patch `topologySpreadConstraints` on the requester Deployment
+   (`maxSkew: 1`, `kubernetes.io/hostname`, `DoNotSchedule`).
+2. **Delete the ScaledObject**, or nothing below takes effect.
+3. Warm: scale up to `nodes`, then back down — the surplus sleeps, keyed to GPUs
+   the scheduler really handed out.
+4. Gate on `WARM_POOL_NS=<ns> bash hack/benchmark/warm_pool.sh verify <n>`.
+5. Scale up again and time each new replica from `creationTimestamp` to its
+   `Ready` condition. **≤15 s means it woke; anything else rebuilt.**
+6. Restore the ScaledObject.
+
+Or use the supported harness, which does the timing part:
+
+```bash
+make benchmark-actuation BENCHMARK_NAMESPACE=<ns>      ACTUATION_TARGET=<deployment> ACTUATION_TRIALS=5
+```
+
+Baseline recorded on pokprod: **median 90 s, 0 of 6 woken.**
+
 ## Separate live bugs, worth reporting regardless
 
 - The launcher's `state-change-reflector` runs as the namespace `default`
@@ -172,5 +242,5 @@ A run against a pool that is not warm silently measures the cold path, so gate o
   no FMA change at all
 - [`fma-upstream-requests.md`](fma-upstream-requests.md) — six findings with
   measurements, for filing upstream
-- [`../guides/fma/README.md`](../guides/fma/README.md) — operator-facing, including
+- [`../guides/fma/`](../guides/fma/) — operator-facing, including
   the warm-pool gate
