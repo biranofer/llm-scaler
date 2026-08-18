@@ -489,14 +489,43 @@ scenario:
       # you also want `benchmark-standup` to own the FMA install.
       enabled: false
 
-      # Pins launchers AND requesters to the same node set. Both halves matter:
-      # binding is node-local, so a requester that lands where no sleeper lives
-      # forces a cold build. Pinning only the launchers -- which is what we did
-      # first -- makes that the common case rather than the rare one.
+      # PLACEMENT. Binding is node-local: a requester that lands where no
+      # sleeper lives rebuilds from scratch (~50-90s) instead of waking one
+      # (~3s). Two ways to arrange that, and both are OFF here because
+      # everything under `fma:` is inert while fma.enabled is false -- step_06
+      # skips itself when FMA is not a deployed method, so nothing is labeled
+      # and no nodeSelector or affinity is ever rendered. Flip one of these
+      # together with `enabled: true` above, never on its own;
+      # hack/benchmark/fma_placement.sh fails the standup if you do.
+      #
+      # This block previously carried `launcherNodeSelection.enabled: true`
+      # under `enabled: false`. It read as configured and did nothing, and every
+      # FMA-vs-non-FMA number taken before 2026-08-18 was measured on the cold
+      # path because of it.
+      #
+      # warmAffinity (ours, hack/benchmark/patch_harness.sh fix 3): launchers
+      # spread over every eligible GPU node and the requester PREFERS nodes that
+      # already hold a sleeper. The pool spans nodes, grows by replicas rather
+      # than by relabeling, and degrades to a cold rebuild -- not to Pending --
+      # when the warm set is exhausted. Size it with warm_pool.sh.
+      warmAffinity:
+        enabled: false
+
+      # launcherNodeSelection (upstream): pins launchers AND requesters to ONE
+      # node. step_06 scores GPU nodes, takes the best, strips the label from
+      # every other node, and sizes requester replicas, launcherCount and the
+      # KEDA ScaledObject ceiling to that node's free GPUs at that instant. The
+      # pool cannot then grow past one node, the ceiling is a point-in-time
+      # reading, and standup fails outright when no single node has free GPUs --
+      # the common case on a shared cluster. Right for a dedicated benchmark
+      # cluster, wrong for pokprod.
       launcherNodeSelection:
-        enabled: true
+        enabled: false
         nodeLabel: fma-hotstart
 
+      # Warmed by the scenario only when fma.enabled is true. Against an FMA
+      # somebody else deployed, size the pool directly instead:
+      #   hack/benchmark/warm_pool.sh size <replicas>
       requester:
         replicas: __WARM_REPLICAS__
 

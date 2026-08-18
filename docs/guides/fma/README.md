@@ -347,6 +347,56 @@ WARM_POOL_NS=<ns> bash hack/benchmark/warm_pool.sh size <n>     # durable capaci
 **Median replica start (s)** so a result carries that distinction rather than
 leaving it to inference. `?` means not measured, never zero.
 
+### Placement decides warm or cold
+
+Binding is **node-local**. A requester that lands on a node holding a sleeper
+wakes it in ~3s; one that lands anywhere else rebuilds from scratch in ~50-90s.
+Warming the pool is therefore only half the job — the other half is arranging
+for the requester to be scheduled beside it. Two modes:
+
+| | `fma.warmAffinity` (ours) | `fma.launcherNodeSelection` (upstream) |
+|---|---|---|
+| How | Launchers spread over every eligible GPU node; the requester carries a **preferred** `podAffinity` toward nodes holding a sleeper | step_06 picks **one** node, labels it, and hard-pins launchers and requesters to it with a `nodeSelector` |
+| Pool size | Any number of nodes; sized in replicas via `warm_pool.sh` | Capped at one node's free GPUs, read once at standup |
+| Growing it | Raise the replica count | Relabel — but the next standup strips the label from every node but its own pick |
+| Cluster full | Schedules anyway and rebuilds cold | Standup **fails**: "All GPU nodes are currently occupied" |
+| Right for | A shared cluster (pokprod) | A dedicated benchmark cluster |
+
+`warmAffinity` is applied to the gitignored clone by `hack/benchmark/patch_harness.sh`
+(fix 3), so it survives the re-checkout that `benchmark-install` performs. It
+renders two weighted preferred terms: weight 100 toward
+`dual-pods.llm-d.ai/sleeping=true` (a wakeable sleeper is here) and weight 50
+toward `app.kubernetes.io/component=launcher` (covers the window before anything
+has slept, where the first term scores every node zero). Preferred and never
+required — with the warm set exhausted the pod still schedules and rebuilds,
+which is what it would have done anyway; a hard predicate would leave it
+`Pending` instead, trading a slow replica for no replica.
+
+**Everything under `fma:` is inert while `fma.enabled` is false.** `step_06`
+skips itself when FMA is not a deployed method, so no node is selected or
+labeled and no `nodeSelector` or affinity is rendered; `step_02a_fma_warmup_hotstart`
+returns early on the same flag, so `WARM_REPLICAS` warms nothing. Our scenario
+carried `launcherNodeSelection.enabled: true` under `enabled: false` for months
+— it read as configured, did nothing, and every FMA-vs-non-FMA number taken
+before 2026-08-18 is a cold-path measurement because of it. A node selector
+matching **zero** nodes fails the same way: it constrains nothing and reports
+success.
+
+Both shapes are now checked rather than eyeballed:
+
+```bash
+# static, runs automatically at the top of benchmark-standup
+bash hack/benchmark/fma_placement.sh check hack/benchmark/scenarios/guides/workload-autoscaling.yaml
+
+# live, runs automatically in benchmark-run; against someone else's FMA:
+make benchmark-fma-verify BENCHMARK_NAMESPACE=<ns>
+```
+
+`verify` prints launchers and requesters per node and fails when the scenario
+claims a placement the cluster does not have. A requester sitting on a node with
+no launcher is reported as a warning — that one is a cold rebuild on its next
+wake.
+
 ### Do not start a run before the model serves
 
 `benchmark-run` gates on the endpoint the harness itself detects

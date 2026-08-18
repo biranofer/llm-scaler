@@ -169,4 +169,124 @@ io.open(path, "w", encoding="utf-8", newline="\n").write(src)
 print("  fix 2 (report conversion non-fatal): applied")
 PYEOF
 
+# ---------------------------------------------------------------------------
+# Fix 3 -- give the FMA warm pool a placement mode that can span nodes.
+#
+# THE PROBLEM WITH WHAT UPSTREAM SHIPS
+#
+# A wake that finds a sleeping vLLM is ready in ~3s; one that rebuilds takes
+# ~50-90s. dual-pods binds a requester to a launcher on the SAME NODE, so which
+# one you get is a scheduling outcome. Upstream's answer is
+# `fma.launcherNodeSelection`: step_06_fma_deploy.py scores GPU nodes, takes the
+# single best one, strips the label from every OTHER node, labels its pick, and
+# then sizes requester replicas, LauncherPopulationPolicy launcherCount and the
+# KEDA ScaledObject ceiling to that node's free GPU count at that instant.
+#
+# That maximises the hit rate by collapsing placement to a point, and it makes
+# the pool unscalable in three separate ways:
+#
+#   * The pool cannot grow past one node. Labeling a second one does not help --
+#     the next standup's `kubectl label nodes -l <key>=true <key>-` removes it.
+#   * The scaling ceiling is a point-in-time reading of one node's free GPUs.
+#   * With no single node free, standup FAILS ("All GPU nodes are currently
+#     occupied") -- the common case on a shared cluster, and exactly when warm
+#     capacity is worth the most.
+#
+# WHAT THIS ADDS
+#
+# `fma.warmAffinity`: instead of pinning both halves to a fixed node, let the
+# requester FOLLOW the warm pool. The launchers spread over every eligible GPU
+# node (the LauncherPopulationPolicy already does this whenever node selection
+# is off), and the requester expresses a PREFERENCE for nodes that already hold
+# a sleeper.
+#
+# Two weighted terms rather than one, because they answer different questions:
+#
+#   weight 100  dual-pods.llm-d.ai/sleeping=true -- a wakeable sleeper is here.
+#               This is the 3s path, so it outranks everything.
+#   weight  50  app.kubernetes.io/component=launcher -- a launcher is here at
+#               all. Covers the window before any instance has gone to sleep
+#               (initial standup, or right after a scale-up), where the first
+#               term scores every node zero.
+#
+# preferredDuringScheduling, never required: when the warm set is full or absent
+# the pod still schedules and rebuilds cold, which is what it would have done
+# anyway. A hard predicate would leave it Pending instead -- trading a slow
+# replica for no replica.
+#
+# Sizing then belongs to hack/benchmark/warm_pool.sh, which takes REPLICAS and
+# divides them across the policy's node set. Placement stays infra config,
+# warming stays a separate step, and only the size changes hands.
+#
+# Scope note: the selector matches launchers by component, not by model. A
+# benchmark namespace serves one model, so this is precise there. Serving
+# several from one namespace would need `llm-d.ai/model` added to both terms --
+# but that label is only present on BOUND launchers, so a sleeping-launcher
+# selector cannot use it as-is.
+#
+# This is ours, not an upstream bug, so unlike fixes 1 and 2 there is no release
+# to wait for. Drop it if upstream grows a spreading placement mode.
+# ---------------------------------------------------------------------------
+FMATMPL="$REPO_DIR/config/templates/jinja/24_fma-deployment.yaml.j2"
+[ -f "$FMATMPL" ] || fail "expected file missing: $FMATMPL"
+
+"$PY" - "$FMATMPL" <<'PYEOF' || fail "fix 3 (fma warmAffinity) failed"
+import io, sys
+
+path = sys.argv[1]
+src = io.open(path, encoding="utf-8").read()
+
+MARK = "# wva-patch: warm-pool affinity"
+if MARK in src:
+    print("  fix 3 (fma warmAffinity): already applied")
+    sys.exit(0)
+
+# The requester pod spec's affinity block. Unique in the template: the
+# LauncherPopulationPolicy above it uses enhancedNodeSelector, not affinity.
+ANCHOR = (
+    "      affinity:\n"
+    "        nodeAffinity:\n"
+    "          requiredDuringSchedulingIgnoredDuringExecution:\n"
+)
+if ANCHOR not in src:
+    sys.exit("anchor missing (upstream shape changed): %r" % ANCHOR)
+
+# Inserted INSIDE the existing affinity block, before nodeAffinity. That
+# nodeAffinity stays load-bearing: WVA's resolver reads the accelerator name out
+# of it, and an accelerator it cannot resolve silences the saturation engine.
+INSERT = (
+    "      affinity:\n"
+    "{% if fma.warmAffinity is defined and fma.warmAffinity.enabled | default(false) %}\n"
+    "        " + MARK + ": prefer nodes that already hold warm capacity.\n"
+    "        # Binding is node-local, so a requester that lands where no sleeper\n"
+    "        # lives rebuilds from scratch (~50-90s) instead of waking one (~3s).\n"
+    "        # Preferred, not required: with the warm set full or absent the pod\n"
+    "        # still schedules and rebuilds, rather than sitting Pending.\n"
+    "        podAffinity:\n"
+    "          preferredDuringSchedulingIgnoredDuringExecution:\n"
+    "            # A sleeper here is the 3s path; outranks a mere launcher.\n"
+    "            - weight: {{ fma.warmAffinity.sleeperWeight | default(100) }}\n"
+    "              podAffinityTerm:\n"
+    "                topologyKey: kubernetes.io/hostname\n"
+    "                labelSelector:\n"
+    "                  matchLabels:\n"
+    "                    dual-pods.llm-d.ai/sleeping: \"true\"\n"
+    "            # Before anything has slept, the term above scores every node\n"
+    "            # zero. Fall back to where the launchers are at all.\n"
+    "            - weight: {{ fma.warmAffinity.launcherWeight | default(50) }}\n"
+    "              podAffinityTerm:\n"
+    "                topologyKey: kubernetes.io/hostname\n"
+    "                labelSelector:\n"
+    "                  matchLabels:\n"
+    "                    app.kubernetes.io/component: launcher\n"
+    "{% endif %}\n"
+    "        nodeAffinity:\n"
+    "          requiredDuringSchedulingIgnoredDuringExecution:\n"
+)
+
+src = src.replace(ANCHOR, INSERT, 1)
+io.open(path, "w", encoding="utf-8", newline="\n").write(src)
+print("  fix 3 (fma warmAffinity): applied")
+PYEOF
+
 echo "patch_harness: done ($REPO_DIR)"
