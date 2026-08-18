@@ -69,13 +69,20 @@ var _ = Describe("FMA parking - a parked variant's launchers", Label("full"), La
 
 		// Registration is what makes WVA collect for this model at all — with no
 		// ScaledObject there is no variant, the collector never runs for it, and
-		// every assertion below would pass for the wrong reason. minReplicaCount is
-		// 0 because this suite is about a model that is allowed to be parked.
-		By("registering the requester with minReplicaCount=0")
+		// every assertion below would pass for the wrong reason.
+		//
+		// minReplicaCount is 1, NOT 0, even though this suite is about parking. A
+		// variant registered at 0 is parked from the moment it is registered, so it
+		// never becomes active, the collector never runs for it, and the attribution
+		// this suite must first observe never happens — the wait below simply times
+		// out. Parking is therefore simulated by unbinding the pair, which is the
+		// state that actually matters here; the replica count is not what the guard
+		// keys on.
+		By("registering the requester, which is what makes WVA collect for this model at all")
 		scalerAddress := "wva-external-scaler." + cfg.WVANamespace + ".svc.cluster.local:9090"
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace,
 			layout.RequesterDeployment, layout.RequesterDeployment, layout.RequesterDeployment+"-wva",
-			0, 2, cfg.MonitoringNS,
+			1, 2, cfg.MonitoringNS,
 			fixtures.WithWVATriggerMetadata(modelID, "10.0"),
 			fixtures.WithExternalScalerTrigger(scalerAddress),
 		)).To(Succeed())

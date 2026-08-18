@@ -55,6 +55,14 @@ GPU. Sleep mode itself is healthy — vLLM `/is_sleeping` agrees with the
 
 ## 4. Why a WVA-induced pool sidesteps it
 
+> **Sidesteps, not solves.** This design lives with non-fungibility by relying
+> only on sleepers a variant produced itself, so it can never serve a spike in
+> model B from warmth model A left behind. A pool genuinely *shared* across
+> models needs the FMA change in
+> [`fma-shared-warm-pool.md`](fma-shared-warm-pool.md). The two compose: the
+> pricing law below works unchanged against a fungible pool and gets strictly
+> better with one.
+
 If the pool is populated **as a side-effect of WVA's own scale-downs**, every
 sleeper in it was created by a requester that really did reserve that GPU — so
 every sleeper is of the reusable kind. The unusable ones are exactly the
