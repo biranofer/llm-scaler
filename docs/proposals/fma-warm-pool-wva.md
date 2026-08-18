@@ -130,6 +130,44 @@ price simply rises and nothing else happens.
 WVA does not create instances, choose GPUs, write FMA custom resources, or
 manage launcher pods. It observes one number and adjusts one cost.
 
+### 6.4 Scale-to-zero is this design's largest producer, and its sharpest edge
+
+§4 rests on the pool being a side-effect of WVA's own scale-downs. **Parking is
+the limiting case of a scale-down**: it releases every GPU a variant holds at
+once, so a parked FMA variant produces sleepers keyed to all of them — the
+largest single deposit into the pool that can occur. Waking it again is the 2s
+path this proposal exists to reach, and scale-from-zero is where a 2s-versus-80s
+difference is most visible to a user, because nothing is serving in the meantime.
+
+So the two features compose in the intended direction. Three consequences follow,
+and none of them is obvious from either design read alone:
+
+**A parked variant's launchers must not be attributed to it.** They keep running
+and keep answering `/metrics` with zeros — a sleeping launcher reports
+`vllm:num_requests_running 0`, not nothing. Attributed, a parked model would read
+as serving, and the scale-from-zero engine declines to wake a model whose decode
+is already covered: parked, unwakeable, reported healthy. The pairing hop's
+partner-must-resolve guard is what prevents it
+(`fma-aware-attribution.md` §1), and `test/e2e/fma_parking_test.go` pins it.
+
+**Warmth decays, so a wake budget derived from the 2s case is wrong for a
+long-parked model.** A sleeper survives only while its launcher does, and the
+populator reaps launchers it considers excess (upstream ask 2). A model parked
+for minutes likely wakes in seconds; one parked overnight has had its sleepers
+reclaimed and rebuilt, and wakes on the 494s path. This is the interaction to
+measure before quoting any FMA wake SLO: **`retentionPeriod` chooses how long a
+model waits before parking; nothing chooses how long its warmth survives
+afterwards.** Until upstream ask 2 lands there is no knob for it.
+
+**`free(P)` counts warmth that a parked variant can no longer use.** The signal
+is per pool, but a sleeper is reusable only by a requester handed the same GPU
+(§3). A parked variant contributes to `free(P)` while being, for its own next
+wake, no more likely to reclaim its own sleepers than any other variant is. The
+price therefore reads the pool as more useful than it is, in proportion to how
+much of it belongs to parked variants. Bounded and self-correcting — the mistake
+is in the direction of spending warmth, not hoarding it — but it should be
+measured in phase 1 rather than assumed.
+
 ## 7. Configuration surface
 
 Placed against the layering in `wva-keda-external-scaler.md` §7.5, whose rule is
@@ -227,6 +265,9 @@ visible instead of merely slow.
   decision.
 - **Cold models never self-warm.** A model gets a sleeper only after being
   served and scaled down once. There is no pre-warming without a real allocation.
+- **Warmth is not durable.** Nothing keeps a sleeper alive for as long as its
+  model stays parked, so a long-parked variant wakes cold however healthy the
+  pool looked when it parked (§6.4).
 - **Warmth costs GPUs.** A sleeping instance still occupies its accelerator's
   slot. `max` is a spending limit, not free headroom.
 
