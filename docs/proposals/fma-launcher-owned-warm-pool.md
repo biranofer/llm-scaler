@@ -5,10 +5,14 @@ rediscovered. Origin: after measuring that every placement-based approach fails
 for the same structural reason, the question was asked the other way round —
 *do we need requesters at all?*
 
-**The idea in one sentence.** Give each launcher Pod the GPUs it uses, keep a
-known population of launchers, and scale by **waking and sleeping instances
-inside them** — instead of creating a requester Pod per replica and hoping the
-scheduler hands it the GPU a sleeper already occupies.
+**The idea in one sentence.** Give a launcher Pod the GPUs it uses, keep a known
+population of such launchers, and scale by **waking and sleeping instances inside
+them** — instead of creating a requester Pod per replica and hoping the scheduler
+hands it the GPU a sleeper already occupies.
+
+**Read the hybrid section before the rest.** Applying this to *all* launchers
+discards the property FMA was designed for (warm processes that cost no
+accelerators). Applying it to a small reserved subset keeps both.
 
 ---
 
@@ -96,6 +100,66 @@ The mechanism already exists: instances are created and deleted through the
 launcher API (`/v2/vllm/instances`), and sleep/wake are HTTP calls to the
 instance — which is exactly what `wakeUp` does today (`POST /wake_up` against
 `podIP:serverPort`). Nothing new is needed to drive it.
+
+## Why FMA was built the other way round, in its own words
+
+This is not an oversight to correct; it is a trade `docs/dual-pods.md` made
+deliberately, and the reasoning is worth stating because it bounds any change.
+
+Kubernetes assumes a Pod is both a description of workload and a set of OS
+processes. A launcher breaks that: it is "a flexible **platform** rather than a
+unit of workload", and dual pods exists "as a way of bridging that mismatch". So
+the roles were split — the requester **describes the workload** and therefore
+carries its resource requirements; the launcher **runs the processes**. The
+enabling trick is stated plainly:
+
+> we can construct Pods that have access to all of the accelerators on their node
+> while being accounted --- in the Kubernetes scheduler and kubelet --- as
+> consuming none of them.
+
+The objective is that warm processes cost nothing. The launcher-populator places
+a launcher on **every eligible node**; if each held accelerators, standing FMA up
+would reserve an entire cluster's GPUs before serving one token. Zero-GPU
+launchers are what make ubiquitous pre-warming affordable.
+
+**And the lottery is written into that same paragraph:**
+
+> The dual pods implementation gives to the process that actually runs vLLM an
+> environment variable setting that directs vLLM and the nvidia runtime to use
+> **the accelerators that were chosen by the Kubernetes scheduler and kubelet for
+> the server-requesting Pod**.
+
+The GPU is chosen by the scheduler, per requester, at scale-up time. A sleeping
+instance is pinned to a GPU chosen in a *previous* such decision, and nothing
+makes the scheduler repeat it. Reuse needs the same card drawn twice.
+
+So the design keeps Kubernetes as the accelerator allocator — ordinary
+scheduling, quota and accounting all keep working — and the price is that FMA
+does not get to choose the GPU. Everything measured above is that price.
+
+|  | zero-GPU launchers (today) | GPU-owning launchers |
+| --- | --- | --- |
+| Warm capacity costs | **nothing** | a held GPU |
+| Launchers can be everywhere | **yes** | only where you pay |
+| Who picks the GPU | Kubernetes, per scale-up | you, once at creation |
+| Wake reliability | lottery | **deterministic** |
+
+## The hybrid, which is probably the right shape
+
+An all-or-nothing inversion throws away the property the original design was
+built for. It is not necessary. Keep **zero-GPU launchers as the default
+everywhere** — cheap, ubiquitous, exactly as designed — and additionally run a
+small number of **GPU-owning launchers as a reserved warm pool**.
+
+- Up to K instances wake deterministically in 2-3 s, because those GPUs are held
+  and their instances are woken by choice rather than by scheduling.
+- Demand beyond K falls back to today's elastic behaviour, cold starts included.
+- K is a knob with a meaning a person can reason about: *how much am I willing to
+  pay for guaranteed sub-3-second capacity?*
+
+That is an allocation question in tokens of demand and cost, which is what WVA
+exists to answer, and it needs no change to how ordinary launchers work. It also
+degrades honestly: exceeding the reserve is slow, not broken.
 
 ## What is given up
 
