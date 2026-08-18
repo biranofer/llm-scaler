@@ -118,7 +118,8 @@ blocked.
 
 **R1 — Fungible warmth.** Warm reuse must not require the requester to be handed
 the one GPU a sleeper happens to sit on. Without this every other guarantee is
-built on scheduler luck.
+built on scheduler luck. **No viable mechanism is known** — see
+[Step 0 answered](#step-0-answered) and the measurement under it.
 
 **The original phrasing of R1 — "re-point `CUDA_VISIBLE_DEVICES` at bind time" —
 is not achievable, and step 0 has now established that.** See
@@ -208,25 +209,61 @@ influencing that assignment from a controller is a Kubernetes-level fight
 (device-plugin semantics, scheduler extenders) far larger than the change we
 wanted.
 
-**(b) Make warm reuse depend on host-resident weights, not on a GPU-pinned
-process.** Respawn the instance on whichever GPU the requester was actually given,
-reusing weights already resident in the launcher's host memory or page cache. The
-cost becomes a process start plus a host→device copy, instead of a download and a
-full load. This is generic, contains no WVA concept, and is a clean upstream
-story: *reuse the weights cache, not the process.*
+**(b) ~~Make warm reuse depend on host-resident weights, not on a GPU-pinned
+process.~~ Measured, and it does not exist.** The idea was to respawn on whichever
+GPU the requester was given, reusing weights already resident in host memory or
+page cache, paying a process start instead of a full load. It rests on storage
+being a large part of the cold start. It is not.
 
-Direction (b) also explains the measurement that started all of this. The 494s
-and ~50s figures are download-and-load costs. A host-cached respawn is a different
-quantity entirely — and **nobody has measured it yet**, which makes it the next
-question, in the same spirit as this one:
+### Measured on pokprod, 2026-08-18
 
-> How long does starting a vLLM instance take on a launcher that has already
-> served that model, with weights still in host cache, on a different GPU?
+`/model-cache` is **`model-pvc`, ReadWriteMany, IBM Spectrum Scale**, mounted by
+*every* launcher on every node. So there is no per-launcher download to avoid:
+each launcher already has the weights. Timing a full read of the 1.5 GB
+`model.safetensors` from inside four launchers, two of which hold a resident
+instance and two of which have never run one:
 
-If that is seconds, direction (b) delivers the pool. If it is tens of seconds, the
-shared pool is worth much less than assumed and this plan should be reconsidered
-rather than pushed. **Measure before implementing** — the same discipline that
-just saved the R1 work.
+| launcher | node | resident instances | pass 1 | pass 2 |
+| --- | --- | --- | --- | --- |
+| pfw8b | b93r38s0 | 0 | 2753 ms | 2800 ms |
+| hhj4j | b93r38s3 | 1 | 3484 ms | 2922 ms |
+| zhs9q | b93r39s0 | 0 | 2771 ms | 2902 ms |
+| zhwmp | b93r38s2 | 1 | 2807 ms | 2759 ms |
+
+**Reading the entire model takes ~2.8 s, and having served it before makes no
+difference.** Page-cache warmth is not visible above noise, and neither is the
+distinction between a launcher that has run the model and one that never has.
+
+So of a ~50 s cold start, storage is about **2.8 s**. The other ~47 s is GPU-side
+and vLLM initialisation — CUDA context, host→device transfer, graph capture — and
+a respawn pays all of it whatever the cache holds. **Direction (b) is dead:
+there is no storage penalty to avoid, so there is nothing for a host cache to
+save.**
+
+*Caveat:* `dd` reads sequentially to `/dev/null`, while vLLM's load also mmaps,
+converts and transfers. The measurement bounds the storage component; it does not
+model the rest. That bound is the point — whatever costs 47 s, it is not the PVC.
+
+### What this leaves
+
+The warm pool's value rests **entirely** on keeping the vLLM process alive, which
+is precisely what is GPU-pinned (step 0). Sleep mode is the only thing that avoids
+the 47 s, and it cannot be moved between GPUs. That collapses the two directions
+into one:
+
+- **(a) align the GPU the other way** — choose the sleeper first, then arrange for
+  the requester to be given *that* GPU — is now the only route to a fungible pool,
+  and it is the expensive one: device-plugin semantics, scheduler extenders, or a
+  requester that does not request a GPU at all.
+- A cross-model shared pool may simply not be reachable without changes deeper
+  than FMA — in vLLM's ability to rebind a sleeping engine to another device.
+
+**Recommendation: do not start the fork work on the strength of this plan.** The
+per-model warm pool in `fma-warm-pool-wva.md` still stands — it never needed
+fungibility, only sleepers a variant produced itself — and it is unaffected by
+this result. The *shared, cross-model* pool needs a different mechanism than
+either direction here proposed, and finding it starts with whether vLLM can be
+made to rebind a sleeping engine at all.
 
 ## Scale-to/from-zero is a first-class tenant
 
