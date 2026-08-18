@@ -116,15 +116,16 @@ So the honest summary:
 Four properties. The first two need FMA; the last two are WVA's and are not
 blocked.
 
-**R1 — Fungible warmth.** Warm reuse must not require the requester to be handed
-the one GPU a sleeper happens to sit on. Without this every other guarantee is
-built on scheduler luck. **No viable mechanism is known** — see
-[Step 0 answered](#step-0-answered) and the measurement under it.
+**R1 — Warm coverage, not fungible warmth.** A single sleeper cannot be made
+fungible (measured, below). The property that matters is instead that a requester
+LANDS on a GPU holding a sleeper for its model — achieved by keeping several
+sleepers co-resident rather than by re-pointing one. `--sleeper-limit` is the
+knob; ~1.4 GiB per sleeper is the price. See
+[Measured on pokprod](#measured-on-pokprod-2026-08-18).
 
 **The original phrasing of R1 — "re-point `CUDA_VISIBLE_DEVICES` at bind time" —
-is not achievable, and step 0 has now established that.** See
-[Step 0 answered](#step-0-answered). R1 is restated above
-as the property required, not the mechanism assumed.
+is not achievable**, and the goal it was reaching for is met a different way: by
+co-resident sleepers rather than a movable one.
 
 **R2 — Pool state that can be read before deciding.** Free sleepers per (model,
 accelerator, and the node set a requester could actually land on), exported by
@@ -153,9 +154,10 @@ Deliberately ordered so that nothing is filed upstream before there is a result
 worth filing.
 
 0. ~~**Answer the contingent question**: can a sleeping vLLM have its device
-   re-pointed without a weight reload?~~ **Answered: no.** See below. R1 is
-   restated; the fork work changes shape before it starts, which is exactly what
-   this step was for.
+   re-pointed without a weight reload?~~ **Answered: no** — and three further
+   rounds of measurement followed, which between them replaced the fork plan with
+   a configuration-and-policy plan. See
+   [Measured on pokprod](#measured-on-pokprod-2026-08-18).
 1. **WVA: R4, then R3.** Classify every FMA wake and stop assuming warm. No FMA
    dependency, useful immediately, and it establishes the baseline the later
    comparison needs.
@@ -176,94 +178,140 @@ worth filing.
 
 Steps 1 and 5 are WVA work and are **not blocked** by any of the fork work.
 
-## Step 0 answered
+## Measured on pokprod, 2026-08-18
 
-**A sleeping vLLM cannot be re-pointed at a different GPU without restarting the
-process.** Established by reading the fork, not by speculation:
+Three rounds of measurement, each of which changed the plan. Kept in full because
+two of them corrected an earlier conclusion in this same document.
 
-| path | where the device is fixed |
-| --- | --- |
-| separate provider pod | `CUDA_VISIBLE_DEVICES` written into the **pod spec** container env (`pkg/controller/dual-pods/inference-server.go:1917`) |
-| launcher-hosted instance | `config.env_vars["CUDA_VISIBLE_DEVICES"]` set from `gpu_uuids` **before** `multiprocessing.Process` spawns the server (`inference_server/launcher/launcher.py:187`) |
+### 1. A sleeping instance cannot change GPU (step 0) — stands
 
-In both cases the device is chosen at process start. An env var cannot be changed
-under a running process, and a CUDA context is bound to its device at
-initialisation, so "re-point at bind time" would mean killing and respawning the
-server — which is the very thing sleep mode exists to avoid. The GPU-UUID hash in
-the instance ID is therefore not an arbitrary choice: **it is an accurate
-statement of what the process can actually serve.**
+`CUDA_VISIBLE_DEVICES` is fixed at process start, in both spawn paths: the
+controller writes it into the pod-spec container env
+(`pkg/controller/dual-pods/inference-server.go:1917`), and the launcher writes it
+into `config.env_vars` before `multiprocessing.Process`
+(`inference_server/launcher/launcher.py:187`). An env var cannot change under a
+running process and a CUDA context binds at initialisation.
 
-This is the value of running step 0 first. Had R1 been implemented as written, the
-work would have been wasted, and the failure would have surfaced late — as a
-mysterious wake that still took 50s.
+**So the GPU-UUID hash in the instance ID is accurate, not arbitrary.** A single
+sleeper is not fungible, and no amount of re-keying makes it so. This conclusion
+survived everything below.
 
-### What replaces it
-
-The goal is unchanged; the mechanism must be. Two directions, and the second is
-the realistic one:
-
-**(a) Align the GPU the other way.** Choose the sleeper first, then arrange for the
-requester to be given *that* GPU. This keeps the process untouched, which is the
-ideal outcome — but the requester's GPU comes from the device plugin, and
-influencing that assignment from a controller is a Kubernetes-level fight
-(device-plugin semantics, scheduler extenders) far larger than the change we
-wanted.
-
-**(b) ~~Make warm reuse depend on host-resident weights, not on a GPU-pinned
-process.~~ Measured, and it does not exist.** The idea was to respawn on whichever
-GPU the requester was given, reusing weights already resident in host memory or
-page cache, paying a process start instead of a full load. It rests on storage
-being a large part of the cold start. It is not.
-
-### Measured on pokprod, 2026-08-18
+### 2. Storage is not the cost — so "reuse host-resident weights" is not the fix
 
 `/model-cache` is **`model-pvc`, ReadWriteMany, IBM Spectrum Scale**, mounted by
-*every* launcher on every node. So there is no per-launcher download to avoid:
-each launcher already has the weights. Timing a full read of the 1.5 GB
-`model.safetensors` from inside four launchers, two of which hold a resident
-instance and two of which have never run one:
+every launcher on every node, so there is no per-launcher download at all.
+Reading the whole 1.5 GB `model.safetensors`:
 
-| launcher | node | resident instances | pass 1 | pass 2 |
-| --- | --- | --- | --- | --- |
-| pfw8b | b93r38s0 | 0 | 2753 ms | 2800 ms |
-| hhj4j | b93r38s3 | 1 | 3484 ms | 2922 ms |
-| zhs9q | b93r39s0 | 0 | 2771 ms | 2902 ms |
-| zhwmp | b93r38s2 | 1 | 2807 ms | 2759 ms |
+| launcher | resident instances | pass 1 | pass 2 |
+| --- | --- | --- | --- |
+| pfw8b | 0 | 2753 ms | 2800 ms |
+| hhj4j | 1 | 3484 ms | 2922 ms |
+| zhs9q | 0 | 2771 ms | 2902 ms |
+| zhwmp | 1 | 2807 ms | 2759 ms |
 
-**Reading the entire model takes ~2.8 s, and having served it before makes no
-difference.** Page-cache warmth is not visible above noise, and neither is the
-distinction between a launcher that has run the model and one that never has.
+~2.8 s, identical whether the launcher has served the model or not. Weight I/O is
+a small and already-shared part of a cold start.
 
-So of a ~50 s cold start, storage is about **2.8 s**. The other ~47 s is GPU-side
-and vLLM initialisation — CUDA context, host→device transfer, graph capture — and
-a respawn pays all of it whatever the cache holds. **Direction (b) is dead:
-there is no storage penalty to avoid, so there is nothing for a host cache to
-save.**
+### 3. What a cold start is actually made of, and what a sleeper actually costs
 
-*Caveat:* `dd` reads sequentially to `/dev/null`, while vLLM's load also mmaps,
-converts and transfers. The measurement bounds the storage component; it does not
-model the rest. That bound is the point — whatever costs 47 s, it is not the PVC.
+Created a second instance on an idle GPU of an otherwise-quiet node, timed it,
+then deleted it. From its own log:
 
-### What this leaves
+```
+init engine (profile, create kv cache, warmup model) took 18.75 s (compilation: 12.35 s)
+torch.compile took 12.35 s in total
+Graph capturing finished in 3 secs, took 0.43 GiB
+```
 
-The warm pool's value rests **entirely** on keeping the vLLM process alive, which
-is precisely what is GPU-pinned (step 0). Sleep mode is the only thing that avoids
-the 47 s, and it cannot be moved between GPUs. That collapses the two directions
-into one:
+| quantity | measured |
+| --- | --- |
+| engine init, end to end | **~19 s** (not the ~50 s assumed) |
+| of which `torch.compile` | **12.35 s** |
+| of which CUDA graph capture | 3 s |
+| weight read from the PVC | ~2.8 s |
+| **GPU memory held by a SLEEPING instance** | **~1.4 GiB** |
+| GPU memory held while awake (`--gpu-memory-utilization 0.30`) | 25 GiB |
 
-- **(a) align the GPU the other way** — choose the sleeper first, then arrange for
-  the requester to be given *that* GPU — is now the only route to a fungible pool,
-  and it is the expensive one: device-plugin semantics, scheduler extenders, or a
-  requester that does not request a GPU at all.
-- A cross-model shared pool may simply not be reachable without changes deeper
-  than FMA — in vLLM's ability to rebind a sleeping engine to another device.
+Two corrections to earlier drafts of this document fall out:
 
-**Recommendation: do not start the fork work on the strength of this plan.** The
-per-model warm pool in `fma-warm-pool-wva.md` still stands — it never needed
-fungibility, only sleepers a variant produced itself — and it is unaffected by
-this result. The *shared, cross-model* pool needs a different mechanism than
-either direction here proposed, and finding it starts with whether vLLM can be
-made to rebind a sleeping engine at all.
+- **A sleeper does not hold its GPU.** An earlier reading of `nvidia-smi` totals
+  suggested it held ~81 GiB; that was other tenants' memory on a shared cluster.
+  The container sees only its own PID: **1386 MiB**. `is_sleeping` returns true
+  and the weights really are offloaded.
+- **The cold start is dominated by compilation, not by loading.** `torch.compile`
+  alone is 12.35 s of ~19 s. Note `/model-cache/vllm` (32 MB) and
+  `/model-cache/triton` (19 MB) are compile caches **already on the shared PVC**,
+  so this figure is with a warm compile cache — which is likely why earlier
+  measurements of a fresh model saw ~50 s and this saw ~19 s.
+
+### 4. Multiple instances per launcher: confirmed, and it is the answer
+
+The cluster already runs `--sleeper-limit=2` (sleeping servers permitted **per
+GPU**) and `maxInstances: 4` (instances per launcher pod). Creating a second
+instance alongside an existing sleeper **succeeded**, and both coexisted:
+
+```
+total=2 running=2
+  IsOqTGFHyahCVv running ['GPU-fc3875f6-...']   <- the pre-existing sleeper
+  efcf6278-7f55- running ['GPU-7af4810a-...']   <- created for this test
+```
+
+## What this means for a pool serving several models
+
+**It is achievable today, by configuration, and needs no FMA code change.** The
+error in the earlier draft was attacking the wrong mechanism: the goal is not to
+make one sleeper serve many models, but to keep **several sleepers, one per
+model, co-resident** — so whichever model spikes finds its own warm instance
+already there.
+
+The economics now have numbers:
+
+- A sleeper costs **~1.4 GiB** of GPU memory. On an 80 GiB accelerator, memory is
+  nowhere near the binding constraint.
+- The binding constraint is **`--sleeper-limit`**, a controller flag, default 1,
+  set to 2 here — and it is **controller-global rather than per pool**, which is
+  upstream ask 4 of `fma-warm-pool-wva.md`.
+- What a warm hit saves is **~19 s of engine init**, most of it compilation — not
+  weight loading, which is shared and cheap.
+- Only one instance per GPU can be *awake* at a realistic
+  `gpu-memory-utilization`, so a GPU covers N models warm and serves one at a
+  time.
+
+The GPU-alignment constraint from step 0 does not go away, but it stops being
+fatal: if a GPU holds sleepers for N models instead of 1, a requester landing
+there hits warm for any of those N. **Raising `sleeper-limit` raises the hit
+rate directly**, and its cost is 1.4 GiB per model per GPU.
+
+That turns the problem into exactly the one WVA is built for: **a budget of
+sleeper slots per GPU, and more models than slots.** Which models hold warm slots
+on which GPUs, and which sleeper is evicted when another model needs one, is a
+cross-model allocation question in tokens of demand. A pool-saturation threshold
+cannot express it; WVA's per-replica sizing can.
+
+## Revised recommendation
+
+**Do not fork FMA.** Not because the pool is unreachable — it is reachable — but
+because the mechanism is a flag and an allocation policy, both of which sit
+outside FMA's code.
+
+1. **WVA-side, unblocked:** treat sleeper slots as an allocatable resource. Read
+   the pool (`component=launcher` + `sleeping=true`), decide which models hold
+   slots, and price FMA demand as `fma-warm-pool-wva.md` §6.2 already describes.
+2. **Configuration, no code:** raise `--sleeper-limit` to the number of models a
+   GPU should cover. Measure the hit rate against it.
+3. **Upstream, small and generic:** per-pool rather than controller-global
+   `sleeper-limit` (ask 4), and pool state as a metric (ask 3). Both are
+   defensible alone and neither encodes a WVA concept.
+
+### Still to measure
+
+- **Do two sleepers for DIFFERENT models coexist on ONE GPU?** Only one model
+  (`Qwen3-0.6B`) is on this PVC, so the co-residency test above used two GPUs.
+  `sleeper-limit=2` is per GPU and permits it, but it has not been demonstrated.
+- **Hit rate as a function of `sleeper-limit`**, which is the number that decides
+  whether this is worth operating.
+- **Cold start with a COLD compile cache**, to size what the shared
+  `/model-cache/vllm` is already saving.
 
 ## Scale-to/from-zero is a first-class tenant
 
