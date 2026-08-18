@@ -768,6 +768,20 @@ ACTUATION_TRIALS ?= 5
 # dead endpoints in the InferencePool.
 FMA_VERSION ?= v0.6.4
 
+# Pin the FMA controllers to specific IMAGES rather than to a version of the
+# upstream registry. Needed to run a fork: a fork's build lives at its own path
+# (ours is ghcr.io/ev-shindin/dual-pods-controller), which shares no prefix with
+# upstream, so FMA_VERSION cannot reach it.
+#
+# Set this whenever a forked controller is under test. benchmark-standup re-runs
+# benchmark-fma-fixups, so without it a standup mid-experiment silently restores
+# the stock controller and the run measures unmodified behaviour:
+#
+#   make benchmark-fma-fixups BENCHMARK_NAMESPACE=<ns> \
+#     FMA_CONTROLLER_IMAGE=ghcr.io/ev-shindin/dual-pods-controller:aa072ef
+FMA_CONTROLLER_IMAGE ?=
+FMA_POPULATOR_IMAGE  ?=
+
 .PHONY: benchmark-fma-fixups
 benchmark-fma-fixups: ## Re-apply the FMA fixes a standup undoes: launcher RBAC + controller version (set BENCHMARK_NAMESPACE)
 	@# Run this after every FMA standup. Without it, FMA benchmarking does not
@@ -785,7 +799,8 @@ benchmark-fma-fixups: ## Re-apply the FMA fixes a standup undoes: launcher RBAC 
 	@if [ -z "$(BENCHMARK_NAMESPACE)" ]; then \
 		echo "ERROR: BENCHMARK_NAMESPACE is required"; exit 1; \
 	fi
-	@bash hack/benchmark/fma_fixups.sh $(BENCHMARK_NAMESPACE) $(FMA_VERSION)
+	@FMA_CONTROLLER_IMAGE="$(FMA_CONTROLLER_IMAGE)" FMA_POPULATOR_IMAGE="$(FMA_POPULATOR_IMAGE)" \
+		bash hack/benchmark/fma_fixups.sh $(BENCHMARK_NAMESPACE) $(FMA_VERSION)
 
 .PHONY: benchmark-verify-warm-affinity
 benchmark-verify-warm-affinity: ## Prove fma.warmAffinity beats default scheduler spreading (any cluster with >=3 nodes; no GPUs needed)

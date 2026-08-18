@@ -46,7 +46,24 @@ set -u
 
 NS="${1:?usage: fma_fixups.sh <namespace> [fma-version]}"
 VERSION="${2:-${FMA_VERSION:-v0.6.4}}"
-REG="ghcr.io/llm-d-incubation/llm-d-fast-model-actuation"
+REG="${FMA_REG:-ghcr.io/llm-d-incubation/llm-d-fast-model-actuation}"
+
+# The images this script pins each deployment to. Overridable because a build of
+# a fork lives somewhere else entirely -- ours is
+# ghcr.io/ev-shindin/dual-pods-controller, which shares no path prefix with the
+# upstream registry, so FMA_REG alone cannot express it.
+#
+# Without this the trap is silent and expensive: benchmark-standup re-runs these
+# fixups, so a standup in the middle of an experiment resets the controller to
+# the stock version and the run measures unmodified behaviour while every log
+# still says the fork is being tested. Set the image, not just the version:
+#
+#   FMA_CONTROLLER_IMAGE=ghcr.io/ev-shindin/dual-pods-controller:aa072ef \
+#     make benchmark-fma-fixups BENCHMARK_NAMESPACE=<ns>
+#
+# The populator is pinned separately and stays upstream unless it too is forked.
+CONTROLLER_IMAGE="${FMA_CONTROLLER_IMAGE:-${REG}/dual-pods-controller:${VERSION}}"
+POPULATOR_IMAGE="${FMA_POPULATOR_IMAGE:-${REG}/launcher-populator:${VERSION}}"
 
 kubectl get ns "$NS" >/dev/null 2>&1 || { echo "fma_fixups: no namespace $NS" >&2; exit 1; }
 
@@ -84,12 +101,14 @@ else
 fi
 
 echo
-echo "=== fix 2: FMA controllers at ${VERSION} ==="
+echo "=== fix 2: FMA controllers ==="
+echo "  controller: $CONTROLLER_IMAGE"
+echo "  populator:  $POPULATOR_IMAGE"
 # Container names differ per deployment (dual-pods uses "controller", the
 # populator uses "launcher-populator"), so read the name rather than assume it --
 # `kubectl set image` fails with "unable to find container named ..." otherwise,
 # and it fails per-deployment, so half the upgrade silently does not happen.
-upgrade() { # $1=deployment-name-substring  $2=image-name
+upgrade() { # $1=deployment-name-substring  $2=full image ref to pin to
     local dep
     dep=$(kubectl get deploy -n "$NS" -o name 2>/dev/null | grep -- "$1" | head -1 | cut -d/ -f2)
     [ -n "$dep" ] || { echo "  no deployment matching '$1' -- FMA may not be stood up here"; return 0; }
@@ -97,18 +116,18 @@ upgrade() { # $1=deployment-name-substring  $2=image-name
     c=$(kubectl get deploy "$dep" -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].name}' 2>/dev/null)
     local cur
     cur=$(kubectl get deploy "$dep" -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
-    if [ "$cur" = "${REG}/${2}:${VERSION}" ]; then
-        echo "  $dep already at ${VERSION}"
+    if [ "$cur" = "$2" ]; then
+        echo "  $dep already at $2"
         return 0
     fi
-    kubectl set image "deploy/$dep" "$c=${REG}/${2}:${VERSION}" -n "$NS" >/dev/null \
-        && echo "  $dep -> ${VERSION}" \
+    kubectl set image "deploy/$dep" "$c=$2" -n "$NS" >/dev/null \
+        && echo "  $dep: $cur -> $2" \
         || { echo "  FAILED to upgrade $dep" >&2; return 1; }
     kubectl rollout status "deploy/$dep" -n "$NS" --timeout=180s >/dev/null 2>&1 \
         && echo "    rolled out" || echo "    WARNING: rollout did not complete" >&2
 }
-upgrade dual-pods-controller dual-pods-controller
-upgrade launcher-populator   launcher-populator
+upgrade dual-pods-controller "$CONTROLLER_IMAGE"
+upgrade launcher-populator   "$POPULATOR_IMAGE"
 
 echo
 echo "=== launcher reflectors ==="
