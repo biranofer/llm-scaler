@@ -12,6 +12,15 @@ target replica count for that cycle (`D9` = decided 9) — read alongside `N` it
 controller reacting to demand before the replica count catches up (e.g. `13:04:30`: still 1
 ready replica, but already decided 7).
 
+Two things decide whether the report comes back populated:
+
+- **Controller verbosity.** The two per-replica lines are logged at `V(logging.DEFAULT)`, the
+  verbosity the shipped deployment runs at. A controller started with `-v=1` or lower
+  suppresses them and the report is empty.
+- **`--cycle-gap`** (default 3s) is the silence that separates two optimize cycles. It must
+  stay below `GLOBAL_OPT_INTERVAL`; the script warns on stderr if it merged cycles into one
+  row.
+
 ---
 
 # K1/K2 Capacity Decision Report

@@ -3,7 +3,7 @@
 the controller logs within a given results dir's run window, and render a
 markdown report of which fallback tier fired, when, and why.
 
-Reads six log lines:
+Reads eight log lines:
   - k2-decision                    (saturation_v2) per replica, per cycle:
                                     which of the four k2 priority tiers fired
                                     (observed / historical / derived /
@@ -11,16 +11,28 @@ Reads six log lines:
   - replica-capacity-decision      (saturation_v2) per replica, per cycle:
                                     k1 vs k2, which bound won, demand/queue
                                     inputs
-  - replica-capacity-no-cache-info (saturation_v2) when vllm:cache_config_info
-                                    is absent
+  - replica-capacity-skipped       (saturation_v2) vllm:cache_config_info is
+                                    absent AND no capacity-store record covers
+                                    the replica: it contributes no capacity
+  - replica-capacity-store-fallback
+                                    (saturation_v2) vllm:cache_config_info is
+                                    absent but a capacity-store record does
+                                    cover the replica
   - variant-capacity-source        (saturation_v2) zero-replica variant:
                                     compatible-variant borrow or no-data
   - zero-replica-capacity-estimate (saturation_v2) zero-replica variant:
                                     live / derived / stored-fallback estimate
+  - scheduler-queue-demand         (saturation_v2) per model, per cycle: the
+                                    EPP flow-control queue's token demand
   - Applied saturation decision via shared cache
                                     (steadystate) the actual, post-enforcement
                                     target replica count for the variant this
                                     cycle
+
+The two per-replica lines are logged at V(logging.DEFAULT), which is the
+verbosity the shipped deployment runs at (cmd/main.go defaults -v to
+logging.DEFAULT). Started with -v=1 or lower, the controller suppresses them
+and this report comes back empty.
 
 Output:
   metrics/processed/k2_decisions.json   (raw per-event records)
@@ -36,7 +48,7 @@ import json
 import re
 import subprocess
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,16 +69,25 @@ LOG_LINE = re.compile(
 )
 
 DECISION_MSG = "Applied saturation decision via shared cache"
+K2_MSG = "k2-decision"
+RC_MSG = "replica-capacity-decision"
+SQ_MSG = "scheduler-queue-demand"
 
 MESSAGES = {
-    "k2-decision",
-    "replica-capacity-decision",
-    "replica-capacity-no-cache-info",
+    K2_MSG,
+    RC_MSG,
+    SQ_MSG,
+    "replica-capacity-skipped",
+    "replica-capacity-store-fallback",
     "variant-capacity-source",
     "zero-replica-capacity-estimate",
-    "scheduler-queue-demand",
     DECISION_MSG,
 }
+
+# Default cycle-clustering window, in seconds. See assign_cycles(). Must sit
+# comfortably below GLOBAL_OPT_INTERVAL (the gap *between* cycles) and above
+# the spread of a single cycle's own log lines.
+DEFAULT_CYCLE_GAP = 3.0
 
 
 def md_table(headers, rows):
@@ -87,101 +108,152 @@ def md_table(headers, rows):
     return lines
 
 
-# Legend for the abbreviated codes in the per-iteration detail table's
-# "Inputs", "Bound", and "Decision" columns — kept short so each row fits on
-# one line.
-INPUTS_LEGEND = (
-    "q=queueLength/queueThreshold, h=history-window sample count, "
-    "in/out=avg input/output tokens this cycle, no-sig=no observed/historical/"
-    "derived signal (fell all the way to k1)"
-)
+# Legend for the abbreviated codes in the detail table's "Bound" and "Decision"
+# columns — kept short so each row fits on one line.
 BOUND_LEGEND = "k1=memory-bound won, k2=compute-bound won"
 DECISION_LEGEND = "DN = the controller decided N replicas (post scale-to-zero/min-replica enforcement)"
-
-
-def format_priority_inputs(priority, e):
-    """Renders the fallback-chain inputs specific to whichever k2 priority
-    tier fired, for the per-iteration detail table, as a short code (see
-    INPUTS_LEGEND) rather than a sentence — keeps each row to one line."""
-    if priority == "P1-obs":
-        return f"q{e.get('queueLength','?')}/{e.get('queueThreshold','?')} h{e.get('historyWindowLen','?')}"
-    if priority == "P2-hist":
-        return f"h{e.get('historyWindowLen','?')}"
-    if priority == "P3-k2":
-        return f"in{e.get('avgInputTokens','?')} out{e.get('avgOutputTokens','?')}"
-    if priority == "P4-k1":
-        return "no-sig"
-    return "?"
 
 
 def format_bound(bound_by):
     return {"k1-memory": "k1", "k2-compute": "k2"}.get(bound_by, bound_by)
 
 
-def build_cycles(rc_events, k2_events, sq_by_ts, decision_by_ts):
-    """Aggregates k2-decision + replica-capacity-decision + scheduler-queue-demand
-    + the applied decision into ONE row per optimize cycle (timestamp),
-    totalled across every replica that reported that cycle — not one row per
-    replica, and not a naive walk of raw events (a cycle with several
-    replicas at different priorities is one aggregate point, not several
-    same-timestamp entries read as a sequence that never happened in time)."""
-    rc_by_ts = defaultdict(list)
-    for e in rc_events:
-        rc_by_ts[e["_ts"]].append(e)
-    k2_by_ts = defaultdict(list)
-    for e in k2_events:
-        k2_by_ts[e["_ts"]].append(e)
+def parse_iso(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
+
+def assign_cycles(events, gap_seconds):
+    """Groups timestamp-sorted events into optimize cycles, returning a list of
+    per-cycle event lists.
+
+    The controller stamps logs at whole-second precision (controller-runtime's
+    RFC3339 time encoder), and one optimize cycle emits all of its lines inside
+    a fraction of a second. Joining on exact timestamp equality therefore
+    usually works — and silently produces garbage when it does not: a cycle
+    that happens to straddle a second boundary splits into two rows, each with
+    N halved, k1/k2 blank, demand totals split, and no applied decision. In the
+    report that is indistinguishable from a real half-idle cycle.
+
+    Clustering on the gap between consecutive events removes the boundary
+    sensitivity: inside a cycle that gap is 0-1s, between cycles it is the
+    optimize interval (15s by default), so any threshold between the two
+    separates them cleanly.
+    """
     cycles = []
-    for ts in sorted(set(rc_by_ts) | set(k2_by_ts)):
-        rcs = rc_by_ts.get(ts, [])
-        k2s = k2_by_ts.get(ts, [])
-
-        priorities = [k.get("priority", "?") for k in k2s]
-        priority_label = ",".join(sorted(set(priorities))) if priorities else "?"
-        # k1 and k2 are shared across replicas of one variant unless their
-        # history-bucket key differs (rare within one cycle) — show the most
-        # common value rather than every replica's copy.
-        k1_common = Counter(r.get("k1MemoryBound") for r in rcs).most_common(1)
-        k2_common = Counter(r.get("k2ComputeBound") for r in rcs).most_common(1)
-        bound_counts = Counter(format_bound(r.get("boundBy", "?")) for r in rcs)
-
-        tokens_in_use = sum(r.get("tokensInUse", 0) or 0 for r in rcs)
-        local_queue = sum(r.get("localQueueDemand", 0) or 0 for r in rcs)
-        replica_demand_total = sum(r.get("replicaDemand", 0) or 0 for r in rcs)
-
-        sq = sq_by_ts.get(ts)
-        epp_queue = (sq.get("estimatedTokens") if sq else 0) or 0
-
-        target = decision_by_ts.get(ts)
-        decision_label = f"D{target}" if target is not None else "?"
-
-        cycles.append({
-            "ts": ts,
-            "time_short": ts.split("T")[1].split("+")[0] if "T" in ts else ts,
-            "n": max(len(rcs), len(k2s)),
-            "priority_label": priority_label,
-            "k1": k1_common[0][0] if k1_common else "?",
-            "k2": k2_common[0][0] if k2_common else "?",
-            "bound_label": ",".join(sorted(bound_counts)) if bound_counts else "?",
-            "tokens_in_use": tokens_in_use,
-            "local_queue": local_queue,
-            "epp_queue": epp_queue,
-            "total_demand": replica_demand_total + epp_queue,
-            "decision": decision_label,
-        })
+    prev = None
+    for e in events:
+        ts = parse_iso(e["_ts"])
+        if prev is None or (ts - prev).total_seconds() > gap_seconds:
+            cycles.append([])
+        cycles[-1].append(e)
+        prev = ts
     return cycles
 
 
-def parse_iso(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+def warn_if_cycles_merged(cycles, gap_seconds):
+    """scheduler-queue-demand is emitted exactly once per model per optimize
+    cycle, which makes it a reliable marker for whether clustering over-merged.
+    Two of them for one model inside a single cluster means --cycle-gap is at
+    or above the optimize interval, so each row is covering several cycles."""
+    for cycle in cycles:
+        per_model = Counter(e.get("modelID") for e in cycle if e["_msg"] == SQ_MSG)
+        if per_model and max(per_model.values()) > 1:
+            print(
+                f"WARNING: --cycle-gap={gap_seconds}s merged several optimize cycles into one "
+                f"row (saw {max(per_model.values())} {SQ_MSG} events for one model in a single "
+                "cluster). Lower it below the controller's GLOBAL_OPT_INTERVAL.",
+                file=sys.stderr,
+            )
+            return
+
+
+def build_cycle_row(cycle, variant):
+    """Aggregates one optimize cycle's events into a single row for `variant`,
+    totalled across every replica of it that reported that cycle — not one row
+    per replica. Returns None when this variant did not report in this cycle."""
+    rcs = [e for e in cycle if e["_msg"] == RC_MSG and e.get("variant") == variant]
+    k2s = [e for e in cycle if e["_msg"] == K2_MSG and e.get("variant") == variant]
+    if not rcs and not k2s:
+        return None
+
+    # scheduler-queue-demand is model-level, not per-variant, so join it on the
+    # modelID this variant's own events reported rather than on whichever queue
+    # event happens to share the cycle. With several models in one log window
+    # that is the difference between this model's number and another model's.
+    model_ids = {e.get("modelID") for e in rcs + k2s}
+    sq = next((e for e in cycle
+               if e["_msg"] == SQ_MSG and e.get("modelID") in model_ids), None)
+
+    # The applied-decision line's "variant" field is "namespace/name" (a
+    # composite cache key — see steadystate/engine.go), while every
+    # saturation_v2 event uses the bare name. Strip the namespace prefix so
+    # both sides join on the same key.
+    decision = next((e for e in cycle
+                     if e["_msg"] == DECISION_MSG
+                     and e.get("variant", "").rsplit("/", 1)[-1] == variant), None)
+
+    priorities = [k.get("priority", "?") for k in k2s]
+    # k1 and k2 are shared across replicas of one variant unless their
+    # history-bucket key differs (rare within one cycle) — show the most
+    # common value rather than every replica's copy.
+    k1_common = Counter(r.get("k1MemoryBound") for r in rcs).most_common(1)
+    k2_common = Counter(r.get("k2ComputeBound") for r in rcs).most_common(1)
+    bound_counts = Counter(format_bound(r.get("boundBy", "?")) for r in rcs)
+
+    epp_queue = (sq.get("estimatedTokens") if sq else 0) or 0
+    replica_demand_total = sum(r.get("replicaDemand", 0) or 0 for r in rcs)
+    ts = min(e["_ts"] for e in rcs + k2s)
+    target = decision.get("target") if decision else None
+
+    return {
+        "ts": ts,
+        "time_short": ts.split("T")[1].split("+")[0] if "T" in ts else ts,
+        "n": max(len(rcs), len(k2s)),
+        "priority_label": ",".join(sorted(set(priorities))) if priorities else "?",
+        "k1": k1_common[0][0] if k1_common else "?",
+        "k2": k2_common[0][0] if k2_common else "?",
+        "bound_label": ",".join(sorted(bound_counts)) if bound_counts else "?",
+        "tokens_in_use": sum(r.get("tokensInUse", 0) or 0 for r in rcs),
+        "local_queue": sum(r.get("localQueueDemand", 0) or 0 for r in rcs),
+        "epp_queue": epp_queue,
+        "total_demand": replica_demand_total + epp_queue,
+        "decision": f"D{target}" if target is not None else "?",
+    }
+
+
+def fetch_logs(namespace, since_seconds):
+    """Returns the controller's logs, or exits non-zero. A kubectl failure —
+    expired token, wrong namespace, no matching pods — must not reach the
+    report as an empty log window; that reads as "the controller never logged
+    anything" and sends whoever holds the report off to check the image."""
+    cmd = ["kubectl", "logs", "-n", namespace,
+           "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
+           f"--since={since_seconds}s", "--tail=200000"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"ERROR: {' '.join(cmd)} failed (exit {proc.returncode}):", file=sys.stderr)
+        print(proc.stderr.strip(), file=sys.stderr)
+        sys.exit(1)
+    if not proc.stdout.strip():
+        print(f"ERROR: no controller logs in namespace {namespace!r} over the last "
+              f"{since_seconds}s. Check the -n namespace and that the "
+              "workload-variant-autoscaler pod is running.", file=sys.stderr)
+        sys.exit(1)
+    return proc.stdout
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("results_dir", help="Path to .../results/<treatment>_<i>")
     ap.add_argument("-n", "--namespace", required=True)
+    ap.add_argument("--cycle-gap", type=float, default=DEFAULT_CYCLE_GAP,
+                    help="Seconds of silence separating two optimize cycles. Must be below the "
+                         f"controller's GLOBAL_OPT_INTERVAL. Default: {DEFAULT_CYCLE_GAP}")
     args = ap.parse_args()
+
+    if args.cycle_gap <= 0:
+        print("ERROR: --cycle-gap must be positive", file=sys.stderr)
+        sys.exit(1)
 
     rd = Path(args.results_dir).resolve()
     meta_path = rd / "run_metadata.yaml"
@@ -196,12 +268,7 @@ def main():
     now = datetime.now(timezone.utc)
     since_seconds = int((now - start).total_seconds()) + 90
 
-    logs = subprocess.run(
-        ["kubectl", "logs", "-n", args.namespace,
-         "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
-         f"--since={since_seconds}s", "--tail=200000"],
-        capture_output=True, text=True,
-    ).stdout
+    logs = fetch_logs(args.namespace, since_seconds)
 
     events = []
     for line in logs.splitlines():
@@ -226,7 +293,7 @@ def main():
     json_out = processed_dir / "k2_decisions.json"
     json_out.write_text(json.dumps({"events": events}, indent=2))
 
-    report = render_report(events, start, stop)
+    report = render_report(events, start, stop, args.cycle_gap)
     reports_dir = rd / "metrics" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     md_out = reports_dir / "k2_decision_report.md"
@@ -236,7 +303,7 @@ def main():
     print(f"Wrote {md_out}")
 
 
-def render_report(events, start, stop):
+def render_report(events, start, stop, cycle_gap):
     lines = []
     lines.append("# K1/K2 Capacity Decision Report")
     lines.append("")
@@ -244,53 +311,33 @@ def render_report(events, start, stop):
     lines.append(f"Total events captured: {len(events)}")
     lines.append("")
 
-    k2_events = [e for e in events if e["_msg"] == "k2-decision"]
+    k2_events = [e for e in events if e["_msg"] == K2_MSG]
     variants = sorted({e.get("variant", "?") for e in k2_events})
 
-    # scheduler-queue-demand is model-level (one per cycle, not per variant or
-    # per replica) — joined into each variant's per-iteration table by
-    # timestamp only. Fine for the common single-model-per-report case; with
-    # several models sharing a log window this would need a modelID filter too.
-    sq_by_ts = {e["_ts"]: e for e in events if e["_msg"] == "scheduler-queue-demand"}
-
-    # The applied-decision line's "variant" field is "namespace/name" (a
-    # composite cache key — see steadystate/engine.go), while every
-    # saturation_v2 event uses the bare name. Strip the namespace prefix so
-    # both sides join on the same key.
-    decision_events = [e for e in events if e["_msg"] == DECISION_MSG]
+    cycles = assign_cycles(events, cycle_gap)
+    warn_if_cycles_merged(cycles, cycle_gap)
 
     for variant in variants:
-        v_events = [e for e in k2_events if e.get("variant") == variant]
-        if not v_events:
+        rows = [r for r in (build_cycle_row(c, variant) for c in cycles) if r]
+        if not rows:
             continue
-
-        rc_events = [e for e in events
-                     if e["_msg"] == "replica-capacity-decision" and e.get("variant") == variant]
-
-        decision_by_ts = {
-            e["_ts"]: e.get("target")
-            for e in decision_events
-            if e.get("variant", "").rsplit("/", 1)[-1] == variant
-        }
-
-        cycles = build_cycles(rc_events, v_events, sq_by_ts, decision_by_ts)
 
         lines.append(f"## Variant: {variant}")
         lines.append("")
         lines.append("One row per optimize cycle, totalled across every ready replica of this "
-                      "variant that cycle (N). KVinUse/LocalQ/EPPq/TotalDemand are all in tokens; "
-                      "Priority lists every k2 tier that fired across N replicas this cycle "
-                      "(P1-obs=observed, P2-hist=historical average, P3-k2=derived from deployment "
-                      "args, P4-k1=no signal, memory-bound only). Time is HH:MM:SS on the run date "
-                      "above.")
+                     "variant that cycle (N). KVinUse/LocalQ/EPPq/TotalDemand are all in tokens; "
+                     "Priority lists every k2 tier that fired across N replicas this cycle "
+                     "(P1-obs=observed, P2-hist=historical average, P3-k2=derived from deployment "
+                     "args, P4-k1=no signal, memory-bound only). Time is HH:MM:SS on the run date "
+                     "above.")
         lines.append("")
         lines.append(f"Legend — Bound: {BOUND_LEGEND}.  Decision: {DECISION_LEGEND}.")
         lines.append("")
 
         detail_rows = [[
-            c["time_short"], c["n"], c["priority_label"], c["k2"], c["k1"], c["bound_label"],
-            c["tokens_in_use"], c["local_queue"], c["epp_queue"], c["total_demand"], c["decision"],
-        ] for c in cycles]
+            r["time_short"], r["n"], r["priority_label"], r["k2"], r["k1"], r["bound_label"],
+            r["tokens_in_use"], r["local_queue"], r["epp_queue"], r["total_demand"], r["decision"],
+        ] for r in rows]
         lines.extend(md_table(
             ["Time", "N", "Priority", "k2", "k1", "Bound", "KVinUse", "LocalQ", "EPPq",
              "TotalDemand", "Decision"],
@@ -298,9 +345,10 @@ def render_report(events, start, stop):
         lines.append("")
 
     if not k2_events:
-        lines.append("_No k1/k2 decision events found in the run window. "
-                      "Check that the controller image includes the k1/k2 logging "
-                      "and that LOG_LEVEL permits INFO output._")
+        lines.append("_No k1/k2 decision events found in the run window. The two per-replica "
+                     "lines are logged at V(logging.DEFAULT): check that the controller was not "
+                     "started with -v=1 or lower, and that its image includes the k1/k2 "
+                     "logging._")
         lines.append("")
 
     return "\n".join(lines)
