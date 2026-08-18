@@ -2,10 +2,15 @@
 
 ## Status
 
-Proposed. Fact-checked against pokprod001 on 2026-08-14; see
-[Fact-check status](#fact-check-status) for which claims are measured, which are
-sourced from FMA's code, and which remain unverified. One unverified claim is
-load-bearing and must be settled before implementation.
+**Phases 1 and 2 are implemented and merged** (`749531b9` the pairing hop,
+`daff8ceb` the launcher PodMonitor, plus `docs/guides/fma/`). Phases 0.5, 3 and 4
+remain open; phase 4 (GPU accounting) is the one with a correctness consequence
+rather than a coverage one — see §10.
+
+Fact-checked against pokprod001 on 2026-08-14; see
+[Fact-check status](#fact-check-status) for which claims are measured and which
+come from FMA's code. Nothing load-bearing is unverified: the two claims that
+required binding a live pair were settled in phase 0.
 
 ## Problem
 
@@ -1099,17 +1104,23 @@ End-to-end, on a real FMA install: drive load, then assert
    drive an FMA variant with no attribution fix and no PodMonitor change, using
    EPP signals already collected, and brings WVA level with what plain KEDA does
    on FMA today. Must be explicit in status and metrics, never silent.
-1. **Locator pairing hop + tests.** Self-contained. Makes FMA measurable
-   anywhere the launchers are already scraped correctly. Includes the
-   scale-target-membership guard (§1.5) and the `sleeping` label guard (§2) —
-   both are part of phase 1, not follow-ups; without them the hop either
-   attributes nothing or attributes sleeping pods.
-2. **Scrape enablement.** PodMonitor, preflight, docs.
-3. **Discovery target rules.** Requester-only namespaces become supported.
-4. **GPU accounting** via `accelerators`.
+1. ~~**Locator pairing hop + tests.**~~ **Done** (`749531b9`) —
+   `locateViaPairing` in `internal/collector/locator/locator.go`, with the
+   scale-target-membership guard (§1.5) and the `sleeping` guard (§2), covered by
+   `pairing_test.go`. Four miss reasons ship with it (`unbound_launcher`,
+   `pairing_unresolved`, `other_model_variant`, `unresolved`).
+2. ~~**Scrape enablement.**~~ **Done** (`daff8ceb`) —
+   `config/fma-launcher-metrics/`, plus `docs/guides/fma/`.
+3. **Discovery target rules.** Requester-only namespaces become supported. Open.
+4. **GPU accounting** via `accelerators`. Open, and the one that matters: until
+   it lands, a warm pool's GPUs are invisible to the limiter (§10), so WVA
+   over-states free capacity by exactly the resident launcher count and will
+   authorise scale-up into GPUs that are already occupied. Everything above is a
+   measurement gap; this one is a wrong answer.
 
-Phase 1 is worth landing alone: it is ~40 lines behind a guard that cannot fire
-without FMA.
+Phase 0.5 (pool-level degraded mode, §9) was never built and is now largely moot:
+phases 1–2 give real attribution, which is what 0.5 was a cheap substitute for.
+Keep it only if a deployment turns up where the launchers cannot be scraped.
 
 ## Upstream asks for FMA
 
@@ -1272,9 +1283,6 @@ coupling is one line rather than an assumption spread through the collector.
   builds targets from pod metadata, there is one `server-port` annotation per
   pod, and so only one instance's rows exist to attribute. Perfect attribution
   cannot recover a series that was never collected. See upstream request 5.
-- **Does the `dual` label survive a launcher restart** before rebinding? If the
-  label lands after the container is ready, there is a window where a live
-  engine is unattributed. Harmless (it under-reports supply) but worth measuring.
 - **Does the `dual` label survive a launcher restart** before rebinding? If the
   label lands after the container is ready, there is a window where a live
   engine is unattributed. Harmless (it under-reports supply) but worth measuring.
