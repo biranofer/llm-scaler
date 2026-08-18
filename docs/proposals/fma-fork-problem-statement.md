@@ -18,9 +18,46 @@ sometimes builds a new one in 41–90 s, and nothing an operator or an autoscale
 controls decides which** — so actuation latency is unpredictable by an order of
 magnitude, and the slow path silently destroys warm capacity on its way through.
 
+## Measured 2026-08-18: 0 woke, 3 rebuilt — with the pool VERIFIED warm
+
+The decisive run, and it moves the root cause. Requesters spread one per node,
+pool warmed by scaling up and back, gate passed (`warm_pool.sh verify` rc=0, 3
+sleepers). Then 2 → 5:
+
+```
+2bjf2  pokprod-b93r43s3   64s  rebuilt
+4sf2r  pokprod-b93r39s2   64s  rebuilt
+rmwgm  pokprod-b93r43s1   95s  rebuilt
+--> 0 woke, 3 rebuilt
+```
+
+**Two of the three landed on `b93r43*` nodes, which host no launcher at all.**
+The launcher pool lives on `b93r38*`/`b93r39*`. Binding is node-local, so a wake
+was impossible before GPU alignment was ever reached.
+
+**So node placement fails first, and GPU alignment is the second-order problem.**
+The `LauncherPopulationPolicy` pins launchers to a subset of nodes, while the
+requester Deployment carries only `nvidia.com/gpu.product Exists` — no
+nodeSelector, no affinity toward where warm capacity actually is. The scheduler
+places requesters with **no knowledge of where sleepers live**, across a much
+larger node set than the pool occupies.
+
+This also shows the earlier "constrain both halves" mitigation is **not currently
+in place** on this cluster: the requester Deployment was checked and has no node
+constraint. Any measurement taken in this state is measuring the cold path by
+construction.
+
 ## Why it happens
 
-Three facts, each verified, that together make the outcome a coin toss:
+Four facts, each verified. The first is the one that fires first:
+
+0. **The requester's NODE is chosen without reference to warm capacity.** The
+   populator decides where launchers live; the scheduler decides where requesters
+   live; nothing connects them. Measured above: 2 of 3 requesters landed on nodes
+   with no launcher.
+
+The remaining three then decide the outcome among the requesters that do land
+somewhere useful:
 
 1. **A sleeping instance is pinned to one GPU.** The instance ID is a hash
    including the GPU UUIDs, and `CUDA_VISIBLE_DEVICES` is fixed at process start
@@ -94,6 +131,27 @@ new API, no scheduler interaction, and no WVA concept.
 **How to verify:** create an instance on a launcher that already holds a sleeper
 for a different GPU, and assert the sleeper survives. The pattern is in
 `fma-shared-warm-pool.md` §4 — two instances co-resident, `total=2 running=2`.
+
+### Fix 1.5 — Make requesters land where the warm capacity is
+
+**Problem:** the highest-yield gap, and the cheapest to close. Launchers are
+pinned to a subset of nodes; requesters are unconstrained. Measured: 0 of 3 woke
+because 2 landed on nodes with no launcher.
+
+**Change, in increasing order of ambition:**
+
+- **(config, today, no code)** constrain the requester Deployment to the same node
+  set as the `LauncherPopulationPolicy`. This is a nodeSelector/affinity edit and
+  it is what upstream's own `ocp-wva-fma-hotstart` scenario does. It should be
+  verified before any fork work, because it may recover most of the wake rate on
+  its own.
+- **(FMA)** have the dual-pods controller express warm capacity as scheduling
+  input — node affinity injected onto the requester, or a scheduler hint — so
+  placement follows sleepers rather than ignoring them.
+
+**Why it comes before the GPU-alignment work:** a requester on a node with no
+launcher cannot wake anything however well the GPUs line up. Fixing alignment
+while placement is unconstrained fixes the second problem and leaves the first.
 
 ### Fix 2 — Let warm capacity be provisioned deliberately
 
