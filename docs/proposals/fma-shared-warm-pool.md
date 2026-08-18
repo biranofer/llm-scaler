@@ -383,6 +383,9 @@ filed. Recorded so it is not rediscovered a third time.
 
 ## See also
 
+- [`fma-launcher-owned-warm-pool.md`](fma-launcher-owned-warm-pool.md) — the
+  other direction entirely: give launchers their GPUs and drop requesters, so a
+  scale-up wakes a chosen instance instead of rolling the scheduler's dice
 - [`fma-fork-problem-statement.md`](fma-fork-problem-statement.md) — **what the
   fork must actually fix**, with the wake non-determinism evidence consolidated
 - [`fma-warm-pool-wva.md`](fma-warm-pool-wva.md) — the no-FMA-change pricing
