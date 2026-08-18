@@ -238,11 +238,22 @@ Two corrections to earlier drafts of this document fall out:
   suggested it held ~81 GiB; that was other tenants' memory on a shared cluster.
   The container sees only its own PID: **1386 MiB**. `is_sleeping` returns true
   and the weights really are offloaded.
-- **The cold start is dominated by compilation, not by loading.** `torch.compile`
-  alone is 12.35 s of ~19 s. Note `/model-cache/vllm` (32 MB) and
-  `/model-cache/triton` (19 MB) are compile caches **already on the shared PVC**,
-  so this figure is with a warm compile cache — which is likely why earlier
-  measurements of a fresh model saw ~50 s and this saw ~19 s.
+- **The ~19 s figure is NOT representative, and the error was mine.** It is
+  dominated by `torch.compile` (12.35 s) — but that compilation happened only
+  because the test instance MISSED the shared compile cache. FMA already hosts
+  pre-compiled artifacts: `/model-cache/vllm/torch_compile_cache/` is on the
+  ReadWriteMany PVC and is reused across launchers. The test passed
+  `--gpu-memory-utilization 0.30` instead of the standard `0.95`, and a different
+  config is a different cache key, so it compiled from scratch and wrote a second
+  key — the directory is stamped with the test's start time and the cache grew
+  from 32 MB to 63 MB during the run.
+
+  **A real bind, with the ISC's own config, hits that cache and skips the 12.35
+  s.** The true cold start for a matching config is therefore well under 19 s and
+  has not been measured. This matters to the whole case: the value of a sleeper is
+  the gap between a warm wake (~2 s) and a cache-hitting cold start, not the gap
+  to a cache-missing one. **Measure that gap before operating on it** — the
+  argument for a large sleeper pool is proportionally weaker.
 
 ### 4. Multiple instances per launcher: confirmed, and it is the answer
 
@@ -310,8 +321,10 @@ outside FMA's code.
   `sleeper-limit=2` is per GPU and permits it, but it has not been demonstrated.
 - **Hit rate as a function of `sleeper-limit`**, which is the number that decides
   whether this is worth operating.
-- **Cold start with a COLD compile cache**, to size what the shared
-  `/model-cache/vllm` is already saving.
+- **Cold start with the ISC's OWN config**, so the shared compile cache is hit.
+  This is the number the whole case rests on and the one measurement here got
+  wrong. Until it exists, the benefit of a sleeper is unquantified: it is the gap
+  from ~2 s to *that* figure, not to the 19 s a cache miss costs.
 
 ## Scale-to/from-zero is a first-class tenant
 
