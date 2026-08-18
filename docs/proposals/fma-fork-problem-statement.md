@@ -35,6 +35,30 @@ rmwgm  pokprod-b93r43s1   95s  rebuilt
 The launcher pool lives on `b93r38*`/`b93r39*`. Binding is node-local, so a wake
 was impossible before GPU alignment was ever reached.
 
+### The natural experiment that proves it
+
+A follow-up run intended to test Fix 1.5 **failed to apply its node constraint**
+(`error decoding patch: unexpected end of JSON input`), so the requesters were
+placed by the scheduler as usual. The result is more convincing than the intended
+test would have been, because nothing was arranged:
+
+```
+j595g  pokprod-b93r39s1   2s   WOKE      <- a node that HAS a launcher
+bfzhq  pokprod-b93r43s1   58s  rebuilt   <- no launcher on this node
+zpw6x  pokprod-b93r43s3   58s  rebuilt   <- no launcher on this node
+--> 1 woke, 2 rebuilt
+```
+
+**The single requester that happened to land on a launcher node woke in 2
+seconds.** The two that landed elsewhere rebuilt in 58 s. Same cluster, same
+pool, same moment — the only variable was the node.
+
+Two things follow. Warm binding **works**, and is worth ~56 s when it happens; and
+the reason it usually does not happen is placement, not the binding logic. A run
+that constrains the requester to the launcher node set has still not been done —
+the patch above was malformed — so **Fix 1.5 remains untested, but its premise is
+now measured.**
+
 **So node placement fails first, and GPU alignment is the second-order problem.**
 The `LauncherPopulationPolicy` pins launchers to a subset of nodes, while the
 requester Deployment carries only `nvidia.com/gpu.product Exists` — no

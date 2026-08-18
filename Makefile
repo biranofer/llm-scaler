@@ -156,6 +156,11 @@ BENCHMARK_WVA_DEPLOY ?= true
 # would take that group away from the metrics server every ScaledObject's HPA
 # queries. It was there for the HPA path the external scaler replaced.
 BENCHMARK_SKIP_PROMETHEUS_ADAPTER ?= true
+
+# Standing a guide up over an EPP that is already serving replaces objects the
+# running stack depends on, and the damage is silent -- see benchmark-standup.
+# Set true to proceed anyway (re-rendering the same guide, or accepting it).
+BENCHMARK_ALLOW_EPP_REUSE ?= false
 # Where benchmark-deploy-wva writes its ScaledObject plan. A named file, not a
 # temp path, so a run that scaled something unexpected can be explained after it.
 BENCHMARK_SO_PLAN ?= $(CURDIR)/benchmark-scaledobject-plan.yaml
@@ -854,6 +859,33 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo "         re-apply scraping afterwards:  kubectl apply -k config/fma-launcher-metrics -n $(BENCHMARK_NAMESPACE)"; \
 		echo "         See docs/deployment/operations.md, 'FMA launcher pods'."; \
 		echo ""; \
+	fi
+	@# An EPP already serving in this namespace is a stack somebody is using. The
+	@# guide renders its own EPP Deployment, Service, InferencePool and a PodMonitor
+	@# named vllm-<model>, and applies them unconditionally -- so a second standup
+	@# silently REPLACES the first one's objects. The failure is invisible: the pods
+	@# keep running and answering while the scrape config and pool membership change
+	@# underneath them. Same class of fault as the FMA PodMonitor collision above,
+	@# which cost a benchmark that read a variant flat at one replica through a
+	@# 155-deep queue. prometheus-adapter already declines to overwrite someone
+	@# else's object; the EPP did not.
+	@epps=$$(kubectl get deploy -n "$(BENCHMARK_NAMESPACE)" --no-headers 2>/dev/null | grep -c -- '-epp' || true); \
+	if [ "$${epps:-0}" -gt 0 ] && [ "$(BENCHMARK_ALLOW_EPP_REUSE)" != "true" ]; then \
+		echo ""; \
+		echo "ERROR: $(BENCHMARK_NAMESPACE) already runs an EPP ($$epps deployment(s))."; \
+		echo "       This standup renders its own EPP, Service, InferencePool and a PodMonitor"; \
+		echo "       named vllm-<model>, and applies them over whatever is there. The pods keep"; \
+		echo "       running and answering, so the damage is SILENT -- scrape config and pool"; \
+		echo "       membership change underneath a stack somebody may be using."; \
+		echo ""; \
+		echo "       Choose one:"; \
+		echo "         - stand up in a clean namespace (recommended), or"; \
+		echo "         - benchmark what is already there:  make benchmark-run BENCHMARK_NAMESPACE=$(BENCHMARK_NAMESPACE)"; \
+		echo "         - re-render deliberately:           BENCHMARK_ALLOW_EPP_REUSE=true"; \
+		echo ""; \
+		kubectl get deploy -n "$(BENCHMARK_NAMESPACE)" --no-headers 2>/dev/null | grep -- '-epp' | sed 's/^/         /'; \
+		echo ""; \
+		exit 1; \
 	fi
 	@if [ "$(BENCHMARK_DIRECT_KEDA)" = "true" ]; then \
 		echo "Direct-KEDA mode: this feature isn't in a released llm-d-benchmark tag yet — upgrading the llm-d-benchmark checkout to '$(BENCHMARK_REPO_REF)' (unreleased)..."; \
