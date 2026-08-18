@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/inferenceengine"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 )
 
@@ -22,6 +23,11 @@ import (
 // reads fields by key. Renaming either side turns the report silently empty
 // rather than producing an error, so the contract is pinned here: these tests
 // fail instead.
+//
+// k2-decision, replica-capacity-decision and scheduler-queue-demand feed the
+// report's table columns. The rest are dumped verbatim to k2_decisions.json,
+// where the reason/source field is what a human reads to tell a measured number
+// from an estimated one — so those are pinned too.
 //
 // When a message or field below changes, update MESSAGES and the corresponding
 // e.get(...) keys in dump_k2_decisions.py in the same commit.
@@ -62,6 +68,13 @@ func observedCtx(t *testing.T) (context.Context, *observer.ObservedLogs) {
 	return logr.NewContext(context.Background(), zapr.NewLogger(zap.New(core))), logs
 }
 
+// infoOnlyCtx returns a context whose logger keeps Info and discards anything
+// more verbose — what the controller emits when started with -v=0.
+func infoOnlyCtx() (context.Context, *observer.ObservedLogs) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	return logr.NewContext(context.Background(), zapr.NewLogger(zap.New(core))), logs
+}
+
 // requireLogged asserts the message was emitted and carries every field key the
 // report reads, returning the first such entry's fields.
 func requireLogged(t *testing.T, logs *observer.ObservedLogs, msg string) map[string]any {
@@ -75,6 +88,27 @@ func requireLogged(t *testing.T, logs *observer.ObservedLogs, msg string) map[st
 			"%q must carry field %q; dump_k2_decisions.py reads it by name", msg, key)
 	}
 	return fields
+}
+
+// stringField reads a field the report treats as text, failing rather than
+// panicking if it stops being a string.
+func stringField(t *testing.T, fields map[string]any, key string) string {
+	t.Helper()
+	v, ok := fields[key].(string)
+	require.True(t, ok, "field %q must be a string, got %T", key, fields[key])
+	return v
+}
+
+// deploymentParams builds engine params good enough for k2 derivation. Returned
+// fresh each call so compatibility is decided by value, the way FindCompatible
+// decides it, not by two variants sharing one pointer.
+func deploymentParams() *EngineParams {
+	return &EngineParams{
+		Engine:                    inferenceengine.EngineVLLM,
+		BlockSize:                 16,
+		MaxNumSeqs:                256,
+		EffectiveMaxBatchedTokens: 8192,
+	}
 }
 
 func TestLogContract_LiveReplicaEmitsCycleFields(t *testing.T) {
@@ -166,69 +200,184 @@ func TestLogContract_FallbackOutcomesHaveDistinctMessages(t *testing.T) {
 	})
 }
 
-func TestLogContract_ZeroReplicaVariantExplainsItsSource(t *testing.T) {
-	states := []domain.VariantReplicaState{
-		{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
+// A zero-replica variant has to say where its number came from, since every
+// source below is an estimate of a different quality: a reused live
+// observation, a deployment-arg derivation, or the raw stored value.
+func TestLogContract_ZeroReplicaEstimateNamesItsSource(t *testing.T) {
+	zeroState := []domain.VariantReplicaState{
+		{VariantName: "variant-zero", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
 	}
 
-	t.Run("estimated from a stored record", func(t *testing.T) {
+	t.Run("reused live observation", func(t *testing.T) {
 		ctx, logs := observedCtx(t)
 		store := NewCapacityKnowledgeStore()
-		store.Update("test-ns", "test-model", "variant-a", CapacityRecord{
+		store.Update("test-ns", "test-model", "variant-zero", CapacityRecord{
 			AcceleratorName:   "H100",
 			GpuCount:          1,
 			EffectiveCapacity: 10000,
 			LearnedFrom:       learnedFromLive,
-			LearnedAt:         time.Now(),
 		})
 		analyzer := NewSaturationAnalyzer(store)
 
-		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, states))
+		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, zeroState))
 		require.NoError(t, err)
 
-		assert.Equal(t, "stored-live", requireLogged(t, logs, "zero-replica-capacity-estimate")["source"])
+		fields := requireLogged(t, logs, "zero-replica-capacity-estimate")
+		assert.Equal(t, "stored-live", stringField(t, fields, "source"))
 	})
 
-	t.Run("no data at all", func(t *testing.T) {
+	t.Run("derived from deployment args", func(t *testing.T) {
 		ctx, logs := observedCtx(t)
-		analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+		store := NewCapacityKnowledgeStore()
+		store.Update("test-ns", "test-model", "variant-zero", CapacityRecord{
+			AcceleratorName:   "H100",
+			GpuCount:          1,
+			EffectiveCapacity: 4000,
+			EngineParams:      deploymentParams(),
+			LearnedFrom:       "deployment",
+		})
+		analyzer := NewSaturationAnalyzer(store)
 
-		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, states))
+		// A live variant alongside it supplies the model-level token averages
+		// the derivation needs; without them the estimate falls through to the
+		// raw stored value instead.
+		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(
+			[]domain.ReplicaMetrics{
+				makeReplicaMetrics("pod-live", "variant-live", 5000, 16000, 0, 100, 50),
+			},
+			append([]domain.VariantReplicaState{
+				{VariantName: "variant-live", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+			}, zeroState...),
+		))
 		require.NoError(t, err)
 
-		requireLogged(t, logs, "variant-capacity-source")
+		fields := requireLogged(t, logs, "zero-replica-capacity-estimate")
+		assert.Equal(t, "deployment-derived", stringField(t, fields, "source"))
+		assert.Contains(t, fields, "boundedBy", "the derived estimate must say what capped it")
+		assert.Contains(t, fields, "perReplicaCapacity")
+	})
+
+	t.Run("no derivation possible", func(t *testing.T) {
+		ctx, logs := observedCtx(t)
+		store := NewCapacityKnowledgeStore()
+		// Deployment-learned but with no engine params, so there is nothing to
+		// derive from and the raw stored value is all that is left.
+		store.Update("test-ns", "test-model", "variant-zero", CapacityRecord{
+			AcceleratorName:   "H100",
+			GpuCount:          1,
+			EffectiveCapacity: 4000,
+			LearnedFrom:       "deployment",
+		})
+		analyzer := NewSaturationAnalyzer(store)
+
+		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, zeroState))
+		require.NoError(t, err)
+
+		fields := requireLogged(t, logs, "zero-replica-capacity-estimate")
+		assert.Equal(t, "deployment-stored-fallback", stringField(t, fields, "source"))
 	})
 }
 
-// The two per-replica lines are the highest-volume logging in the controller —
-// two per replica per optimize cycle. They are gated so an operator can drop to
-// -v=1 and silence them without losing the V(1) diagnostics elsewhere; the
-// once-per-cycle lines stay unconditional so that knob does not also blind the
-// report to which variants reported at all.
-func TestLogContract_PerReplicaLinesAreVerbosityGated(t *testing.T) {
-	// A sink that keeps Info and discards anything more verbose — what the
-	// controller emits when started with -v=0.
-	core, logs := observer.New(zapcore.InfoLevel)
-	ctx := logr.NewContext(context.Background(), zapr.NewLogger(zap.New(core)))
-	analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+// The borrow branch: a variant with deployment params but no capacity of its
+// own takes a compatible sibling's number. Nothing else in the report
+// distinguishes that from a number the variant measured itself.
+func TestLogContract_BorrowedCapacityNamesItsDonor(t *testing.T) {
+	ctx, logs := observedCtx(t)
 
-	input := makeAnalyzerInput(
-		[]domain.ReplicaMetrics{
-			makeReplicaMetrics("pod-1", "variant-a", 5000, 16000, 0, 100, 50),
-		},
-		[]domain.VariantReplicaState{
-			{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
-		},
-	)
-	input.SchedulerQueue = &domain.SchedulerQueueMetrics{QueueSize: 3, QueueBytes: 4096}
+	store := NewCapacityKnowledgeStore()
+	// No capacity of its own, so the stored-estimate branch cannot fire...
+	store.Update("test-ns", "test-model", "variant-borrow", CapacityRecord{
+		AcceleratorName:       "H100",
+		GpuCount:              1,
+		EffectiveCapacity:     0,
+		TotalKvCapacityTokens: 0,
+		EngineParams:          deploymentParams(),
+		LearnedFrom:           "deployment",
+	})
+	// ...but a sibling on the same hardware, with equal-valued params, has one.
+	store.Update("test-ns", "test-model", "variant-donor", CapacityRecord{
+		AcceleratorName:   "H100",
+		GpuCount:          1,
+		EffectiveCapacity: 9000,
+		EngineParams:      deploymentParams(),
+		LearnedFrom:       learnedFromLive,
+	})
+	analyzer := NewSaturationAnalyzer(store)
 
-	_, err := analyzer.Analyze(ctx, input)
+	_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, []domain.VariantReplicaState{
+		{VariantName: "variant-borrow", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
+	}))
 	require.NoError(t, err)
 
-	for _, msg := range []string{"k2-decision", "replica-capacity-decision"} {
-		assert.Empty(t, logs.FilterMessage(msg).All(),
-			"%q is per-replica, per-cycle and must not be logged unconditionally", msg)
-	}
-	assert.NotEmpty(t, logs.FilterMessage("scheduler-queue-demand").All(),
-		"scheduler-queue-demand is once per cycle and stays at Info")
+	fields := requireLogged(t, logs, "variant-capacity-source")
+	assert.Contains(t, stringField(t, fields, "reason"), "borrowed from a compatible variant")
+	assert.Equal(t, float64(9000), fields["perReplicaCapacity"])
+	assert.Equal(t, learnedFromLive, stringField(t, fields, "engineParamsSource"))
+}
+
+func TestLogContract_NoDataVariantSaysSo(t *testing.T) {
+	ctx, logs := observedCtx(t)
+	analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+
+	_, err := analyzer.Analyze(ctx, makeAnalyzerInput(nil, []domain.VariantReplicaState{
+		{VariantName: "variant-zero", AcceleratorName: "H100", CurrentReplicas: 0, GPUsPerReplica: 1},
+	}))
+	require.NoError(t, err)
+
+	fields := requireLogged(t, logs, "variant-capacity-source")
+	assert.Contains(t, stringField(t, fields, "reason"), "no compatible variant found")
+}
+
+// The two per-replica decision lines are the highest-volume logging in the
+// controller — two per replica per optimize cycle. They are gated so an
+// operator can drop to -v=1 and silence them without losing the V(1)
+// diagnostics elsewhere; the once-per-cycle lines stay unconditional so that
+// knob does not also blind the report to which variants reported at all.
+//
+// replica-capacity-skipped is deliberately not gated: it reports a replica
+// contributing no capacity at all, which under-counts supply and makes the
+// controller over-scale, so no -v setting may hide it.
+func TestLogContract_PerReplicaLinesAreVerbosityGated(t *testing.T) {
+	t.Run("routine decisions are hidden at -v=0", func(t *testing.T) {
+		ctx, logs := infoOnlyCtx()
+		analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+
+		input := makeAnalyzerInput(
+			[]domain.ReplicaMetrics{
+				makeReplicaMetrics("pod-1", "variant-a", 5000, 16000, 0, 100, 50),
+			},
+			[]domain.VariantReplicaState{
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+			},
+		)
+		input.SchedulerQueue = &domain.SchedulerQueueMetrics{QueueSize: 3, QueueBytes: 4096}
+
+		_, err := analyzer.Analyze(ctx, input)
+		require.NoError(t, err)
+
+		for _, msg := range []string{"k2-decision", "replica-capacity-decision"} {
+			assert.Empty(t, logs.FilterMessage(msg).All(),
+				"%q is per-replica, per-cycle and must not be logged unconditionally", msg)
+		}
+		assert.NotEmpty(t, logs.FilterMessage("scheduler-queue-demand").All(),
+			"scheduler-queue-demand is once per cycle and stays at Info")
+	})
+
+	t.Run("a replica contributing nothing is not", func(t *testing.T) {
+		ctx, logs := infoOnlyCtx()
+		analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+
+		_, err := analyzer.Analyze(ctx, makeAnalyzerInput(
+			[]domain.ReplicaMetrics{
+				makeReplicaMetrics("pod-1", "variant-a", 0, 0, 0, 100, 50),
+			},
+			[]domain.VariantReplicaState{
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+			},
+		))
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, logs.FilterMessage("replica-capacity-skipped").All(),
+			"a replica contributing no capacity under-counts supply; -v must not hide it")
+	})
 }

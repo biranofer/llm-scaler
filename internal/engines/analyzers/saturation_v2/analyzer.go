@@ -200,7 +200,8 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 	// the shipped verbosity (cmd/main.go defaults -v to logging.DEFAULT), so
 	// hack/benchmark/dump_k2_decisions.py still sees them out of the box, while an
 	// operator who does not want them can drop to -v=1 without losing the V(1)
-	// diagnostics elsewhere.
+	// diagnostics elsewhere. replica-capacity-skipped is deliberately not among
+	// them: it reports a degradation rather than a decision.
 	logger.V(logging.DEFAULT).Info("replica-capacity-decision",
 		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 		"k1MemoryBound", k1, "k2ComputeBound", k2, "k2Source", k2Labels[k2Priority],
@@ -254,7 +255,10 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 ) *ReplicaCapacity {
 	rec := a.capacityStore.Get(namespace, modelID, rm.VariantName)
 	if rec == nil || rec.EffectiveCapacity <= 0 {
-		logger.V(logging.DEFAULT).Info("replica-capacity-skipped",
+		// Not a routine decision: this replica contributes no capacity at all,
+		// so supply is under-counted and the controller over-scales. Unlike the
+		// other per-replica lines it stays at Info, where -v cannot hide it.
+		logger.Info("replica-capacity-skipped",
 			"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 			"reason", "no vllm:cache_config_info and no usable capacity-store record")
 		return nil

@@ -29,10 +29,12 @@ Reads eight log lines:
                                     target replica count for the variant this
                                     cycle
 
-The two per-replica lines are logged at V(logging.DEFAULT), which is the
-verbosity the shipped deployment runs at (cmd/main.go defaults -v to
-logging.DEFAULT). Started with -v=1 or lower, the controller suppresses them
-and this report comes back empty.
+k2-decision, replica-capacity-decision and replica-capacity-store-fallback are
+logged at V(logging.DEFAULT), which is the verbosity the shipped deployment
+runs at (cmd/main.go defaults -v to logging.DEFAULT). Started with -v=1 or
+lower, the controller suppresses them and this report comes back empty.
+replica-capacity-skipped is at Info and survives any -v, since it reports a
+replica contributing no capacity at all rather than a routine decision.
 
 Output:
   metrics/processed/k2_decisions.json   (raw per-event records)
