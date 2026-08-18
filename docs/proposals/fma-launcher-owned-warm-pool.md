@@ -266,49 +266,105 @@ them is normal, and predictable wake latency is the product. It is wrong for a
 shared research cluster, where the appeal of releasing GPUs between spikes is
 exactly what makes warmth unreliable.
 
-## What survives of FMA
+## What of FMA is reusable, component by component
 
-Roughly half.
+Surveyed at `aa072ef`. The headline: **the launcher half is already
+requester-free and needs almost nothing done to it**, while the dual-pods
+controller — about 3.5k lines, the bulk of the Go — is what goes.
 
-- **Keep:** the launcher and its instance lifecycle — a per-node process manager
-  that owns GPUs and can create, sleep and wake vLLM instances. That is the part
-  that delivers 2-3 s wakes, and it is genuinely valuable.
-- **Drop:** requesters, the dual-pod binding, the state-change reflector labels,
-  the populator's launcher-count juggling, and the stale-binding failure modes.
-  That machinery exists to reconcile two Pods representing one thing, and nearly
-  every defect found in this area lives there: reclaiming a sleeper over an
-  inference-port conflict, GPU-hash mismatches, stale `dual` labels surviving an
-  unbind, and WVA attribution dropping launchers because they belong to a
-  LauncherConfig rather than a Deployment.
+### The finding that matters most
 
-Allocation — which models hold warm instances on which GPUs — then sits in WVA,
-where `fma-shared-warm-pool.md` already argues it belongs.
+**The launcher has no sleep/wake endpoints, and does not need any.** Its API is
+pure CRUD-plus-watch over *processes*. Sleep and wake are performed by the
+controller calling **each vLLM instance's own OpenAI port directly**:
+
+- `POST /wake_up` — `pkg/controller/dual-pods/inference-server.go:1565`
+- `POST /sleep` — `inference-server.go:1780`
+- `GET /is_sleeping` — `inference-server.go:2053`
+
+Those endpoints exist only because the launcher Pod template forces
+`VLLM_SERVER_DEV_MODE=1` (`pkg/controller/utils/pod-helper.go:328`) — load-bearing
+and easy to lose.
+
+So the central mechanism of this proposal — hold a GPU, keep several instances on
+it, wake the one you want — **already works today and requires no launcher
+change at all.** What is missing is only the controller that decides *which*.
+
+### Reusable as is
+
+| component | lines | why it survives |
+| --- | --- | --- |
+| `inference_server/launcher/launcher.py` | 967 | FastAPI multi-process vLLM host. **No Kubernetes client, no Pod concept, no requester vocabulary.** Forks instances as process groups, pins each to GPUs by translating `gpu_uuids` into `CUDA_VISIBLE_DEVICES` (`:176-191`) — it already knows how to place instances on specific cards. Offers a Kubernetes-watch-style NDJSON stream at `GET /v2/vllm/instances/watch?since=<rev>` with a 1000-event ring buffer, which is a better change primitive than polling. |
+| `launcher/gputranslator.py` | 247 | UUID↔CUDA-index mapping via `pynvml`, plus a mock mode for CPU-only clusters. **This is how a GPU-owning launcher self-discovers its cards without a requester** — the gap left when the requester stops reporting them. |
+| `pkg/controller/dual-pods/launcherclient.go` | 281 | Typed Go client for the launcher API. Zero requester concepts. Any replacement controller needs exactly this. |
+| `cmd/launcher-populator` + `api/.../launcherpopulationpolicy_types.go` + `launcherconfig_types.go` | — | See below; the pool controller and its API. |
+| `pkg/controller/generic/`, `pkg/controller/utils/generics.go`, `pkg/observability`, `pkg/common/flags.go`, `pkg/generated/**` | — | Plumbing: typed workqueues, informer scaffolding, metrics/pprof, generated clients. |
+| chart RBAC + launcher-populator Deployment, `dockerfiles/Dockerfile.launcher.*` | — | Deployment surface for the half that stays. |
+
+### Reusable with changes — and these are the real work
+
+| component | change needed |
+| --- | --- |
+| **`pkg/controller/utils/pod-helper.go:345-352`** | `removeGPUResourceLimits` **zeroes `nvidia.com/gpu` on the launcher Pod**. This single function is the code expression of "the requester holds the GPU". **Deleting it is the change that makes this whole proposal possible.** |
+| **`pkg/controller/launcher-populator/`** (~1.9k) | **This is already the "scale the pool" controller.** Desired count comes 100% from LauncherPopulationPolicy objects and never from requester Pods. Its only requester touch is defensive — `isLauncherBoundToServerRequestingPod` marks a launcher un-deletable. Swap that for "has a live instance" and it does the job. |
+| `api/.../inferenceserverconfig_types.go` | Its `labels`/`annotations` are documented as applied to the providing Pod **"while bound"**. Redefine to **"while live"** — that *is* the label swap this design turns on. Everything else (port, options, env) is already "which model do I want an instance of". |
+| `api/.../launcherpopulationpolicy_types.go` | Doc-only. It currently says the launcher count is the larger of what the policy says and **what the requesters need**; that second clause disappears, making the policy the *sole* source of pool size. A simplification. |
+| `api/.../launcherconfig_types.go` | Nothing substantive — `maxInstances` already means "how many instances fit in one launcher Pod", which is exactly one awake plus N asleep. |
+| `inference-server.go:804-1080` (~280) | The launcher-selection and LRU-reclaim policy, including the port-conflict fix from `aa072ef`. The *policy* — which sleeping instance to wake or evict — survives; its *inputs* must be re-plumbed away from requester Pods. |
+| `launcher_pod_notifier.py` | The sidecar that publishes instance state onto the Pod as an annotation so an informer sees it. Mechanism is right, name is dual-pods branded. The launcher's own `/watch` may be the better primitive. |
+| `pkg/api/interface.go`, `pkg/controller/common/interface.go` | Keep `SleepingLabelName`, `SleepState`, the launcher identity labels and `LauncherServicePort`; drop the binding vocabulary. |
+
+### Not needed — requester-specific
+
+`cmd/dual-pods-controller`, and **`pkg/controller/dual-pods/{controller.go,inference-server.go}` (~3.5k lines, the bulk of the Go code)**; `cmd/requester` and `cmd/test-requester`; `pkg/spi`; `pkg/server/requester/{probes,proxy}` and most of `coordination`; the dual-pods chart template; the requester validating-admission-policy and examples; `Dockerfile.requester`; `inference_server/benchmark/` as written.
+
+### What this says about the size of the job
+
+The valuable half — a per-node multi-process vLLM host that can pin instances to
+GPUs, sleep and wake them, and stream state changes — **exists, is tested, and is
+already free of the requester concept.** The pool controller exists too and is
+nearly free of it.
+
+What has to be built is a controller that decides which instance is live on each
+card and swaps the label accordingly, and that is a much smaller thing than what
+it replaces. The one-line change that unlocks it is deleting
+`removeGPUResourceLimits`.
+
+**Open question this survey settles:** the launcher already translates
+`gpu_uuids` to `CUDA_VISIBLE_DEVICES` per instance, so a launcher Pod granted its
+own GPUs can certainly place instances on specific cards among them. What remains
+untested is only whether *several instances co-resident on one card* behave —
+which `--sleeper-limit` (2 on pokprod) already permits and which is cheap to try.
 
 ## Open questions, in the order they should be answered
 
-1. **Can a launcher Pod granted `nvidia.com/gpu: N` place instances on specific
-   cards among its N?** It should: `CUDA_VISIBLE_DEVICES` inside the container
-   maps to the allocated devices, and `launcher.py` already does UUID→index
-   translation per instance. **This is inference from reading, not a measurement,
-   and it is the load-bearing assumption of the whole design.** Cheap to test;
-   test it first.
-2. **How are N awake instances in one Pod exposed as endpoints?** The honest
-   options are one instance awake per launcher (simple, wasteful), a headless
-   Service with per-port endpoints, or one launcher Pod per GPU (which restores
-   Pod-level readiness and is probably the pragmatic answer — a launcher Pod
-   holding exactly one GPU, with M sleeping instances for M models on it).
+1. **Do several instances co-reside on ONE card, one awake and the rest asleep?**
+   This is now the only load-bearing untested assumption. Placement *onto a
+   chosen card* is settled — `launcher.py:176-191` already translates `gpu_uuids`
+   into `CUDA_VISIBLE_DEVICES` per instance — and `--sleeper-limit` (2 on
+   pokprod) already permits two sleepers per GPU. What has not been observed is
+   the full pattern on a single card: awake instance at
+   `gpu-memory-utilization 0.95` plus N sleepers at ~1.4 GiB each, and a clean
+   swap between them. Cheap; test it first.
+2. **How fast is the swap?** Sleep A, wake B, relabel. Expected ~2-3 s from the
+   wake measurements, but sleep-then-wake as a single operation has never been
+   timed, and the label→EndpointSlice→InferencePool propagation adds an unknown
+   tail. That tail, not the wake, may dominate.
 3. **Does WVA's actuation path fit?** It already computes desired replicas per
    variant and speaks the KEDA external-scaler protocol. Mapping "desired = 3"
-   onto "wake these three instances" needs an actuator that addresses instances,
-   not Deployments.
-4. **What is the cost model?** Holding a GPU continuously versus paying ~41 s of
-   cold start per spike. This is the number that decides whether the trade is
-   worth making, and it is a business input, not a measurement.
+   onto "wake these three instances, relabel those Pods" needs an actuator that
+   addresses instances rather than Deployments.
+4. **Which models stay warm on which cards, and who is evicted?** The allocation
+   problem, and the reason this belongs with WVA. `fma-shared-warm-pool.md` §6.2
+   already sketches the pricing.
+5. **What is the cost model?** Holding a pool of GPUs versus paying ~41 s of cold
+   start per spike. A business input, not a measurement — but the one that
+   decides whether any of this is worth building.
 
-Option 2's third variant deserves emphasis: **one launcher Pod per GPU, holding
-several sleeping instances for several models**, keeps Pod-level readiness and
-endpoint semantics intact while still removing the requester. It may be the
-smallest change that gets the whole benefit.
+**Settled by the component survey**, and previously listed here as open: a
+launcher Pod can place instances on specific cards among those it holds, and the
+endpoint question is answered by one GPU per launcher Pod — one live model per
+Pod keeps Pod-level readiness and ordinary label selection intact.
 
 ## See also
 
