@@ -193,7 +193,7 @@ main() {
         # engine metrics, the EPP supplies the scheduler queue. Missing either is
         # silent, and missing the queue also disables the detector that would have
         # reported the rest.
-        wva_report_epp_flowcontrol
+        wva_require_epp_metrics
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi
@@ -243,6 +243,14 @@ main() {
             check_permissions
         fi
         check_single_installation
+        # Before anything is created, for the same reason as check_permissions: an
+        # install that cannot see the EPP's signals sizes workloads from engine
+        # metrics alone, and every symptom of that is silent. Refusing here beats
+        # refusing after the objects exist, and WVA_ALLOW_NO_EPP_METRICS=true is the
+        # way past it. kind-emulator is exempt: the e2e path builds its own stack.
+        if [ "$SKIP_CHECKS" != "true" ] && [ "${ENVIRONMENT:-}" != "kind-emulator" ]; then
+            wva_require_epp_metrics
+        fi
     fi
 
     set_tls_verification
