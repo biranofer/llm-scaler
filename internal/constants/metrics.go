@@ -400,6 +400,16 @@ const (
 	//
 	// Labels: namespace, model_name
 	WVAModelReplicas = "wva_model_replicas"
+
+	// WVAScaleFromZeroWakeSeconds is how long a wake-from-zero took: from the
+	// first activation WVA published to the model being observed serving.
+	//
+	// The distribution is the point, not the average. On FMA the same code path
+	// takes roughly 2s when it binds a reusable sleeping instance and roughly 50s
+	// when it has to build one, so a bimodal histogram is what a working warm pool
+	// looks like and a shift toward the slow mode is how its regression shows up.
+	// Nothing else would report that: the wake still succeeds, just slowly.
+	WVAScaleFromZeroWakeSeconds = "wva_scale_from_zero_wake_seconds"
 )
 
 // Reasons a model cannot reach the scaling state its configuration implies

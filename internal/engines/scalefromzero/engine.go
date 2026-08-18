@@ -287,6 +287,7 @@ func (e *Engine) optimize(ctx context.Context) error {
 		logger.V(logging.DEBUG).Error(activeErr, "Could not list active variants; treating every role as uncovered")
 	}
 	coverage := activeRoleCoverage(activeVAs, activeTargets)
+	observeCompletedWakes(activeVAs, activeTargets)
 
 	// Wake decisions are made per model, not per variant: a P/D model needs a
 	// decode (optionally with a prefill) chosen together against one GPU budget,
@@ -700,4 +701,36 @@ func (e *Engine) publishActivation(
 		"namespace", va.Namespace,
 		"targetReplicas", targetWorkloadReplicas,
 		"reason", string(domain.DecisionReasonScaleFromZero)+reasonDetails)
+}
+
+// observeCompletedWakes reports how long each finished wake took.
+//
+// This is the only place a wake's END can be seen. The engine stops publishing
+// once a model is serving, so nothing downstream of publishActivation ever
+// learns that the pod came up — and the 30s wake-signal sweep, which does see
+// ready replicas, is far too coarse: it cannot separate a 2s warm FMA bind from
+// a 50s cold load, which is the entire distinction the metric exists to make.
+// This runs on the 100ms optimize loop, so the resolution matches the question.
+//
+// A model is counted only once ready replicas exist, not merely because its
+// spec left zero. A wake that has scheduled a pod but not yet loaded the model
+// has not finished the thing being measured — that gap IS the cold path.
+func observeCompletedWakes(
+	activeVAs []wvav1alpha1.VariantAutoscaling,
+	scaleTargets map[string]scaletarget.ScaleTargetAccessor,
+) {
+	// Several variants of one model can go ready in the same pass (a P/D serving
+	// set), and the wake is per model. CompleteWake deletes the episode as it
+	// reports it, so the second variant finds nothing open and the model
+	// contributes one observation rather than one per variant.
+	for i := range activeVAs {
+		va := &activeVAs[i]
+		st, found := scaleTargets[utils.GetNamespacedKey(va.Namespace, va.GetScaleTargetName())]
+		if !found || st.GetStatusReadyReplicas() < 1 {
+			continue
+		}
+		if took, ok := decision.CompleteWake(va.Namespace, va.Spec.ModelID); ok {
+			metrics.ObserveWakeDuration(va.Namespace, va.Spec.ModelID, took.Seconds())
+		}
+	}
 }

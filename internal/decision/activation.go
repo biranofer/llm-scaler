@@ -22,13 +22,23 @@ import (
 type Activations struct {
 	mu sync.RWMutex
 	m  map[string]time.Time
+	// firstAt records when the CURRENT wake episode began, which m cannot: Mark is
+	// re-called every poll while requests are still queued, so m holds the most
+	// recent publish rather than the start. Measuring how long a wake took needs
+	// the start, and the difference between the two is the whole measurement — a
+	// warm FMA bind and a cold model load differ by roughly 2s versus 50s.
+	firstAt map[string]time.Time
 	// now is the clock, overridden in tests.
 	now func() time.Time
 }
 
 // NewActivations returns an empty registry.
 func NewActivations() *Activations {
-	return &Activations{m: make(map[string]time.Time), now: time.Now}
+	return &Activations{
+		m:       make(map[string]time.Time),
+		firstAt: make(map[string]time.Time),
+		now:     time.Now,
+	}
 }
 
 func activationKey(namespace, modelID string) string {
@@ -41,7 +51,32 @@ func activationKey(namespace, modelID string) string {
 func (a *Activations) Mark(namespace, modelID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.m[activationKey(namespace, modelID)] = a.now()
+	key := activationKey(namespace, modelID)
+	a.m[key] = a.now()
+	// Only the first Mark of an episode opens the timing window. Re-publishing
+	// while the queue drains must not restart the clock, or every wake would
+	// measure as one poll interval.
+	if _, open := a.firstAt[key]; !open {
+		a.firstAt[key] = a.now()
+	}
+}
+
+// CompleteWake closes the current wake episode and reports how long it took,
+// or false when the model has no episode open.
+//
+// Called when the model is next observed serving. Idempotent by construction:
+// the episode is deleted here, so the many polls that follow report nothing and
+// a single wake contributes one observation rather than one per poll.
+func (a *Activations) CompleteWake(namespace, modelID string) (time.Duration, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	key := activationKey(namespace, modelID)
+	at, open := a.firstAt[key]
+	if !open {
+		return 0, false
+	}
+	delete(a.firstAt, key)
+	return a.now().Sub(at), true
 }
 
 // Clear forgets the model's activation, so normal idle accounting takes over
@@ -50,7 +85,12 @@ func (a *Activations) Mark(namespace, modelID string) {
 func (a *Activations) Clear(namespace, modelID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.m, activationKey(namespace, modelID))
+	key := activationKey(namespace, modelID)
+	delete(a.m, key)
+	// An episode ended without the model ever being seen serving is not a wake
+	// that took a long time — it is a wake that did not complete. Dropping it
+	// keeps the histogram a record of real wakes rather than of abandoned ones.
+	delete(a.firstAt, key)
 }
 
 // WithinRetention reports whether the model was woken from zero less than
@@ -88,6 +128,12 @@ func (a *Activations) WithinRetention(namespace, modelID string, retention time.
 // DefaultActivations is the process-wide registry, written by the
 // scale-from-zero engine and read by the scale-to-zero enforcement gate.
 var DefaultActivations = NewActivations()
+
+// CompleteWake closes the default registry's wake episode for the model and
+// reports its duration. See Activations.CompleteWake.
+func CompleteWake(namespace, modelID string) (time.Duration, bool) {
+	return DefaultActivations.CompleteWake(namespace, modelID)
+}
 
 // MarkActivated records a wake-from-zero in the default registry.
 func MarkActivated(namespace, modelID string) {

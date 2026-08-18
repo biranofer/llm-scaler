@@ -53,6 +53,7 @@ var (
 	errorsTotal          *prometheus.CounterVec
 
 	optimizationDuration *prometheus.HistogramVec
+	wakeDuration         *prometheus.HistogramVec
 	modelsProcessedGauge *prometheus.GaugeVec
 
 	// pipeline stage visibility metrics
@@ -268,6 +269,17 @@ func InitMetrics(registry prometheus.Registerer) error {
 			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 		},
 		optimizationDurationLabels,
+	)
+	wakeDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: constants.WVAScaleFromZeroWakeSeconds,
+			Help: "Time from publishing a scale-from-zero activation to the model being observed serving",
+			// Spread deliberately across both modes an FMA wake has. A warm bind
+			// lands near 2s and a cold model load near 50-80s, so buckets bunched at
+			// either end would collapse the distinction this metric exists to show.
+			Buckets: []float64{1, 2, 3, 5, 8, 15, 30, 45, 60, 90, 120, 300},
+		},
+		[]string{constants.LabelNamespace, constants.LabelModelName},
 	)
 	modelsProcessedLabels := []string{}
 	if controllerInstance != "" {
@@ -537,6 +549,9 @@ func InitMetrics(registry prometheus.Registerer) error {
 	}
 	if err := registry.Register(errorsTotal); err != nil {
 		return fmt.Errorf("failed to register errorsTotal metric: %w", err)
+	}
+	if err := registry.Register(wakeDuration); err != nil {
+		return err
 	}
 	if err := registry.Register(optimizationDuration); err != nil {
 		return fmt.Errorf("failed to register optimizationDuration metric: %w", err)
@@ -814,6 +829,18 @@ func SetModelReplicas(namespace, modelName string, replicas int) {
 		return
 	}
 	modelReplicas.With(modelSeriesLabels(namespace, modelName)).Set(float64(replicas))
+}
+
+// ObserveWakeDuration records how long a wake-from-zero took.
+//
+// Called once per completed wake, not once per poll: the caller closes the
+// episode as it reports it, so a model that stays up does not keep contributing
+// samples and skew the distribution toward whatever its steady state is.
+func ObserveWakeDuration(namespace, modelName string, seconds float64) {
+	if wakeDuration == nil {
+		return
+	}
+	wakeDuration.With(modelSeriesLabels(namespace, modelName)).Observe(seconds)
 }
 
 // ClearModelReplicas drops a model's replica series, for a model that has gone

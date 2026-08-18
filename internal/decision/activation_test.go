@@ -143,3 +143,62 @@ func TestLapsedHoldsArePruned(t *testing.T) {
 		t.Fatal("an unread hold must survive another model's pruning")
 	}
 }
+
+// A wake's duration is measured from the FIRST publish of an episode, not the
+// last. The engine re-publishes every poll while the queue drains, so measuring
+// from the most recent Mark would report one poll interval for every wake --
+// the metric would look perfect and mean nothing.
+func TestActivations_CompleteWake_MeasuresFromFirstMark(t *testing.T) {
+	now := time.Unix(1000, 0)
+	a := NewActivations()
+	a.now = func() time.Time { return now }
+
+	a.Mark("ns", "m")
+	now = now.Add(10 * time.Second)
+	a.Mark("ns", "m") // re-publish while the request is still queued
+	now = now.Add(5 * time.Second)
+
+	took, ok := a.CompleteWake("ns", "m")
+	if !ok {
+		t.Fatal("no wake episode was open")
+	}
+	if took != 15*time.Second {
+		t.Errorf("wake measured %v, want 15s (from the first Mark, not the second)", took)
+	}
+}
+
+// One wake yields one observation. The model stays serving for many polls after
+// it comes up, and an episode that did not close would contribute a sample on
+// every one of them, dragging the distribution toward the steady state.
+func TestActivations_CompleteWake_OnlyOnce(t *testing.T) {
+	a := NewActivations()
+	a.Mark("ns", "m")
+	if _, ok := a.CompleteWake("ns", "m"); !ok {
+		t.Fatal("first CompleteWake reported no episode")
+	}
+	if took, ok := a.CompleteWake("ns", "m"); ok {
+		t.Errorf("second CompleteWake reported a duration of %v; the episode should be closed", took)
+	}
+}
+
+// A model that never woke has nothing to report. Guards the case where the
+// engine sees an active model it did not wake -- every ordinary serving model,
+// on every poll.
+func TestActivations_CompleteWake_NeverWoken(t *testing.T) {
+	a := NewActivations()
+	if took, ok := a.CompleteWake("ns", "never-woken"); ok {
+		t.Errorf("reported a %v wake for a model that was never activated", took)
+	}
+}
+
+// Clear ends an episode without recording it. A wake abandoned before the model
+// served is not a slow wake; counting it would put a false tail on the
+// histogram exactly where a warm-pool regression is read.
+func TestActivations_Clear_DropsTheEpisode(t *testing.T) {
+	a := NewActivations()
+	a.Mark("ns", "m")
+	a.Clear("ns", "m")
+	if took, ok := a.CompleteWake("ns", "m"); ok {
+		t.Errorf("a cleared episode still reported %v", took)
+	}
+}
