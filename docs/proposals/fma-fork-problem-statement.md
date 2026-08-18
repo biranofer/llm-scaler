@@ -1,8 +1,30 @@
 # What the FMA fork must fix
 
 **Status:** problem statement, for `ev-shindin/llm-d-fast-model-actuation`
-(branch `feat/reuse-by-model`, currently empty)
+(branch `feat/reuse-by-model`)
 **Audience:** whoever picks up the fork. Read this before writing code.
+
+> **Updated 2026-08-18 — read this first.**
+>
+> - **Fix 1 is implemented and validated on cluster** (`aa072ef`, image
+>   `ghcr.io/ev-shindin/dual-pods-controller:aa072ef`). Its root cause was NOT
+>   what this document assumed: capacity is already checked, but a **port
+>   conflict bypasses that check**, because the port comes from the ISC and is
+>   therefore identical for the same model on a different GPU. Deployed on
+>   pokprod: **0 destroy events, 2 declines, and the first observed
+>   `warmAffinity` wake at 2 s**.
+> - **Fix 1.5 is done and was measured insufficient.** Placement now works —
+>   3/3 replicas landed beside sleepers, twice — and **still 0 woke**. Landing on
+>   the right node is necessary and nowhere near sufficient: the reuse key is the
+>   GPU UUID and a pool node has 7-8 of them. See
+>   `../guides/fma/README.md#node-locality-is-necessary-and-nowhere-near-sufficient`.
+> - **Fix 2 (deliberate provisioning) is bounded by arithmetic, not by FMA.**
+>   Reliable wakes require covering *every free GPU on every node a requester can
+>   reach*, and the free set belongs to other tenants.
+> - Consequently the strategic direction has moved to
+>   [`fma-launcher-owned-warm-pool.md`](fma-launcher-owned-warm-pool.md), which
+>   removes the per-scale scheduling event rather than trying to win it. The
+>   fixes below remain correct and worth having for the current architecture.
 
 This exists because the evidence is spread across three documents and a
 benchmark harness, and none of them states the defect in a form someone can act

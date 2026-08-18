@@ -1,9 +1,25 @@
 # Plan: a reliable, shared FMA warm pool, with the policy in WVA
 
-**Status:** plan
+**Status:** plan — **partly overtaken, see the note below**
 **Requires FMA code changes:** yes — this is the entry that does.
 **Fork:** `ev-shindin/llm-d-fast-model-actuation`, branch `feat/reuse-by-model`
-(created, no commits yet).
+(one commit, `aa072ef`, validated on cluster).
+
+> **Updated 2026-08-18.** This document's "**Do not fork FMA**" recommendation
+> was made before the wake path had been measured end to end. A minimal fork
+> landed and is validated (`aa072ef`, see
+> [`fma-fork-problem-statement.md`](fma-fork-problem-statement.md)).
+>
+> Its central claim still stands and is now quantified: co-resident sleepers per
+> GPU are the currency, `--sleeper-limit` is the binding constraint, and
+> allocation belongs in WVA. What changed is that **placement cannot rescue the
+> hit rate** — measured 3/3 correct placement with 0 wakes — because reuse keys
+> on the GPU UUID. `warm_pool.sh coverage` now reports covered/free per node,
+> which is what actually predicts a wake; pokprod measured **6 of 44 free GPUs
+> covered, 7 of 12 nodes at 0%**.
+>
+> The strategic direction has since moved to
+> [`fma-launcher-owned-warm-pool.md`](fma-launcher-owned-warm-pool.md).
 **Upstream posture:** work in the fork, no PR, until the WVA/FMA integration
 produces results worth carrying.
 
