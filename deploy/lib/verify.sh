@@ -196,6 +196,16 @@ verify_deployment() {
         fi
     fi
 
+    # --- The EPP's scheduler queue, WVA's other input.
+    #
+    # Reported here as well as in the preflight, because a caller who runs
+    # `make deploy-wva` without `make check-prereqs` would otherwise never be told,
+    # and the gate being off is invisible in every other output: WVA still emits
+    # decisions, the HPA still reads healthy, and wva_unmeasured_queue — which
+    # exists to catch exactly this class of blindness — is itself sourced from the
+    # queue that is missing, so it reads 0.
+    wva_report_epp_flowcontrol || true
+
     # --- Monitoring
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
         log_info "Checking Prometheus..."
