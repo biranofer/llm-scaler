@@ -15,6 +15,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 )
 
 // SaturationAnalyzer implements the domain.Analyzer interface using a
@@ -194,7 +195,13 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		effectiveCapacity = k2
 		bound = "k2-compute"
 	}
-	logger.Info("replica-capacity-decision",
+	// Per-replica, per-cycle diagnostics: two lines per replica per optimize
+	// cycle, the highest-volume logging in the controller. V(logging.DEFAULT) is
+	// the shipped verbosity (cmd/main.go defaults -v to logging.DEFAULT), so
+	// hack/benchmark/dump_k2_decisions.py still sees them out of the box, while an
+	// operator who does not want them can drop to -v=1 without losing the V(1)
+	// diagnostics elsewhere.
+	logger.V(logging.DEFAULT).Info("replica-capacity-decision",
 		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 		"k1MemoryBound", k1, "k2ComputeBound", k2, "k2Source", k2Labels[k2Priority],
 		"effectiveCapacity", effectiveCapacity, "boundBy", bound,
@@ -247,7 +254,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 ) *ReplicaCapacity {
 	rec := a.capacityStore.Get(namespace, modelID, rm.VariantName)
 	if rec == nil || rec.EffectiveCapacity <= 0 {
-		logger.Info("replica-capacity-no-cache-info",
+		logger.V(logging.DEFAULT).Info("replica-capacity-skipped",
 			"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 			"reason", "no vllm:cache_config_info and no usable capacity-store record")
 		return nil
@@ -295,7 +302,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacityFallback(
 	localQueueDemand := waitingQueueDemand(rm, role)
 	replicaDemand := kvUsageDemand + localQueueDemand
 
-	logger.Info("replica-capacity-no-cache-info",
+	logger.V(logging.DEFAULT).Info("replica-capacity-store-fallback",
 		"modelID", modelID, "namespace", namespace, "variant", rm.VariantName, "pod", rm.PodName,
 		"reason", "no vllm:cache_config_info; using capacity-store record",
 		"storeEffectiveCapacity", rec.EffectiveCapacity, "storeLearnedFrom", rec.LearnedFrom,
@@ -347,7 +354,7 @@ func (a *SaturationAnalyzer) computeK2(
 		ra.Add(float64(k2Observed))
 		historyLen := ra.Len()
 		a.mu.Unlock()
-		logger.Info("k2-decision",
+		logger.V(logging.DEFAULT).Info("k2-decision",
 			"modelID", modelID, "namespace", namespace, "variant", variantName,
 			"priority", k2Labels[k2SrcObserved], "historyKey", historyKey,
 			"queueLength", queueLen, "queueThreshold", queueThreshold,
@@ -366,7 +373,7 @@ func (a *SaturationAnalyzer) computeK2(
 	}
 	a.mu.Unlock()
 	if histAvg > 0 {
-		logger.Info("k2-decision",
+		logger.V(logging.DEFAULT).Info("k2-decision",
 			"modelID", modelID, "namespace", namespace, "variant", variantName,
 			"priority", k2Labels[k2SrcHistorical], "historyKey", historyKey,
 			"queueLength", queueLen, "queueThreshold", queueThreshold,
@@ -376,7 +383,7 @@ func (a *SaturationAnalyzer) computeK2(
 
 	// Priority 3: Derived from deployment args
 	if k2Derived := estimateCapacityFromParams(engineParams, avgInput, avgOutput); k2Derived > 0 {
-		logger.Info("k2-decision",
+		logger.V(logging.DEFAULT).Info("k2-decision",
 			"modelID", modelID, "namespace", namespace, "variant", variantName,
 			"priority", k2Labels[k2SrcDerived], "historyKey", historyKey,
 			"avgInputTokens", avgInput, "avgOutputTokens", avgOutput,
@@ -385,7 +392,7 @@ func (a *SaturationAnalyzer) computeK2(
 	}
 
 	// Priority 4: Fallback to k1
-	logger.Info("k2-decision",
+	logger.V(logging.DEFAULT).Info("k2-decision",
 		"modelID", modelID, "namespace", namespace, "variant", variantName,
 		"priority", k2Labels[k2SrcFallback], "historyKey", historyKey,
 		"reason", "no observed/historical/derived k2; capacity is memory-bound only",
