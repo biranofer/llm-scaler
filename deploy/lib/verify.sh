@@ -73,6 +73,37 @@ verify_deployment() {
         log_warning "  If it is rejecting a flag, IMG and these manifests are different versions: build and push this tree (make docker-build docker-push IMG=<ref>) and re-run with that IMG."
     fi
 
+    # --- Did the model-server metrics actually arrive?
+    #
+    # The sanity check that closes the loop: a PodMonitor existing says nothing
+    # about whether it produced a target. One naming a port no container declares
+    # generates NO target at all rather than a failing one, so "applied" and
+    # "working" are different claims and only the second one matters. This is the
+    # half that carries the value — the installer does not create the object (see
+    # infra_monitoring.sh), so reporting the outcome is all there is.
+    #
+    # Asked of WVA rather than of Prometheus, deliberately. The Prometheus URL is
+    # in-cluster (on OpenShift, thanos-querier.openshift-monitoring.svc) and is not
+    # reachable from wherever this script runs, so querying it would need a route,
+    # a token, or a one-shot pod. WVA has already queried it, every optimization
+    # interval, and says what it found: wva_saturation_metrics_up, and this log
+    # line. One kubectl call, no cluster networking, and it reports the thing the
+    # operator actually cares about.
+    local wva_logs40 sat_missing
+    wva_logs40=$(kubectl logs -n "$WVA_NS" -l "$WVA_CONTROLLER_LABEL_SELECTOR" --tail=40 2>/dev/null)
+    sat_missing=$(grep -c "No saturation metrics available" <<< "$wva_logs40" || true)
+    if [ "${sat_missing:-0}" -gt 0 ]; then
+        log_warning "WVA is running but has NO model-server metrics to size from — it logged \"No saturation metrics available for model\" ${sat_missing}x in its last 40 lines."
+        log_warning "  It will hold every workload at minReplicas. On the HPA that looks identical to a correct decision ('1/1 (avg)'), which is why this is checked here."
+        log_warning "  Usually nothing is scraping the model servers. Check:  kubectl get podmonitor,servicemonitor -n ${WVA_WATCH_NS:-$WVA_NS}"
+        log_warning "  That is llm-d's step 3, \"(Optional) Enable monitoring\" — optional for llm-d, required for WVA:"
+        log_warning "      kubectl apply -n ${WVA_WATCH_NS:-$WVA_NS} -k \$REPO_ROOT/guides/recipes/modelserver/components/monitoring"
+        log_warning "  or, with no llm-d checkout:  kubectl apply -n ${WVA_WATCH_NS:-$WVA_NS} -k config/modelserver-metrics"
+        log_warning "  A model server with 0 replicas also produces no series; that case resolves itself when one starts."
+    elif grep -q "scaling-decision" <<< "$wva_logs40"; then
+        log_success "WVA is reading model-server metrics and emitting scaling decisions"
+    fi
+
     # --- Monitoring
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
         log_info "Checking Prometheus..."
