@@ -71,48 +71,59 @@ Reliability, stated as the property that is missing: **a warm hit is currently a
 accident of scheduling.** Nothing can predict one, so nothing can plan on one, so
 the pool cannot be sized, priced or promised.
 
-## The split: mechanism upstream, policy in WVA
+## WVA is the brain, FMA is the muscle
 
-This is deliberate, and it is not a trick. Two separate reasons put the line
-where it is:
+That is the whole architecture in a sentence, and it decides where each change
+belongs.
 
-**What FMA should own is a mechanism, because that is what upstream can accept.**
-A change that makes sleepers reusable and pool state observable helps every
-consumer — a KEDA scenario, a Grafana dashboard, a human. It is generic, it has
-no WVA concept in it, and it is defensible on its own merits. A change that
-encoded *our* allocation policy would be both worse engineering and much harder
-to land.
+**FMA is the muscle: it should own mechanism.** Making sleepers reusable and pool
+state observable is generic capability — it helps every consumer, contains no WVA
+concept, and is defensible upstream on its own merits. A change that encoded our
+allocation policy inside FMA would be worse engineering and much harder to land.
 
-**What WVA should own is the allocation policy, because only WVA can compute
-it.** This is structural rather than defensive, and `fma-aware-attribution.md` §9
-already establishes why: the working KEDA-on-FMA scenario scales the requester
-Deployment on **EPP pool saturation**, a signal measured at the pool. That loop
-never reads a per-replica engine metric — which is exactly why it is immune to
-FMA's attribution problems, and exactly why it cannot do this. Deciding *which*
-models hold warm slots, *how many*, and *when to spill demand to a non-FMA
-variant* is a cross-model allocation problem in tokens of supply and demand.
-A threshold on pool saturation cannot express it.
+**WVA is the brain: it should own allocation.** Deciding *which* models hold warm
+slots, *how many*, and *when to spill demand onto a non-FMA variant* is a
+cross-model allocation problem stated in tokens of supply and demand. WVA already
+computes exactly that, per replica, which is why it needed the attribution work in
+the first place.
 
-So the honest statement of the competitive position is:
+The two fit because they are different kinds of work, not because either is
+withheld. FMA moves fast; WVA decides what is worth moving.
 
-> Upstream gets a pool that works. WVA gets a pool that is *allocated*. The
-> second requires per-replica token-level sizing, which is WVA's existing
-> differentiator and which a threshold-based autoscaler structurally does not
-> have.
+**This is not about limiting who else can use FMA.** A better FMA is good for
+every consumer, and the upstream changes here are deliberately generic so that a
+KEDA scenario, a Grafana dashboard or an operator benefits too. The claim is
+narrower and more durable: **WVA can use FMA more efficiently than a
+threshold-driven autoscaler can**, because efficiency here means allocating a
+scarce shared resource across models, and that needs a model of supply and demand
+rather than a threshold to chase.
 
-We should not try to make the upstream primitive deliberately awkward for others
-to use. It would likely be rejected, it would be bad faith in an incubation
-project we depend on, and it is unnecessary: the part that is hard to copy is the
-part we are keeping anyway.
+`fma-aware-attribution.md` §9 shows why that difference is structural rather than
+asserted. The working KEDA-on-FMA scenario scales the requester Deployment on
+**EPP pool saturation** — a signal measured at the pool, which never reads a
+per-replica engine metric. That is what makes it robust against FMA's attribution
+problems, and it is the same property that leaves it with nothing to say about
+which of several models should hold the last warm slot. Both loops are legitimate;
+they answer different questions.
+
+So the honest summary:
+
+> Upstream gets a pool that works, for everyone. WVA gets a pool that is
+> *allocated*, because it is the component that can size warmth in tokens.
 
 ## What reliability requires
 
 Four properties. The first two need FMA; the last two are WVA's and are not
 blocked.
 
-**R1 — Fungible sleepers.** Key instance reuse on **(model, options)** rather than
-on a hash including GPU UUIDs, and re-point `CUDA_VISIBLE_DEVICES` at bind time.
-Without this every other guarantee is built on scheduler luck.
+**R1 — Fungible warmth.** Warm reuse must not require the requester to be handed
+the one GPU a sleeper happens to sit on. Without this every other guarantee is
+built on scheduler luck.
+
+**The original phrasing of R1 — "re-point `CUDA_VISIBLE_DEVICES` at bind time" —
+is not achievable, and step 0 has now established that.** See
+[Step 0 answered](#step-0-answered). R1 is restated above
+as the property required, not the mechanism assumed.
 
 **R2 — Pool state that can be read before deciding.** Free sleepers per (model,
 accelerator, and the node set a requester could actually land on), exported by
@@ -140,10 +151,10 @@ FMA work measurable when it arrives.
 Deliberately ordered so that nothing is filed upstream before there is a result
 worth filing.
 
-0. **Answer the contingent question** (fork spike, no commits worth keeping):
-   can a sleeping vLLM have its device re-pointed without a weight reload? The
-   whole of R1 rests on it. If the answer is no, this plan changes shape and
-   everything after it is wasted — so nothing else in the fork starts first.
+0. ~~**Answer the contingent question**: can a sleeping vLLM have its device
+   re-pointed without a weight reload?~~ **Answered: no.** See below. R1 is
+   restated; the fork work changes shape before it starts, which is exactly what
+   this step was for.
 1. **WVA: R4, then R3.** Classify every FMA wake and stop assuming warm. No FMA
    dependency, useful immediately, and it establishes the baseline the later
    comparison needs.
@@ -163,6 +174,59 @@ worth filing.
    59s warm bind is a report; a PR carrying 59s → seconds is a case.
 
 Steps 1 and 5 are WVA work and are **not blocked** by any of the fork work.
+
+## Step 0 answered
+
+**A sleeping vLLM cannot be re-pointed at a different GPU without restarting the
+process.** Established by reading the fork, not by speculation:
+
+| path | where the device is fixed |
+| --- | --- |
+| separate provider pod | `CUDA_VISIBLE_DEVICES` written into the **pod spec** container env (`pkg/controller/dual-pods/inference-server.go:1917`) |
+| launcher-hosted instance | `config.env_vars["CUDA_VISIBLE_DEVICES"]` set from `gpu_uuids` **before** `multiprocessing.Process` spawns the server (`inference_server/launcher/launcher.py:187`) |
+
+In both cases the device is chosen at process start. An env var cannot be changed
+under a running process, and a CUDA context is bound to its device at
+initialisation, so "re-point at bind time" would mean killing and respawning the
+server — which is the very thing sleep mode exists to avoid. The GPU-UUID hash in
+the instance ID is therefore not an arbitrary choice: **it is an accurate
+statement of what the process can actually serve.**
+
+This is the value of running step 0 first. Had R1 been implemented as written, the
+work would have been wasted, and the failure would have surfaced late — as a
+mysterious wake that still took 50s.
+
+### What replaces it
+
+The goal is unchanged; the mechanism must be. Two directions, and the second is
+the realistic one:
+
+**(a) Align the GPU the other way.** Choose the sleeper first, then arrange for the
+requester to be given *that* GPU. This keeps the process untouched, which is the
+ideal outcome — but the requester's GPU comes from the device plugin, and
+influencing that assignment from a controller is a Kubernetes-level fight
+(device-plugin semantics, scheduler extenders) far larger than the change we
+wanted.
+
+**(b) Make warm reuse depend on host-resident weights, not on a GPU-pinned
+process.** Respawn the instance on whichever GPU the requester was actually given,
+reusing weights already resident in the launcher's host memory or page cache. The
+cost becomes a process start plus a host→device copy, instead of a download and a
+full load. This is generic, contains no WVA concept, and is a clean upstream
+story: *reuse the weights cache, not the process.*
+
+Direction (b) also explains the measurement that started all of this. The 494s
+and ~50s figures are download-and-load costs. A host-cached respawn is a different
+quantity entirely — and **nobody has measured it yet**, which makes it the next
+question, in the same spirit as this one:
+
+> How long does starting a vLLM instance take on a launcher that has already
+> served that model, with weights still in host cache, on a different GPU?
+
+If that is seconds, direction (b) delivers the pool. If it is tens of seconds, the
+shared pool is worth much less than assumed and this plan should be reconsidered
+rather than pushed. **Measure before implementing** — the same discipline that
+just saved the R1 work.
 
 ## Scale-to/from-zero is a first-class tenant
 
