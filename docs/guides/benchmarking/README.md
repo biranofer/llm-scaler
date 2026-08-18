@@ -117,6 +117,8 @@ Optional, except `BENCHMARK_NAMESPACE`.
 | `BENCHMARK_KEDA_SCALE_UP_STABILIZATION` | `0` | `60` |
 | `BENCHMARK_KEDA_SCALE_DOWN_PERIOD` | `120` | `60` |
 | `BENCHMARK_KEDA_SCALE_DOWN_STABILIZATION` | `300` | `120` |
+| `BENCHMARK_ALLOW_EPP_REUSE` | `false` | `true` |
+| `BENCHMARK_WVA_DEPLOY` | `true` | `false` |
 
 **The harness image must match `BENCHMARK_REPO_REF`.** The harness pod always
 runs the checkout's scripts — they are copied in from a ConfigMap built from the
@@ -125,6 +127,36 @@ tree — while the image comes from llm-d-benchmark's `defaults.yaml`, which pin
 v0.7.8's scripts call `guidellm run` and the v0.7.0 image's guidellm only has
 `benchmark`: `Error: No such command 'run'`. `BENCHMARK_IMAGE_TAG` follows the
 ref for you; set it only to pin something else.
+
+### Standing up beside something that already exists
+
+A standup renders a whole stack and applies it unconditionally. On a shared
+cluster that is a way to break someone else's running workload without either of
+you seeing an error: the pods keep running and answering while the scrape config,
+pool membership or image change underneath them. Three refusals now guard that,
+each because it happened.
+
+- **An EPP already serving in the namespace.** The guide renders its own EPP
+  Deployment, Service, InferencePool and a PodMonitor named `vllm-<model>`, and
+  replaces whatever is there. Standup stops, lists the deployments it found, and
+  offers three ways on: use a clean namespace, benchmark what is already there
+  with `make benchmark-run` alone, or re-render deliberately with
+  `BENCHMARK_ALLOW_EPP_REUSE=true`.
+- **A WVA controller already running.** The guard used to exclude our own
+  deployment name, so a standup silently re-applied over a running controller and
+  moved it to `$(IMG)` — including one somebody else was mid-experiment on.
+  Standup now prints the running image against the incoming one and points at
+  `BENCHMARK_WVA_DEPLOY=false`, which reuses the controller that is already
+  installed instead of redeploying it.
+- **The `prometheus-adapter-resource-reader` ClusterRole.** Cluster-scoped, so
+  taking it over affects every tenant: rewriting its Helm ownership metadata
+  makes the real release's next `helm upgrade` fail. Standup previously declined
+  only when it carried a release-namespace annotation; it now declines whenever
+  the object exists at all, and says so. The probe it exists to satisfy passes on
+  the existing object anyway.
+
+The FMA placement check that runs at the top of standup is described in
+[Autoscale a Fast Model Actuation stack](../fma/#placement-decides-warm-or-cold).
 
 **`BENCHMARK_HARNESS_RUN_AS_USER` is 0 because the harness writes to
 `/usr/local/bin` at startup.** llm-d-benchmark stopped forcing that UID in
