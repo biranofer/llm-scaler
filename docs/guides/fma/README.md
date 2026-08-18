@@ -372,6 +372,25 @@ required — with the warm set exhausted the pod still schedules and rebuilds,
 which is what it would have done anyway; a hard predicate would leave it
 `Pending` instead, trading a slow replica for no replica.
 
+**Why the default is worse than random.** On pokprod there are 14 GPU nodes, all
+one accelerator type, and the LauncherPopulationPolicy pins launchers to 5 named
+hosts — while the requester's `nodeAffinity` matches `gpu.product`, so all 14 are
+eligible. An unconstrained requester therefore lands beside warm capacity about
+a third of the time at best, and less than that in practice: the scheduler
+*spreads* replicas away from nodes already running pods, which is precisely the
+wrong direction here.
+
+That a *preferred* term is strong enough to reverse it is a claim about
+scheduler scoring, not about YAML, so it is measured rather than asserted:
+
+```bash
+make benchmark-verify-warm-affinity   # any cluster with >= 3 nodes, no GPUs needed
+```
+
+It stands launchers up on one node of three, then runs six requester replicas
+with and without the rendered affinity. Measured: **2/6 on the launcher node
+without it — an even scatter — against 6/6 with it.**
+
 **Everything under `fma:` is inert while `fma.enabled` is false.** `step_06`
 skips itself when FMA is not a deployed method, so no node is selected or
 labeled and no `nodeSelector` or affinity is rendered; `step_02a_fma_warmup_hotstart`

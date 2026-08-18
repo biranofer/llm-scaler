@@ -787,6 +787,15 @@ benchmark-fma-fixups: ## Re-apply the FMA fixes a standup undoes: launcher RBAC 
 	fi
 	@bash hack/benchmark/fma_fixups.sh $(BENCHMARK_NAMESPACE) $(FMA_VERSION)
 
+.PHONY: benchmark-verify-warm-affinity
+benchmark-verify-warm-affinity: ## Prove fma.warmAffinity beats default scheduler spreading (any cluster with >=3 nodes; no GPUs needed)
+	@# warmAffinity is a PREFERRED podAffinity, so whether it actually wins is a
+	@# question about scheduler scoring, not about YAML -- unreadable from the
+	@# template. This runs both arms and compares. Measured on kind: 2/6 replicas
+	@# on the launcher node without it, 6/6 with it.
+	@bash -c 'command -v python3 >/dev/null || { echo "python3 required"; exit 1; }'
+	@python3 hack/benchmark/verify_warm_affinity.py
+
 .PHONY: benchmark-fma-verify
 benchmark-fma-verify: ## Report where FMA launchers and requesters actually landed, and fail if the scenario's placement is inert (set BENCHMARK_NAMESPACE)
 	@# The question this answers is "will the next scale-up wake a sleeper or
