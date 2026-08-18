@@ -924,6 +924,11 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 			echo "someone else's on a shared cluster. Rewriting its ownership to $(WVA_MONITORING_NAMESPACE)"; \
 			echo "would make that release's next helm upgrade fail on invalid ownership metadata."; \
 			echo "The probe it exists to satisfy passes on the existing object anyway."; \
+		elif kubectl get clusterrole prometheus-adapter-resource-reader >/dev/null 2>&1; then \
+			echo "ClusterRole prometheus-adapter-resource-reader already exists and carries no"; \
+			echo "release-namespace annotation. NOT rewriting its ownership: it is CLUSTER-scoped,"; \
+			echo "something else created it, and --overwrite would take it over on a shared"; \
+			echo "cluster. The probe it exists to satisfy passes on the existing object anyway."; \
 		else \
 			echo "Stubbing prometheus-adapter-resource-reader ClusterRole so standup's existing-PA probe passes..."; \
 			kubectl create clusterrole prometheus-adapter-resource-reader \
