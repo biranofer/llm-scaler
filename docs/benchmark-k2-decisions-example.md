@@ -18,8 +18,10 @@ Two things decide whether the report comes back populated:
   verbosity the shipped deployment runs at. A controller started with `-v=1` or lower
   suppresses them and the report is empty.
 - **`--cycle-gap`** (default 3s) is the silence that separates two optimize cycles. It must
-  stay below `GLOBAL_OPT_INTERVAL`; the script warns on stderr if it merged cycles into one
-  row.
+  stay below `GLOBAL_OPT_INTERVAL`, which ships at 15s but may be configured as low as 1s —
+  so the script detects a gap that spanned more than one cycle and narrows it automatically,
+  reporting what it chose on stderr. It will not narrow below 1s, since log timestamps are
+  second-granularity and a cycle straddling a second boundary would then split in two.
 
 ---
 

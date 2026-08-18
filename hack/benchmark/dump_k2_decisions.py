@@ -86,10 +86,31 @@ MESSAGES = {
     DECISION_MSG,
 }
 
-# Default cycle-clustering window, in seconds. See assign_cycles(). Must sit
-# comfortably below GLOBAL_OPT_INTERVAL (the gap *between* cycles) and above
-# the spread of a single cycle's own log lines.
+# Cycle-clustering window, in seconds. See assign_cycles(). The default sits
+# comfortably below the shipped GLOBAL_OPT_INTERVAL (15s) and above the spread
+# of a single cycle's own log lines; resolve_cycles() narrows it when the run
+# used a shorter interval.
 DEFAULT_CYCLE_GAP = 3.0
+
+# The floor resolve_cycles() will not narrow past. Log timestamps are
+# second-granularity, so below 1s a cycle whose lines straddle a second boundary
+# gets split apart again -- the exact bug the clustering exists to prevent.
+MIN_CYCLE_GAP = 1.0
+
+# Messages that occur at most once per optimize cycle, mapped to the field tuple
+# naming the thing they are "once per". A repeat inside one cluster proves the
+# clustering merged several cycles. k2-decision is absent on purpose: it is per
+# replica but carries no pod field, so two replicas of one variant legitimately
+# produce two indistinguishable events in a single cycle.
+CYCLE_UNIQUE_KEYS = {
+    RC_MSG: ("variant", "pod"),
+    "replica-capacity-skipped": ("variant", "pod"),
+    "replica-capacity-store-fallback": ("variant", "pod"),
+    SQ_MSG: ("modelID",),
+    "variant-capacity-source": ("variant",),
+    "zero-replica-capacity-estimate": ("variant",),
+    DECISION_MSG: ("variant",),
+}
 
 
 def md_table(headers, rows):
@@ -152,21 +173,51 @@ def assign_cycles(events, gap_seconds):
     return cycles
 
 
-def warn_if_cycles_merged(cycles, gap_seconds):
-    """scheduler-queue-demand is emitted exactly once per model per optimize
-    cycle, which makes it a reliable marker for whether clustering over-merged.
-    Two of them for one model inside a single cluster means --cycle-gap is at
-    or above the optimize interval, so each row is covering several cycles."""
+def cycles_merged(cycles):
+    """True if any cluster holds two events that can only happen once per
+    optimize cycle -- proof the clustering gap exceeded the optimize interval.
+
+    Keying on every once-per-cycle message rather than on scheduler-queue-demand
+    alone is what makes this work at all: that line is only logged when
+    input.SchedulerQueue is non-nil, and the collector returns nil whenever the
+    EPP flow-control metrics are absent. On a cluster without them the queue
+    line never appears, so a detector keyed on it could never fire.
+    """
     for cycle in cycles:
-        per_model = Counter(e.get("modelID") for e in cycle if e["_msg"] == SQ_MSG)
-        if per_model and max(per_model.values()) > 1:
-            print(
-                f"WARNING: --cycle-gap={gap_seconds}s merged several optimize cycles into one "
-                f"row (saw {max(per_model.values())} {SQ_MSG} events for one model in a single "
-                "cluster). Lower it below the controller's GLOBAL_OPT_INTERVAL.",
-                file=sys.stderr,
-            )
-            return
+        counts = Counter(
+            (e["_msg"],) + tuple(e.get(f) for f in CYCLE_UNIQUE_KEYS[e["_msg"]])
+            for e in cycle if e["_msg"] in CYCLE_UNIQUE_KEYS
+        )
+        if counts and max(counts.values()) > 1:
+            return True
+    return False
+
+
+def resolve_cycles(events, gap_seconds):
+    """Clusters events into optimize cycles, narrowing the gap until no cluster
+    holds two events that can only happen once per cycle.
+
+    GLOBAL_OPT_INTERVAL ships at 15s but may legally go as low as 1s
+    (config.MinOptimizationInterval), so no single gap is right for every
+    cluster and a fixed default would silently merge cycles on a fast one.
+    Narrowing stops at MIN_CYCLE_GAP; at a 1s interval the cycles are simply not
+    separable at this timestamp resolution, and that is reported rather than
+    papered over.
+    """
+    gap = gap_seconds
+    cycles = assign_cycles(events, gap)
+    while cycles_merged(cycles) and gap > MIN_CYCLE_GAP:
+        gap = max(MIN_CYCLE_GAP, gap / 2.0)
+        cycles = assign_cycles(events, gap)
+
+    if gap != gap_seconds:
+        print(f"NOTE: --cycle-gap={gap_seconds}s spanned more than one optimize cycle; "
+              f"narrowed to {gap}s.", file=sys.stderr)
+    if cycles_merged(cycles):
+        print(f"WARNING: even --cycle-gap={gap}s cannot separate this run's optimize cycles "
+              "(GLOBAL_OPT_INTERVAL at or below the 1s timestamp resolution?). Each row below "
+              "may cover more than one cycle.", file=sys.stderr)
+    return cycles
 
 
 def build_cycle_row(cycle, variant):
@@ -249,12 +300,15 @@ def main():
     ap.add_argument("results_dir", help="Path to .../results/<treatment>_<i>")
     ap.add_argument("-n", "--namespace", required=True)
     ap.add_argument("--cycle-gap", type=float, default=DEFAULT_CYCLE_GAP,
-                    help="Seconds of silence separating two optimize cycles. Must be below the "
-                         f"controller's GLOBAL_OPT_INTERVAL. Default: {DEFAULT_CYCLE_GAP}")
+                    help="Seconds of silence separating two optimize cycles. Narrowed "
+                         f"automatically (down to {MIN_CYCLE_GAP}s) if it turns out to span more "
+                         f"than one. Default: {DEFAULT_CYCLE_GAP}")
     args = ap.parse_args()
 
-    if args.cycle_gap <= 0:
-        print("ERROR: --cycle-gap must be positive", file=sys.stderr)
+    if args.cycle_gap < MIN_CYCLE_GAP:
+        print(f"ERROR: --cycle-gap must be at least {MIN_CYCLE_GAP}s. Below that, a cycle whose "
+              "log lines straddle a second boundary is split into separate rows.",
+              file=sys.stderr)
         sys.exit(1)
 
     rd = Path(args.results_dir).resolve()
@@ -316,8 +370,7 @@ def render_report(events, start, stop, cycle_gap):
     k2_events = [e for e in events if e["_msg"] == K2_MSG]
     variants = sorted({e.get("variant", "?") for e in k2_events})
 
-    cycles = assign_cycles(events, cycle_gap)
-    warn_if_cycles_merged(cycles, cycle_gap)
+    cycles = resolve_cycles(events, cycle_gap)
 
     for variant in variants:
         rows = [r for r in (build_cycle_row(c, variant) for c in cycles) if r]
