@@ -513,3 +513,125 @@ deploy_monitoring_stack() {
 
     deploy_prometheus_stack
 }
+
+# --- EPP flow control ---------------------------------------------------------
+#
+# WVA needs the EPP's flow-control queue, and the guide understates it as a
+# scale-from-zero concern. Three things depend on it:
+#
+#   scale-from-zero   at 0 replicas there are no engine metrics, so the scheduler
+#                     queue is the ONLY evidence anyone is asking for the model.
+#                     Without it a parked workload never wakes.
+#   arrival rate      domain/analyzer.go: "Zero when the metric is unavailable (EPP
+#                     absent or no traffic yet)". Absence is indistinguishable from
+#                     idleness, so requests queued but not yet dispatched are
+#                     invisible to the demand model.
+#   wva_unmeasured_queue
+#                     the detector for "serving traffic through pods WVA cannot
+#                     attribute" — an unscraped FMA launcher, a PodMonitor naming a
+#                     port the pods do not declare, ownerReferences reaching no
+#                     scale target. It is sourced from this queue PRECISELY because
+#                     it does not depend on any engine pod being scraped. With the
+#                     gate off it reads 0 forever, so the safety net is disabled by
+#                     the same absence it exists to catch.
+#
+# The gate is not a container flag. It is declared in the EPP's own plugins config:
+#
+#     featureGates:
+#       - flowControl
+#
+# Measured on pokprod001: the namespaces whose EPP config carries that list have
+# inference_extension_flow_control_queue_size series; the one built from llm-d's
+# optimized-baseline guide has no featureGates section and no series.
+#
+# WVA reads the queue by scraping the EPP directly with a token mounted at
+# /var/run/secrets/epp-metrics/token, and falls back to the same metric in
+# Prometheus. Either path is fine — but neither has anything to read while the gate
+# is off, which is why this checks the gate rather than the plumbing.
+
+# wva_epp_services echoes the EPP Service each InferencePool in $1 points at.
+# Read from the pool's endpointPickerRef rather than guessed from a name, because
+# that reference is what the gateway itself dials.
+wva_epp_services() {
+    local ns="$1" kind
+    for kind in inferencepools.inference.networking.k8s.io inferencepools.inference.networking.x-k8s.io; do
+        kubectl get "$kind" -n "$ns" -o json 2>/dev/null | jq -r '
+            .items[]?
+            | (.spec.endpointPickerRef // .spec.extensionRef // {})
+            | select((.name // "") != "")
+            | .name' 2>/dev/null
+    done | sort -u
+}
+
+# wva_epp_flowcontrol_state echoes on|off|unknown for the EPP behind Service $2.
+#
+# Resolves the config the way the container does: the --config-file argument names
+# a path, the volumeMount covering that path names a volume, and the volume names
+# the ConfigMap and therefore the key. Guessing "<service>-plugins.yaml" would be
+# right here and wrong for any guide that names its file differently.
+wva_epp_flowcontrol_state() {
+    local ns="$1" svc="$2" sel pod cfg key cm data
+    sel=$(kubectl get svc "$svc" -n "$ns" -o json 2>/dev/null \
+        | jq -r '(.spec.selector // {}) | to_entries | map(.key + "=" + .value) | join(",")')
+    [ -n "$sel" ] || { echo unknown; return 0; }
+    pod=$(kubectl get pods -n "$ns" -l "$sel" -o name 2>/dev/null | head -1)
+    [ -n "$pod" ] || { echo unknown; return 0; }
+
+    cfg=$(kubectl get "$pod" -n "$ns" -o json 2>/dev/null | jq -r '
+        .spec.containers[] | select((.args // []) | any(. == "--config-file"))
+        | (.args | index("--config-file")) as $i | .args[$i + 1] // ""' | head -1)
+    # `--config-file=<path>` is equally legal.
+    [ -n "$cfg" ] || cfg=$(kubectl get "$pod" -n "$ns" -o json 2>/dev/null | jq -r '
+        .spec.containers[].args[]? | select(startswith("--config-file=")) | sub("^--config-file="; "")' | head -1)
+    [ -n "$cfg" ] || { echo unknown; return 0; }
+    key="${cfg##*/}"
+
+    cm=$(kubectl get "$pod" -n "$ns" -o json 2>/dev/null | jq -r --arg dir "${cfg%/*}" '
+        .spec.containers[].volumeMounts[]? | select(.mountPath == $dir) | .name' | head -1)
+    [ -n "$cm" ] && cm=$(kubectl get "$pod" -n "$ns" -o json 2>/dev/null | jq -r --arg v "$cm" '
+        .spec.volumes[]? | select(.name == $v) | .configMap.name // ""' | head -1)
+    [ -n "$cm" ] || { echo unknown; return 0; }
+
+    data=$(kubectl get configmap "$cm" -n "$ns" -o jsonpath="{.data.${key//./\\.}}" 2>/dev/null)
+    [ -n "$data" ] || { echo unknown; return 0; }
+    # The gate is an entry in a featureGates list. Matched on the entry rather than
+    # on the word anywhere in the file, so a plugin merely named after it does not
+    # read as the gate being on.
+    if printf '%s' "$data" | awk '
+        /^[[:space:]]*featureGates:/ { inlist = 1; next }
+        inlist && /^[[:space:]]*-[[:space:]]*flowControl[[:space:]]*$/ { found = 1; exit }
+        inlist && /^[[:space:]]*[^-[:space:]]/ { inlist = 0 }
+        END { exit !found }'; then
+        echo on
+    else
+        echo off
+    fi
+}
+
+# wva_report_epp_flowcontrol is the read-only report, for the preflight and verify.
+wva_report_epp_flowcontrol() {
+    local ns="${WVA_WATCH_NS:-$WVA_NS}" svc state any=false
+
+    for svc in $(wva_epp_services "$ns"); do
+        any=true
+        state=$(wva_epp_flowcontrol_state "$ns" "$svc")
+        case "$state" in
+            on)
+                log_success "  EPP flow control: enabled on $svc (its config declares featureGates: [flowControl])." ;;
+            off)
+                log_warning "  EPP flow control: NOT enabled on $svc — WVA is missing the scheduler queue."
+                log_warning "    Scale-from-zero can never fire: at 0 replicas that queue is the only evidence anyone is asking for the model."
+                log_warning "    Queued-but-undispatched demand is also invisible (arrival rate reads 0), and wva_unmeasured_queue — the detector for 'serving through pods WVA cannot attribute' — reads 0 forever, because it is sourced from this same queue."
+                log_warning "    Enable it in the EPP's plugins config, then restart the EPP:"
+                log_warning "        featureGates:"
+                log_warning "          - flowControl"
+                log_warning "    llm-d's own EPP configs that WVA is tested against carry it; see the EPP/router section of the llm-d guide you deployed, and docs/guides/install-in-namespace/README.md for what WVA reads it for." ;;
+            *)
+                log_info "  EPP flow control: could not read $svc's plugins config, so this cannot say whether the gate is on. Check that its config declares featureGates: [flowControl]." ;;
+        esac
+    done
+
+    if [ "$any" = false ]; then
+        log_info "  EPP flow control: no InferencePool in $ns names an endpoint picker, so there is no EPP to check yet."
+    fi
+}

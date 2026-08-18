@@ -189,6 +189,11 @@ main() {
         # though it answered whether the metrics WVA needs are in it. They are
         # different questions and only the second one decides whether WVA can work.
         wva_report_modelserver_metrics
+        # The other half of "can WVA see anything": the model servers supply the
+        # engine metrics, the EPP supplies the scheduler queue. Missing either is
+        # silent, and missing the queue also disables the detector that would have
+        # reported the rest.
+        wva_report_epp_flowcontrol
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi
