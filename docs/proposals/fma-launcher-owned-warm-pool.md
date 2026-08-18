@@ -222,32 +222,46 @@ WVA borrows and returns, not a serving fleet it has to own.
 
 ### Where the controller lives
 
-**Not in WVA.** Mechanism and policy split along the line FMA's own design rules
-already draw ("FMA should expose mechanism and state"; allocation belongs to the
-brain):
+**A separate reconciliation loop — but not necessarily a separate repo, and not
+inside WVA's optimizer.** The split that matters is loop and privilege, not
+ownership:
 
-| | responsibility | home |
+| | responsibility | where |
 | --- | --- | --- |
-| **Actuator** | make the live model on a Pod match what was asked: sleep one instance, wake another, swap the label | **FMA fork**, replacing the dual-pods controller |
-| **Policy** | which models are live and warm where, pool size, when to hand over | **WVA today, the planner later** |
+| **Actuator** | make the live model on a Pod match what was asked: sleep one instance, wake another, swap the label | its own controller/loop |
+| **Policy** | which models are live and warm where, pool size, when to hand over | WVA |
 
-The contract is declarative and boringly Kubernetes-shaped — desired state in an
-annotation, actual state in a label:
+Three reasons to keep it out of the optimizer loop:
+
+1. **Cadence.** The actuator reacts to Pod and instance events in seconds — the
+   launcher already exposes a Kubernetes-watch-style NDJSON stream at
+   `GET /v2/vllm/instances/watch?since=<rev>`. WVA's optimizer runs on a 15 s
+   cycle behind KEDA polling. Sharing one loop makes the slow rhythm gate the
+   fast one.
+2. **Privilege.** The actuator needs Pod CRUD in the launcher namespace, which is
+   wider than WVA otherwise holds. Separate loops keep that blast radius separate.
+3. **FMA's own rule** — mechanism and state in FMA, allocation in the brain —
+   which keeps the actuator usable by anyone running llm-d, with or without WVA.
+
+**Two viable homes, and the choice is not forced by the design:**
+
+- **In the WVA repo, as a second manager.** Attractive now: no dependency on a
+  forked FMA, ships and versions with WVA, and can be contributed to llm-d later.
+  Keeps the fork small — only `removeGPUResourceLimits` has to change there.
+- **In the FMA fork**, replacing the dual-pods controller. Natural if the change
+  is ever upstreamed, since it lives beside the launcher it drives.
+
+Either way the contract is declarative and boringly Kubernetes-shaped — desired
+state in an annotation, actual state in a label:
 
 ```
-annotation  fma.llm-d.ai/desired-model: <isc-name>     # written by WVA/planner
+annotation  fma.llm-d.ai/desired-model: <isc-name>     # written by WVA
 label       llm-d.ai/model:             <isc-name>     # written by the actuator
 ```
 
-The actuator's whole job is "make the label match the annotation". Anyone can
-drive it by writing an annotation, with or without WVA.
-
-Three reasons beyond purity: WVA is on a path toward replacement by the llm-d
-planner, and a mechanism buried inside it retires with it; the actuator wants to
-be event-driven on Pod and instance changes (the launcher already offers an
-NDJSON watch stream) while WVA's loop is a 15 s optimizer behind KEDA polling;
-and the actuator needs Pod CRUD in the launcher namespace, which is a wider
-privilege than WVA otherwise holds.
+The actuator's whole job is "make the label match the annotation", and WVA reads
+the label back to know when a wake has landed — ordinary level-triggered
+reconciliation, no handshake. Anyone can drive it by writing an annotation.
 
 ## RECOMMENDED: an elastic pool of GPU-holding launchers, one GPU each
 
