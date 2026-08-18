@@ -10,11 +10,14 @@ population of such launchers, and scale by **waking and sleeping instances insid
 them** — instead of creating a requester Pod per replica and hoping the scheduler
 hands it the GPU a sleeper already occupies.
 
-**Read "RECOMMENDED: an elastic pool of GPU-holding launchers" first.** It
-supersedes the two earlier framings kept below: applying GPU ownership to *all*
-launchers discards the property FMA was designed for (warm processes costing no
-accelerators), and the reserved-subset hybrid still treats the commitment as
-permanent. Making the POOL the elastic unit removes both problems.
+**Read "THE OPERATING MODEL: the pool is a bridge, not a fleet" first**, then
+"RECOMMENDED: an elastic pool of GPU-holding launchers". Together they supersede
+the earlier framings kept further down.
+
+The short version: the pool does not serve the load, it **covers the ramp**. WVA
+wakes a pool instance on scale-up and sleeps it again once the ordinary replica
+is serving, so the pool is sized by *concurrent spikes x ramp time* rather than
+by peak capacity — and it degrades to today's slow start when empty.
 
 ---
 
@@ -145,6 +148,106 @@ does not get to choose the GPU. Everything measured above is that price.
 | Launchers can be everywhere | **yes** | only where you pay |
 | Who picks the GPU | Kubernetes, per scale-up | you, once at creation |
 | Wake reliability | lottery | **deterministic** |
+
+## THE OPERATING MODEL: the pool is a bridge, not a fleet
+
+This is the framing that makes the cost work, and it changes how the pool is
+sized. Read it before the architecture below.
+
+**Several pools, one per accelerator type, each holding warm instances of the
+models that run on that type.** On a scale-up WVA wakes the corresponding
+instances from the pool *and* scales the ordinary Deployment as usual. The pool
+serves while the real replicas start; as each real replica begins **serving**,
+WVA sleeps the pool instance and hands the traffic over. The slot returns to
+standby, ready for the next spike.
+
+### Why this changes the economics
+
+Every other version of this design sized the pool against **load** — cover the
+free GPUs, hold enough warm capacity to serve the peak. That is expensive, and it
+is why "hold the GPUs" kept looking unaffordable.
+
+As a bridge, the pool is sized against **ramp time**. A slot is occupied only for
+the ~41-90 s a normal replica needs to become ready, then it sleeps and is
+reusable:
+
+```
+pool size  ~=  concurrent spike arrivals  x  ramp time
+```
+
+not peak capacity. A handful of permanently-held slots can bridge many models'
+spikes, serially. That is a small, affordable, fixed cost — the first version of
+this proposal that plausibly survives a cost review.
+
+### And it degrades to today's behaviour
+
+If the pool is empty, or the model is not in that pool's warm set, the scale-up
+is exactly what happens today: a slow start. Nothing goes `Pending`, nothing
+breaks. That is the property the extended-resource idea could not offer, and it
+means the pool can be introduced incrementally and switched off without risk.
+
+It also fits WVA's existing shape: pool instances are a **transient** resource
+WVA borrows and returns, not a serving fleet it has to own.
+
+### Sequence
+
+1. WVA decides 1 → 4.
+2. Wake 3 pool instances of that model, apply the live label — traffic flows in
+   **~3 s**.
+3. In parallel, scale the ordinary Deployment 1 → 4.
+4. As each real replica begins serving, sleep one pool instance and remove its
+   label.
+
+### Four sharp edges, in the order they bite
+
+1. **Hand over on *serving*, not on `Ready`.** `readyReplicas` is not the same
+   condition as being in the EndpointSlice and reachable through the router. This
+   repo already paid for that distinction — `hack/benchmark/wait_serving.sh`
+   exists because a 503 in exactly that window killed whole runs. The trigger
+   must be the InferencePool's view.
+2. **The bridge needs GPUs on both sides at once.** During handover the pool
+   holds its GPUs *and* the new replicas hold theirs. On a full cluster the real
+   replicas never schedule, the bridge never completes, and the pool stays awake
+   — silently turning a burst buffer into permanent capacity. Needs an explicit
+   timeout and a decision: keep serving from the pool, or give up and release.
+3. **Attribution must not double-count.** Capacity is genuinely doubled for the
+   bridge window. If WVA counts pool instances as durable supply it will suppress
+   the very scale-up they exist to cover — the same failure mode as pending
+   replicas counting toward anticipated supply.
+4. **Pool composition is still the allocation question.** A model absent from a
+   pool's warm set gets no bridge. Per-accelerator-type pools match the
+   accelerator-aware modelling WVA already does, but *which* models each pool
+   keeps warm is WVA's decision, and it is the same budgeting problem
+   `fma-shared-warm-pool.md` describes.
+
+### Where the controller lives
+
+**Not in WVA.** Mechanism and policy split along the line FMA's own design rules
+already draw ("FMA should expose mechanism and state"; allocation belongs to the
+brain):
+
+| | responsibility | home |
+| --- | --- | --- |
+| **Actuator** | make the live model on a Pod match what was asked: sleep one instance, wake another, swap the label | **FMA fork**, replacing the dual-pods controller |
+| **Policy** | which models are live and warm where, pool size, when to hand over | **WVA today, the planner later** |
+
+The contract is declarative and boringly Kubernetes-shaped — desired state in an
+annotation, actual state in a label:
+
+```
+annotation  fma.llm-d.ai/desired-model: <isc-name>     # written by WVA/planner
+label       llm-d.ai/model:             <isc-name>     # written by the actuator
+```
+
+The actuator's whole job is "make the label match the annotation". Anyone can
+drive it by writing an annotation, with or without WVA.
+
+Three reasons beyond purity: WVA is on a path toward replacement by the llm-d
+planner, and a mechanism buried inside it retires with it; the actuator wants to
+be event-driven on Pod and instance changes (the launcher already offers an
+NDJSON watch stream) while WVA's loop is a 15 s optimizer behind KEDA polling;
+and the actuator needs Pod CRUD in the launcher namespace, which is a wider
+privilege than WVA otherwise holds.
 
 ## RECOMMENDED: an elastic pool of GPU-holding launchers, one GPU each
 
