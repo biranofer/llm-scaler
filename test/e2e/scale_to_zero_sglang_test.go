@@ -179,7 +179,17 @@ var _ = Describe("Scale-To-Zero Feature - parking an SGLang model", Serial, Labe
 		//
 		// Idleness cannot be established before the counters stop advancing AND the
 		// retention window has then elapsed, so anything faster is contamination.
-		earliest := time.Duration(servingWindowSeconds)*time.Second + retentionDuration
+		//
+		// The grace is not slack. servingSince is stamped when the pod reports
+		// READY, while the emulator's IDLE_AFTER clock starts at PROCESS START, so
+		// the idle window opens before servingSince and elapsed-since-ready is short
+		// by the pod's startup time. Against an exact floor this suite passes on a
+		// cold controller (its first run took 380s) and fails on a warm one, which
+		// is how it failed in a full-suite run at 57/58. The floor only has to
+		// separate a real park from a leftover decision that lands in seconds, and
+		// 105s still does that by a wide margin.
+		const graceForPodStartup = 15 * time.Second
+		earliest := time.Duration(servingWindowSeconds)*time.Second + retentionDuration - graceForPodStartup
 		Expect(time.Since(servingSince)).To(BeNumerically(">=", earliest),
 			"parked sooner than idleness could possibly be established: the counter was still "+
 				"advancing, so this is stale state, not a decision")
