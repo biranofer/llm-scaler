@@ -939,32 +939,12 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		cp "$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml.j2" \
 		   "$(BENCHMARK_REPO_DIR)/config/specification/$(BENCHMARK_SPEC).yaml.j2"; \
 	fi
+	@# Lives in a script, not inline here, so its branches can actually be run.
+	@# Inline it was reachable only by driving a whole standup, which is why it
+	@# shipped reviewed-but-never-executed -- and why the "ours from an earlier
+	@# run" case went unnoticed reporting "something else created it".
 	@if [ "$(BENCHMARK_SKIP_PROMETHEUS_ADAPTER)" = "true" ]; then \
-		echo "Not installing prometheus-adapter: it and KEDA both register the"; \
-		echo "external.metrics.k8s.io APIService, and a cluster has exactly one."; \
-		existing_ns=$$(kubectl get clusterrole prometheus-adapter-resource-reader \
-			-o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null || true); \
-		if [ -n "$$existing_ns" ] && [ "$$existing_ns" != "$(WVA_MONITORING_NAMESPACE)" ]; then \
-			echo "NOT touching ClusterRole prometheus-adapter-resource-reader: it already belongs to"; \
-			echo "the Helm release prometheus-adapter in $$existing_ns — a REAL install, possibly"; \
-			echo "someone else's on a shared cluster. Rewriting its ownership to $(WVA_MONITORING_NAMESPACE)"; \
-			echo "would make that release's next helm upgrade fail on invalid ownership metadata."; \
-			echo "The probe it exists to satisfy passes on the existing object anyway."; \
-		elif kubectl get clusterrole prometheus-adapter-resource-reader >/dev/null 2>&1; then \
-			echo "ClusterRole prometheus-adapter-resource-reader already exists and carries no"; \
-			echo "release-namespace annotation. NOT rewriting its ownership: it is CLUSTER-scoped,"; \
-			echo "something else created it, and --overwrite would take it over on a shared"; \
-			echo "cluster. The probe it exists to satisfy passes on the existing object anyway."; \
-		else \
-			echo "Stubbing prometheus-adapter-resource-reader ClusterRole so standup's existing-PA probe passes..."; \
-			kubectl create clusterrole prometheus-adapter-resource-reader \
-				--verb=get,list,watch --resource=pods,nodes 2>/dev/null || true; \
-			kubectl annotate --overwrite clusterrole prometheus-adapter-resource-reader \
-				meta.helm.sh/release-name=prometheus-adapter \
-				meta.helm.sh/release-namespace=$(WVA_MONITORING_NAMESPACE); \
-			kubectl label --overwrite clusterrole prometheus-adapter-resource-reader \
-				app.kubernetes.io/managed-by=Helm; \
-		fi; \
+		bash hack/benchmark/pa_clusterrole.sh stub $(WVA_MONITORING_NAMESPACE); \
 	fi
 	@echo "Injecting PYTORCH_ALLOC_CONF, decode replicas, and KEDA config into scenario YAML ($(BENCHMARK_SPEC).yaml)..."
 	@sed -i.bak 's/extraEnvVars: \[\]/extraEnvVars:\n        - name: PYTORCH_ALLOC_CONF\n          value: "expandable_segments:True"/' \
