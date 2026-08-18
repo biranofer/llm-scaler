@@ -1,16 +1,17 @@
-# Plan: a shared, reusable FMA warm pool
+# Plan: a reliable, shared FMA warm pool, with the policy in WVA
 
 **Status:** plan
 **Requires FMA code changes:** yes — this is the entry that does.
 **Fork:** `ev-shindin/llm-d-fast-model-actuation`, branch `feat/reuse-by-model`
 (created, no commits yet).
+**Upstream posture:** work in the fork, no PR, until the WVA/FMA integration
+produces results worth carrying.
 
 ---
 
 ## What this is, and why it is a separate document
 
-Three FMA documents already exist in this repo and none of them proposes changing
-FMA:
+Three FMA documents already exist here and none proposes changing FMA:
 
 | document | what it does | FMA changes |
 | --- | --- | --- |
@@ -18,20 +19,41 @@ FMA:
 | `fma-warm-pool-wva.md` | keep a warm pool by *pricing* FMA demand | none — by design |
 | `fma-upstream-requests.md` | six findings to file upstream | asks, not a plan |
 
-This one states the goal those three work around: **one warm pool of launcher
+This one states the goal those three work around: **one pool of launcher
 capacity, shared across models, that absorbs spikes and makes scale-from-zero
-fast.** That requires a change inside FMA, so it needs its own plan, a fork, and
-an upstream path.
+fast — and that is reliable enough to plan against.** That needs a change inside
+FMA, so it needs its own plan, a fork, and an upstream path.
 
-## The blocker, stated exactly
+## Terminology
 
-Sleeping instances are **not fungible**. FMA reuses a sleeping instance only on an
-exact instance-ID match, and that ID is a hash that **includes the GPU UUIDs**
-(`pkg/controller/dual-pods`, present in v0.6.4 and on `main`).
+Upstream's terms, used here so the eventual PR does not have to be translated.
+Where this document has been using WVA-local shorthand, the mapping is:
 
-A requester is assigned its GPU by the device plugin. Launcher pods request **0
-GPU**, so the scheduler cannot align the two. On a mismatch FMA does not fall
-back — it destroys the sleeper and builds a fresh instance:
+| upstream (`docs/dual-pods.md`, `docs/launcher.md`) | shorthand used here |
+| --- | --- |
+| server-requesting Pod (of a Deployment) | **requester** |
+| nominal server-providing Pod (of a `LauncherConfig`) | **launcher** / provider |
+| vLLM **instance** — a subprocess inside a launcher | instance |
+| unbound provider (asleep by definition) | **sleeper** |
+| `LauncherPopulationPolicy` | the populator |
+| `InferenceServerConfig` (ISC) | the ISC — source of the serving labels |
+
+Two upstream invariants this plan must not contradict:
+
+- **Bound ⇔ awake.** "An unbound server-providing Pod is asleep. The transitions
+  happen while bound: wake up ASAP after binding, go to sleep just before
+  unbinding."
+- **The provider joins the InferencePool, not the requester** — serving labels
+  come from the ISC's `modelServerConfig.labels`, applied at bind time. This is
+  what makes a bound launcher an EPP endpoint and a sleeper invisible to routing.
+
+## Why today's pool is not reliable
+
+Not "not implemented" — **not reachable**. Sleeping instances are not fungible:
+the instance ID is a hash that includes the **GPU UUIDs**
+(`pkg/controller/dual-pods`, v0.6.4 and `main`). A requester is assigned its GPU
+by the device plugin; launcher pods request **0 GPU**, so the scheduler cannot
+align the two. On a mismatch FMA does not fall back — it destroys the sleeper:
 
 ```
 Got GPU UUIDs                                              <- requester gets GPU-ceb79397
@@ -40,103 +62,148 @@ Selected launcher Pod, binding first
 Created vLLM instance                                      <- fresh ~50s load
 ```
 
-Measured on pokprod (2026-08-16): a genuine bind to a launcher that had been
-asleep since 2026-08-14 took **59s**, against a cold build of 68s. The warm pool
-cost a full GPU per slot and returned almost nothing.
+Measured on pokprod: a bind to a launcher asleep since 2026-08-14 took **59s**
+against a **68s** cold build. Warm binding is additionally **node-local** — a
+requester binds only to a launcher on its own node — so pinning launchers without
+pinning requesters makes every scale-up cold.
 
-Two consequences worth being blunt about:
+Reliability, stated as the property that is missing: **a warm hit is currently an
+accident of scheduling.** Nothing can predict one, so nothing can plan on one, so
+the pool cannot be sized, priced or promised.
 
-- **A pool shared across models is not merely unimplemented, it is unreachable.**
-  Warmth cannot be pooled when each sleeper is bound to one GPU that one
-  scheduler decision has to reproduce.
-- **`fma-warm-pool-wva.md` is a workaround for this bug, not a solution to it.**
-  Its §4 restricts the design to sleepers a variant produced itself, precisely
-  because those are the only reusable ones. It is correct and it is worth
-  shipping — but it can never serve a spike in model B from warmth model A left
-  behind, which is the thing actually wanted.
+## The split: mechanism upstream, policy in WVA
 
-Warm binding is also **node-local**: a requester binds only to a launcher on its
-own node. Pinning launchers without pinning requesters turns every scale-up into
-a cold load. That is a configuration trap, already documented, and it does not go
-away by itself — a fungible pool still has to be reachable from where requesters
-land.
+This is deliberate, and it is not a trick. Two separate reasons put the line
+where it is:
 
-## Goal
+**What FMA should own is a mechanism, because that is what upstream can accept.**
+A change that makes sleepers reusable and pool state observable helps every
+consumer — a KEDA scenario, a Grafana dashboard, a human. It is generic, it has
+no WVA concept in it, and it is defensible on its own merits. A change that
+encoded *our* allocation policy would be both worse engineering and much harder
+to land.
 
-One pool of launcher capacity per accelerator type, drawn on by every model in
-the namespace:
+**What WVA should own is the allocation policy, because only WVA can compute
+it.** This is structural rather than defensive, and `fma-aware-attribution.md` §9
+already establishes why: the working KEDA-on-FMA scenario scales the requester
+Deployment on **EPP pool saturation**, a signal measured at the pool. That loop
+never reads a per-replica engine metric — which is exactly why it is immune to
+FMA's attribution problems, and exactly why it cannot do this. Deciding *which*
+models hold warm slots, *how many*, and *when to spill demand to a non-FMA
+variant* is a cross-model allocation problem in tokens of supply and demand.
+A threshold on pool saturation cannot express it.
 
-- A spike in any model can be served from any free warm slot, subject to the
-  model's weights being loadable there.
-- **Scale-to/from-zero is a first-class user of the pool, not an edge case.** A
-  parked model is the cheapest possible tenant of warm capacity: it holds no
-  requester, no GPU through a requester, and no replicas, yet it can return to
-  service in seconds. That combination is only available with FMA, and it is the
-  strongest argument for the pool paying for itself.
+So the honest statement of the competitive position is:
 
-## The change in FMA
+> Upstream gets a pool that works. WVA gets a pool that is *allocated*. The
+> second requires per-replica token-level sizing, which is WVA's existing
+> differentiator and which a threshold-based autoscaler structurally does not
+> have.
 
-Upstream ask 1 of `fma-warm-pool-wva.md` §11, stated as the work item:
+We should not try to make the upstream primitive deliberately awkward for others
+to use. It would likely be rejected, it would be bad faith in an incubation
+project we depend on, and it is unnecessary: the part that is hard to copy is the
+part we are keeping anyway.
 
-> Key instance reuse on **(model, options)** rather than on a hash that includes
-> GPU UUIDs, and re-point `CUDA_VISIBLE_DEVICES` at bind time.
+## What reliability requires
 
-Sleepers then become interchangeable within a model across GPUs on reachable
-nodes, which is the property the pool needs. It is also the change that makes
-FMA's own measured best case — a 2s bind — the normal case rather than an
-accident of the scheduler handing back the same GPU.
+Four properties. The first two need FMA; the last two are WVA's and are not
+blocked.
 
-Open design questions for the fork, to be answered in code rather than here:
+**R1 — Fungible sleepers.** Key instance reuse on **(model, options)** rather than
+on a hash including GPU UUIDs, and re-point `CUDA_VISIBLE_DEVICES` at bind time.
+Without this every other guarantee is built on scheduler luck.
 
-- **Does re-pointing suffice at the vLLM level?** A sleeping vLLM has weights
-  offloaded; whether the device can be swapped under it without a reload is the
-  crux, and it decides whether this is a small change or a large one. **Settle
-  this first** — the rest of the plan is contingent on it.
-- **Is the instance-ID hash load-bearing elsewhere?** It appears in labels,
-  annotations and the launcher API. Changing what it covers may ripple.
-- **What happens to a sleeper whose GPU was taken by another tenant?** Today
-  reclamation is implicit in the mismatch path; with reuse decoupled from the
-  GPU, eviction becomes an explicit policy.
+**R2 — Pool state that can be read before deciding.** Free sleepers per (model,
+accelerator, and the node set a requester could actually land on), exported by
+FMA. WVA can approximate this today with a pod LIST — `free(P)` in
+`fma-warm-pool-wva.md` §6.1 — but a LIST cannot see *reachability*, and
+node-locality means an unreachable sleeper is not free capacity. This is upstream
+ask 3 of that document, promoted here from nice-to-have to a reliability
+requirement.
+
+**R3 — A wake is never worse than no-FMA.** The decision must not *depend* on a
+warm hit. If the pool misses, the variant takes the ordinary cold path and WVA's
+sizing must already have assumed it could. A design that is fast when warm and
+wrong when cold is not reliable; it is lucky.
+
+**R4 — Every wake is classified.** Warm hit or cold build, with the reason, as a
+metric. "Reliable" is a measurable claim or it is a hope — and the 59s-vs-68s
+measurement above only exists because someone looked. Without R4 a regression
+in R1 is invisible: the system keeps working, just slowly.
+
+R3 and R4 are WVA-side and should land **first**, because they are what make the
+FMA work measurable when it arrives.
 
 ## Sequence
 
-1. **Answer the vLLM question** (fork spike, no PR). If the device cannot be
-   re-pointed under a sleeping instance, this plan changes shape and the rest is
-   moot — so nothing else starts until it is answered.
-2. **Implement reuse-by-model** on `feat/reuse-by-model`.
-3. **Test with WVA** on the kind emulator first, then pokprod. The measurement
-   that matters is the one already taken, repeated: bind to a sleeper created by
-   a *different* requester, on a *different* GPU. Success is seconds, not ~50s.
-   `hack/benchmark/warm_pool.sh verify` already computes the free-pool predicate.
-4. **Land the WVA side** — `fma-warm-pool-wva.md`'s pricing law, which needs no
-   change to work against a fungible pool and gets strictly better with one.
-5. **PR upstream**, with the before/after numbers from step 3. The case is
-   already written up in `fma-upstream-requests.md`; a PR carrying a measured
-   2s-vs-59s comparison is a different proposition from an issue describing one.
+Deliberately ordered so that nothing is filed upstream before there is a result
+worth filing.
 
-Steps 1–2 are FMA work in the fork. Step 4 is WVA work and is **not blocked** by
-any of it.
+0. **Answer the contingent question** (fork spike, no commits worth keeping):
+   can a sleeping vLLM have its device re-pointed without a weight reload? The
+   whole of R1 rests on it. If the answer is no, this plan changes shape and
+   everything after it is wasted — so nothing else in the fork starts first.
+1. **WVA: R4, then R3.** Classify every FMA wake and stop assuming warm. No FMA
+   dependency, useful immediately, and it establishes the baseline the later
+   comparison needs.
+2. **Fork: R1** on `feat/reuse-by-model`. Kept minimal and generic — no WVA
+   concept enters FMA.
+3. **Test the pair on WVA.** Kind emulator for mechanics, pokprod for the number
+   that matters: bind to a sleeper created by a *different* requester on a
+   *different* GPU. Success is seconds, not ~50s. `hack/benchmark/warm_pool.sh
+   verify` already computes the free-pool predicate.
+4. **Fork: R2**, once step 3 shows R1 works and the LIST approximation is the
+   thing limiting us.
+5. **WVA: the allocation policy** — `fma-warm-pool-wva.md`'s pricing law, which
+   works unchanged against a fungible pool and gets strictly better with one,
+   plus cross-model allocation and the spill-to-non-FMA rule.
+6. **Only then, upstream.** R1 and R2 as separate PRs, each defensible alone,
+   each carrying the before/after measurement from step 3. An issue describing a
+   59s warm bind is a report; a PR carrying 59s → seconds is a case.
 
-## What WVA must get right regardless
+Steps 1 and 5 are WVA work and are **not blocked** by any of the fork work.
 
-These hold whether or not the fork change lands, and two are already covered:
+## Scale-to/from-zero is a first-class tenant
 
-- **A parked variant's launchers must not be attributed to it** — otherwise a
-  parked model reads as serving and scale-from-zero refuses to wake it. Guarded
-  by the pairing hop; pinned by `test/e2e/fma_parking_test.go`.
-- **Warm launchers must survive parking.** Same suite asserts it, because a fix
-  for the point above that deleted the launchers would satisfy it and destroy
-  the pool.
-- **The pool's GPUs must become visible to the API server.** Unresolved, and the
-  highest-severity item in `fma-upstream-requests.md`: nine launchers held nine
-  GPUs while the namespace was charged for one. A shared pool makes this worse,
-  not better — it is exactly the configuration where nobody owns the GPUs.
+Not an edge case, and worth stating because it is the strongest argument the pool
+has. A parked model holds no requester, no replicas, and no GPU through a
+requester, yet with warm capacity it returns to service in seconds. That
+combination does not exist without FMA.
+
+Three things must hold, and two are already covered:
+
+- **A parked variant's launchers must not be attributed to it** — otherwise the
+  model reads as *serving*, and scale-from-zero declines to wake a model whose
+  decode is already covered: parked, unwakeable, reported healthy. Guarded by the
+  pairing hop.
+- **Warm launchers must survive parking.** A fix for the point above that deleted
+  them would satisfy it and destroy the pool. `test/e2e/fma_parking_test.go`
+  asserts both together for that reason.
+- **Warmth decays while parked, and nothing bounds the decay.** The populator
+  reaps launchers it considers excess, so a model parked for minutes wakes warm
+  and one parked overnight wakes cold. `retentionPeriod` chooses when a model
+  parks; nothing chooses how long its warmth survives. Until upstream ask 2
+  (`minLauncherCount`) lands there is no knob — so **no FMA wake SLO should be
+  quoted for a long-parked model**, and R4 is what will show the difference.
+
+## Known gap found while testing this
+
+`resolveTarget` caches the pod→scale-target chain **indefinitely**
+(`internal/collector/locator/locator.go:124`). If a launcher keeps a stale
+`dual` label naming a deleted requester, the cached chain keeps resolving and the
+launcher stays attributed — the parked-reads-as-serving failure above, made
+permanent for that pod name rather than brief.
+
+In normal operation FMA clears the label on unbind, so the common path is safe
+and this is not a live outage. It is the crashed-dual-pods-controller case, and
+it is worth either invalidating on partner `NotFound` or bounding the chain
+cache. Recorded here rather than fixed, because it is independent of this plan.
 
 ## Status of the fork
 
-`feat/reuse-by-model` exists on `ev-shindin/llm-d-fast-model-actuation` with **no
-commits**. Nothing has been changed, tested, or filed. This document exists so
-that fact is recorded rather than rediscovered.
+`feat/reuse-by-model` exists with **no commits**. Nothing implemented, tested or
+filed. Recorded so it is not rediscovered a third time.
 
 ## See also
 
@@ -145,4 +212,4 @@ that fact is recorded rather than rediscovered.
 - [`fma-upstream-requests.md`](fma-upstream-requests.md) — the six findings, with
   measurements
 - [`fma-aware-attribution.md`](fma-aware-attribution.md) — how WVA measures an
-  FMA variant at all
+  FMA variant at all, and §9 on why the KEDA path is immune to all of it
