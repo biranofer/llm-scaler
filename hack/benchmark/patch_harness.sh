@@ -218,6 +218,21 @@ PYEOF
 # divides them across the policy's node set. Placement stays infra config,
 # warming stays a separate step, and only the size changes hands.
 #
+# WHAT THIS DOES NOT BUY -- measured on pokprod, twice, 2026-08-18
+#
+# Placement, not wakes. Both runs put 3/3 replicas on a node holding a sleeper
+# and consumed sleepers doing it, and all six replicas still REBUILT (43-79s).
+# The reuse key is the GPU UUID, and a pool node has 7-8 GPUs while a requester
+# reserves one (the launcher reserves none and uses its requester's). So the
+# right node still leaves roughly a 1-in-7 chance of the right GPU.
+#
+# That is also why launcherNodeSelection works where this does not, and the
+# reason is not the pinning: step_06 sizes requesters to the node's FREE GPU
+# count, saturating it, so every sleeper's GPU is matched by exhaustion. The
+# trade-off is therefore span-nodes OR wake-reliably, not both, until the reuse
+# key stops hashing GPU UUIDs. This mode is still the right default on a shared
+# cluster -- it is free, and it is a precondition for any match at all.
+#
 # Scope note: the selector matches launchers by component, not by model. A
 # benchmark namespace serves one model, so this is precise there. Serving
 # several from one namespace would need `llm-d.ai/model` added to both terms --

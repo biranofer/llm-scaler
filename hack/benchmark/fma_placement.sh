@@ -106,14 +106,25 @@ print("SUMMARY %d %d %d" % (len(launchers), sum(requesters.values()), stranded))
 '
 
 # Count requester Deployments whose pod template carries a podAffinity.
+#
+# Requesters are identified by the POD TEMPLATE label, not the Deployment
+# object's own labels -- llm-d puts `llm-d.ai/role` on the template only, so
+# `kubectl get deploy -l llm-d.ai/role=requester` matches NOTHING. That is the
+# same mistake that made so_discover find zero model servers on a real cluster:
+# `-l` reads the object's labels and nothing else. Verified against pokprod,
+# where the requester Deployment carries only `app: fma-requester-<model>`.
 PY_HAS_AFFINITY='
 import json, sys
-n = 0
+total = with_aff = 0
 for d in json.load(sys.stdin).get("items", []):
-    spec = ((d.get("spec", {}) or {}).get("template", {}) or {}).get("spec", {}) or {}
-    if (spec.get("affinity") or {}).get("podAffinity"):
-        n += 1
-print(n)
+    tmpl = (d.get("spec", {}) or {}).get("template", {}) or {}
+    labels = (tmpl.get("metadata", {}) or {}).get("labels", {}) or {}
+    if labels.get("llm-d.ai/role") != "requester":
+        continue
+    total += 1
+    if ((tmpl.get("spec", {}) or {}).get("affinity") or {}).get("podAffinity"):
+        with_aff += 1
+print("%d %d" % (with_aff, total))
 '
 
 cmd_check() {
@@ -254,10 +265,12 @@ cmd_verify() {
     fi
 
     if [ "$aff_en" = "true" ]; then
-        local with_aff
-        with_aff=$(kubectl get deploy -n "$ns" -l llm-d.ai/role=requester -o json 2>/dev/null |
-            python3 -c "$PY_HAS_AFFINITY" 2>/dev/null || echo 0)
-        echo "  requester deployments carrying a podAffinity: ${with_aff:-0}"
+        local affcounts with_aff total_req
+        affcounts=$(kubectl get deploy -n "$ns" -o json 2>/dev/null |
+            python3 -c "$PY_HAS_AFFINITY" 2>/dev/null || echo "0 0")
+        with_aff=$(echo "$affcounts" | awk '{print $1}')
+        total_req=$(echo "$affcounts" | awk '{print $2}')
+        echo "  requester deployments carrying a podAffinity: ${with_aff:-0}/${total_req:-0}"
         if [ "${with_aff:-0}" -eq 0 ]; then
             echo ""
             echo "ERROR: warmAffinity is enabled but no requester Deployment carries a podAffinity."

@@ -508,6 +508,14 @@ scenario:
       # already hold a sleeper. The pool spans nodes, grows by replicas rather
       # than by relabeling, and degrades to a cold rebuild -- not to Pending --
       # when the warm set is exhausted. Size it with warm_pool.sh.
+      #
+      # It buys PLACEMENT, not wakes. Measured twice on pokprod: 3/3 replicas
+      # landed beside a sleeper and all three still rebuilt (43-79s). The reuse
+      # key is the GPU UUID and a pool node has 7-8 GPUs, so landing on the
+      # right node leaves a ~1-in-7 chance of the right GPU. Reliable wakes
+      # additionally need the pooled nodes SATURATED -- one requester per free
+      # GPU -- which is exactly what makes launcherNodeSelection work and what
+      # makes it expensive. See docs/guides/fma/README.md.
       warmAffinity:
         enabled: false
 

@@ -391,6 +391,47 @@ It stands launchers up on one node of three, then runs six requester replicas
 with and without the rendered affinity. Measured: **2/6 on the launcher node
 without it — an even scatter — against 6/6 with it.**
 
+### Node locality is necessary and nowhere near sufficient
+
+**Do not expect `warmAffinity` alone to buy you wakes.** Measured on pokprod,
+twice, with the rendered affinity confirmed on the live object:
+
+| | placement | result |
+|---|---|---|
+| unconstrained (prior) | — | 0 woke / 3 rebuilt (64s, 64s, 95s) |
+| hard node pin (prior) | 1 node, saturated | **3 woke / 0 rebuilt** (2s, 3s, 3s) |
+| `warmAffinity` (2026-08-18) | **3/3 on launcher nodes** | 0 woke / 3 rebuilt (43-70s) |
+| `warmAffinity`, repeat | **3/3 on launcher nodes** | 0 woke / 3 rebuilt (44-79s) |
+
+Placement did exactly what it was built to do — every replica landed beside a
+sleeper, and the sleeper count dropped as they were consumed — and the wake did
+not happen. The reason is arithmetic:
+
+- The reuse key is the **GPU UUID**, not the node.
+- A pool node here has **7-8 GPUs**. The requester reserves **1**; the launcher
+  reserves **0** and uses whichever GPU its requester holds.
+- So a requester that lands on the right node still has to be handed *the same
+  GPU* the sleeper is holding — about a 1-in-7 chance. Three replicas missing
+  three times running is unremarkable (p≈0.64 per run).
+
+Which explains why the hard pin worked, and it is not the pinning: `step_06`
+sizes requester replicas to the node's **free GPU count**, so the requesters
+saturate the node. Every GPU is reserved, so every sleeper's GPU is necessarily
+matched. Reuse succeeds by exhaustion.
+
+That is the real trade-off, and it is sharper than "one node does not scale":
+
+> You can have a warm pool that **spans nodes**, or one that **reliably wakes**,
+> but not both — until the reuse key stops hashing GPU UUIDs.
+
+`warmAffinity` is still the right default on a shared cluster: it costs nothing,
+it removes the 9-in-14 chance of landing nowhere near a sleeper, and it is a
+precondition for any GPU match at all. It is just not, on its own, the ~3s path.
+To get reliable wakes today you must additionally **saturate** the pooled nodes
+— one requester per free GPU — which is what makes the pool expensive. Removing
+GPU identity from the reuse key (`feat/reuse-by-model`) is what would break the
+trade-off, and this measurement is the argument for doing it.
+
 **Everything under `fma:` is inert while `fma.enabled` is false.** `step_06`
 skips itself when FMA is not a deployed method, so no node is selected or
 labeled and no `nodeSelector` or affinity is rendered; `step_02a_fma_warmup_hotstart`
