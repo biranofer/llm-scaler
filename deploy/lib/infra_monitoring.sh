@@ -191,6 +191,33 @@ wva_report_modelserver_metrics() {
     log_warning "      (and .../components/monitoring-pd as well, for a prefill/decode split)"
     log_warning "    No llm-d checkout? This repo carries an equivalent covering both roles:"
     log_warning "      kubectl apply -n $ns -k config/modelserver-metrics"
+    return 1
+}
+
+# wva_require_modelserver_metrics turns that report into a stop.
+#
+# Same class as the EPP gate, and for the same reason: llm-d's monitoring step is
+# "(Optional) Enable monitoring" -- optional FOR LLM-D, required for WVA -- so a
+# correctly-followed llm-d install can leave a namespace WVA cannot size anything in,
+# and every symptom of that is silent. Refusing here asks the caller to finish llm-d,
+# which is where the fix actually lives.
+#
+# SKIP_CHECKS=true is the bypass, and the only one. A per-check WVA_ALLOW_* flag was
+# tried and removed: the scenario is already selected by WVA_SCOPE, and a second knob
+# for the same decision is a second thing to get wrong.
+#
+# Worth revisiting later: rather than refusing, WVA could DEGRADE knowingly -- keep
+# running with engine metrics only and say which capabilities are off. That is the
+# better answer and a bigger change; refusing is the honest interim.
+wva_require_modelserver_metrics() {
+    wva_report_modelserver_metrics && return 0
+    log_error "Refusing to continue: nothing scrapes the llm-d model servers in ${WVA_WATCH_NS:-$WVA_NS}.
+
+WVA sizes workloads from their vllm:* series, so with none it would hold everything at
+minReplicas while reporting healthy. Apply one of the monitors above (llm-d's own, or
+this repo's equivalent), or install without the checks:
+
+  SKIP_CHECKS=true"
 }
 
 # There is deliberately no wva_ensure_modelserver_metrics — the installer does not
@@ -739,12 +766,12 @@ wva_report_epp_flowcontrol() {
 # only place anybody is looking.
 wva_require_epp_metrics() {
     wva_report_epp_flowcontrol && return 0
-    if [ "${WVA_ALLOW_NO_EPP_METRICS:-}" = "true" ]; then
-        log_warning "  Continuing anyway (WVA_ALLOW_NO_EPP_METRICS=true). WVA will size from engine metrics alone: no scale-from-zero, no queued-demand signal, and wva_unmeasured_queue blind."
-        return 0
-    fi
     log_error "Refusing to continue: WVA cannot see the EPP signals it sizes workloads from (details above).
 
-Fix the EPP, or pass WVA_ALLOW_NO_EPP_METRICS=true to install anyway — the controller
-will run and scale from engine metrics only, with the limitations listed above."
+Fix the EPP — the reference above is llm-d's own — or install without the checks:
+
+  SKIP_CHECKS=true
+
+Installed that way the controller runs and sizes from engine metrics only: no
+scale-from-zero, no queued-demand signal, and wva_unmeasured_queue blind."
 }

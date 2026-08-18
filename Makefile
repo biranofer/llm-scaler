@@ -336,12 +336,12 @@ SCOPE ?= $(if $(WVA_SCOPE),$(WVA_SCOPE),namespace)
 define wva_phase
 	@echo "Phase '$(if $(1),$(1),auto)', $(SCOPE)-scoped$(if $(2), on $(2),)"
 	$(if $(filter prereqs,$(1)),,@echo "Image: $(IMG)")
-	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) IMG=$(IMG) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),INSTALL_PHASE=$(1),) $(if $(2),ENVIRONMENT=$(2),) WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) $(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) ./deploy/install.sh
+	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) IMG=$(IMG) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),INSTALL_PHASE=$(1),) $(if $(2),ENVIRONMENT=$(2),) WVA_DEFAULT_SO=$(WVA_DEFAULT_SO) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) $(if $(PROMETHEUS_URL),PROMETHEUS_URL=$(PROMETHEUS_URL),) ./deploy/install.sh
 endef
 
 # wva_check: $(1)=ENVIRONMENT
 define wva_check
-	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),ENVIRONMENT=$(1),) ./deploy/install.sh --check
+	$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) WVA_LIMITER=$(WVA_LIMITER) $(if $(1),ENVIRONMENT=$(1),) ./deploy/install.sh --check
 endef
 
 ##@ Install and remove
@@ -1502,7 +1502,14 @@ nightly-test-llm-d: ## Nightly CI: noop; use as test_target instead of empty str
 .PHONY: nightly-deploy-wva-guide
 nightly-deploy-wva-guide: ## Nightly: WVA controller + monitoring stack from job env (WVA_NS <- WVA_NAMESPACE or CONTROLLER_NAMESPACE)
 	# Note: CKS callers with resource constraints should disable nodeExporter by patching kube-prometheus-stack post-install.
+	# NAMESPACE is passed explicitly, defaulting to the controller namespace.
+	# NAMESPACE (what WVA manages) is now mandatory in namespace scope, and this
+	# target only ever set WVA_NS (where the controller is installed) -- it relied on
+	# the old fallback that let one variable stand for both. Naming it here keeps this
+	# job's behaviour exactly as it was, rather than leaving it to a default that no
+	# longer exists.
 	@WVA_NS="$${WVA_NS:-$${WVA_NAMESPACE:-$${CONTROLLER_NAMESPACE:-}}}" \
+	NAMESPACE="$${NAMESPACE:-$${WVA_NS:-$${WVA_NAMESPACE:-$${CONTROLLER_NAMESPACE:-}}}}" \
 	ENVIRONMENT="$${ENVIRONMENT:-openshift}" \
 	./deploy/install.sh
 
