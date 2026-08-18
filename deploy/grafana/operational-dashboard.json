@@ -2314,6 +2314,112 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "id": 65,
+      "type": "heatmap",
+      "title": "How long a wake from zero took",
+      "description": "Distribution of wva_scale_from_zero_wake_seconds: from the first activation WVA published to the model being observed serving. Read the SHAPE, not the average. On FMA the same code path takes seconds when it binds a reusable sleeping instance and tens of seconds when it has to build one, so two bands is what a working warm pool looks like and the fast band thinning is how its regression appears - the wake still succeeds, just slowly, which is why nothing else reports it. A single slow band on a non-FMA model is simply the model load time and is expected.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "sum by (le) (increase(wva_scale_from_zero_wake_seconds_bucket{$namespace_label=~\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{le}}",
+          "refId": "A",
+          "format": "heatmap"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "mode": "scheme",
+          "scheme": "Oranges",
+          "steps": 32
+        },
+        "yAxis": {
+          "unit": "s"
+        },
+        "legend": {
+          "show": true
+        },
+        "tooltip": {
+          "show": true
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 66,
+      "type": "timeseries",
+      "title": "Wake from zero, p95 by model",
+      "description": "95th percentile of wva_scale_from_zero_wake_seconds per model. The heatmap above shows whether the distribution is bimodal; this shows which model moved. A step change here with no config change is the warm pool having stopped being reusable - the case measured on pokprod, where a bind to a two-day-old sleeper took 59s against a 68s cold build because the sleeper was destroyed and rebuilt rather than reused.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 84
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, $namespace_label, model_name) (rate(wva_scale_from_zero_wake_seconds_bucket{$namespace_label=~\"$namespace\"}[$__rate_interval])))",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ],
   "refresh": "",
