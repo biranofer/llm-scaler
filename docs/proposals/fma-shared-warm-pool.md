@@ -383,6 +383,8 @@ filed. Recorded so it is not rediscovered a third time.
 
 ## See also
 
+- [`fma-fork-problem-statement.md`](fma-fork-problem-statement.md) — **what the
+  fork must actually fix**, with the wake non-determinism evidence consolidated
 - [`fma-warm-pool-wva.md`](fma-warm-pool-wva.md) — the no-FMA-change pricing
   design, and §6.4 on how scale-to-zero feeds and drains the pool
 - [`fma-upstream-requests.md`](fma-upstream-requests.md) — the six findings, with
