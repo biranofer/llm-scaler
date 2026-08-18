@@ -1090,6 +1090,26 @@ benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (name
 		echo "BENCHMARK_WVA_DEPLOY=false to benchmark that one instead."; \
 		exit 1; \
 	fi
+	@# A controller THIS repo installed is excluded from the check above, so the
+	@# install below re-applies over it and moves it to $(IMG). That is right when
+	@# you are iterating on your own build and wrong when the namespace belongs to a
+	@# run somebody else is watching -- the image changes underneath them with no
+	@# warning. Say what is about to happen, and name the way out.
+	@ours=$$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) wva-controller-manager \
+		-o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true); \
+	if [ -n "$$ours" ]; then \
+		echo ""; \
+		echo "NOTE: $(BENCHMARK_NAMESPACE) already runs a WVA controller from this repo."; \
+		echo "      running: $$ours"; \
+		echo "      about to: $(IMG)"; \
+		if [ "$$ours" != "$(IMG)" ]; then \
+			echo "      This REPLACES the running controller's image. If someone is using this"; \
+			echo "      namespace, reuse it instead:  make benchmark-standup ... BENCHMARK_WVA_DEPLOY=false"; \
+		else \
+			echo "      Same image -- this is a no-op re-apply."; \
+		fi; \
+		echo ""; \
+	fi
 	@echo ""
 	@echo "Installing WVA from this repo into namespace $(BENCHMARK_NAMESPACE) (scope: namespace)"
 	@echo "  image:  $(IMG)"

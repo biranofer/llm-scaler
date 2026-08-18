@@ -35,6 +35,39 @@ rmwgm  pokprod-b93r43s1   95s  rebuilt
 The launcher pool lives on `b93r38*`/`b93r39*`. Binding is node-local, so a wake
 was impossible before GPU alignment was ever reached.
 
+### Fix 1.5 CONFIRMED: 3 woke, 0 rebuilt — 2 s, 3 s, 3 s
+
+Constraining the requester Deployment to the same five nodes the
+`LauncherPopulationPolicy` pins launchers to, and changing nothing else:
+
+```
+9wcfg  pokprod-b93r39s1   2s  WOKE
+jslr5  pokprod-b93r38s2   3s  WOKE
+mcl96  pokprod-b93r39s0   3s  WOKE
+--> 3 woke, 0 rebuilt
+```
+
+The constraint was verified applied before measuring
+(`key=kubernetes.io/hostname op=In n_values=5`, spread present) — the previous
+attempt's patch was malformed and silently measured the unconstrained case.
+
+| run | requester constraint | result |
+| --- | --- | --- |
+| baseline | none | 0 woke / 3 rebuilt — 64 s, 64 s, 95 s |
+| accidental | none (patch failed) | 1 woke / 2 rebuilt — 2 s vs 58 s |
+| **Fix 1.5** | **pinned to the launcher node set** | **3 woke / 0 rebuilt — 2 s, 3 s, 3 s** |
+
+**~90 s → ~3 s, by configuration, with no FMA code change.** This is the single
+highest-yield change available and it should be applied before any fork work is
+considered. The remaining fixes address what happens once placement is right —
+they are no longer the first-order problem.
+
+What this does NOT prove: that the constraint is safe at scale. Pinning
+requesters to the launcher node set caps the model at `launcherCount × nodes`
+replicas and concentrates load on those nodes. Sizing that pool becomes the
+operating question, and it is an allocation decision — which is where WVA comes
+in (see `fma-shared-warm-pool.md`).
+
 ### The natural experiment that proves it
 
 A follow-up run intended to test Fix 1.5 **failed to apply its node constraint**
@@ -57,7 +90,7 @@ Two things follow. Warm binding **works**, and is worth ~56 s when it happens; a
 the reason it usually does not happen is placement, not the binding logic. A run
 that constrains the requester to the launcher node set has still not been done —
 the patch above was malformed — so **Fix 1.5 remains untested, but its premise is
-now measured.**
+now measured, and the fix itself is confirmed above.**
 
 **So node placement fails first, and GPU alignment is the second-order problem.**
 The `LauncherPopulationPolicy` pins launchers to a subset of nodes, while the
