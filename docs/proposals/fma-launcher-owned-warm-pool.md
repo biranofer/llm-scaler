@@ -10,9 +10,11 @@ population of such launchers, and scale by **waking and sleeping instances insid
 them** — instead of creating a requester Pod per replica and hoping the scheduler
 hands it the GPU a sleeper already occupies.
 
-**Read the hybrid section before the rest.** Applying this to *all* launchers
-discards the property FMA was designed for (warm processes that cost no
-accelerators). Applying it to a small reserved subset keeps both.
+**Read "RECOMMENDED: an elastic pool of GPU-holding launchers" first.** It
+supersedes the two earlier framings kept below: applying GPU ownership to *all*
+launchers discards the property FMA was designed for (warm processes costing no
+accelerators), and the reserved-subset hybrid still treats the commitment as
+permanent. Making the POOL the elastic unit removes both problems.
 
 ---
 
@@ -144,6 +146,70 @@ does not get to choose the GPU. Everything measured above is that price.
 | Who picks the GPU | Kubernetes, per scale-up | you, once at creation |
 | Wake reliability | lottery | **deterministic** |
 
+## RECOMMENDED: an elastic pool of GPU-holding launchers, one GPU each
+
+This supersedes both framings below. It keeps the determinism of launcher-owned
+GPUs without the permanent cost, and it dissolves the endpoint problem instead of
+solving it.
+
+**The shape.** A pool of launcher Pods, each requesting exactly **one** GPU and
+hosting several instances on it: one awake, the rest asleep. Scale the POOL to
+change GPU capacity. Within a Pod, change which model is live by sleeping one
+instance, waking another, and swapping the `llm-d.ai/model` label.
+
+Why one GPU per Pod: only one instance per GPU can be awake at a realistic
+`gpu-memory-utilization` anyway, so one Pod hosts one live model. Pod-level
+readiness therefore stays meaningful and Services, EndpointSlices and the
+InferencePool keep working with no new machinery — they select Pods, and the
+label says which pool this Pod currently belongs to.
+
+**What this buys that nothing else here does.** Repurposing a GPU from model A to
+model B in ~2-3 s: sleep A, wake B, swap the label. That is not merely a fast
+scale-up, it is fast *reallocation* — which is what a multi-model autoscaler
+actually needs and cannot do today at any speed.
+
+| concern | mechanism |
+| --- | --- |
+| GPU capacity | pool size — an ordinary Deployment scaled by HPA/KEDA/WVA |
+| Which model is live on a card | sleep/wake + `llm-d.ai/model` label swap, ~2-3 s |
+| Which models stay warm on a card | the sleeping set, bounded by `--sleeper-limit` and memory |
+| Endpoint membership | ordinary label selection, unchanged |
+| GPU accounting | correct by construction: the Pod requests what it uses |
+
+Because the GPU commitment is elastic at the POOL level while fixed from any
+individual instance's point of view, the earlier objection to launcher-owned
+GPUs — that you lose scale-to-zero — does not apply. Nothing is scheduled per
+scale event, so there is no lottery; and nothing is held that the pool size does
+not justify.
+
+Requesters, dual-pod binding, the reflector labels, the GPU-UUID component of the
+instance ID and the entire reclaim path all become unnecessary.
+
+**The sharp edges, which are dials rather than gaps:**
+
+1. **The warm set per card is small.** At `gpu-memory-utilization 0.95` a card
+   fits the awake instance plus roughly two sleepers (~1.4 GiB each) — about
+   three models. More requires lowering utilisation, trading KV-cache space for
+   warm breadth.
+2. **`--sleeper-limit` caps it** (default 1, set to 2 on pokprod) and is
+   controller-global. It is the one flag that must change.
+3. **A model outside a Pod's warm set is still a ~41 s cold start**, so *which*
+   models are warm on *which* cards is the central policy question.
+4. **Scale-down must choose a victim** holding warm instances someone may want.
+5. **Weights come from the PVC the first time** a model appears on a card, so
+   warm sets accumulate rather than existing at pool creation.
+
+Items 3, 4 and 5 are allocation decisions in tokens of demand and cost — WVA's
+job, not FMA's, consistent with `fma-shared-warm-pool.md`.
+
+**Note on implementation.** A launcher cannot acquire a GPU after the fact: Pod
+resource requests are immutable, in-place resize (KEP-1287) is alpha on v1.32 and
+covers only CPU and memory, and device-plugin resources cannot be resized at all.
+So GPU-holding launchers are *created* that way — a second LauncherConfig whose
+podTemplate requests one GPU. `LauncherPopulationPolicy.countForLauncher` is
+already a list of `{launcherConfigName, launcherCount}`, so one policy can
+maintain both an ordinary and a reserved population without an API change.
+
 ## The hybrid, which is probably the right shape
 
 An all-or-nothing inversion throws away the property the original design was
@@ -162,6 +228,11 @@ exists to answer, and it needs no change to how ordinary launchers work. It also
 degrades honestly: exceeding the reserve is slow, not broken.
 
 ## What is given up
+
+*(This section and the two above it describe the earlier all-or-nothing framing.
+They are kept because the reasoning still bounds the design; where they conflict
+with the RECOMMENDED section, the RECOMMENDED section wins. In particular, point
+3 below does NOT apply to the elastic pool, which releases GPUs by scaling down.)*
 
 1. **The Deployment scaling interface.** HPA and KEDA scale Deployments;
    "wake instance #3" is not a replica count. Less painful here than elsewhere:
