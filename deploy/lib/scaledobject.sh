@@ -1403,3 +1403,355 @@ spec:
         variantCost: "${cost:-$SO_DEFAULT_VARIANT_COST}"${policy_line}
 EOF
 }
+
+# --- Parking and freezing -----------------------------------------------------
+#
+# Idling a WVA-managed workload is not `kubectl scale --replicas=0`: the HPA KEDA
+# owns enforces minReplicaCount and puts it straight back. The three obvious moves
+# all fail, one of them dangerously:
+#
+#   kubectl scale --replicas=0     HPA restores minReplicaCount within seconds.
+#   maxReplicaCount: 0             not a valid state — KEDA hands it to the HPA as
+#                                  the ceiling, and a maximum of zero leaves no
+#                                  room to scale up.
+#   scale the WVA controller to 0  WORSE THAN NOTHING. KEDA cannot fetch a metric
+#                                  spec from a scaler that is gone, so it FALLS
+#                                  BACK TO A CPU METRIC and keeps scaling the
+#                                  workload between min and max — see
+#                                  "cpu: <unknown>/80%" in
+#                                  docs/guides/install-in-namespace/README.md.
+#                                  The workload keeps its GPUs and is now sized by
+#                                  the wrong signal, while everything reads healthy.
+#
+# The supported lever is on the ScaledObject, and the controller can stay running:
+# it holds no GPU and keeping it up keeps the install verifiable.
+#
+#   park    autoscaling.keda.sh/paused-replicas="<n>"  drives the target to n
+#           (0 by default), then freezes the scale loop. KEDA also removes the HPA,
+#           so nothing can raise the count while it is parked.
+#   freeze  autoscaling.keda.sh/paused="true"          holds whatever is running
+#           now. For maintenance, where dropping to zero is not wanted.
+#   resume  remove both.
+#
+# What this is NOT: autonomous idling. `idleReplicaCount: 0` (or minReplicaCount: 0)
+# scales to zero when triggers go inactive and wakes on demand — a policy, not an
+# operation — and on llm-d it needs the EPP's flowControl feature gate, without
+# which it parks and never wakes. Parking is deterministic and needs no gate.
+
+# so_pause_marker is what identifies a ScaledObject as WVA's: a trigger addressing
+# the external scaler by name. Matched on the address rather than on
+# app.kubernetes.io/managed-by, because an `apply: adopt` object was created by
+# something else and carries that label from whatever made it — but its trigger
+# names WVA, which is the thing that makes it WVA's to park.
+readonly SO_PAUSE_ANN_REPLICAS='autoscaling.keda.sh/paused-replicas'
+readonly SO_PAUSE_ANN_PAUSED='autoscaling.keda.sh/paused'
+
+# so_pause_rows echoes one TSV row per WVA-triggered ScaledObject in scope:
+#
+#   namespace  name  kind  target  min  max  state  replicas  gpus
+#
+# state is park:<n>, freeze or live. gpus is what the workload is holding right
+# now — per-replica limits times current replicas — because that is the number
+# anyone parking a workload on a shared cluster actually wants to see.
+so_pause_rows() {
+    local ns rows
+    for ns in $(so_target_namespaces); do
+        [ -n "$ns" ] || continue
+        rows=$(kubectl get scaledobject -n "$ns" -o json 2>/dev/null | jq -r --arg pr "$SO_PAUSE_ANN_REPLICAS" --arg pp "$SO_PAUSE_ANN_PAUSED" '
+            .items[]?
+            | select([ .spec.triggers[]?.metadata.scalerAddress // ""
+                       | select(startswith("wva-external-scaler.")) ] | length > 0)
+            | [ .metadata.namespace,
+                .metadata.name,
+                (.spec.scaleTargetRef.kind // "Deployment"),
+                (.spec.scaleTargetRef.name // "-"),
+                (.spec.minReplicaCount // 0 | tostring),
+                (.spec.maxReplicaCount // 100 | tostring),
+                (if (.metadata.annotations[$pr] // "") != "" then "park:" + .metadata.annotations[$pr]
+                 elif (.metadata.annotations[$pp] // "") == "true" then "freeze"
+                 else "live" end)
+              ] | @tsv' 2>/dev/null) || continue
+        [ -n "$rows" ] || continue
+        # Replicas and GPUs come from the scale target, not the ScaledObject, so
+        # they are read per row rather than in the query above.
+        printf '%s\n' "$rows" | while IFS=$'\t' read -r rns name kind target min max state; do
+            [ -n "$name" ] || continue
+            local reps gpu
+            reps=$(so_pause_target_replicas "$rns" "$kind" "$target")
+            gpu=$(so_pause_target_gpus "$rns" "$kind" "$target")
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$rns" "$name" "$kind" "$target" "$min" "$max" "$state" "${reps:-0}" \
+                "$(( ${reps:-0} * ${gpu:-0} ))"
+        done
+    done
+}
+
+# so_pause_target_replicas echoes the scale target's current replica count.
+so_pause_target_replicas() {
+    local ns="$1" kind="$2" name="$3"
+    kubectl get "$kind" "$name" -n "$ns" -o jsonpath='{.spec.replicas}' 2>/dev/null \
+        | tr -cd '0-9' | sed 's/^$/0/'
+}
+
+# so_pause_target_gpus echoes the GPUs ONE replica of the target holds, summed over
+# its containers. nvidia.com/gpu only: that is the limit llm-d's guides set, and a
+# wrong guess here would misreport what parking frees.
+so_pause_target_gpus() {
+    local ns="$1" kind="$2" name="$3"
+    kubectl get "$kind" "$name" -n "$ns" -o json 2>/dev/null | jq -r '
+        # Same arithmetic as the controller, so the number an operator reads here is
+        # the number WVA is working from. See GetTotalGPUsPerReplica in
+        # internal/utils/scaletarget/{deployment,lws}.go:
+        #   Deployment  sum over the pod templates containers.
+        #   LWS         leader_GPUs + (size - 1) * worker_GPUs, size defaulting to 1.
+        #               .spec.replicas is the GROUP count, so this is per group --
+        #               reading workerTemplate alone ignored both the leader and the
+        #               group size and under-reported every LWS workload.
+        #   either      0 means "no explicit request", which for an inference
+        #               workload usually means one GPU rather than none. The
+        #               controller defaults to 1 there and so must this, or parking
+        #               such a workload reports freeing nothing.
+        # Every vendor resource the controller counts (internal/constants), not
+        # nvidia alone. requests is what the controller reads; limits is a fallback,
+        # and Kubernetes constrains the two equal for extended resources.
+        def gpus($cs):
+          [ $cs[]? | .resources as $r
+            | ( [ "nvidia.com/gpu", "amd.com/gpu", "habana.ai/gaudi",
+                  "gpu.intel.com/i915", "gpu.intel.com/xe" ]
+                | map(. as $k | (($r.requests[$k] // $r.limits[$k] // 0) | tonumber))
+                | add ) ] | add // 0;
+        ( if .spec.leaderWorkerTemplate then
+            .spec.leaderWorkerTemplate as $t
+            | (if $t.leaderTemplate then gpus($t.leaderTemplate.spec.containers) else 0 end)
+              + ((($t.size // 1) - 1) * gpus($t.workerTemplate.spec.containers))
+          else
+            gpus(.spec.template.spec.containers)
+          end )
+        | if . <= 0 then 1 else . end' 2>/dev/null | tr -cd '0-9' | sed 's/^$/0/'
+}
+
+# SO_PAUSE_NOTHING_TO_DO is a sentinel exit code, not an error: it means the
+# caller asked for nothing to happen (no ScaledObject in scope, or an empty
+# answer at the prompt), and so_park/so_freeze/so_resume should quietly return 0.
+#
+# It has to be a code, not just "any nonzero": so_pause_select is invoked as
+# `r="$(so_pause_select ...)"`. Bash preserves the inner exit status correctly
+# through that substitution -- log_error's `exit 1` really does end up as $?=1 in
+# the caller -- but a genuinely QUIET "nothing to do" (this file, return 1) and a
+# genuine `log_error` fatal (deploy/lib/common.sh, also exit 1) were both plain
+# `1`, so `|| return 0` could not tell "nothing selected" from "SO=<typo>, refused"
+# apart -- both were silently reported as success. `make so-park SO=typo` exited
+# 0 having parked nothing, which is the one outcome the SO= parameter exists to
+# prevent going unnoticed in CI.
+readonly SO_PAUSE_NOTHING_TO_DO=3
+
+# so_pause_select echoes the rows the caller should act on.
+#
+# Interactive by default, because "which workload" is the one question a script
+# cannot answer for someone parking GPUs on a shared cluster, and picking wrong
+# takes down a workload that was meant to keep serving. SO=<name>[,<name>] or
+# SO=all skips the prompt, for CI and for anyone who already knows.
+so_pause_select() {
+    local verb="$1" rows
+    rows="$(so_pause_rows)"
+    if [ -z "$rows" ]; then
+        log_warning "No ScaledObject in $(so_target_namespaces | paste -sd, -) names WVA's external scaler, so there is nothing to $verb."
+        log_info "  A workload nothing has registered with WVA is not autoscaled by it — 'kubectl scale' works on that normally."
+        return "$SO_PAUSE_NOTHING_TO_DO"
+    fi
+
+    # Named explicitly: no prompt.
+    if [ -n "${SO:-}" ]; then
+        if [ "$SO" = "all" ]; then printf '%s\n' "$rows"; return 0; fi
+        local want found=""
+        for want in $(printf '%s' "$SO" | tr ',' ' '); do
+            local match ns_want=""
+            # SO=<namespace>/<name> disambiguates; SO=<name> alone is a footgun
+            # for a cluster-scoped install watching several namespaces
+            # (WVA_DEFAULT_SO_NS=all) -- ScaledObject names are only unique WITHIN
+            # a namespace, so a bare name can match the same-named object in two
+            # different namespaces, and applying to both is very likely not what
+            # was meant. Checked below rather than assumed away.
+            case "$want" in
+                */*) ns_want="${want%%/*}"; want="${want#*/}" ;;
+            esac
+            if [ -n "$ns_want" ]; then
+                match=$(printf '%s\n' "$rows" | awk -F'\t' -v n="$ns_want" -v w="$want" '$1 == n && $2 == w')
+            else
+                match=$(printf '%s\n' "$rows" | awk -F'\t' -v w="$want" '$2 == w')
+                local match_ns_count
+                match_ns_count=$(printf '%s\n' "$match" | awk -F'\t' 'NF{print $1}' | sort -u | grep -c .)
+                if [ "${match_ns_count:-0}" -gt 1 ]; then
+                    log_error "SO=$want matches a ScaledObject of that name in more than one namespace: $(printf '%s\n' "$match" | awk -F'\t' 'NF{print $1}' | sort -u | paste -sd, -). ScaledObject names are unique only within a namespace, not across the cluster. Say which:  SO=<namespace>/$want"
+                fi
+            fi
+            if [ -z "$match" ]; then
+                log_error "SO=${ns_want:+$ns_want/}$want is not a WVA-triggered ScaledObject in $(so_target_namespaces | paste -sd, -). Run 'make so-list' to see what is there."
+            fi
+            found="${found}${match}
+"
+        done
+        printf '%s' "$found" | grep -v '^$'
+        return 0
+    fi
+
+    so_pause_show "$rows" >&2
+    if [ ! -t 0 ]; then
+        log_error "Which ScaledObject to $verb needs a terminal, or naming one: SO=<name> (comma-separated for several), or SO=all."
+    fi
+
+    local reply
+    printf '\n' >&2
+    read -r -p "  Which to $verb? number(s) separated by spaces, 'a' for all, or Ctrl-C to stop: " reply
+    [ -n "$reply" ] || { log_warning "Nothing selected — no change made."; return "$SO_PAUSE_NOTHING_TO_DO"; }
+    if [ "$reply" = "a" ] || [ "$reply" = "all" ]; then printf '%s\n' "$rows"; return 0; fi
+
+    local n out=""
+    for n in $reply; do
+        case "$n" in
+            ''|*[!0-9]*) log_error "'$n' is not a number. Nothing has been changed." ;;
+        esac
+        local row
+        row=$(printf '%s\n' "$rows" | sed -n "${n}p")
+        [ -n "$row" ] || log_error "There is no $n in that list. Nothing has been changed."
+        out="${out}${row}
+"
+    done
+    printf '%s' "$out" | grep -v '^$'
+}
+
+# so_pause_show prints the numbered table the prompt refers to.
+so_pause_show() {
+    local rows="$1" nscount
+    # ScaledObject names are unique only WITHIN a namespace. SO= already refuses a
+    # bare name matching in several, but this numbered list had no namespace
+    # column -- so two same-named objects rendered as two identical rows and the
+    # prompt asked the operator to choose between them blind. Choosing wrong is
+    # exactly what the prompt exists to prevent. Shown only when the scope really
+    # spans more than one namespace, since the kind column was already dropped
+    # (below) to keep GPUS and STATE on the width of a normal terminal.
+    nscount=$(printf '%s\n' "$rows" | awk -F'\t' 'NF{print $1}' | sort -u | grep -c .)
+    printf '\n  WVA-managed workloads in %s:\n\n' "$(so_target_namespaces | paste -sd, -)"
+    # The kind is shown only when it is not a Deployment: it is "Deployment" for
+    # almost every row, and spelling it out pushed the columns that carry the
+    # decision -- GPUS and STATE -- off the width of a normal terminal.
+    if [ "${nscount:-0}" -gt 1 ]; then
+        printf '    #  %-22s %-38s %-30s %4s %4s %5s %s\n' NAMESPACE NAME TARGET MIN MAX GPUS STATE
+        printf '%s\n' "$rows" | awk -F'\t' '{
+            t = ($3 == "Deployment") ? $4 : $3 "/" $4
+            printf "    %d  %-22s %-38s %-30s %4s %4s %5s %s\n", NR, $1, $2, t, $5, $6, $9, $7
+        }'
+    else
+        printf '    #  %-46s %-40s %4s %4s %5s %s\n' NAME TARGET MIN MAX GPUS STATE
+        printf '%s\n' "$rows" | awk -F'\t' '{
+            t = ($3 == "Deployment") ? $4 : $3 "/" $4
+            printf "    %d  %-46s %-40s %4s %4s %5s %s\n", NR, $2, t, $5, $6, $9, $7
+        }'
+    fi
+}
+
+# so_pause_apply parks, freezes or resumes the rows on stdin.
+so_pause_apply() {
+    local mode="$1" rows="$2" replicas="${PARK_REPLICAS:-0}"
+    local ns name state gpus changed=0 freed=0
+
+    while IFS=$'\t' read -r ns name _kind _target _min _max state _reps gpus; do
+        [ -n "$name" ] || continue
+        case "$mode" in
+            park)
+                if [ "$state" = "park:$replicas" ]; then
+                    log_info "  $ns/$name is already parked at $replicas — leaving it."
+                    continue
+                fi
+                # One annotation, not both. KEDA honours paused-replicas first when
+                # both are present, so carrying a stale `paused` alongside it only
+                # makes the object's state ambiguous to read.
+                kubectl annotate scaledobject "$name" -n "$ns" \
+                    "$SO_PAUSE_ANN_REPLICAS=$replicas" --overwrite >/dev/null 2>&1 || {
+                    log_warning "  $ns/$name: could not annotate — skipping."; continue; }
+                kubectl annotate scaledobject "$name" -n "$ns" "${SO_PAUSE_ANN_PAUSED}-" >/dev/null 2>&1 || true
+                log_success "  $ns/$name parked at $replicas (was $state, holding ${gpus:-0} GPU)"
+                changed=$((changed + 1)); freed=$((freed + ${gpus:-0}))
+                ;;
+            freeze)
+                if [ "$state" = "freeze" ]; then
+                    log_info "  $ns/$name is already frozen — leaving it."
+                    continue
+                fi
+                # Freezing something already PARKED would hold it at the count it is
+                # parked to, which is what parking already does — so it changes
+                # nothing an operator wants and leaves the object describing itself
+                # two different ways. Refuse rather than do it: whoever asked
+                # almost certainly wants it serving again first.
+                case "$state" in
+                    park:*)
+                        log_warning "  $ns/$name is parked at ${state#park:} — not freezing it. Freeze holds the CURRENT count, so this would just hold it at ${state#park:}."
+                        log_info "    To have it serving and then frozen:  make so-resume SO=$ns/$name   (wait for it to be ready)   make so-freeze SO=$ns/$name"
+                        continue ;;
+                esac
+                kubectl annotate scaledobject "$name" -n "$ns" \
+                    "$SO_PAUSE_ANN_PAUSED=true" --overwrite >/dev/null 2>&1 || {
+                    log_warning "  $ns/$name: could not annotate — skipping."; continue; }
+                kubectl annotate scaledobject "$name" -n "$ns" "${SO_PAUSE_ANN_REPLICAS}-" >/dev/null 2>&1 || true
+                log_success "  $ns/$name frozen at its current size (was $state)"
+                changed=$((changed + 1))
+                ;;
+            resume)
+                if [ "$state" = "live" ]; then
+                    log_info "  $ns/$name is not parked or frozen — leaving it."
+                    continue
+                fi
+                kubectl annotate scaledobject "$name" -n "$ns" \
+                    "${SO_PAUSE_ANN_REPLICAS}-" "${SO_PAUSE_ANN_PAUSED}-" >/dev/null 2>&1 || {
+                    log_warning "  $ns/$name: could not remove the annotations — skipping."; continue; }
+                log_success "  $ns/$name resumed (was $state) — KEDA recreates its HPA and WVA sizes it from live metrics"
+                changed=$((changed + 1))
+                ;;
+        esac
+    done <<< "$rows"
+
+    [ "$changed" -gt 0 ] || { log_info "Nothing changed."; return 0; }
+    case "$mode" in
+        park)
+            [ "$freed" -gt 0 ] && log_success "Parked $changed workload(s), releasing $freed GPU(s) once the pods terminate."
+            [ "$freed" -eq 0 ] && log_success "Parked $changed workload(s)."
+            log_info "  Resume with: make so-resume"
+            ;;
+        freeze)
+            log_success "Froze $changed workload(s) at their current size. They keep their GPUs; only autoscaling stopped."
+            log_info "  Resume with: make so-resume" ;;
+        resume)
+            log_success "Resumed $changed workload(s). Each returns to at least its minReplicaCount, and a model server takes a few minutes to load."
+            log_info "  Watch: kubectl get scaledobject,hpa -n $(so_target_namespaces | head -1)" ;;
+    esac
+}
+
+# so_park / so_freeze / so_resume are what the make targets call.
+# so_pause_run is the shared body of so_park/so_freeze/so_resume: capture
+# so_pause_select's rows, and tell its sentinel "nothing to do" apart from
+# everything else nonzero, which is a fatal `log_error` that already printed why
+# and must not be reported as success.
+so_pause_run() {
+    local mode="$1" verb="$2" r rc
+    r="$(so_pause_select "$verb")"; rc=$?
+    if [ "$rc" -eq "$SO_PAUSE_NOTHING_TO_DO" ]; then
+        return 0
+    elif [ "$rc" -ne 0 ]; then
+        return 1
+    fi
+    so_pause_apply "$mode" "$r"
+}
+so_park()   { so_pause_run park   park; }
+so_freeze() { so_pause_run freeze freeze; }
+so_resume() { so_pause_run resume resume; }
+
+# so_list just shows the table, so "what is parked" needs no guessing.
+so_list() {
+    local rows
+    rows="$(so_pause_rows)"
+    if [ -z "$rows" ]; then
+        log_warning "No ScaledObject in $(so_target_namespaces | paste -sd, -) names WVA's external scaler."
+        return 0
+    fi
+    so_pause_show "$rows"
+}

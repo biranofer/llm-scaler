@@ -443,6 +443,42 @@ scaledobjects-repoint: ## Repoint ScaledObjects naming a missing WVA at the inst
 		$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_repoint_stale'
 
+# The environment the so-* targets share. Same shape the scaledobjects-* targets
+# pass inline: WVA_NS and NAMESPACE only when the CALLER set them, so an unset
+# variable stays unset and the resolution in wva_bootstrap_env still runs.
+WVA_SO_ENV = $(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),)
+
+## Parking a WVA-managed workload, and putting it back.
+##
+## `kubectl scale --replicas=0` does NOT idle one: the HPA that KEDA owns enforces
+## minReplicaCount and restores it within seconds. maxReplicaCount=0 is not a valid
+## state either. And scaling the CONTROLLER down is worse than doing nothing --
+## KEDA cannot reach the scaler, falls back to a CPU metric, and keeps sizing the
+## workload by the wrong signal while everything reads healthy. The supported lever
+## is on the ScaledObject; the controller can stay up, it holds no GPU.
+##
+## All three ASK which ScaledObject, because picking the wrong one takes down a
+## workload that was meant to keep serving. SO=<name>[,<name>] or SO=all skips the
+## prompt, which is also what CI and any non-interactive caller must pass.
+.PHONY: so-list
+so-list: ## Show WVA-managed workloads with their replicas, GPUs and park/freeze state.
+	@$(WVA_SO_ENV) bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_list'
+
+.PHONY: so-park
+so-park: ## Park workloads at 0 replicas and stop autoscaling, releasing their GPUs. PARK_REPLICAS=<n> to park at n. SO=<name>|all.
+	@$(WVA_SO_ENV) $(if $(PARK_REPLICAS),PARK_REPLICAS=$(PARK_REPLICAS),) $(if $(SO),SO=$(SO),) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_park'
+
+.PHONY: so-freeze
+so-freeze: ## Stop autoscaling but hold the current replica count (keeps GPUs). For maintenance. SO=<name>|all.
+	@$(WVA_SO_ENV) $(if $(SO),SO=$(SO),) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_freeze'
+
+.PHONY: so-resume
+so-resume: ## Undo so-park or so-freeze: WVA sizes the workload again from live metrics. SO=<name>|all.
+	@$(WVA_SO_ENV) $(if $(SO),SO=$(SO),) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_resume'
+
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # Supports FOCUS and SKIP variables for ginkgo test filtering.
