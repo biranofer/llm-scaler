@@ -968,5 +968,5 @@ Pod keeps Pod-level readiness and ordinary label selection intact.
   the inference port), implemented and validated on cluster
 - [`fma-upstream-requests.md`](fma-upstream-requests.md) — the findings filed
   against FMA, including warm instances holding GPUs Kubernetes cannot see
-- [`../guides/fma/README.md`](../guides/fma/README.md) — operating the current
+- [`../guides/fma/`](../guides/fma/) — operating the current
   design, and `warm_pool.sh coverage` for measuring what predicts a wake

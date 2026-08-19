@@ -1023,5 +1023,5 @@ machinery, is to measure that cold start.
   economics, `--sleeper-limit`, and why allocation belongs in WVA
 - [`fma-fork-problem-statement.md`](fma-fork-problem-statement.md) — the defects
   in the current dual-pods path, and Fix 1 as landed
-- [`../guides/fma/README.md`](../guides/fma/README.md) — operating the current
+- [`../guides/fma/`](../guides/fma/) — operating the current
   design, and `warm_pool.sh coverage` for the number that predicts a wake

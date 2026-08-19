@@ -47,11 +47,14 @@ make check-prereqs
 <!-- guide:prerequisites.check end -->
 
 Read-only. It reports the namespace it resolved, whether that namespace holds
-model servers, and the Prometheus it found. Every check the install runs,
-including this one, can be skipped with `SKIP_CHECKS=true` on any `make`
-command — for CI, or for someone who has already confirmed what it would have
-checked. A skipped check is a failure mode it stops warning you about, not one
-that stops happening.
+model servers, and the Prometheus it found. `SKIP_CHECKS=true` bypasses the tool
+and permission checks on an **install** — for CI, or for someone who has already
+confirmed what they would have checked. It does not apply here: running the
+checks is all this command does, so it runs them either way. Nor is it a blanket
+bypass of the install — the guard against a second install repointing the shared
+ClusterRoleBindings, and the post-install verification, both run regardless. A
+skipped check is a failure mode it stops warning you about, not one that stops
+happening.
 
 ## Installation Instructions
 

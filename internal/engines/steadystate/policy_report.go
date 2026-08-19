@@ -133,13 +133,18 @@ func joinSorted(values []string) string {
 // reportUnresolvedAccelerator warns that a variant's accelerator could not be
 // resolved, and says what that actually costs under the current configuration.
 //
-// This is a LOG line rather than only a Kubernetes event because the event does
-// not arrive. Variants are synthesized in memory and their kind is not registered
-// in the scheme, so the recorder cannot build an object reference for one:
-// "no kind is registered for the type variant.VariantAutoscaling". A single e2e
-// run attempted 31 of these warnings and the API server received none of them —
-// the operator's only signal for a real misconfiguration was being dropped, and
-// the emission looked successful from inside WVA.
+// This is a LOG line as well as a Kubernetes event. It was written when the event
+// did not arrive at all: variants are synthesized in memory and their kind is not
+// registered in the scheme, so the recorder could not build an object reference
+// for one ("no kind is registered for the type variant.VariantAutoscaling"), and a
+// single e2e run attempted 31 of these warnings for which the API server received
+// none. That is fixed — events hang on the ScaledObject now, see
+// variant.EventTarget — so the two are complementary rather than one standing
+// in for the other. They fail in opposite directions: the event is re-emitted while
+// the condition holds and the API server aggregates the repeats, whereas this line
+// is printed once per change (p.changed, below) and can scroll out of a long-lived
+// controller's log. The event is the durable signal; a grep of the log corroborates
+// it and cannot clear it.
 //
 // The consequence depends on whether a limiter is declared, and the difference is
 // severe enough to be worth saying rather than leaving to be inferred:

@@ -20,6 +20,14 @@ the failure with no natural symptom:
 ```bash
 # Check accelerators resolve FIRST. A GPU-aware optimizer gives no budget to a
 # variant whose accelerator it cannot resolve, and it then never scales up.
+# The event is the signal to trust: it is re-emitted for as long as the
+# condition holds, and the API server folds the repeats into one entry with a
+# count. It hangs on the ScaledObject, so it is in the MODEL's namespace, not
+# WVA's -- hence -A. The log line says the same thing but is printed once per
+# CHANGE, so on a controller that has been up a while it may have scrolled
+# away: an empty grep is not an all-clear.
+kubectl get events -A --field-selector reason=AcceleratorNotResolved
+# Corroborates, never clears: this line is logged once per change.
 kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i "Accelerator not resolved"
 ```
 <!-- guide:prerequisites.accelerators end -->

@@ -5,13 +5,25 @@ prerequisites:
     note: |
       Check accelerators resolve FIRST. A GPU-aware optimizer gives no budget to a
       variant whose accelerator it cannot resolve, and it then never scales up.
-    # The event REASON (AcceleratorNotResolved) never reaches the log by itself: the
-    # recorder is handed a synthesized VariantAutoscaling whose kind is not
-    # registered in the scheme, so emitting it fails and only the failure is logged,
-    # at error level, once per reconcile. The line that is actually logged on the
-    # working path is the prose below -- see docs/deployment/gpu-limiter.md, which
-    # already greps this form.
-    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i "Accelerator not resolved"
+      The event is the signal to trust: it is re-emitted for as long as the
+      condition holds, and the API server folds the repeats into one entry with a
+      count. It hangs on the ScaledObject, so it is in the MODEL's namespace, not
+      WVA's -- hence -A. The log line says the same thing but is printed once per
+      CHANGE, so on a controller that has been up a while it may have scrolled
+      away: an empty grep is not an all-clear.
+    # AcceleratorNotResolved is an event REASON, never log text: it goes through the
+    # recorder, so grepping the log for it finds nothing on a healthy cluster and
+    # nothing on a broken one. The events do land -- variant.EventTarget hangs them
+    # on the ScaledObject rather than on the synthesized VariantAutoscaling, whose
+    # kind is deliberately absent from the scheme -- and a synthesized variant takes
+    # the ScaledObject's namespace (utils.variant), which is where the model servers
+    # are, NOT where WVA runs. `kubectl describe scaledobject` shows them too.
+    # The prose in the grep is what reportUnresolvedAccelerator actually logs;
+    # docs/deployment/gpu-limiter.md greps the same form.
+    run: |
+      kubectl get events -A --field-selector reason=AcceleratorNotResolved
+      # Corroborates, never clears: this line is logged once per change.
+      kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i "Accelerator not resolved"
 
 deploy:
   enable:
