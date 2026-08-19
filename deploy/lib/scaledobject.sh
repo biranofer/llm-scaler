@@ -406,7 +406,7 @@ so_serving_workload_for_model() {
 
 # so_model_id echoes the model a serving container runs: --served-model-name where
 # the workload sets one (it is the name clients and the EPP use), else --model,
-# else the POSITIONAL model of `vllm serve <model>`.
+# else the positional model of `vllm serve <model>`.
 # Both "--flag value" and "--flag=value" are accepted; both appear in the wild.
 #
 # The positional form is not an edge case: it is what llm-d's own guides emit.
@@ -418,6 +418,8 @@ so_serving_workload_for_model() {
 # so neither flag is present, and reading flags alone returned empty for the
 # flagship guide -- every workload in the plan written `apply: no`, "the model
 # could not be read", on a namespace where the model is perfectly well defined.
+# The caller therefore passes command AND args, so `serve` is always visible to
+# anchor on rather than guessed around.
 #
 # Empty output means the model could not be determined. The caller must record that
 # and skip rather than guess: a ScaledObject with the wrong modelID groups a
@@ -440,30 +442,37 @@ so_model_id() {
             esac
         done
     done
-    # The token after `serve`, for the shape where the whole command line is
-    # inside the args -- `sh -c "vllm serve <model> ..."`, which the llm-d
-    # modelservice chart emits. Tried BEFORE the bare first token, because there
-    # the first token is `-c` and the model is several words in.
+    # The token after `serve`. This covers both shapes llm-d emits, because the
+    # caller passes command AND args: `command: ["vllm","serve"]` with the model
+    # first in args, and `sh -c "vllm serve <model> ..."` from the modelservice
+    # chart, where the model sits several words into a single args string.
+    #
+    # Anchoring on `serve` is the whole point. A bare "first non-flag token"
+    # fallback was tried and removed: it answered `python` for
+    # `python -m sglang.launch_server --model-path X`, `/bin/sh` for an
+    # entrypoint wrapper and `ray` for a ray head -- all of them workloads that
+    # DO carry a serving label now that role markers are matched, so all of them
+    # would have been given a confidently wrong modelID. Empty is the correct
+    # answer there, and the caller already knows what to do with it.
     take=""
     for tok in $args; do
         if [ -n "$take" ]; then
             case "$tok" in
                 -*) : ;;
-                *) echo "$tok"; return ;;
+                *) echo "$tok"; return 0 ;;
             esac
             take=""
         fi
-        [ "$tok" = "serve" ] && take=1
+        # Not `[ ... ] && take=1`: as the last command in the loop body that
+        # leaves the loop -- and so this function -- exiting non-zero whenever
+        # the final token is not `serve`. The caller assigns from a command
+        # substitution under `set -e`, so an unreadable model took the whole
+        # install down instead of being recorded as `apply: no`.
+        if [ "$tok" = "serve" ]; then take=1; fi
     done
-    # `command: ["vllm", "serve"]` with the model first in args. Only when that
-    # first token is not a flag: args that open with one carry no positional
-    # model, and guessing here is what the empty return exists to prevent.
-    for tok in $args; do
-        case "$tok" in
-            -*) return ;;
-            *)  echo "$tok"; return ;;
-        esac
-    done
+    # Nothing matched. Empty output, exit 0: "could not be determined" is a
+    # normal outcome the plan reports, not a failure.
+    return 0
 }
 
 # so_pool echoes the InferencePool whose selector matches a workload's pod labels,
@@ -647,7 +656,7 @@ so_discover() {
                 model=$(so_model_id "$args")
                 if [ -z "$model" ]; then
                     apply=no
-                    note="no --served-model-name, --model, or positional model on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+                    note="no --served-model-name, --model, or 'vllm serve <model>' on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
                 fi
                 # FMA: report it, do NOT retarget.
                 #
@@ -726,7 +735,17 @@ so_discover() {
                         # the block scalar, and CR is not in bash IFS, so the
                         # modelID would keep an invisible trailing character and
                         # match no metric series.
-                        (($t.spec.containers[0].args // [])
+                        # command AND args: the model of `vllm serve <model>` is
+                        # positional, and the llm-d guides split the two across
+                        # the fields -- command: ["vllm","serve"] with the model
+                        # first in args. Reading args alone leaves no `serve`
+                        # token to anchor on, which is what forced an earlier
+                        # version to fall back to "first non-flag token" and so
+                        # to answer `python` for an SGLang server. With command
+                        # folded in the anchor is always present, and anything
+                        # that is not a `serve` command correctly yields nothing.
+                        ((($t.spec.containers[0].command // [])
+                          + ($t.spec.containers[0].args // []))
                          | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                       ] | join("|")')
         done
