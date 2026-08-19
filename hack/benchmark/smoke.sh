@@ -25,7 +25,7 @@ set -o pipefail
 
 case "${1:-}" in
     -h|--help)
-        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        sed -n '2,/^[^#]/p' "$0" | sed -e 's/^# //' -e 's/^#//' -e '$d'
         exit 0
         ;;
 esac
@@ -113,7 +113,7 @@ command -v wva_epp_services >/dev/null 2>&1 && EPPS="$(wva_epp_services "$NS" 2>
 [ -n "$EPPS" ] || EPPS="$(kubectl get svc -n "$NS" -o name 2>/dev/null \
     | grep -E "router-epp|epp$" | cut -d/ -f2)"
 if [ -n "$EPPS" ]; then
-    ok "EPP: $(printf '%s' "$EPPS" | paste -sd, -)"
+    ok "EPP: $(printf '%s' "$EPPS" | tr '\n' ',' | sed 's/,$//')"
 else
     gone "No EPP (InferencePool endpoint picker) in $NS"
     fix "see docs/guides/testing-with-llm-d/ for a stack with one"
@@ -247,38 +247,82 @@ if [ -z "$DASH_KIND" ]; then
     warn "  Kubernetes: import deploy/grafana/operational-dashboard.json into your Grafana"
 else
     echo "  Found: $DASH_KIND in $DASH_WHERE"
+    # The installer's detection answers "which Prometheus does the CONTROLLER
+    # use", and that answer is an in-cluster Service address. This script runs on
+    # a laptop, where it resolves to nothing:
+    #
+    #   curl https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/... -> 000
+    #
+    # which failed the capture while every other step succeeded. So resolve a URL
+    # reachable from HERE, and fall back to a port-forward, which needs no Route
+    # and works the same on both platforms.
     PROM="${PROMETHEUS_URL:-}"
+    PF_PID=""
     if [ -z "$PROM" ]; then
-        # The installer's own detection: Thanos on OpenShift, prometheus-operated
-        # elsewhere. Sourcing it keeps one answer for "which Prometheus".
-        # shellcheck source=/dev/null
-        . "$REPO/deploy/lib/common.sh" 2>/dev/null || true
-        # shellcheck source=/dev/null
-        . "$REPO/deploy/lib/infra_monitoring.sh" 2>/dev/null || true
-        if command -v wva_detect_prometheus_url >/dev/null 2>&1; then
-            PROM="$(wva_detect_prometheus_url 2>/dev/null || true)"
+        ROUTE_HOST="$(kubectl get route -n openshift-monitoring thanos-querier \
+            -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+        if [ -n "$ROUTE_HOST" ]; then
+            PROM="https://${ROUTE_HOST}"
+        else
+            # No Route (plain Kubernetes, or a tenant who cannot read one).
+            # Forward to whichever Prometheus service the cluster has.
+            for cand in "openshift-monitoring/thanos-querier/9091" \
+                        "${MONITORING_NAMESPACE:-workload-variant-autoscaler-monitoring}/prometheus-operated/9090" \
+                        "monitoring/prometheus-operated/9090"; do
+                pf_ns="${cand%%/*}"; pf_rest="${cand#*/}"
+                pf_svc="${pf_rest%%/*}"; pf_port="${pf_rest##*/}"
+                kubectl get svc "$pf_svc" -n "$pf_ns" >/dev/null 2>&1 || continue
+                kubectl port-forward -n "$pf_ns" "svc/$pf_svc" ":${pf_port}" >/tmp/wva-smoke-pf.$$ 2>&1 &
+                PF_PID=$!
+                for _ in 1 2 3 4 5 6 7 8 9 10; do
+                    local_port="$(sed -n 's|.*127.0.0.1:\([0-9]*\).*|\1|p' /tmp/wva-smoke-pf.$$ 2>/dev/null | head -1)"
+                    [ -n "$local_port" ] && break
+                    sleep 1
+                done
+                if [ -n "${local_port:-}" ]; then
+                    [ "$pf_port" = "9090" ] && PROM="http://127.0.0.1:${local_port}" \
+                                            || PROM="https://127.0.0.1:${local_port}"
+                    echo "  Port-forwarded $pf_ns/$pf_svc"
+                    break
+                fi
+                kill "$PF_PID" 2>/dev/null; PF_PID=""
+            done
         fi
     fi
     if [ -z "$PROM" ]; then
-        warn "Could not work out the Prometheus URL; pass PROMETHEUS_URL=<url> to snapshot."
+        warn "Could not reach a Prometheus from here; pass PROMETHEUS_URL=<url> to snapshot."
     else
         echo "  Prometheus: $PROM"
         mkdir -p "$OUT"
         # The run's own elapsed window, not a fixed --since: a slow start would
         # otherwise push the interesting minutes off the left of every chart.
         SINCE="$(( ($(date -u +%s) - START_EPOCH) / 60 + 2 ))m"
-        TOK="$(kubectl create token default -n "$NS" 2>/dev/null || true)"
+        # The CALLER's token first. A `default` ServiceAccount token is scoped to
+        # the namespace and is refused by the platform monitoring stack, so
+        # preferring it produced a 403 on exactly the cluster where the route
+        # works. Whoever is running this already has whatever access they have.
+        TOK="${PROMETHEUS_TOKEN:-}"
         if [ -z "$TOK" ] && command -v oc >/dev/null 2>&1; then
             TOK="$(oc whoami -t 2>/dev/null || true)"
         fi
-        if "$REPO/hack/benchmark/snapshot.py" --namespace "$NS" \
+        [ -n "$TOK" ] || TOK="$(kubectl create token default -n "$NS" 2>/dev/null || true)"
+        # `python3 <script>`, not the script's own shebang: a checkout made on
+        # Windows carries CRLF, and the kernel then looks for an interpreter
+        # literally named `python3\r`. The file is fine; the shebang is the only
+        # thing that cares, so do not go through it.
+        if python3 "$REPO/hack/benchmark/snapshot.py" --namespace "$NS" \
                 --prometheus-url "$PROM" ${TOK:+--token "$TOK"} --insecure \
-                --since "$SINCE" --out "$OUT/snapshot" >/dev/null 2>&1; then
+                --since "$SINCE" --out "$OUT/snapshot" >/tmp/wva-smoke-snap.$$ 2>&1; then
             SNAP="$OUT/snapshot"
             echo "  Captured $SINCE of dashboard data"
         else
-            warn "Capture failed. The run itself is unaffected."
+            warn "Capture failed:"
+            tail -3 /tmp/wva-smoke-snap.$$ | sed 's/^/      /' >&2
+            warn "  The run itself is unaffected."
         fi
+        rm -f /tmp/wva-smoke-snap.$$
+        [ -n "$PF_PID" ] && kill "$PF_PID" 2>/dev/null
+        rm -f /tmp/wva-smoke-pf.$$
     fi
 fi
 
