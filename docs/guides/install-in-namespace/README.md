@@ -187,6 +187,13 @@ for the other causes.
 
 ### 2. Read the decisions
 
+**Give it an optimize cycle first.** WVA decides on a timer, so a ScaledObject
+created seconds ago has not been through one yet and this returns nothing —
+which reads like a broken install and is not. Measured on a fresh namespace: 0
+decision lines immediately after `scaledobjects-apply`, 53 a few minutes later,
+with no change in between. If it is still empty after a few minutes, that is
+worth investigating; straight away, it is not.
+
 <!-- guide:verify.decisions start -->
 ```bash
 kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decision

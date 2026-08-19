@@ -167,10 +167,15 @@ verify_deployment() {
         # is the healthy case, so without this the check kills the rest of
         # verify_deployment on exactly the clusters where nothing is wrong.
         local sm_rejected
+        # The MESSAGE, not just the name. A missing Secret is only one thing a
+        # ServiceMonitor can fail to resolve, and assuming it was misdiagnoses every
+        # other cause while prescribing a fix that cannot work. Seen on pokprod001:
+        # the Secret existed and the rejection was a missing CA ConfigMap, for which
+        # delete-and-re-apply runs straight back into the same missing object.
         sm_rejected=$(kubectl get events -n "$WVA_NS" \
             --field-selector reason=InvalidConfiguration \
-            -o jsonpath='{range .items[*]}{.involvedObject.kind}/{.involvedObject.name}{"\n"}{end}' 2>/dev/null \
-            | grep '^ServiceMonitor/' | sort -u) || true
+            -o jsonpath='{range .items[*]}{.involvedObject.kind}/{.involvedObject.name}{"  "}{.message}{"\n"}{end}' 2>/dev/null \
+            | grep '^ServiceMonitor/' | cut -c1-210 | sort -u) || true
 
         if [ -n "$sm_missing" ]; then
             log_warning "A ServiceMonitor names a bearerTokenSecret that does not exist, so the prometheus-operator has rejected it and WVA's own metrics are NOT being collected:"
@@ -178,9 +183,9 @@ verify_deployment() {
             log_warning "  Scaling is unaffected (that reads llm-d's metrics), but no wva_* series will appear and the dashboard will be empty."
             log_warning "  Fix: create the Secret, then force ONE re-evaluation — the operator ignores metadata-only writes, so change the spec, or delete and re-apply the ServiceMonitor."
         elif [ -n "$sm_rejected" ]; then
-            log_warning "A ServiceMonitor was rejected by the prometheus-operator (InvalidConfiguration). Its Secret exists NOW, so this is very likely the earlier rejection standing after the cause was fixed — the operator does not re-evaluate on its own:"
+            log_warning "A ServiceMonitor was rejected by the prometheus-operator (InvalidConfiguration), and it does not re-evaluate on its own. The reason it gave:"
             printf '%s\n' "$sm_rejected" | sed 's/^/      /' >&2
-            log_warning "  Until it is re-evaluated there is no scrape target and no wva_* series. Force one:"
+            log_warning "  Until it is re-evaluated there is no scrape target and no wva_* series — on the dashboard the WVA panels stay empty while the vllm:* ones fill. Fix what the message names FIRST, then force one re-evaluation:"
             log_warning "    kubectl -n $WVA_NS delete servicemonitor <name> && NAMESPACE=$WVA_NS make setup-prereqs"
             log_warning "  Then confirm a target exists — a re-apply of unchanged content will NOT do it."
         elif [ -n "$sm_refs" ]; then
