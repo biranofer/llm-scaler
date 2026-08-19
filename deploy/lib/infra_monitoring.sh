@@ -103,11 +103,78 @@ foreign_prometheus() {
 # The Grafana sidecar discovers dashboards by label, not by namespace ownership, so
 # a plain labelled ConfigMap is all an existing Grafana needs. DASHBOARD_NS targets
 # a Grafana living somewhere other than MONITORING_NAMESPACE.
+# wva_grafana_dashboard_search_ns echoes the namespaces a Grafana dashboard
+# sidecar watches, or nothing if that cannot be determined.
+#
+# This is the difference between a dashboard that appears and a ConfigMap nobody
+# reads. The sidecar discovers dashboards by LABEL, but only inside the namespaces
+# it is told to watch: kube-prometheus-stack passes searchNamespace through as the
+# sidecar container's NAMESPACE env var, and its default is the sidecar's own
+# namespace. Publishing a correctly-labelled ConfigMap anywhere else succeeds and
+# is then silently ignored -- there is no error to notice, which is why this is
+# detected rather than documented.
+wva_grafana_dashboard_search_ns() {
+    local ns="$1" out
+    out=$(kubectl get deploy,statefulset -n "$ns" -l app.kubernetes.io/name=grafana \
+            -o jsonpath='{range .items[*]}{range .spec.template.spec.containers[*]}{.name}{"~"}{range .env[*]}{.name}{"="}{.value}{","}{end}{"\n"}{end}{end}' \
+            2>/dev/null) || return 0
+    printf '%s\n' "$out" | awk -F'~' '/sc-dashboard/ {print $2}' \
+        | tr ',' '\n' | sed -n 's/^NAMESPACE=//p' | head -1
+}
+
+# wva_dashboard_ns_is_watched reports whether $1 is covered by the watch list $2.
+wva_dashboard_ns_is_watched() {
+    local ns="$1" watched="$2"
+    case "$watched" in
+        ALL|all) return 0 ;;
+        "")      return 1 ;;
+    esac
+    case ",${watched}," in
+        *",${ns},"*) return 0 ;;
+    esac
+    return 1
+}
+
+# wva_choose_dashboard_ns picks the namespace to publish into.
+#
+# ONE SHARED OBJECT REMAINS THE DEFAULT, deliberately: the ConfigMap name is fixed
+# and the dashboard is generic and variable-driven, so ten namespace-scoped installs
+# applying the same object is better than ten identical entries in the picker. See
+# the note below on pinning.
+#
+# This function therefore does NOT switch to a per-tenant copy on its own, even
+# when Grafana would see it. Detection is used to make the ADVICE accurate -- to
+# suggest DASHBOARD_NS only when it would actually render, and to warn when the
+# chosen namespace is not watched -- not to change where the dashboard lands.
+wva_choose_dashboard_ns() {
+    printf '%s' "${DASHBOARD_NS:-$MONITORING_NAMESPACE}"
+}
+
+# wva_dashboard_manual_help prints the two routes that need no cluster rights.
+# Printed at the moment of failure, because that is when it is read.
+wva_dashboard_manual_help() {
+    local ns="$1" watched
+    watched="$(wva_grafana_dashboard_search_ns "$MONITORING_NAMESPACE")"
+    if wva_dashboard_ns_is_watched "$WVA_NS" "$watched"; then
+        log_info "  Grafana watches '${watched}', so this works with no admin at all:"
+        log_info "    DASHBOARD_NS=$WVA_NS  (publishes a private copy into your own namespace)"
+    fi
+    log_info "  Fastest, and needs NO Kubernetes permission:"
+    log_info "    In Grafana: Dashboards -> New -> Import -> upload"
+    log_info "    deploy/grafana/operational-dashboard.json"
+    log_info "  Or send a cluster admin this:"
+    log_info "    kubectl create configmap wva-operation-dashboard -n $ns \\"
+    log_info "      --from-file=operational-dashboard.json=deploy/grafana/operational-dashboard.json \\"
+    log_info "      && kubectl label configmap wva-operation-dashboard -n $ns grafana_dashboard=1"
+}
+
 install_operational_dashboard() {
     [ "${DEPLOY_OPERATIONAL_DASHBOARD:-true}" = "true" ] || return 0
 
     local json="$WVA_PROJECT/deploy/grafana/operational-dashboard.json"
-    local ns="${DASHBOARD_NS:-$MONITORING_NAMESPACE}"
+    local ns watched
+    ns="$(wva_choose_dashboard_ns)"
+    watched="$(wva_grafana_dashboard_search_ns "$MONITORING_NAMESPACE")"
     if [ ! -f "$json" ]; then
         log_warning "Operational dashboard JSON not found at $json — skipping"
         return 0
@@ -122,8 +189,8 @@ install_operational_dashboard() {
         case "$ns_err" in
             *[Ff]orbidden*)
                 log_info "No permission to read namespace $ns — the shared dashboard belongs to whoever administers monitoring."
-                log_info "  Cluster admin: run this install, or apply deploy/grafana/operational-dashboard.json as a ConfigMap labelled grafana_dashboard=1 in $ns."
-                log_info "  Namespace admin: publish your own copy with DASHBOARD_NS=$WVA_NS — everything else about this install is unaffected."
+                log_info "  The install is unaffected; only this dashboard step is skipped."
+                wva_dashboard_manual_help "$ns"
                 return 0
                 ;;
             *)
@@ -178,7 +245,9 @@ install_operational_dashboard() {
     if [ "$scope" = "namespace" ] && [ "$ns" != "$WVA_NS" ]; then
         cp "$json" "$patched"
         log_info "Dashboard published to the shared $ns — namespace left selectable."
-        log_info "  Set DASHBOARD_NS=$WVA_NS to publish a copy pinned to this namespace."
+        if wva_dashboard_ns_is_watched "$WVA_NS" "$watched"; then
+            log_info "  DASHBOARD_NS=$WVA_NS would publish a copy pinned to this namespace instead."
+        fi
     elif [ "$scope" = "namespace" ]; then
         yq -o=json -I2 \
             '(.templating.list[] | select(.name == "namespace") | .current) =
@@ -198,6 +267,13 @@ install_operational_dashboard() {
         | kubectl annotate --local -f - "wva.llmd.ai/dashboard-version=$ours" -o yaml \
         | kubectl apply -f - >/dev/null; then
         log_success "Operational dashboard published to $ns (ConfigMap wva-operation-dashboard, version $ours, label grafana_dashboard=1)"
+        # Publishing is not the same as appearing. Say so now rather than leaving
+        # someone to conclude the dashboard is broken.
+        if [ -n "$watched" ] && ! wva_dashboard_ns_is_watched "$ns" "$watched"; then
+            log_warning "Grafana's sidecar watches '${watched}', not $ns — this ConfigMap will NOT appear as a dashboard."
+            log_info "  Ask for grafana.sidecar.dashboards.searchNamespace=ALL, or:"
+            wva_dashboard_manual_help "$ns"
+        fi
         # The tenant's scoping is a LINK, not a default. A variable default lives
         # in the dashboard JSON, and this object is shared by every install on
         # the cluster -- so there is no per-tenant default to set. A URL gives
@@ -220,7 +296,8 @@ install_operational_dashboard() {
         case "$apply_err" in
             *[Ff]orbidden*)
                 log_info "No permission to write the dashboard into $ns — it is the monitoring namespace's to own."
-                log_info "  Namespace admin: DASHBOARD_NS=$WVA_NS publishes your own copy instead."
+                log_info "  The install is unaffected; only this dashboard step is skipped."
+                wva_dashboard_manual_help "$ns"
                 ;;
             *)
                 log_warning "Could not publish the operational dashboard to $ns: ${apply_err:-unknown error}"

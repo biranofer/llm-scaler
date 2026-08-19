@@ -73,9 +73,10 @@ namespace that Grafana's sidecar actually watches*:
 DASHBOARD_NS=my-monitoring ./deploy/install.sh   # DEPLOY_PROMETHEUS=false is fine
 ```
 
-A sidecar watches only its own namespace by default, so picking the wrong
-`DASHBOARD_NS` produces a ConfigMap nobody reads and no error. See
-[If you cannot write to the monitoring namespace](#if-you-cannot-write-to-the-monitoring-namespace).
+A sidecar watches only the namespaces it is configured for — `ALL` for a Grafana
+this installer deployed, often just its own for one you already had — so a wrong
+`DASHBOARD_NS` can produce a ConfigMap nobody reads. The install checks and warns;
+see [If you cannot write to the monitoring namespace](#if-you-cannot-write-to-the-monitoring-namespace).
 
 Skip it entirely with `DEPLOY_OPERATIONAL_DASHBOARD=false`.
 
@@ -99,15 +100,20 @@ dashboard step is skipped. Nothing about WVA's scaling depends on it.
 
 #### If you cannot write to the monitoring namespace
 
-`DASHBOARD_NS=<your-namespace>` is **not** sufficient on its own, and it fails
-quietly. The Grafana sidecar discovers dashboards by **label within the namespaces
-it is told to watch**, and `kube-prometheus-stack` defaults
-`sidecar.dashboards.searchNamespace` to the sidecar's *own* namespace. This
-installer does not override it. So a ConfigMap published into your namespace is
-created successfully, is correctly labelled, and is **never picked up** — there is
-no error to see.
+`DASHBOARD_NS=<your-namespace>` publishes a private copy into your own namespace,
+which needs no cluster rights at all. **Whether it renders depends on the Grafana**,
+so the installer checks and tells you:
 
-Four ways out, cheapest first:
+- **A Grafana this installer deployed watches every namespace.** The bundled chart
+  (grafana 12.10.4 via kube-prometheus-stack) sets the dashboard sidecar's
+  `searchNamespace` to `ALL`, verified on a live install. So `DASHBOARD_NS` simply
+  works, and the install says so.
+- **A Grafana you already had may watch only its own namespace.** That is the
+  sidecar's other common configuration, and there is no error when it applies: the
+  ConfigMap is created, is correctly labelled, and is silently never read. The
+  install detects this and warns rather than reporting success.
+
+Ways out, cheapest first:
 
 1. **Import the JSON by hand.** `deploy/grafana/operational-dashboard.json` is an
    ordinary Grafana dashboard. Anyone with Grafana editor rights can import it
@@ -117,10 +123,10 @@ Four ways out, cheapest first:
 2. **Use the shared dashboard, scoped to you.** If an admin has already published
    it, you need nothing: open the link the install prints,
    `…/d/wva-operational/wva-operational-dashboard?var-namespace=<your-namespace>`.
-3. **Ask for the sidecar to watch all namespaces.** A one-time cluster change —
-   `grafana.sidecar.dashboards.searchNamespace=ALL`, or an explicit list — after
-   which `DASHBOARD_NS=<your-namespace>` works for every tenant, self-service, for
-   good. This is the change that makes option 4 and the table above actually true.
+3. **Ask for the sidecar to watch all namespaces** — only needed for a
+   pre-existing Grafana that does not already. One change,
+   `grafana.sidecar.dashboards.searchNamespace=ALL` or an explicit list, after which
+   `DASHBOARD_NS=<your-namespace>` works for every tenant, self-service.
 4. **Run your own Grafana in your namespace**, then publish to it with
    `DASHBOARD_NS=<your-namespace>`. Fully self-service and needs no admin, at the
    cost of operating another Grafana.
@@ -160,9 +166,13 @@ into your own namespace:
 DASHBOARD_NS=<your-namespace> make deploy-wva   # pinned to that namespace
 ```
 
-This only renders if a Grafana sidecar watches that namespace — your own Grafana,
-or a shared one configured with `searchNamespace: ALL`. Otherwise the ConfigMap is
-inert; import the JSON by hand instead.
+This renders whenever the Grafana's sidecar watches that namespace, which is the
+case for one this installer deployed (`searchNamespace: ALL`). The install verifies
+it and warns if not, in which case import the JSON by hand instead.
+
+Note the trade-off: the shared object is the default on purpose. One generic,
+variable-driven dashboard serves every install, whereas a copy per tenant fills the
+picker with near-identical entries.
 
 **Namespace label:** `wva_*` metrics carry both `namespace` and
 `exported_namespace`. `exported_namespace` is the *workload's* namespace and

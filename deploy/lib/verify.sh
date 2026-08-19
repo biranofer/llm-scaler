@@ -157,7 +157,24 @@ print_summary() {
     else
         echo "  KEDA:         skipped (SCALER_BACKEND=$SCALER_BACKEND) — WVA needs KEDA to actuate"
     fi
-    [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ] && echo "  Grafana:      deployed in $MONITORING_NAMESPACE"
+    # Report where the dashboard ACTUALLY is, not what the flag asked for. This
+    # line used to assert "deployed in $MONITORING_NAMESPACE" even when the publish
+    # had been skipped by a Forbidden -- confident and wrong.
+    if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
+        local dash_ns=""
+        for candidate in "${DASHBOARD_NS:-}" "$WVA_NS" "$MONITORING_NAMESPACE"; do
+            [ -n "$candidate" ] || continue
+            if kubectl get configmap wva-operation-dashboard -n "$candidate" >/dev/null 2>&1; then
+                dash_ns="$candidate"
+                break
+            fi
+        done
+        if [ -n "$dash_ns" ]; then
+            echo "  Dashboard:    published in $dash_ns"
+        else
+            echo "  Dashboard:    not published — import deploy/grafana/operational-dashboard.json into Grafana"
+        fi
+    fi
     # CONTROLLER_INSTANCE is deliberately NOT reported here. No install path puts
     # it on the Deployment, so this line read the installer's shell environment and
     # then asserted a scoping rule the running controller was not applying — the
