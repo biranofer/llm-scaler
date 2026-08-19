@@ -62,6 +62,21 @@ Both terms are measurable before anything is built: `lambda` from historical
 scaling events, `W` from replica start times. Neither is currently measured, and
 sizing K without them is guesswork.
 
+### Scope and commitment
+
+**Phase 1 builds both pool tiers** — level-1 (RAM-backed) and level-2
+(storage-backed) — because which one wins depends on a bandwidth we have not
+measured, and because the two differ only in a label, a memory request and the
+argument to `/sleep`. Building one and not the other would save almost nothing and
+would force the measurement to be re-litigated later.
+
+**We commit to adopting the Snapshot Orchestrator's mechanism once it is ready.**
+This design exists because that work is a declared prototype today (§8), not
+because a RAM tier and a disk tier are rivals. The WVA side is therefore built so
+the mechanism is swappable — one port, two adapters, tier intent rather than
+mechanism calls — and the intended end state is WVA allocating across *both* tiers
+with their agent owning the disk one.
+
 ### Scope: phase 1 is single-Pod
 
 **Phase 1** covers models that fit within one Pod — any tensor-parallel size, so
@@ -447,6 +462,77 @@ as a golden snapshot — vLLM level-2 sleep, then NVIDIA `cuda-checkpoint` to pu
 GPU driver state into host memory, then CRIU to dump the process tree. Later Pods
 for the same model **restore** instead of cold-booting, keyed by a compatibility
 tuple (model, TP, image digest, vLLM version, GPU architecture, driver, kernel).
+
+### What actually exists today, as opposed to what is designed
+
+Checked directly rather than taken from the architecture document.
+
+**`github.com/wseaton/snapshot-orchestrator`** — the prototype:
+
+- **Rust**, in `crates/`: an orchestrator daemon, a snapshot API, a node agent
+  (`vllm-snapshot-agent`, a privileged DaemonSet doing CRIU dump/restore with
+  native container-runtime integration) and a supervisor/shim.
+- **CRDs are `SnapshotReplica` and `SnapshotFleet`** — *not* the
+  `SnapshotCheckpoint` the architecture document describes. The design is still
+  moving, so its API surface should not be treated as settled.
+- Describes itself as a proof-of-concept for "non-destructive CRIU snapshot fan-out
+  for vLLM", and states plainly: **"This project is experimental and is not
+  intended for production use."** 29 commits on main.
+- Requires **custom patches to vLLM, Model Express and the llm-d router**
+  (`integrations/`), so it is not yet consumable as an add-on.
+- Checkpoints to **local NVMe** — consistent with the storage-bandwidth analysis in
+  §3: the approach depends on a fast local read path, and would degrade on shared
+  network storage exactly as level-2 sleep does.
+- Ships a demo console with an unauthenticated REST/WebSocket API — prototype
+  hygiene, not a deployable surface.
+
+**Upstream vLLM: nothing merged.** [RFC #34303](https://github.com/vllm-project/vllm/issues/34303)
+(CUDA Checkpoint/Restore for near-zero cold starts, opened February 2026) is a
+**draft** with a five-phase roadmap and no implementation merged. Its constraints
+matter for both designs:
+
+- Linux x86_64, **NVIDIA driver 570+** (580+ for GPU remapping);
+- **cannot support UVM or IPC memory allocations**;
+- **tensor parallelism**: NCCL communicators are destroyed by the checkpoint and
+  need ~1-3 s of re-initialisation, "potentially negating benefits at large TP
+  scales (TP=8)";
+- **multi-node explicitly deferred** — the same conclusion this design reached
+  independently for LWS (§10).
+
+Also [PR #51316](https://github.com/vllm-project/vllm/pull/51316), the gRPC control
+plane that would replace dev-mode HTTP for sleep and weight reload, is **in
+flight** and stacked on another PR — so both designs depend on
+`VLLM_SERVER_DEV_MODE=1` for now.
+
+**What this means for sequencing.** Their mechanism is a promising prototype whose
+API is unsettled, which needs forked vLLM, llm-d and Model Express, whose
+foundational vLLM support is an unmerged draft, and which requires a privileged
+node agent. That is a reasonable thing to adopt later and an unreasonable thing to
+block on. It is the argument for building the RAM and storage tiers now behind a
+swappable port, and it is not an argument against their design.
+
+### A calibration that narrows our own claim
+
+RFC #34303 gives a cold-start breakdown that includes **GPU transfer at 2-10 s**,
+and estimates suspend/resume at **4-10 s against 6-32 s for existing sleep/wake**.
+Those figures are far above the 0.26-0.85 s the sleep-mode blog reports — because
+the blog measured **small** models (Qwen3-0.6B, Phi-3-vision) and the RFC is
+describing large ones.
+
+This is the `size / B_h2d` scaling of §3 seen from another angle, and it is
+independent corroboration of the formula. But it also narrows the pool's advantage
+at the top end:
+
+| model scale | level-1 wake | CUDA-checkpoint resume | gap |
+| --- | --- | --- | --- |
+| small (≤1 B) | **~0.3 s** | ~4 s | **large — the pool wins clearly** |
+| medium | ~1-3 s | ~4-8 s | meaningful |
+| large (TP=8) | ~6-32 s, plus NCCL re-init | ~4-10 s, plus NCCL re-init | **converges; the pool may not win at all** |
+
+So the pool's advantage is **largest for small and medium models** and may vanish
+for the largest. Combined with §6's note that a 70 B model costs ~20 s and ~140 GB
+of RAM per Pod at level 1, the conclusion is consistent from two directions:
+**warm-pooling is a small-to-medium-model technique.**
 
 ### Where the two agree, independently
 
