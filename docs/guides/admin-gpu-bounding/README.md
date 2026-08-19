@@ -20,7 +20,7 @@ the failure with no natural symptom:
 ```bash
 # Check accelerators resolve FIRST. A GPU-aware optimizer gives no budget to a
 # variant whose accelerator it cannot resolve, and it then never scales up.
-kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i AcceleratorNotResolved
+kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i "Accelerator not resolved"
 ```
 <!-- guide:prerequisites.accelerators end -->
 

@@ -5,7 +5,13 @@ prerequisites:
     note: |
       Check accelerators resolve FIRST. A GPU-aware optimizer gives no budget to a
       variant whose accelerator it cannot resolve, and it then never scales up.
-    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i AcceleratorNotResolved
+    # The event REASON (AcceleratorNotResolved) never reaches the log by itself: the
+    # recorder is handed a synthesized VariantAutoscaling whose kind is not
+    # registered in the scheme, so emitting it fails and only the failure is logged,
+    # at error level, once per reconcile. The line that is actually logged on the
+    # working path is the prose below -- see docs/deployment/gpu-limiter.md, which
+    # already greps this form.
+    run: kubectl logs -n <wva-namespace> deploy/wva-controller-manager | grep -i "Accelerator not resolved"
 
 deploy:
   enable:

@@ -34,6 +34,12 @@ export NAMESPACE=<your-namespace>
 ```
 <!-- guide:env.static.namespace end -->
 
+**Read this before you run the check below**: it is read-only, but an empty
+namespace is a warning worth taking seriously, not a note to skim past — a
+controller pointed at the wrong one installs cleanly, reports healthy, and
+scales nothing. If the check below names one, stop and fix the namespace before
+going further.
+
 <!-- guide:prerequisites.check start -->
 ```bash
 make check-prereqs
@@ -41,9 +47,11 @@ make check-prereqs
 <!-- guide:prerequisites.check end -->
 
 Read-only. It reports the namespace it resolved, whether that namespace holds
-model servers, and the Prometheus it found. **An empty namespace is a warning
-worth reading**: a controller pointed at the wrong one installs cleanly, reports
-healthy and scales nothing.
+model servers, and the Prometheus it found. Every check the install runs,
+including this one, can be skipped with `SKIP_CHECKS=true` on any `make`
+command — for CI, or for someone who has already confirmed what it would have
+checked. A skipped check is a failure mode it stops warning you about, not one
+that stops happening.
 
 ## Installation Instructions
 

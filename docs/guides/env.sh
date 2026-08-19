@@ -28,6 +28,14 @@ export REPO_ROOT
 # above from the published image they thought they had replaced.
 export IMG="${IMG:-ghcr.io/ev-shindin/llm-scaler:main}"
 
+# TODO(release hardening): :main is a floating tag from a personal namespace, not
+# a pinned digest -- deliberately, while this is still pre-release: the branch
+# moves daily and a pinned digest would need updating by hand on every guide edit.
+# Before a real release this needs a pin (a digest, or a versioned tag cut from
+# CI) so two readers running the same guide a week apart get the same build.
+# Left as a comment, not a behavior change: not yet, while the image is still a
+# moving target on purpose.
+
 # The namespace WVA installs into.
 #
 # Left unset on purpose. The install uses WVA_NS, then NAMESPACE — llm-d's own
