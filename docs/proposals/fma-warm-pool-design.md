@@ -108,7 +108,7 @@ introduced incrementally and switched off without risk.
 | instances per Pod | 1 awake + N asleep | `LauncherConfig.maxInstances` caps N |
 | pool identity | (accelerator type, TP size, **sleep level**) | each is immutable per Pod, so each needs its own Deployment |
 | pool size | `spec.replicas` | ordinary scaling; `kubectl scale` works |
-| traffic switch | **Pod readiness gate** | asleep → gate false → out of the EndpointSlice. Kubernetes does the endpoint churn; nothing hand-rolls it |
+| traffic switch | **Pod readiness gate** | asleep → gate false → out of the EndpointSlice. Kubernetes does the endpoint churn — **conditional on EPP honouring readiness, which is prerequisite 1 in §9 and is not yet verified in this stack** |
 | which model is live | `llm-d.ai/model` label | selects the InferencePool the Pod joins |
 
 **Why one GPU (or one TP group) per Pod:** a 4-GPU Pod running four independent
@@ -778,10 +778,29 @@ does not exist anywhere else today (§8) — is untouched by the swap.
 
 ## 9. Prerequisites, before any of this is built
 
-Two of these can invalidate the design, so they are not follow-ups. All four
+Three of these can invalidate the design, so they are not follow-ups. All five
 concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkerset).
 
-1. **Does a woken engine return CORRECT output?** Open vLLM issues report that it
+1. **Does a NotReady Pod actually stop receiving EPP traffic?** This design rests
+   on readiness gating the traffic switch, and that assumption is **unverified in
+   this stack**. Two documented facts undercut it: the launcher's readiness probe
+   hits `:8001` (its own CRUD API, which answers whenever the process manager is
+   up) while EPP dials `:8000`, so the Pod reads `Ready` for its whole life
+   regardless of whether anything can serve; and pool membership is label-driven,
+   which already caused EPP to dispatch to launchers that could not serve and
+   return **~20 % 503s**, destroying benchmark runs. See
+   `../guides/fma/README.md` and upstream request 7.
+
+   The Snapshot Orchestrator's answer is to **patch the llm-d EPP** with a
+   fail-closed scheduling filter keyed on its lifecycle label, which is evidence
+   that its authors did not consider readiness sufficient either.
+
+   **If readiness does not gate dispatch, a sleeping pool Pod serves 503s** and
+   this design needs the same EPP filter — which would cost it the "no new
+   components" property. Cheap to settle: place a pool Pod in an InferencePool,
+   force its gate false, send traffic, count 503s. **Do this first.**
+
+2. **Does a woken engine return CORRECT output?** Open vLLM issues report that it
    may not: [#16234](https://github.com/vllm-project/vllm/issues/16234) (improper
    response after `/wake_up`) and
    [#17103](https://github.com/vllm-project/vllm/issues/17103) (meaningless
@@ -789,12 +808,12 @@ concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkers
    time-to-Ready; nothing verified output correctness.** A pool serving garbage in
    3 s is worse than one serving correctly in 41 s. Those issues predate the
    v0.26.0 engine in use and may be fixed — check, do not assume.
-2. **Measure `B_storage` properly.** Drop caches, read a known-size weight file
+3. **Measure `B_storage` properly.** Drop caches, read a known-size weight file
    from `/model-cache`, and time it. The single 430 MB/s figure may have been a
    page-cache hit. This sets the level-1/level-2 crossover.
-3. **Measure the label → EndpointSlice → InferencePool propagation delay.** It is
+4. **Measure the label → EndpointSlice → InferencePool propagation delay.** It is
    on the critical path and may dominate a 3 s wake.
-4. **Confirm several instances co-reside on one card** — one awake at
+5. **Confirm several instances co-reside on one card** — one awake at
    `gpu-memory-utilization 0.95` plus N sleepers, with a clean swap between them.
    `--sleeper-limit` is 2 on pokprod, so this is cheap to try.
 
