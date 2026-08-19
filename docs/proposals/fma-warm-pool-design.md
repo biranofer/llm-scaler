@@ -138,6 +138,8 @@ spec:
   replicas: 4                                        # K — the pool size knob
   template:
     spec:
+      readinessGates:                                # WVA owns this condition
+        - conditionType: llm-d.ai/WarmServing        # false while asleep -> out of the EndpointSlice
       containers:
         - name: launcher                             # the FMA launcher image, unmodified
           env:
@@ -147,8 +149,9 @@ spec:
             limits:
               nvidia.com/gpu: 1                      # == TP size of this pool's models
               memory: 8Gi                            # level 2: buffers + process overhead only
-          # No readinessProbe here: readiness is owned externally, through a
-          # readiness GATE injected by a mutating webhook (see below). A probe
+          # No readinessProbe here: readiness is owned externally, through the
+          # readinessGate declared below. Nothing needs a webhook, because this
+          # Deployment is ours to author. A probe
           # inside the Pod cannot express "the controller has not admitted me
           # yet", and today's launcher probe answers 200 whenever the launcher
           # lives, regardless of whether its instance sleeps.
@@ -373,7 +376,7 @@ deployment model, but nothing here waits on it.
 | piece | size | where |
 | --- | --- | --- |
 | pool Deployment manifests | config | GitOps, beside the models |
-| **readiness gate**, plus the mutating webhook that injects it | small | Pattern taken from the Snapshot Orchestrator: a `readinessGate` on the Pod whose condition only WVA sets, so a sleeping Pod is out of the EndpointSlice by construction. Strictly better than an in-Pod probe, which cannot express "not admitted yet" — and today's launcher probe answers 200 whenever the launcher lives, regardless of sleep. |
+| **readiness gate** | **config only — no webhook** | A `readinessGate` declared directly in the pool Pod template, whose condition only WVA sets. **We author the pool Deployment, so nothing needs mutating.** The Snapshot Orchestrator needs a webhook only because it must inject the gate into Pods created by somebody else's Deployment; that requirement does not apply here. Strictly better than an in-Pod probe, which cannot express "not admitted yet". |
 | pool discovery and warm-set state | small | WVA — `GET /v2/vllm/instances` on each pool Pod already returns exactly this, so no sidecar or annotation is needed |
 | actuation: wake/sleep, patch the model label, gate readiness | small | WVA, in the loop and RBAC it already has |
 | **allocation policy** — which models are warm where, spike anti-affinity, eviction, exhaustion, hold timeouts | the real work | WVA |
@@ -578,12 +581,110 @@ With that boundary held, the intended steady state for one model is:
 Note the last row: scale-from-zero is the case where the two are closest
 substitutes, and where snapshot's zero idle cost is most attractive.
 
+### Decision: build this, and make the WVA side migration-ready
+
+We implement this design now rather than waiting on the Snapshot Orchestrator, and
+we shape the WVA side so that adopting their mechanism later is an adapter swap
+rather than a rewrite. The reasoning: our niche is real (§8, the RAM tier is the
+only thing that avoids the weight load), their timeline is not ours to control, and
+the seams that make migration cheap are cheap to install now and expensive to
+retrofit.
+
+**The one decision that determines migration cost: what WVA emits.**
+
+| | migration cost |
+| --- | --- |
+| brain emits *mechanism calls* — "POST `/sleep` to this Pod" | rewrite the brain |
+| brain emits **tier intent** — "model X warm at tier RAM on node N" | swap one adapter |
+
+So WVA's output is **desired tier**, never a mechanism call:
+
+```
+llm-d.ai/desired-tier: ram | disk | none      # written by WVA, per (Pod, model)
+llm-d.ai/observed-tier: ram | disk | none     # written by whatever actuates
+```
+
+That is deliberately the same shape as their design's split between desired
+configuration and agent-reported state, and it maps onto a memory hierarchy in
+which their snapshot is simply the `disk` tier:
+
+```
+GPU        serving
+host RAM   level-1 sleep     <- tier "ram": this design
+disk        CRIU snapshot     <- tier "disk": theirs, when it lands
+cold        weight load from storage
+```
+
+### The mechanism interface to isolate
+
+The brain must **not** call the launcher API or vLLM endpoints directly. One
+narrow port, with the FMA-based implementation behind it:
+
+```
+ListWarm(pod)                  -> []{model, tier, lastUsed}
+Warm(pod, model, tier)          # create the instance and sleep it at that tier
+Activate(pod, model)            # wake; make it the live model
+Deactivate(pod, model)          # sleep; drop out of the InferencePool
+Evict(pod, model)               # remove entirely, freeing budget
+```
+
+Today: launcher HTTP (`/v2/vllm/instances`) plus vLLM `/sleep` and `/wake_up`.
+Later: their node agent, unchanged above the port. Everything in §4's sequencing
+is expressed in these five calls, and nothing above them knows about CRIU, the
+launcher, or dev-mode HTTP.
+
+### Vocabulary aligned to theirs, so state means the same thing
+
+Reuse their lifecycle phase names wherever the meaning is identical, rather than
+inventing parallel ones:
+
+| their label | ours | note |
+| --- | --- | --- |
+| `snapshot.llm-d.ai/state`: `serving`, `draining`, `failed` | `llm-d.ai/warm-state`, same values | identical meanings; a later merge is a key rename |
+| `snapshot.llm-d.ai/startup-method`: `cold-booted`, `restored` | same key, plus `woken` | our RAM tier adds one value rather than a new key |
+| `snapshot.llm-d.ai/checkpoint-ref` | `llm-d.ai/warm-ref` | points at the warm entry rather than a CR |
+| readiness gate `snapshot.llm-d.ai/Serving` | a gate of the same shape | gates AND, so both can coexist during migration |
+
+**Record their compatibility key on every warm entry** — *(model, TP, image digest,
+vLLM version, GPU architecture, driver version, kernel version)* — even though a
+RAM-tier entry does not strictly need it. It costs nothing, and it means promoting
+a RAM-tier entry to a disk snapshot later is a tier change rather than a
+re-derivation. Without it, migration has to reconstruct identity for every warm
+model.
+
+### The entrypoint, decided now to avoid a later conflict
+
+Their shim must hold **PID 1 and never exec**, because CRIU restores processes with
+their dump-time PIDs. Our pool Pods would naturally run the launcher as PID 1,
+which is the one incompatibility that cannot be papered over later.
+
+**So adopt the shim-shaped entrypoint from the start:** a thin PID-1 process that
+spawns the launcher as a child and stays resident, reaping and forwarding signals.
+It costs almost nothing now, is useful anyway for signal handling, and removes the
+blocking conflict at migration time.
+
+### What migration actually looks like, then
+
+| layer | changes when their agent lands? |
+| --- | --- |
+| allocation policy, tiering decisions, K sizing | **no** |
+| `desired-tier` contract and labels | **no** |
+| the five-call mechanism port | **no** — same signatures |
+| the adapter behind it | **yes** — launcher HTTP becomes their agent |
+| pool Pod spec | mostly no; add their `managed` annotation, drop ours |
+| the `disk` tier | **new capability, not a replacement** |
+
+The result is additive: their arrival gives WVA a second tier to allocate across,
+rather than invalidating what was built. And the brain — which is the part that
+does not exist anywhere else today (§8) — is untouched by the swap.
+
 ### What to adopt from it regardless### What to adopt from it regardless
 
-1. **The readiness gate.** They inject a gate (`snapshot.llm-d.ai/Serving`) via a
-   mutating admission webhook, so readiness is owned by an external controller.
-   That is the correct Kubernetes mechanism and strictly better than an in-Pod
-   probe, which cannot express "not admitted yet". Adopted in §2 and §5.
+1. **The readiness gate** as the mechanism for externally-owned readiness — but
+   **not** their webhook. They need a mutating webhook because they inject the gate
+   into Pods created by somebody else's Deployment. We author the pool Deployment,
+   so the gate is declared in the template and no admission plumbing, TLS or
+   certificate rotation is required. Adopted in §2 and §5.
 2. **vLLM PR [#51316](https://github.com/vllm-project/vllm/pull/51316)** — a gRPC
    control plane for sleep and weight reload, targeting the Rust frontend. Today
    both designs depend on dev-mode HTTP endpoints (`VLLM_SERVER_DEV_MODE=1`), which
