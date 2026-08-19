@@ -871,6 +871,15 @@ wva_epp_scrapers() {
     # -- true while this was a warning. It now refuses the install, so a wrong NO
     # blocks a correctly monitored cluster, and the safe direction is to say "cannot
     # tell" out loud.
+    # Each filter is PARENTHESISED where they are combined below. `|` binds looser
+    # than `,` in jq, so "$subset, $unevaluated" parsed as
+    #     .items[]? | ... | (name_string, .items[]? | ...)
+    # -- the second filter applied to the STRING the first produced, which fails
+    # with `Cannot index string with string ("spec")`. stderr is sent to /dev/null
+    # here, so the function simply returned nothing, and the gate refused the
+    # install of a namespace whose EPP ServiceMonitor was working. Measured on
+    # pokprod001: the selector matched the Service 2/2 by hand, `$subset` alone
+    # returned the monitor, and the combined program returned an error.
     local unevaluated='
         .items[]?
         | . as $m
@@ -878,8 +887,8 @@ wva_epp_scrapers() {
         | select((.spec.selector.matchExpressions // [] | length) > 0)
         | "unevaluated:" + $kind + "/" + $m.metadata.name'
 
-    kubectl get servicemonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$svc_labels" --arg kind servicemonitor "$subset, $unevaluated" 2>/dev/null
-    kubectl get podmonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$pod_labels" --arg kind podmonitor "$subset, $unevaluated" 2>/dev/null
+    kubectl get servicemonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$svc_labels" --arg kind servicemonitor "($subset), ($unevaluated)" 2>/dev/null
+    kubectl get podmonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$pod_labels" --arg kind podmonitor "($subset), ($unevaluated)" 2>/dev/null
 }
 
 # wva_report_epp_flowcontrol reports both EPP requirements and returns non-zero
