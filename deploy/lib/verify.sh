@@ -94,16 +94,22 @@ verify_deployment() {
     # Checked by cause rather than by event: events expire, the missing Secret does
     # not. Not fatal -- WVA scales from llm-d's metrics, a different path entirely.
     # What is lost is WVA's own telemetry, which fails by rendering empty.
-    local sm_json
-    sm_json=$(kubectl get servicemonitor -n "$WVA_NS" -o json 2>/dev/null)
+    # `|| true` because the ServiceMonitor CRD is absent on any cluster without
+    # the prometheus-operator -- the common case on plain Kubernetes -- and kubectl
+    # exits non-zero there. An assignment carries that status and `set -e` turns it
+    # into an exit. Today the only caller is `verify_deployment || verified=false`,
+    # which suppresses `set -e` for the whole body; this no longer depends on that.
+    local sm_json sm_refs
+    sm_json=$(kubectl get servicemonitor -n "$WVA_NS" -o json 2>/dev/null) || true
     if [ -n "$sm_json" ]; then
         local sm_missing
-        sm_missing=$(printf '%s' "$sm_json" | jq -r '
+        sm_refs=$(printf '%s' "$sm_json" | jq -r '
             .items[]?
             | .metadata.name as $sm
             | .spec.endpoints[]?
             | select(.bearerTokenSecret.name != null)
-            | "\($sm) \(.bearerTokenSecret.name)"' 2>/dev/null \
+            | "\($sm) \(.bearerTokenSecret.name)"' 2>/dev/null) || true
+        sm_missing=$(printf '%s\n' "$sm_refs" \
           | while read -r sm secret; do
                 [ -n "$secret" ] || continue
                 kubectl get secret "$secret" -n "$WVA_NS" >/dev/null 2>&1 \
@@ -125,11 +131,15 @@ verify_deployment() {
         # prove its absence later. That asymmetry is the right way round: a false
         # "still rejected" costs one spec touch, a false "healthy" costs all of
         # WVA's telemetry, silently.
+        # `|| true`: no matching events is grep exit 1, which pipefail makes the
+        # assignment's status and `set -e` makes an exit -- and NO rejection events
+        # is the healthy case, so without this the check kills the rest of
+        # verify_deployment on exactly the clusters where nothing is wrong.
         local sm_rejected
         sm_rejected=$(kubectl get events -n "$WVA_NS" \
             --field-selector reason=InvalidConfiguration \
             -o jsonpath='{range .items[*]}{.involvedObject.kind}/{.involvedObject.name}{"\n"}{end}' 2>/dev/null \
-            | grep '^ServiceMonitor/' | sort -u)
+            | grep '^ServiceMonitor/' | sort -u) || true
 
         if [ -n "$sm_missing" ]; then
             log_warning "A ServiceMonitor names a bearerTokenSecret that does not exist, so the prometheus-operator has rejected it and WVA's own metrics are NOT being collected:"
@@ -142,8 +152,16 @@ verify_deployment() {
             log_warning "  Until it is re-evaluated there is no scrape target and no wva_* series. Force one:"
             log_warning "    kubectl -n $WVA_NS delete servicemonitor <name> && NAMESPACE=$WVA_NS make setup-prereqs"
             log_warning "  Then confirm a target exists — a re-apply of unchanged content will NOT do it."
-        else
+        elif [ -n "$sm_refs" ]; then
             log_success "WVA metrics ServiceMonitor references resolve (its scrape config is valid)"
+        else
+            # Nothing here authenticates with a Secret, so there is no reference for
+            # the operator to resolve and nothing for this check to confirm. Claiming
+            # "valid" would be the same false green the check exists to remove: on
+            # plain Kubernetes the ServiceMonitor uses bearerTokenFile -- a projected
+            # token the kubelet supplies, which the operator never resolves -- and a
+            # namespace with no ServiceMonitor at all reaches this branch too.
+            log_info "No ServiceMonitor in $WVA_NS authenticates with a Secret, so there is nothing for the prometheus-operator to resolve or reject (only the OpenShift overlay uses bearerTokenSecret; Kubernetes uses bearerTokenFile)."
         fi
     fi
 
