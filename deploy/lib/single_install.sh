@@ -34,14 +34,23 @@
 # Deployment in the cluster. Scope is read from the container args rather than any
 # label: --watch-namespace is what actually restricts the controller's cache, so it
 # is the truth about what an install can reach.
-WVA_INSTALLS_TEMPLATE='{{range .items}}{{.metadata.namespace}} {{.metadata.name}}{{"\n"}}{{end}}'
-WVA_ARGS_TEMPLATE='{{range (index .spec.template.spec.containers 0).args}}{{.}} {{end}}'
+# The args are read in the SAME list call, not one call per install. This function
+# used to fetch each install's Deployment again to read its args, which is one round
+# trip per WVA on the cluster: 12 installs on pokprod001 cost ~13 SECONDS of the
+# preflight, for information the first response already contained. The scope decision
+# is unchanged -- it is still --watch-namespace in the container args, because that is
+# what actually restricts the controller's cache -- it is just no longer paid for
+# twice.
+#
+# Emitted as "namespace name scope" so callers are unaffected. The args are collapsed
+# to one line inside the template; a newline in an arg would otherwise split one
+# install across two records.
+WVA_INSTALLS_TEMPLATE='{{range .items}}{{.metadata.namespace}} {{.metadata.name}} {{range (index .spec.template.spec.containers 0).args}}{{.}}~{{end}}{{"\n"}}{{end}}'
 
 wva_installations() {
     local ns name args scope
-    while read -r ns name; do
+    while read -r ns name args; do
         [ -n "$ns" ] || continue
-        args=$(kubectl -n "$ns" get deploy "$name" -o go-template="$WVA_ARGS_TEMPLATE" 2>/dev/null || true)
         case "$args" in
             *--watch-namespace*) scope=namespace ;;
             *)                   scope=cluster ;;

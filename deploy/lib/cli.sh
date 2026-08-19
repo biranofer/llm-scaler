@@ -52,9 +52,6 @@ Environment Variables:
 
  Scaling behaviour
   WVA_LIMITER                  none (default) | gpu-inventory | quota. none means scaling is UNBOUNDED.
-  WVA_ALLOW_NO_EPP_METRICS      true installs even when the EPP's signals cannot be seen. Without them there is
-                               no scale-from-zero, queued demand is invisible to the demand model, and
-                               wva_unmeasured_queue reads 0 forever (default: unset, and the install refuses).
                                gpu-inventory requires the controller to be able to list nodes.
   ENABLE_SCALE_TO_ZERO         Allow parking idle models at 0 replicas (default: true)
   WVA_DEFAULT_SO               Create default ScaledObjects for what is already running:

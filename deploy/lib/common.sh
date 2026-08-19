@@ -56,20 +56,52 @@ containsElement() {
 # admin runs the prereqs phase once for a namespace; its owner installs and
 # upgrades the controller from then on.
 #
-# WVA_SCOPE selects it; the default preserves the historical inference.
+# WVA_SCOPE selects it. It is the SCENARIO selector: which of WVA's install shapes
+# this is, and therefore what the preflight is entitled to expect.
+#
+# The default is `namespace` EVERYWHERE, because that is the supported scenario --
+# llm-d already working in one namespace, WVA added to it. It used to be inferred
+# from the platform ("namespace" on OpenShift, "cluster" elsewhere), which was not a
+# decision anybody made: the comment here said it "preserves the historical
+# inference". The effect was that `deploy/install.sh` run directly on Kubernetes or
+# kind selected the CLUSTER scenario -- a different shape, with different
+# preconditions -- without the caller asking for it. `make` never did, because
+# Makefile's SCOPE already defaults to namespace.
 wva_install_scope() {
     local scope="${WVA_SCOPE:-}"
     if [ -z "$scope" ]; then
-        if [ "${ENVIRONMENT:-}" = "openshift" ]; then
-            scope="namespace"
-        else
-            scope="cluster"
-        fi
+        scope="namespace"
+
+        # The old platform inference, kept for reference and no longer reached. It
+        # is left in place deliberately rather than deleted: it records what the
+        # default used to be, for anyone reading a bug report from before this
+        # change.
+        #
+        #   if [ "${ENVIRONMENT:-}" = "openshift" ]; then
+        #       scope="namespace"
+        #   else
+        #       scope="cluster"
+        #   fi
     fi
     case "$scope" in
         cluster|namespace) echo "$scope" ;;
         *) log_error "WVA_SCOPE must be 'cluster' or 'namespace', got '$scope'" ;;
     esac
+}
+
+# wva_warn_unsupported_scope says so, once, when the caller has selected a scenario
+# that is not the one being supported right now.
+#
+# Cluster scope is NOT disabled -- it is left working, and anyone for whom it works
+# should keep using it. What it does not get is the preflight's namespace-centric
+# expectations, which are written for scenario 1 and would be wrong here: in a
+# cluster-scoped install the namespaces WVA manages need not exist yet, need not hold
+# model servers yet, and are discovered rather than named.
+wva_warn_unsupported_scope() {
+    [ "$(wva_install_scope)" = "cluster" ] || return 0
+    log_warning "WVA_SCOPE=cluster — one controller for every namespace. This is WIP and not the scenario currently supported end to end."
+    log_warning "  It is not disabled: if it works for you, keep using it. The checks below are written for a single namespace, so they may not fit."
+    log_warning "  To install it without them:  SKIP_CHECKS=true"
 }
 
 # wva_scope_is_tenant reports whether this install manages ONE namespace.
@@ -499,6 +531,129 @@ wva_bootstrap_env() {
     WVA_NS=${WVA_NS:-workload-variant-autoscaler-system}
     export WVA_NS
     wva_resolve_namespace
+    # NOT wva_require_namespace. wva_bootstrap_env is shared with the read-only
+    # tooling -- so-list, so-park, so-freeze, so-resume, scaledobjects-plan,
+    # dashboard -- and requiring the managed namespace here refused all of them:
+    #
+    #   $ make scaledobjects-plan
+    #   [ERROR] NAMESPACE is not set, and it is required.
+    #   WVA is added to a namespace where llm-d is ALREADY RUNNING, so the
+    #   namespace is an input to this install, ...
+    #
+    # for a command that plans and installs nothing. The requirement belongs to the
+    # install, so it is called from the check and install paths in install_core.sh,
+    # which is also where its own comment says it should be.
+}
+
+# wva_require_namespace stops unless the caller named the namespace WVA is to manage.
+#
+# NAMESPACE and WVA_NS are DIFFERENT questions, and the fallback below made them look
+# like one:
+#
+#   NAMESPACE   the namespace WVA MANAGES -- where llm-d is running. Mandatory in
+#               namespace scope: it is the whole input to the scenario.
+#   WVA_NS      the namespace the CONTROLLER IS INSTALLED INTO. It matters when those
+#               two differ, which is the cluster-wide and multi-tenant shape, not
+#               this one.
+#
+# So WVA_NS is deliberately NOT accepted as a way to name the target here. Someone
+# who sets only WVA_NS has said where the controller goes, not what it manages, and
+# guessing the second from the first is how an install ends up in a namespace with no
+# llm-d in it.
+#
+# What this replaces: WVA_NS fell back to `workload-variant-autoscaler-system` and
+# wva_autoselect_namespace then searched the cluster and silently ADOPTED the single
+# namespace that ran model servers -- or, finding none, kept the fallback. Both paths
+# could install a healthy-looking controller into a namespace with nothing to scale,
+# which is the silent failure this preflight exists to prevent. The fallback and the
+# discovery are both still in the file: discovery is how a CLUSTER-scoped install
+# finds the namespaces it manages, which is its proper use.
+wva_require_namespace() {
+    [ "$(wva_install_scope)" = "namespace" ] || return 0
+    [ -z "${NAMESPACE_EXPLICIT:-}" ] || return 0
+    # kind-emulator provisions llm-d, the EPP and WVA in one sequence and owns its own
+    # namespaces: `make deploy-e2e-infra` calls install.sh with no NAMESPACE on
+    # purpose, using the controller-namespace defaults. Requiring it there would break
+    # the e2e suite to enforce a rule about a scenario the suite is not running.
+    [ "${ENVIRONMENT:-}" != "kind-emulator" ] || return 0
+
+    local found="" count=0 hint="" reply=""
+    # ON DEMAND, not automatically.
+    #
+    # Finding the candidates means listing Deployments in every namespace, which took
+    # ~4s on pokprod001 and is pure cost for the common case: somebody who simply
+    # forgot the variable, knows their namespace, and wants the one-line answer. It is
+    # also exactly what a namespace admin may not do, so it can fail for reasons that
+    # have nothing to do with the mistake being reported.
+    #
+    # So it is offered rather than performed: asked for when there is a terminal to ask
+    # at, and otherwise reduced to a command the reader can run knowingly. Nobody waits
+    # for a search they did not request.
+    if [ -t 0 ] && kubectl auth can-i list deployments -A >/dev/null 2>&1; then
+        printf '\n' >&2
+        # `|| reply=""` matters under the caller's `set -e`: `read` returns
+        # non-zero on EOF with nothing read (Ctrl-D at the prompt -- a normal
+        # way to answer "no" -- or a pty with no real input stream behind it),
+        # and a bare `read` with no guard is a plain command whose failure
+        # exits the whole script right here, before the log_error below ever
+        # runs. Exactly the silent failure this preflight exists to prevent.
+        read -r -p "  NAMESPACE is not set. Search the cluster for namespaces running llm-d? [y/N] " reply || reply=""
+        case "$reply" in
+            [Yy]*)
+                found="$(wva_namespaces_with_model_servers 2>/dev/null || true)"
+                count=$(printf '%s' "$found" | grep -c . || true) ;;
+        esac
+    fi
+    if [ "${count:-0}" -eq 0 ]; then
+        # Reads the POD TEMPLATE's labels, not the Deployment's own. `kubectl get
+        # deploy -l llm-d.ai/role=decode` matches only the object, and llm-d puts these
+        # labels where they do the work -- on the template and the selector -- so on
+        # this cluster the -l form found 55 namespaces where the template form found
+        # 108. Suggesting the short one would send half of all readers looking in the
+        # wrong place, which is the same mistake SO_SERVING_MARKER was fixed for.
+        # Every marker, not the role alone. so_serving_markers is the one definition
+        # -- discovery, the preflight count and the scrape check all go through it --
+        # and llm-d's modelservice path renders servers carrying
+        # llm-d.ai/inferenceServing with no role label at all. A command that finds
+        # fewer namespaces than the tool itself searches is the fourth definition of
+        # "model server" this repo has had, and each previous one cost a bug.
+        hint="
+To find them yourself:
+
+    kubectl get deploy -A -o json | jq -r --argjson m '$(so_serving_markers_json)' '.items[]
+      | select((.spec.template.metadata.labels // {}) | to_entries
+               | any(.key + \"=\" + (.value|tostring) as \$kv | (\$m | index(\$kv)) != null))
+      | .metadata.namespace' | sort -u
+"
+    fi
+    # Capped. On a shared cluster this list is long -- 100+ namespaces on pokprod001 --
+    # and an error message that scrolls the instruction off the screen has buried the
+    # one line the reader needed.
+    if [ "${count:-0}" -gt 0 ]; then
+        # Built with explicit newlines: $( ) strips trailing ones, so appending the
+        # "and N more" line after a command substitution put it on the end of the
+        # last namespace instead of its own line.
+        hint="
+llm-d model servers are running in:
+$(printf '%s' "$found" | head -10 | sed 's/^/  - /')"
+        [ "$count" -gt 10 ] && hint="${hint}
+  … and $((count - 10)) more"
+        hint="${hint}
+"
+    fi
+
+    log_error "NAMESPACE is not set, and it is required.
+
+WVA is added to a namespace where llm-d is ALREADY RUNNING, so the namespace is an
+input to this install, not something to guess. Name the one llm-d serves from:
+
+    NAMESPACE=<namespace> make <target>
+${hint}
+NAMESPACE is llm-d's own variable, so if you followed one of its guides it is already
+exported in that shell.
+
+(WVA_NS is a different setting: it names where the CONTROLLER is installed, which
+only differs from the managed namespace in the cluster-wide shape.)"
 }
 
 wva_resolve_namespace() {
