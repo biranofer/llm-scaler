@@ -552,11 +552,22 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		./deploy/install-epp.sh
 	@NS=$${WVA_NS:-workload-variant-autoscaler-system}; \
-	if [ -n "$(SCALE_UP_THRESHOLD)" ] || [ -n "$(SCALE_DOWN_BOUNDARY)" ]; then \
+	if [ -n "$(SCALE_UP_THRESHOLD)$(SCALE_DOWN_BOUNDARY)" ]; then \
 		echo "Applying optional WVA scaling-band overrides (SCALE_UP_THRESHOLD / SCALE_DOWN_BOUNDARY)..."; \
+		cur=$$($(KUBECTL) get configmap wva-scaling-policy-config -n "$$NS" -o jsonpath="{.data.default}" 2>/dev/null); \
+		if [ -z "$$cur" ]; then \
+			echo "  ERROR: no wva-scaling-policy-config/default in $$NS. Install WVA before overriding its thresholds."; \
+			exit 1; \
+		fi; \
+		if [ -n "$(SCALE_UP_THRESHOLD)" ]; then \
+			cur=$$(printf "%s" "$$cur" | sed "s|^scaleUpThreshold:.*|scaleUpThreshold: $(SCALE_UP_THRESHOLD)|"); \
+		fi; \
+		if [ -n "$(SCALE_DOWN_BOUNDARY)" ]; then \
+			cur=$$(printf "%s" "$$cur" | sed "s|^scaleDownBoundary:.*|scaleDownBoundary: $(SCALE_DOWN_BOUNDARY)|"); \
+		fi; \
 		$(KUBECTL) patch configmap wva-scaling-policy-config \
 			-n "$$NS" --type=merge \
-			-p "{\"data\":{\"default\":\"analyzerName: saturation\\nscaleUpThreshold: $(SCALE_UP_THRESHOLD)\\nscaleDownBoundary: $(SCALE_DOWN_BOUNDARY)\\n\"}}"; \
+			-p "$$(jq -n --arg d "$$cur" "{data:{default:\$$d}}")"; \
 	fi
 
 

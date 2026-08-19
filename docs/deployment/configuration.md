@@ -15,7 +15,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENVIRONMENT` | Deployment environment (`kubernetes` or `openshift`) | `kubernetes` |
-| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/). Every `make` target sets this from `SCOPE`, which is `namespace` on both platforms; the platform-derived default below applies only when `deploy/install.sh` is run directly | `namespace` (`SCOPE=cluster` to change it) |
+| `WVA_SCOPE` | `cluster` or `namespace` — see [Scope](../guides/install-cluster-wide/). `namespace` everywhere, including `deploy/install.sh` run directly. It used to be inferred from the platform (`namespace` on OpenShift, `cluster` elsewhere); that inference is gone. Cluster scope still works and warns that it is WIP | `namespace` (`SCOPE=cluster` to change it) |
 | `WVA_LIMITER` | `none`, `gpu-inventory` or `quota` — declares the limiter in the scaling-policy ConfigMap | `none` |
 | `WVA_WATCH_NS` | Namespace a namespace-scoped controller **manages**, when that differs from the one it runs in. Setting it puts the controller outside the namespace it manages, so the workloads' owner does not administer the controller — the arrangement where a GPU bound actually holds. See [the GPU limiter](gpu-limiter.md#the-arrangement-where-the-bound-does-hold) | the controller's own namespace |
 | `INSTALL_PHASE` | `prereqs` (cluster admin: namespace, RBAC, ServiceMonitor, Prometheus/KEDA) \| `wva` (the controller) \| `all`. **Usually leave it unset**: an install that is not told picks the half left to do — `wva` when the caller cannot create cluster-scoped objects, or when the admin half is already in place. `make setup-prereqs` is the `prereqs` phase — see [deploy/](../../deploy/) | auto |
@@ -35,7 +35,7 @@ Every option `deploy/install.sh` reads. Verified against the script: each entry 
 |----------|-------------|---------|
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` |
 | `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` |
-| `NAMESPACE` | Where llm-d runs — **llm-d's own variable**, exported by its guides. `deploy/install-epp.sh` installs EPP there, `DEPLOY_LLMD_NS=true` creates it, and setting it **defaults `WVA_NS` for the `*-namespace-on-*` targets** (an explicit `WVA_NS` wins; cluster-scoped targets are unaffected). It is never passed to the controller — WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which) | `llm-d-optimized-baseline` |
+| `NAMESPACE` | Where llm-d runs — **llm-d's own variable**, exported by its guides. `deploy/install-epp.sh` installs EPP there, `DEPLOY_LLMD_NS=true` creates it, and setting it **defaults `WVA_NS` for the `*-namespace-on-*` targets** (an explicit `WVA_NS` wins; cluster-scoped targets are unaffected). It is never passed to the controller — WVA has no watch and no listing, and ScaledObject discovery does not read it — see [Which namespace is which](#which-namespace-is-which). **Required in namespace scope**, which is the default: the install refuses rather than guess which namespace it manages, so the fallback below applies only to cluster scope and `kind-emulator` | `llm-d-optimized-baseline` (cluster scope only) |
 | `LLMD_NS` | **Deprecated** alias for `NAMESPACE`, this repo's own former name for it. Still honoured, with a warning | — |
 
 ## Deployment flags

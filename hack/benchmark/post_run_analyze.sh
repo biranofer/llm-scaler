@@ -15,6 +15,17 @@
 #   [namespace]   defaults to $BENCHMARK_NAMESPACE; required if that is unset
 #   [suffix]      optional title suffix for the plot
 set -euo pipefail
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 RESULTS_DIR="${1:?usage: $0 <results_dir> [namespace] [suffix]}"
 # No fallback namespace. This used to default to a person's namespace, so a run

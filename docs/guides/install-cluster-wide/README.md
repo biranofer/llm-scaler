@@ -11,6 +11,13 @@ teams, prefer one controller per namespace — see
 [Install WVA in a namespace](../install-in-namespace/) — which keeps
 failure domains, policy and upgrades separate.
 
+**This scope is WIP**, and the install says so as it runs. It is not disabled and
+is not going away: what it does not get is the preflight's namespace-centric
+checks, which are written for a single namespace where llm-d is already serving.
+In this shape the namespaces WVA manages need not exist yet, need not hold model
+servers yet, and are discovered rather than named — so those checks would be
+asking the wrong questions. `SKIP_CHECKS=true` installs without them.
+
 ## Prerequisites
 
 - cluster-admin rights

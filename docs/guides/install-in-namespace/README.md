@@ -34,6 +34,11 @@ export NAMESPACE=<your-namespace>
 ```
 <!-- guide:env.static.namespace end -->
 
+Required, not merely conventional: the install refuses without it rather than
+guess which namespace it manages. `WVA_NS` is a different setting — it names
+where the *controller* is installed, and only differs from the managed namespace
+in the cluster-wide shape.
+
 **Read this before you run the check below**: it is read-only, but an empty
 namespace is a warning worth taking seriously, not a note to skim past — a
 controller pointed at the wrong one installs cleanly, reports healthy, and

@@ -26,6 +26,17 @@
 #   ACTUATION_STEP   how many to add per trial (default 1)
 #   ACTUATION_JSON   also write raw samples here
 set -u
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 DEPLOY="${1:?usage: actuation.sh <deployment> [trials]}"
 TRIALS="${2:-5}"

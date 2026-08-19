@@ -27,6 +27,17 @@
 # Exit status is 0 for every outcome except a real failure to create; "declined"
 # is a success, not an error.
 set -u
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 CR=prometheus-adapter-resource-reader
 ANNOTATION='meta.helm.sh/release-namespace'

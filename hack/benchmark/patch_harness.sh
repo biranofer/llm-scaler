@@ -24,6 +24,17 @@
 # same failure mode that let an unversioned maxReplicas sit in the clone for
 # weeks.
 set -eu
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 REPO_DIR="${1:?usage: patch_harness.sh <llm-d-benchmark clone dir>}"
 [ -d "$REPO_DIR" ] || { echo "patch_harness: no clone at $REPO_DIR" >&2; exit 1; }

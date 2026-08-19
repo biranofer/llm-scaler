@@ -2,6 +2,11 @@
 
 Step-by-step guide for deploying and running WVA scaling benchmarks on an OpenShift cluster. This covers both **single-model** and **multi-model** benchmarks, from cluster access to running the tests and interpreting results.
 
+> This is the long form, with the cluster-access and troubleshooting detail.
+> [Benchmark WVA](../guides/benchmarking/) is the short one — same targets,
+> same order (`benchmark-install` → `standup` → `run` → `report` → `teardown`),
+> without the OpenShift specifics. Start there if you only need a run.
+
 ## Prerequisites
 
 ### Required Tools

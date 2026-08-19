@@ -71,7 +71,9 @@ release: when it does, and that release lives in another namespace, the standup
 leaves it alone and says so rather than rewriting its Helm ownership — which
 would break that release's next `helm upgrade`.
 
-### 2. Run a workload
+## Verification
+
+### Run a workload
 
 <!-- guide:verify.run start -->
 ```bash
@@ -87,6 +89,20 @@ make benchmark-report
 
 Restart the controller between runs — `make benchmark-restart-controller` —
 or learned per-replica capacity from the previous run carries into the next.
+
+`make benchmark-report` renders a markdown table from the newest results in the
+workspace. A run worth keeping has, per scenario: a non-zero request count, an
+error count of **0**, and a replica timeline that moves — a variant flat at one
+replica through a deep queue means WVA never saw the load, not that it decided
+not to scale. Check the queue-depth column against the replica column before
+trusting any latency number; if the two disagree, see
+[After the install](../../deployment/operations.md) before re-running.
+
+## Next
+
+- [Autoscale a Fast Model Actuation stack](../fma/) — if the namespace runs FMA
+- [After the install](../../deployment/operations.md) — what the metrics mean
+- [Configuration](../../deployment/configuration.md) — every installer variable
 
 ## Cleanup
 
@@ -107,7 +123,7 @@ Optional, except `BENCHMARK_NAMESPACE`.
 | --- | --- | --- |
 | `BENCHMARK_NAMESPACE` | — (required) | `my-bench` |
 | `IMG` | a build of this branch | `ghcr.io/you/wva:dev` |
-| `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/two-variant-wva` |
+| `BENCHMARK_SPEC` | `guides/workload-autoscaling` | `guides/epp-keda-saturation` |
 | `BENCHMARK_HARNESS` | `guidellm` | `inference-perf` |
 | `MODEL_ID` | `Qwen/Qwen3-0.6B` | `Qwen/Qwen3-32B` |
 | `BENCHMARK_REPO_REF` | `v0.7.8` | `main` |
@@ -225,8 +241,3 @@ Prometheus actually holds, so the KV-cache and queue-depth panels work wherever
 the benchmark runs. Pick your namespace at the top of the dashboard when viewing
 it live; `--namespace` does it for a capture, and the render passes it through.
 
-## Two variants
-
-Comparing two variants of one model at different costs has its own scenario and
-post-processing — replica timelines per variant, weighted cost, a full-pipeline
-plot. See [the two-variant benchmark](../../developer-guide/two-variant-wva-benchmark.md).

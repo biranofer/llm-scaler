@@ -95,6 +95,21 @@ jobs:
         run: |
           make test
 
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      # docs/guides/README.md tells contributors this runs in CI. It did not,
+      # so a guide could drift from the guide.yaml it is generated from, and a
+      # broken doc link could sit on main unnoticed -- both of which happened.
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Run make guides-check
+        run: make guides-check
+
   kustomize-build:
     runs-on: ubuntu-latest
     steps:

@@ -36,6 +36,17 @@
 #      source scenario (benchmark-scenarios substitutes it on the way into the
 #      clone; the versioned copy still carries the token).
 set -u
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 YQ="${YQ:-yq}"
 command -v "$YQ" >/dev/null 2>&1 || {

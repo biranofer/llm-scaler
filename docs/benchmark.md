@@ -514,7 +514,8 @@ Summary of WVA benchmark runs with configuration details.
 
 ## Two-Variant Efficiency-Aware Scenario
 
-Runs the [two-variant WVA benchmark](developer-guide/two-variant-wva-benchmark.md):
+Runs the two-variant WVA scenario (the guide for it is parked while that work is
+out of scope):
 two TP variants of the same model share one `InferencePool`/EPP, each with its own
 `VariantAutoscaling` + HPA.  The WVA V2 saturation engine scales the **most
 efficient** variant first (highest serving-capacity per unit cost) and routes

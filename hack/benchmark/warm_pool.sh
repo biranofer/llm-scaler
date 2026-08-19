@@ -35,6 +35,17 @@
 #
 # Env: WARM_POOL_NS (default $BENCHMARK_NAMESPACE), KUBECONFIG as usual.
 set -u
+# --help prints this file's header comment -- the documentation the script
+# already carries, so it cannot drift from what the script does. Placed before
+# any argument handling because several of these take a namespace as $1, and
+# without it `--help` was consumed as one.
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'
+        exit 0
+        ;;
+esac
+
 
 NS="${WARM_POOL_NS:-${BENCHMARK_NAMESPACE:-}}"
 [ -n "$NS" ] || { echo "warm_pool: set WARM_POOL_NS or BENCHMARK_NAMESPACE" >&2; exit 2; }
