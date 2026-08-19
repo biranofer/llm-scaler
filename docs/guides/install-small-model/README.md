@@ -145,8 +145,15 @@ creates cluster-scoped RBAC, which deleting the namespace would leave behind.
 
 ## Next
 
-- [Benchmark WVA](../benchmarking/) — drive load and compare runs
-- [Install WVA in a namespace](../install-in-namespace/) — the install on its own
-- [After the install](../../deployment/operations.md) — what the metrics mean
+In order:
+
+1. [Install WVA in a namespace](../install-in-namespace/) — the model is now there
+   for it to scale. (The standup above already installs WVA; use this when you
+   want the install on its own, or are adding WVA to a model somebody else
+   deployed.)
+2. `make benchmark-smoke NAMESPACE=<ns>` — drive load at it and snapshot the
+   dashboard. Run it **last**, once everything is deployed.
+3. [Benchmark WVA](../benchmarking/) — when you want numbers to compare
+4. [After the install](../../deployment/operations.md) — what the metrics mean
 
 [ob]: https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline

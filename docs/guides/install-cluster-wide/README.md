@@ -120,6 +120,8 @@ Full list: [Configuration reference](../../deployment/configuration.md).
 
 ## Next
 
+- `make benchmark-smoke NAMESPACE=<ns>` — drive load at one of the namespaces
+  this controller manages and snapshot the dashboard
 - [Bound every WVA by real GPUs](../admin-gpu-bounding/)
 - [After the install](../../deployment/operations.md)
 - [Install methods](../../deployment/install-methods.md) — GitOps, direct

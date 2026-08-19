@@ -14,7 +14,11 @@ namespace's owner installs and upgrades the controller themselves.
 
 ## Prerequisites
 
-- llm-d model servers in the namespace
+- **llm-d model servers in the namespace, deployed first.** WVA scales what is
+  already serving; it does not deploy models, and the install refuses a namespace
+  with none rather than leave a healthy controller with nothing to scale. No
+  model yet? [Install a small llm-d model](../install-small-model/) puts one on a
+  single GPU.
 - KEDA, installed for you if the cluster has none
 - a Prometheus scraping those model servers
 

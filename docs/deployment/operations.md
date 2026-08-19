@@ -277,9 +277,22 @@ and in the HPA state KEDA derives from them.
 
 ## Testing autoscaling
 
-Drive load at the model and watch the ScaledObject and its HPA react. Full
-procedures, including the simulator and the e2e suites, are in
-[Testing](../developer-guide/testing.md).
+One command, against what you already installed:
+
+```bash
+make benchmark-smoke NAMESPACE=<namespace>
+```
+
+Decode-heavy load at 10 req/s for five minutes, then a snapshot of the dashboard
+over exactly that window. It checks the whole chain first — KEDA, a WVA
+controller that manages *this* namespace, model servers, an EPP, a ScaledObject
+— and reports every gap at once rather than one per five-minute run. It stands
+nothing up, so it is safe against a live namespace, and it needs no benchmark
+CLI. The snapshot is written only when there is a dashboard to snapshot.
+
+For runs whose numbers you intend to compare, use
+[Benchmark WVA](../guides/benchmarking/). Full procedures, including the
+simulator and the e2e suites, are in [Testing](../developer-guide/testing.md).
 
 ## First-line troubleshooting
 

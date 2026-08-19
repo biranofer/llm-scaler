@@ -11,7 +11,8 @@ source docs/guides/env.sh
 
 | guide | for |
 | --- | --- |
-| [Install WVA in a namespace](install-in-namespace/) | **start here.** One team, one namespace — whether or not llm-d is already serving |
+| [Install a small llm-d model](install-small-model/) | **first, if nothing is serving yet.** One 0.6B model on ONE GPU — llm-d's own guides start at 16 |
+| [Install WVA in a namespace](install-in-namespace/) | **start here** when llm-d already serves. One team, one namespace |
 | [Install WVA for the whole cluster](install-cluster-wide/) | one controller for every namespace |
 
 ## Cluster administration
@@ -27,7 +28,6 @@ source docs/guides/env.sh
 | --- | --- |
 | [Scale a model to zero, and get it back](scale-to-zero/) | release an idle model's accelerators — and check it can wake before it parks |
 | [Test against a full llm-d stack](testing-with-llm-d/) | llm-d + WVA on kind, emulated GPUs, no hardware |
-| [Install a small llm-d model](install-small-model/) | one 0.6B model on ONE GPU — llm-d's own guides start at 16 |
 | [Benchmark WVA](benchmarking/) | drive load through a real stack and compare runs |
 | [Autoscale a Fast Model Actuation stack](fma/) | FMA runs the engine in a pod no ScaledObject owns |
 
@@ -39,6 +39,18 @@ source docs/guides/env.sh
 | [After the install](../deployment/operations.md) | what to watch, first-line troubleshooting |
 | [Install methods](../deployment/install-methods.md) | GitOps, direct Kustomize, what the script does |
 | [The GPU limiter](../deployment/gpu-limiter.md) | where policy lives, and the accelerator precondition |
+
+## Checking it works, last
+
+```bash
+make benchmark-smoke NAMESPACE=<namespace>
+```
+
+Decode-heavy load at 10 req/s for five minutes against what you already
+installed, then a dashboard snapshot over that window. It stands nothing up and
+needs no benchmark CLI; it checks the whole chain first — KEDA, a WVA
+controller managing *this* namespace, model servers, an EPP, a ScaledObject —
+and names every gap at once. Runs on plain Kubernetes and OpenShift.
 
 ## Editing a guide
 
