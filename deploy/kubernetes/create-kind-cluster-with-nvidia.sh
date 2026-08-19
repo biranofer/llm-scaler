@@ -38,14 +38,32 @@ helm upgrade --install --wait gpu-operator -n ${GPU_OPERATOR_NS} --create-namesp
 	--set migManager.enabled=false \
 	--set migManager.config.default=""
 
+# wait_for_daemonset polls until $1 exists, or gives up after $2 seconds.
+#
+# Not `timeout 60s bash -c 'until ...'`: `timeout` is GNU coreutils and is NOT on
+# a stock macOS, where it is gtimeout if it is anywhere. That made this script
+# fail on a Mac with "timeout: command not found" -- which reads as a broken
+# script rather than a missing tool, and hid whether anything else here works.
+wait_for_daemonset() {
+	local name="$1" limit="${2:-60}" waited=0
+	until kubectl get daemonset "$name" -o name -n "${GPU_OPERATOR_NS}" 2>/dev/null; do
+		if [ "$waited" -ge "$limit" ]; then
+			echo "  $name did not appear within ${limit}s" >&2
+			return 1
+		fi
+		sleep 10
+		waited=$((waited + 10))
+	done
+}
+
 echo "> Waiting for container toolkit daemonset to be created"
-timeout 60s bash -c "until kubectl get daemonset nvidia-container-toolkit-daemonset -o name -n ${GPU_OPERATOR_NS}; do sleep 10; done"
+wait_for_daemonset nvidia-container-toolkit-daemonset 60
 
 echo "> Waiting for container toolkit daemonset to become ready"
 kubectl rollout status daemonset nvidia-container-toolkit-daemonset -n ${GPU_OPERATOR_NS}
 
 echo "> Waiting for device plugin daemonset to be created"
-timeout 60s bash -c "until kubectl get daemonset nvidia-device-plugin-daemonset -o name -n ${GPU_OPERATOR_NS}; do sleep 10; done"
+wait_for_daemonset nvidia-device-plugin-daemonset 60
 
 echo "> Waiting for device plugin daemonset to become ready"
 kubectl rollout status daemonset nvidia-device-plugin-daemonset -n ${GPU_OPERATOR_NS}
