@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -1033,7 +1034,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 
 		utilizationAt := func(threshold float64) float64 {
 			cfg.KvCacheThreshold = threshold
-			r := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+			r := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 			Expect(r).NotTo(BeNil())
 			return float64(r.ReplicaDemand) / float64(r.EffectiveCapacity)
 		}
@@ -1062,7 +1063,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			KvCacheUsage: 0.5,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil(), "a positive stored capacity must stay sizable")
 		Expect(result.EffectiveCapacity).To(Equal(int64(1)))
 	})
@@ -1078,7 +1079,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			VariantName:  "variant-a",
 			KvCacheUsage: 0.5,
 		}
-		Expect(analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")).To(BeNil())
+		Expect(analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())).To(BeNil())
 	})
 
 	It("should return nil when capacity store has no record", func() {
@@ -1089,7 +1090,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).To(BeNil())
 	})
 
@@ -1105,7 +1106,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			KvCacheUsage: 0.5,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).To(BeNil())
 	})
 
@@ -1123,7 +1124,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// Capacity is the usable portion: 10000 * 0.8 (KvCacheThreshold) = 8000.
 		Expect(result.EffectiveCapacity).To(Equal(int64(8000)))
@@ -1147,7 +1148,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 1.0 * 10000 = 10000 >= 8000
 		Expect(result.ReplicaDemand).To(Equal(int64(10000)))
@@ -1168,7 +1169,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000; demand = 0.9 * 10000 = 9000 >= 8000.
 		// The spec title is now actually satisfied: occupancy past the configured
@@ -1195,7 +1196,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			AvgInputTokens:        500,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		// demand = 0.5 * 10000 + 3 * 500 = 5000 + 1500 = 6500
@@ -1217,7 +1218,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			AvgInputTokens:        0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		// demand = 0.3 * 10000 = 3000 (no queue contribution)
@@ -1241,12 +1242,12 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 		}
 
 		// effectiveCapacity = 10000 * 0.8 = 8000; resident = 0.5 * 10000 = 5000.
-		prefill := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RolePrefill, "H100")
+		prefill := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RolePrefill, "H100", logr.Discard())
 		Expect(prefill).NotTo(BeNil())
 		// 5000 + 3 * 500 = 6500 — output tokens excluded.
 		Expect(prefill.ReplicaDemand).To(Equal(int64(6500)))
 
-		decode := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100")
+		decode := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100", logr.Discard())
 		Expect(decode).NotTo(BeNil())
 		// 5000 + 3 * (500 + 250) = 7250 — output tokens included.
 		Expect(decode.ReplicaDemand).To(Equal(int64(7250)))
@@ -1273,7 +1274,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			AvgOutputTokens:       100,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleDecode, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 8192 * 0.8 = 6553
 		// demand = 0.10 * 8192 + 2 * (200 + 100) = 819 + 600 = 1419
@@ -1294,7 +1295,7 @@ var _ = Describe("computeReplicaCapacityFallback", func() {
 			TotalKvCapacityTokens: 0,
 		}
 
-		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100")
+		result := analyzer.computeReplicaCapacityFallback(rm, cfg, "test-model", "test-ns", domain.RoleBoth, "H100", logr.Discard())
 		Expect(result).NotTo(BeNil())
 		// effectiveCapacity = 10000 * 0.8 = 8000
 		Expect(result.PodName).To(Equal("pod-1"))

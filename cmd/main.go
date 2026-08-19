@@ -96,11 +96,18 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// defaultLogVerbosity is the -v the shipped deployment runs at: config/base/manager
+// passes no -v, so this value decides which V() levels reach the logs. The
+// saturation analyzer's per-replica capacity lines sit at V(logging.DEFAULT) and
+// hack/benchmark/dump_k2_decisions.py needs them, so lowering this silently empties
+// that report. TestDefaultVerbosityKeepsCapacityLogsVisible guards the relationship.
+const defaultLogVerbosity = logging.DEFAULT
+
 // nolint:gocyclo
 func main() {
 	// Command-line flags
 
-	loggerVerbosity := flag.Int("v", logging.DEFAULT, "number for the log level verbosity")
+	loggerVerbosity := flag.Int("v", defaultLogVerbosity, "number for the log level verbosity")
 
 	configFilePath := flag.String("config-file", "", "Path to the YAML configuration file. "+
 		"When set, the main configuration is read from this file instead of a Kubernetes ConfigMap.")
