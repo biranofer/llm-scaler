@@ -480,7 +480,7 @@ so-resume: ## Undo so-park or so-freeze: WVA sizes the workload again from live 
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_resume'
 
 ## A private Grafana for one namespace, with WVA's operational dashboard already
-## imported -- productizes config/grafana-private/, see deploy/lib/dashboard.sh for
+## imported -- see deploy/lib/dashboard.sh for
 ## the design this carries over (grafana-operator, the Thanos TENANCY port instead
 ## of cluster-monitoring-view, a GrafanaDashboard CR as the import bridge).
 ##

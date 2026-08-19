@@ -3,12 +3,14 @@
 # `make dashboard`: a private Grafana instance for one namespace, with WVA's
 # operational dashboard already imported.
 #
-# Productizes what config/grafana-private/ proved by hand (see its README for the
-# measurements this design rests on). Three decisions carry over unchanged:
+# Productizes what a local `config/grafana-private/` experiment proved by hand. That
+# directory has never been in this repository, so the measurements it rests on are
+# recorded in docs/developer-guide/guide-review-install-in-namespace.md and inline
+# below, not behind a path you cannot open. Three decisions carry over unchanged:
 #
 #   grafana-operator, not the shared cluster Grafana   a shared instance's
-#     dashboards are read-only, and on this cluster its sidecar only watches its
-#     own namespace anyway -- see config/grafana-private/README.md.
+#     dashboards are read-only, and its sidecar was measured watching only its own
+#     namespace on the cluster this was built against.
 #   Thanos via the TENANCY port (9092), not cluster-monitoring-view   the usual
 #     recipe for this pattern grants a cluster-scoped role that lets a "private"
 #     dashboard read every tenant's metrics. Measured: 9092 + a namespace query
@@ -41,7 +43,7 @@ readonly WVA_GRAFANA_DASHBOARD_SLUG=wva-operational-dashboard
 # merge preserved the operator's labels and ownerReferences -- but it silently
 # layered a second, unrelated purpose (datasource auth) onto an object the operator
 # considers its own, which is the kind of thing that breaks on the operator's next
-# upgrade. config/grafana-private/ avoided this by naming it plain `grafana-sa`;
+# upgrade. The experiment avoided this by naming it plain `grafana-sa`;
 # this generalizes that choice with an explicit, unambiguous suffix instead.
 readonly WVA_GRAFANA_DS_SA=${WVA_GRAFANA_NAME}-datasource
 
