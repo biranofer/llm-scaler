@@ -59,6 +59,11 @@ SCALE_TO_ZERO_ENABLED       ?= false
 # specs and 35m is not enough -- the suite panics with "test timed out"
 # mid-run, which looks like a hang rather than a budget.
 E2E_TIMEOUT                 ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),75m,35m)
+# Passed to BOTH `go test -timeout` and `-ginkgo.timeout`. Ginkgo keeps its own
+# suite timeout, which defaults to ONE HOUR, so raising only go test's limit
+# bought nothing: a SCALE_TO_ZERO_ENABLED=true run died at exactly 3600s with
+# `FAIL! - Suite Timeout Elapsed`, 30 of 96 specs run and 66 never started --
+# which reads as eight product failures rather than a suite that was cut off.
 DEPLOY_ALERTING_RULES       ?= false
 SCALER_BACKEND              ?= keda  # keda (ScaledObject) or none (skip, use pre-installed backend)
 LLM_D_ROUTER_VERSION        ?= v0.9.0
@@ -115,21 +120,28 @@ BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID
 
 # The fraction of each GPU vLLM may use, substituted into the scenario.
 #
-# It has to follow the MODEL, and did not: the scenarios are written around
-# Qwen3-32B and carry 0.95, which is right for a model that genuinely needs most
-# of an 80GB card. Overriding MODEL_ID swaps the model and left the 32B's budget
-# in place, so a 0.6B -- 1.12GiB of weights -- claimed 73.5GiB of KV cache.
+# 0.90, not the scenarios' 0.95 and not a small-model special case.
 #
-# That works on an empty GPU and fails on a shared one, which is why it looked
-# intermittent rather than wrong. gpu_memory_utilization is a fraction of TOTAL,
-# not of FREE, and on this cluster the memory that is already gone belongs to FMA
-# launcher pods -- which request ZERO GPUs, so the scheduler places our pod on a
-# card it believes is empty. Measured: 77.3 of 79.18 GiB free at startup, then
-# `torch.OutOfMemoryError: tried to allocate 594MiB, 500MiB free`.
+# 0.95 is knife-edge on a SHARED card and was measured failing: gpu_memory_
+# utilization is a fraction of TOTAL, not of free, so vLLM budgets 75.2 of 79.18
+# GiB and leaves 4 GiB -- less than the memory an FMA launcher was already
+# holding on that node. Launchers request ZERO GPUs while running the engine, so
+# the scheduler cannot see that memory and places the model there anyway. Result:
+# `torch.OutOfMemoryError: tried to allocate 594MiB, 500MiB free`, and because it
+# only happens when a co-tenant is present it reads as flakiness. There are 23
+# such launcher pods on this cluster.
 #
-# So: 0.95 for the scenario's own big model, and a small fraction when the caller
-# has substituted a small one. Both are overridable.
-GPU_MEM_UTIL         ?= $(if $(filter Qwen/Qwen3-0.6B,$(BENCHMARK_MODEL_ID)),0.30,0.95)
+# 0.90 leaves 7.9 GiB, which absorbs that and more, and still gives a replica
+# 651k tokens of KV -- 41 requests at the full 16k context.
+#
+# Deliberately NOT lowered for small models, though that is what first stopped the
+# crash. Per-replica capacity IS the KV cache size (saturation_v2/analyzer.go:174,
+# k1 = TotalKvCapacityTokens x KvCacheThreshold), so shrinking KV to make a
+# benchmark scale sooner is doing the autoscaler's job in the wrong layer: it
+# throws away GPU you paid for to get an effect kvCacheThreshold produces for
+# free. Size the card for serving; tune when a replica counts as full in the
+# scaling policy.
+GPU_MEM_UTIL         ?= 0.90
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
@@ -609,7 +621,7 @@ test-e2e-smoke: ## Run smoke e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=keda \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -634,7 +646,7 @@ test-e2e-full: ## Run full e2e test suite
 	SCALER_BACKEND=keda \
 	KEDA_NAMESPACE=$(E2E_KEDA_NAMESPACE) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="full && !smoke && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -669,7 +681,7 @@ test-e2e-multi-controller: ## Run multi-controller e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v \
+	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="multi-controller" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
