@@ -573,6 +573,15 @@ dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA da
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
+	@# WVA_SCOPE=cluster and WVA_NS PINNED. The suite puts model servers in
+	@# LLMD_NAMESPACE and the controller in CONTROLLER_NAMESPACE -- two different
+	@# namespaces -- which only works cluster-scoped. kind used to INFER cluster
+	@# scope; namespace is now the default everywhere, and a namespace-scoped
+	@# install both watches only its own namespace and gets namespace-scoped RBAC:
+	@#   scaledobjects.keda.sh "stz-rt-so" is forbidden
+	@#   Could not read the ScaledObject for a registered workload
+	@# so the workload was never enriched and never parked.
+	@#
 	@# WVA_NS is PINNED. Without it the install lands wherever namespace discovery
 	@# points, and the suite builds scalerAddress from CONTROLLER_NAMESPACE -- so a
 	@# controller that moves is one KEDA can never reach.
@@ -604,6 +613,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		WVA_NS=$(CONTROLLER_NAMESPACE) \
+		WVA_SCOPE=cluster \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
@@ -615,6 +625,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "IMG not set - using default image from registry (latest)"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		WVA_NS=$(CONTROLLER_NAMESPACE) \
+		WVA_SCOPE=cluster \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
