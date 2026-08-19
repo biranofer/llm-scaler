@@ -49,3 +49,7 @@ hack/tls-certs/
 # ScaledObject plan written by `make benchmark-deploy-wva`
 benchmark-scaledobject-plan.yaml
 wva-plan.yaml
+
+# Python bytecode from the hack/benchmark scripts
+__pycache__/
+*.pyc
