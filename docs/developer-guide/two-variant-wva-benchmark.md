@@ -304,7 +304,7 @@ make benchmark-run BENCHMARK_NAMESPACE=$NS BENCHMARK_SPEC=guides/two-variant-wva
 make benchmark-run BENCHMARK_NAMESPACE=$NS BENCHMARK_SPEC=guides/two-variant-wva \
                    BENCHMARK_MODEL_ID=unsloth/Meta-Llama-3.1-8B-Instruct \
                    BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX=v2 \
-                   BENCHMARK_WORKLOAD=symmetrical.yaml
+                   BENCHMARK_WORKLOAD=symmetrical
 ```
 
 Each run produces a workspace under `$REPO/$USER-<timestamp>/...` with raw
