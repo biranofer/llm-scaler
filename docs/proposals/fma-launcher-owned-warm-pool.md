@@ -353,6 +353,121 @@ Two consequences worth planning around:
   should hold *several* large models, or it is poor value -- the opposite of the
   TP=1 case, where a Pod is cheap enough to be lightly loaded.
 
+## What vLLM actually guarantees, checked against its own docs
+
+Three findings, and the first two are go/no-go items rather than details.
+
+### Host RAM, not just GPU memory
+
+Level-1 sleep offloads weights **to CPU memory**, and the docs are explicit:
+*"Please make sure there's enough CPU memory to store the model weights."*
+
+So the ~1.4 GiB measured on pokprod is the **GPU** residue. The pool Pod must also
+have host RAM for the **full weights of every model sleeping on it**. Three 8 B
+models warm on one card is roughly 48 GB of RAM, and it must appear in the Pod's
+memory request.
+
+This changes pool-Pod sizing:
+
+```
+pod memory request  >=  sum over warm set of (model weight size)  +  overhead
+pod GPU memory      >=  awake instance  +  1.4 GiB per sleeper
+```
+
+It also bounds the warm set independently of `--sleeper-limit`: a node with
+modest RAM cannot host a Pod keeping several large models warm, regardless of how
+much GPU memory is free.
+
+### Waking correctly is not the same as waking quickly -- UNVERIFIED
+
+Two open vLLM issues report that a woken engine returns **wrong output**, not
+merely slow output:
+
+- [#16234](https://github.com/vllm-project/vllm/issues/16234) --
+  "Calling `/wake_up` after `/sleep` and then sending a request leads to improper
+  LLM response"
+- [#17103](https://github.com/vllm-project/vllm/issues/17103) --
+  "AsyncLLM sleep then wake_up produces meaningless outputs"
+
+**This applies to the entire proposal, not only to LWS, and it exposes a gap in
+our own measurements.** Everything measured on pokprod was *time to Ready*. No
+test verified that a woken instance produces correct output. A pool that serves
+garbage in 3 s is worse than one that serves correctly in 41 s.
+
+Those issues predate the v0.26.0 engine in use here and may be fixed, but that is
+a check to run, not an assumption to make. **Verifying output correctness across
+a sleep/wake cycle is the first go/no-go for this design.**
+
+### Corroborated
+
+- `/sleep` and `/wake_up` require `VLLM_SERVER_DEV_MODE=1`, matching what FMA's
+  Pod template sets (`pkg/controller/utils/pod-helper.go:328`) -- the dependency
+  is confirmed from both ends.
+- Level-1 wake is documented at ~0.1-0.8 s for small models and ~3-6 s for large
+  ones, consistent with the 2-3 s measured here.
+
+## LeaderWorkerSet: a plausible extension, gated on one unknown
+
+WVA already treats LWS as a first-class scale target -- the locator walks
+ownerReferences to `Deployment` or `LeaderWorkerSet`
+(`internal/collector/locator/walk.go`) -- so the policy half generalises for
+free.
+
+### The shape generalises cleanly
+
+| single-Pod pool | LWS pool |
+| --- | --- |
+| pool Pod owns N GPUs | pool **group** owns N Pods across nodes |
+| one awake instance per Pod | one awake instance per **group** |
+| Pod readiness gates the endpoint | **leader** readiness gates it; LWS already has group-level readiness |
+| `llm-d.ai/model` on the Pod | the same label on the leader |
+| pools per (accelerator, TP size) | pools per (accelerator, **group shape**) |
+
+`LeaderWorkerSet` has `replicas` x `size`, so a pool of K warm groups is
+`replicas: K` -- the same "size the pool in replicas" knob.
+
+### The unknown that decides it
+
+**Does sleep/wake work across NODES?** vLLM claims it does -- *"Works with tensor
+parallelism, pipeline parallelism, etc."* -- but:
+
+- the docs contain **no mention of Ray, cross-node or multi-node** setups;
+- the published benchmarks are single-node, the largest being Qwen3-235B at
+  **TP=4 on one A100 host**;
+- [#21231](https://github.com/vllm-project/vllm/issues/21231) reports
+  `--enable-sleep-mode` having **no effect on Ray workers** in a multi-node
+  deployment.
+
+TP within a node is well supported. Cross-node is asserted in one blanket
+sentence and demonstrated nowhere.
+
+**If multi-node sleep does not work, LWS support ends there**, because a warm
+group would hold *full* GPU memory and could therefore keep exactly one model
+warm. That degenerates to running a spare group -- plain over-provisioning, with
+none of the multi-model sharing that justifies a pool.
+
+### The second obstacle, if the first clears
+
+FMA's launcher is a **per-Pod** process manager: it forks vLLM as a child in its
+own Pod. A multi-node instance needs create/sleep/wake coordinated across every
+Pod of the group -- a group-aware launcher, or something driving N launchers in
+lockstep. That is genuine new work, and the one place where "we only reuse the
+launcher" stops holding.
+
+### The economics invert in both directions
+
+A warm LWS group holds an entire multi-node allocation -- N Pods of GPUs, idle --
+which is far more expensive than a one-GPU pool Pod. But the payoff scales with
+it: multi-node models have the **longest** cold starts, paying Pod scheduling
+across nodes, image pulls, distributed rendezvous *and* a large weight load, so
+minutes rather than the ~41 s measured for a 0.6 B model. Avoiding that is worth
+most exactly where holding the group costs most.
+
+Whether it nets out needs a number nobody here has: **the actual cold-start time
+for a representative multi-node model on this cluster.** That is measurable today
+with no new machinery, and it is the cheap next step before any LWS-specific
+design.
+
 ## What we must build, and what we reuse
 
 Working this through changes the answer sharply, and in our favour.
