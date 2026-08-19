@@ -188,6 +188,22 @@ kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decisi
 scaling-decision {"modelID":"meta/llama","decisions":[{"name":"llama-decode-wva","curr":1,"tgt":3,"action":"scale-up"}]}
 ```
 
+### 3. (Optional) See it in a dashboard
+
+<!-- guide:visualize.dashboard start -->
+```bash
+make dashboard
+```
+<!-- guide:visualize.dashboard end -->
+
+Stands up a Grafana private to this namespace — not the shared cluster
+instance, whose dashboards are read-only — with WVA's operational dashboard
+already imported, reading Thanos through a namespaced role rather than any
+cluster-scoped grant. Requires grafana-operator's CRDs; that is a cluster-admin
+install, so this only creates namespaced objects and says plainly if they are
+missing. Prints the dashboard URL and the admin password on every run, so it is
+safe to re-run for either.
+
 ## Cleanup
 
 <!-- guide:cleanup.uninstall start -->

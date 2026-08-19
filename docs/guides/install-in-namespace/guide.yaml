@@ -29,6 +29,10 @@ verify:
   decisions:
     run: kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decision
 
+visualize:
+  dashboard:
+    run: make dashboard
+
 cleanup:
   uninstall:
     run: make undeploy-wva
