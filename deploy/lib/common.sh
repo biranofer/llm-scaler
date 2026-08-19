@@ -404,7 +404,51 @@ wva_overlay_dir() {
 #                       Verified with a token-scoped kubeconfig; it cannot be
 #                       fixed by granting more to the tenant without granting them
 #                       everything the controller has.
-WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor Role RoleBinding)
+# ServiceAccount and Secret are here for the ServiceMonitor's sake, and the
+# ordering is the whole point.
+#
+# On OPENSHIFT the ServiceMonitor authenticates with `bearerTokenSecret:
+# wva-controller-manager-token`. (On Kubernetes it uses `bearerTokenFile` -- a
+# projected service-account token the kubelet supplies -- so there is no Secret
+# for the operator to resolve and this failure cannot occur there. The kinds move
+# on both platforms anyway: the objects reference each other on both, and one
+# phase boundary is easier to reason about than a per-platform one.) The prometheus-operator resolves that Secret when
+# it first sees the ServiceMonitor, and if the Secret is absent it REJECTS the
+# object -- `reason=InvalidConfiguration`, "unable to get secret" -- and does not
+# retry when the Secret later appears. Nothing re-evaluates it: a metadata write
+# is not enough, and re-running this phase applies identical content, so
+# `kubectl apply` reports "unchanged" and the operator never looks again.
+#
+# With the Secret in the CONTROLLER phase, the two-phase install therefore created
+# the ServiceMonitor 33 minutes before the Secret it needs, and WVA's own metrics
+# were permanently uncollected -- no `up` series, no `wva_*` series -- while every
+# install step reported success. Measured on pokprod001: the install said
+# "All components verified successfully!" and Thanos had nothing.
+#
+# The single-command install (INSTALL_PHASE=all) was unaffected, because it applies
+# everything at once and the render orders Secret before ServiceMonitor. That is
+# why this survived: it is the two-person split, the shape the guides recommend,
+# that breaks. The two namespaces on that cluster running this code with working
+# metrics both had their Secret created 3 seconds BEFORE their ServiceMonitor.
+#
+# Both kinds belong to an admin anyway -- they are namespaced, and creating them
+# needs no rights a namespace owner lacks, but they are part of the same
+# monitoring wiring the ServiceMonitor is. Moving them here keeps the three
+# objects that reference each other in one phase, applied in render order, which
+# puts ServiceAccount and Secret ahead of ServiceMonitor.
+#
+# This list also drives the phase-2 gate (wva_rendered_prereq_objects), so the
+# controller phase now checks for them and names them if an admin's phase 1
+# predates this change.
+#
+# Note the filter matches on KIND alone -- it cannot name objects. Every
+# ServiceAccount and Secret in the render is therefore admin-owned, today the
+# two controller/epp-metrics ServiceAccounts and their service-account-token
+# Secrets, which is what is wanted. A Secret added to the base later becomes
+# admin-owned silently, and a tenant would meet it as a missing prerequisite at
+# phase 2 rather than as anything more obvious. Adding one means deciding which
+# phase owns it.
+WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor Role RoleBinding ServiceAccount Secret)
 
 # wva_prereq_kind_filter echoes a yq expression selecting (or with $1=exclude,
 # rejecting) the admin-owned kinds. One definition, so the prereqs phase and the
