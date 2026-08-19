@@ -357,53 +357,79 @@ Two consequences worth planning around:
 
 Three findings, and the first two are go/no-go items rather than details.
 
-### Sleep level is the memory/latency dial, and it is a design decision
+### Sleep level is the memory/latency dial -- a formula, not a fixed threshold
 
-vLLM offers two sleep levels, and the choice is not a detail -- it decides what a
-warm model costs and how fast it wakes.
+vLLM offers two sleep levels, and which to use is a design decision. It must be
+expressed as a rule parameterised by measured bandwidth, **not** as a size
+threshold: a threshold is an artefact of one cluster's storage and goes wrong the
+moment the design runs on better hardware.
 
 | | **level 1** | **level 2** |
 | --- | --- | --- |
 | model weights | offloaded to **CPU RAM** | **discarded**; only buffers kept (rope scaling tensors) |
 | host RAM per sleeping model | **~GB** -- the full weights | **~MB** |
-| GPU residue | ~1.4 GiB measured here | similar; both are dominated by CUDA context, allocator and captured graphs, not weights |
-| wake | restore from RAM | **reload weights from storage** |
-| wake, Qwen3-0.6B | **0.26 s** | 0.85 s |
-| wake, Phi-3-vision | **0.82 s** | 2.58 s |
+| GPU residue | ~1.4 GiB measured | similar; both are dominated by CUDA context, allocator and captured graphs, not weights |
+| wake | restore from RAM, over PCIe/NVLink | **re-read weights from storage** |
+| wake, Qwen3-0.6B | 0.26 s | 0.85 s |
+| wake, Phi-3-vision | 0.82 s | 2.58 s |
 | versus a full reload | 18-200x faster | 23-45x faster |
 
 Both preserve the expensive part -- process, allocator, CUDA graphs -- which is
 why even level 2 beats a cold start so heavily.
 
-**Level 1 buys speed with host RAM.** The docs are explicit: *"Please make sure
-there's enough CPU memory to store the model weights."* So the ~1.4 GiB measured
-on pokprod is **GPU residue only**, and a level-1 pool Pod additionally needs RAM
-for the full weights of every model asleep on it. Three 8 B models is roughly
-**48 GB of RAM**, and it must appear in the Pod's memory request. That bounds the
-warm set independently of `--sleeper-limit`: a RAM-poor node cannot keep several
-large models warm however much GPU memory is free.
+**Both wake times scale with model size; they differ only in the pipe.**
 
-**Level 2 removes that bound, and its cost is storage bandwidth.** Host RAM falls
-to megabytes, so a Pod could keep many more models warm. But waking re-reads the
-weights, which makes wake time a function of the storage behind the model cache
--- and the published 0.85 s / 2.58 s figures come from a single A100 host, not a
-shared PVC.
+```
+level 1 wake  ~=  weight_size / B_h2d       # host->GPU, a hardware constant, ~5-25 GB/s
+level 2 wake  ~=  weight_size / B_storage   # the read path, and the one that varies
+```
 
-**On this cluster that difference is decisive.** A PVC weight read was measured at
-~2.8 s for Qwen3-0.6B (~1.2 GB), i.e. roughly **430 MB/s**. Extrapolated:
+`B_h2d` is much the same everywhere. `B_storage` spans more than an order of
+magnitude -- a contended shared filesystem, local NVMe, or a page-cache hit are
+utterly different regimes -- so it is the only term worth measuring.
 
-| model | weights | level-2 wake, at ~430 MB/s |
-| --- | --- | --- |
-| Qwen3-0.6B | ~1.2 GB | ~3 s |
-| 8 B | ~16 GB | **~37 s** |
-| 70 B | ~140 GB | minutes |
+**The rule:**
 
-At 8 B and above, **level 2 approaches a cold start and stops being worth
-anything** on this storage. So:
+```
+choose level 2  iff  weight_size / B_storage  <=  T_wake     # costs ~MB of RAM
+else level 1    iff  RAM budget >= weight_size               # costs weight_size of RAM per Pod
+else            do not keep this model warm; a cold start is the honest answer
+```
 
-> **Level 1 for large models, level 2 for small ones or RAM-bound nodes** -- and
-> the crossover is set by storage bandwidth, which must be measured per cluster
-> rather than assumed from the published benchmarks.
+**The general conclusion, which is the inverse of the obvious one.** As
+`B_storage` approaches `B_h2d`, **level 2 strictly dominates level 1**: the same
+wake time without any of the RAM. On local NVMe at ~7 GB/s an 8 B model wakes at
+level 2 in ~2.3 s -- exactly what level 1 offers, while level 1 additionally
+consumes 16 GB of host RAM per Pod per model.
+
+> **Level 2 is the default. Level 1 is a workaround for slow storage** -- host RAM
+> spent to buy back what the read path cannot deliver.
+
+So the implementation should carry the formula and **measure `B_storage`**, per
+pool or per storage class, rather than shipping a size cutoff. That keeps it
+correct on better hardware, and on a cluster that later gains a faster tier.
+
+**Worked example -- one slow case, not the rule.** On a shared `ReadWriteMany`
+PVC measured at ~0.43 GB/s (`model-pvc`, mounted at `/model-cache` by every
+launcher Pod), with a 5 s wake target the crossover falls near ~2 GB of weights:
+
+| model | weights | level 1 (~7 GB/s) | level 2 (0.43 GB/s) | level 1 RAM |
+| --- | --- | --- | --- | --- |
+| 0.6 B | ~1.2 GB | ~0.2 s | ~2.8 s | 1.2 GB |
+| 8 B | ~16 GB | ~2.3 s | ~37 s | 16 GB |
+| 70 B | ~140 GB | ~20 s | ~5.4 min | **140 GB** |
+
+Two things fall out even from this bad case. **Levels can be mixed within a Pod**
+-- `/sleep` takes a level per instance, so one big model can sit at level 1 while
+several small ones sit at level 2, and only the level-1 members consume the RAM
+budget. And **the top end has a limit**: at 70 B, level 1 costs ~20 s *and* 140 GB
+of RAM per Pod while level 2 costs minutes, so warm-pooling very large models may
+simply not pay on any storage -- a cold start or a permanently running replica is
+the better answer.
+
+That 0.43 GB/s came from a single read that may itself have been a page-cache
+hit, so it is a lower bound on uncertainty, not a calibrated figure. It is here to
+illustrate the shape of the rule, and nothing in the design should depend on it.
 
 **Fine-grained wake.** `wake_up(tags=["weights"])` then `tags=["kv_cache"]`
 restores in two stages instead of one, keeping peak GPU memory down. That is
@@ -556,18 +582,20 @@ spec:
   replicas: 4
 ```
 
-**Pool Pod sizing follows from the sleep level**, and is easy to get wrong
-because the GPU figure is the small one:
+**Pool Pod sizing follows from the sleep level**, and the GPU figure is the
+small one -- RAM is what bites:
 
 ```
-# level 1 -- fast wake, RAM-hungry
-pod memory request  >=  SUM(weight size of every model in the warm set)  + overhead
+# level 1 -- wake bounded by PCIe; RAM-hungry
+pod memory request  >=  SUM(weight size of every level-1 model in the warm set) + overhead
 pod GPU memory      >=  awake instance + ~1.4 GiB per sleeper
 
-# level 2 -- RAM-cheap, wake bounded by storage read
-pod memory request  >=  small, ~MB per sleeper
+# level 2 -- RAM-cheap; wake bounded by the read path
+pod memory request  >=  ~MB per sleeper
 pod GPU memory      >=  awake instance + ~1.4 GiB per sleeper
-wake time           ~=  weight size / storage bandwidth   <-- measure this
+
+# and the level itself is derived, not configured per model:
+level 2  iff  weight_size / B_storage <= T_wake     # B_storage measured per pool
 ```
 
 Per tier, eligibility and the behaviours long drain forces:
