@@ -423,7 +423,7 @@ wva_report_namespace() {
             log_warning "    If your models are elsewhere, name it:  WVA_NS=<their namespace>"
             return 0
         fi
-        log_warning "  $managed holds NO llm-d model servers (nothing labelled ${SO_SERVING_MARKER})."
+        log_warning "  $managed holds NO llm-d model servers (nothing labelled $(so_serving_markers | paste -sd'/' -))."
         local elsewhere
         elsewhere="$(wva_namespaces_with_model_servers)"
         if [ -n "$elsewhere" ]; then
@@ -455,10 +455,12 @@ wva_model_server_count() {
         # CRD) or unreadable, and then `$((total + 0\n0))` is a syntax error that
         # takes the preflight down mid-report. Last line, digits only.
         n="$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
-            | jq --argjson p "$pod" --arg marker "$SO_SERVING_MARKER" '
+            | jq --argjson p "$pod" --argjson markers "$(so_serving_markers_json)" '
                 [ .items[]
                   | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
-                  | select(to_entries | any(.key + "=" + (.value|tostring) == $marker))
+                  | select(to_entries
+                           | any(.key + "=" + (.value|tostring) as $kv
+                                 | ($markers | index($kv)) != null))
                 ] | length' 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
         total=$((total + ${n:-0}))
     done
