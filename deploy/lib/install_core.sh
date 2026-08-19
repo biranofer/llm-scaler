@@ -185,6 +185,10 @@ main() {
         check_permissions
         check_single_installation
         wva_report_prometheus
+        # "Prometheus: <url>" answers whether an endpoint resolved, which reads as
+        # though it answered whether the metrics WVA needs are in it. They are
+        # different questions and only the second one decides whether WVA can work.
+        wva_report_modelserver_metrics
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi

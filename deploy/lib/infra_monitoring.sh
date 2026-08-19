@@ -83,6 +83,139 @@ deploy_fma_launcher_podmonitor() {
 # script is meant to be idempotent, and the e2e re-deploys onto a live cluster
 # every run. Detecting merely "a Prometheus exists" would have turned that upgrade
 # into a silent skip.
+# --- Model-server metrics -----------------------------------------------------
+#
+# WVA's capacity model is built entirely on vllm:* series — num_requests_waiting,
+# kv_cache_usage_perc, time_per_output_token_seconds, request_prompt_tokens, and
+# the rest (see internal/collector). Something has to scrape the model servers for
+# any of it to exist.
+#
+# Providing that is arguably llm-d's job, and a full llm-d standup does provide it:
+# a working optimized-baseline namespace carries a `decode` PodMonitor selecting
+# llm-d.ai/role=decode on port `modelserver`. But a namespace built from the guide
+# need not have one, and the failure is silent in the worst way. Measured on
+# pokprod001: dhl-la-1708 ran four replicas for hours and produced ZERO vllm
+# series, while `check-prereqs` reported "[SUCCESS] Prometheus: <url>" — true, and
+# about the endpoint, not its contents — and the controller's own startup
+# validation passed for the same reason. WVA then logged "No saturation metrics
+# available for model, skipping analysis" every cycle and held at minReplicas,
+# which on the HPA is indistinguishable from a correct decision: `1/1 (avg)`.
+#
+# So: verify it, and confirm afterwards that series actually arrived. The fix
+# itself is applied by hand, never by this script — see wva_report_modelserver_metrics
+# below for why creating the PodMonitor automatically was tried and reverted.
+
+# wva_modelserver_scrape_conflict echoes any monitor in $1, other than WVA's own,
+# whose selector keys on llm-d's labels — i.e. something already scrapes these
+# pods.
+#
+# Same reasoning as fma_launcher_scrape_conflict: two scrape configs on one pod
+# give it two targets, and WVA's additive queries would double-count throughput
+# while per-replica capacity still looked right. Better to leave an existing,
+# working scrape alone.
+wva_modelserver_scrape_conflict() {
+    local ns="$1" kind
+    for kind in podmonitors servicemonitors; do
+        kubectl get "$kind" -n "$ns" -o json 2>/dev/null | jq -r --arg kind "$kind" '
+            .items[]?
+            | select((.metadata.labels["app.kubernetes.io/component"] // "")
+                     != "modelserver-metrics")
+            | . as $m
+            # The serving ROLE specifically, not any llm-d.ai/-prefixed key: llm-d
+            # attaches those to plenty of non-serving components too (gateway, EPP),
+            # so a monitor for one of those was read as proof the decode/prefill
+            # pods are already scraped when nothing actually scrapes them.
+            | select(
+                (.spec.selector.matchLabels["llm-d.ai/role"] // "" | . == "decode" or . == "prefill")
+                or
+                (.spec.selector.matchExpressions // []
+                 | any(.key == "llm-d.ai/role"
+                       and ((.values // []) | any(. == "decode" or . == "prefill")))))
+            | "\($kind|rtrimstr("s"))/\($m.metadata.name)"' 2>/dev/null
+    done
+}
+
+# wva_serving_workload_count echoes how many workloads in $1 carry a serving role,
+# read from the pod template — the same basis discovery uses, so it counts a
+# workload scaled to zero.
+#
+# Both Deployment and LeaderWorkerSet, matching how scaledobject.sh itself scans
+# (SO_POD_PATH_DEPLOYMENT / SO_POD_PATH_LWS, `for kind in Deployment
+# LeaderWorkerSet`): multi-node / disaggregated serving is a real, supported
+# shape, and a Deployment-only count would silently no-op this whole check for a
+# namespace whose decode/prefill pods are owned by a LWS instead — reproducing,
+# for exactly that shape, the failure this check exists to catch.
+wva_serving_workload_count() {
+    local ns="$1" total=0 kind resource pod n
+    for kind in Deployment LeaderWorkerSet; do
+        resource='deployments'; pod='["spec","template"]'
+        if [ "$kind" = "LeaderWorkerSet" ]; then
+            resource='leaderworkersets'; pod='["spec","leaderWorkerTemplate","leaderTemplate"]'
+        fi
+        n=$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null | jq --argjson p "$pod" '
+            [ .items[]?
+              | (getpath($p + ["metadata","labels"]) // {})["llm-d.ai/role"] // ""
+              | select(. == "decode" or . == "prefill") ] | length' 2>/dev/null)
+        total=$((total + ${n:-0}))
+    done
+    echo "$total"
+}
+
+# wva_report_modelserver_metrics is the read-only half, for the preflight: say
+# whether anything scrapes the model servers, without applying anything.
+wva_report_modelserver_metrics() {
+    local ns="${WVA_WATCH_NS:-$WVA_NS}" conflict servers
+
+    kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1 || {
+        log_info "No PodMonitor CRD on this cluster, so model-server scraping cannot be checked or created here."
+        return 0
+    }
+
+    servers="$(wva_serving_workload_count "$ns")"
+    [ "${servers:-0}" -gt 0 ] || return 0
+
+    conflict="$(wva_modelserver_scrape_conflict "$ns" | paste -sd, -)"
+    if [ -n "$conflict" ]; then
+        log_success "  Model-server metrics: $conflict already scrapes them."
+        return 0
+    fi
+    if kubectl get podmonitor -n "$ns" -l app.kubernetes.io/component=modelserver-metrics \
+         --no-headers 2>/dev/null | grep -q .; then
+        log_success "  Model-server metrics: WVA's own PodMonitor is in place."
+        return 0
+    fi
+    log_warning "  Model-server metrics: NOTHING scrapes the $servers model server(s) in $ns."
+    log_warning "    WVA sizes workloads from vllm:* series. With none, it holds at minReplicas and says so only in its log — the HPA still reads a healthy '1/1 (avg)', so nothing looks wrong."
+    log_warning "    This is llm-d's step 3, \"(Optional) Enable monitoring\" — optional for llm-d, required for WVA. From an llm-d checkout:"
+    log_warning "      kubectl apply -n $ns -k \$REPO_ROOT/guides/recipes/modelserver/components/monitoring"
+    log_warning "      (and .../components/monitoring-pd as well, for a prefill/decode split)"
+    log_warning "    No llm-d checkout? This repo carries an equivalent covering both roles:"
+    log_warning "      kubectl apply -n $ns -k config/modelserver-metrics"
+}
+
+# There is deliberately no wva_ensure_modelserver_metrics — the installer does not
+# create this object, it only reports that it is missing.
+#
+# An earlier version did create it, in the prereqs phase, and the reasoning for
+# removing it is worth keeping:
+#
+#   ownership   the PodMonitor scrapes llm-d's pods and is DEFINED by llm-d
+#               (guides/recipes/modelserver/components/monitoring). WVA creating it
+#               means WVA owns an object about someone else's workload, in someone
+#               else's namespace.
+#   cleanup     and would then leak it. cleanup.sh deletes what the WVA overlay
+#               renders; anything applied separately with `kubectl apply -k` into
+#               the workload namespace survives `undeploy-wva`. The FMA launcher
+#               PodMonitor above already has this problem; adding a second was the
+#               wrong direction.
+#   drift       our copy silently falls behind if llm-d changes the port name or
+#               adds relabelings for a new server shape.
+#
+# The check is the half that carried the value anyway: this defect's whole cost was
+# that nothing said the metrics were missing, not that the object was hard to
+# create. Naming the problem and printing llm-d's own command is a ten-second fix
+# for the reader, and leaves the manifest owned by the project that defines it.
+
 foreign_prometheus() {
     kubectl get crd prometheuses.monitoring.coreos.com >/dev/null 2>&1 || return 0
     kubectl get prometheuses.monitoring.coreos.com -A \
