@@ -847,7 +847,7 @@ does not exist anywhere else today (§8) — is untouched by the swap.
 
 ## 9. Prerequisites, before any of this is built
 
-The two that could have invalidated the design are answered. All five
+**Four of five answered; none invalidated the design.** All five
 concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkerset).
 
 1. ~~**Does a NotReady Pod actually stop receiving EPP traffic?**~~
@@ -912,11 +912,52 @@ concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkers
    *concurrent* wakes, which is the case that decides level 1 versus level 2 for a
    burst.
 
-4. **Measure the label → EndpointSlice → InferencePool propagation delay.** It is
-   on the critical path and may dominate a 3 s wake.
-5. **Confirm several instances co-reside on one card** — one awake at
-   `gpu-memory-utilization 0.95` plus N sleepers, with a clean swap between them.
-   `--sleeper-limit` is 2 on pokprod, so this is cheap to try.
+4. ~~**Measure the label → EndpointSlice → InferencePool propagation delay.**~~
+   **ANSWERED 2026-08-19 — sub-second in both directions**, measured on kind
+   against the live EPP by timing log arrivals at a probe backend:
+
+   | direction | measured |
+   | --- | --- |
+   | **admit** — gate false→true until EPP's first request | **462 ms** |
+   | **drain** — gate true→false until EPP stops | **631 ms** |
+
+   So propagation does **not** dominate a wake, and the ~3 s figure this document
+   worried about was an artefact of the first attempt: patching Pod conditions with
+   a JSON *merge* patch replaces the whole array and wipes `Ready`, which produced a
+   spurious 3.7 s. Pod conditions carry `patchMergeKey: type`, so a **strategic**
+   merge is required to add one condition without clobbering the others — worth
+   knowing for the implementation, since WVA will be doing exactly this patch.
+
+   **Operational consequence:** after gating false, wait ~1 s (2 s for margin)
+   before calling `/sleep`. That is the ordering requirement from §9.1, now with a
+   number attached.
+
+5. ~~**Confirm several instances co-reside on one card.**~~ **ANSWERED
+   2026-08-19 — yes, and the memory arithmetic matches.** A second instance was
+   created on the *same* GPU as an existing sleeper on pokprod, pinned by
+   `gpu_uuids`, on its own port:
+
+   | state of `GPU-1bb953f9` | used |
+   | --- | --- |
+   | one sleeper only | **1399 MiB** — the ~1.4 GiB figure, confirmed directly |
+   | plus a second instance at `--gpu-memory-utilization 0.15` | **14339 MiB** ≈ 1.4 GB + 0.15 x 81.5 GB |
+   | after deleting the second | **1399 MiB** — no leak |
+
+   `total=2 running=2`, both reporting the same GPU UUID, and **the first
+   instance's `is_sleeping=true` was undisturbed** throughout. So one card hosts
+   several instances with independent state, which is what the warm set requires.
+
+   **Deliberately not tested: the 0.95 case.** Creating an instance at the ISC's
+   real `--gpu-memory-utilization 0.95` would have claimed a whole 80 GB card
+   outside Kubernetes' accounting on a shared cluster, which could break an
+   incoming tenant Pod. What remains unverified is therefore the memory *ceiling*
+   — one awake instance at 0.95 plus N sleepers — which is arithmetic (§2) rather
+   than a mechanism question. The mechanism is confirmed.
+
+   Also unverified: sleeping *both* instances. The second was still initialising
+   when the window closed — `status=running` from the launcher means the process
+   started, not that the engine is serving, which is worth remembering when
+   building the actuator.
 
 ---
 
