@@ -1266,8 +1266,15 @@ benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (name
 	@echo "  image:  $(IMG)"
 	@echo "  target: $(BENCHMARK_WVA_TARGET)  (ENVIRONMENT=$(ENVIRONMENT))"
 	@echo ""
+	@# NAMESPACE as well as WVA_NS. They answer different questions -- what WVA
+	@# MANAGES versus where the controller is installed -- and NAMESPACE became
+	@# mandatory in namespace scope, so passing only WVA_NS made the install
+	@# refuse and print 105 candidate namespaces. Here the two are the same
+	@# namespace by construction: the benchmark stands the model up and installs
+	@# the controller beside it.
 	$(MAKE) $(BENCHMARK_WVA_TARGET) \
 		WVA_NS=$(BENCHMARK_NAMESPACE) \
+		NAMESPACE=$(BENCHMARK_NAMESPACE) \
 		WVA_SCOPE=namespace \
 		IMG=$(IMG) \
 		$(if $(BENCHMARK_PROMETHEUS_URL),PROMETHEUS_URL=$(BENCHMARK_PROMETHEUS_URL),)
