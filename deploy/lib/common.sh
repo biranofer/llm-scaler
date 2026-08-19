@@ -486,11 +486,39 @@ WVA_PREREQ_KINDS=(Namespace ClusterRole ClusterRoleBinding ServiceMonitor Role R
 # rejecting) the admin-owned kinds. One definition, so the prereqs phase and the
 # controller phase cannot disagree about where the line is and leave a kind that
 # neither applies.
+# WVA_PREREQ_NAMED are objects the prereqs phase owns BY NAME, for kinds it does
+# not own wholesale.
+#
+# Only wva-metrics-server-ca, and it has to be here: the ServiceMonitor above is
+# admin-owned and references this ConfigMap as its `ca`. The prometheus-operator
+# resolves that the moment the ServiceMonitor appears and REJECTS it if the
+# ConfigMap is absent, then never reconsiders -- so a two-phase install created
+# the monitor in phase 1, the ConfigMap in phase 2, and left a standing rejection:
+#
+#   failed to get ca "<configmap=wva-metrics-server-ca,key=service-ca.crt>":
+#   configmaps "wva-metrics-server-ca" not found
+#
+# with no scrape target, no wva_* series, and a dashboard whose WVA panels are
+# empty while its vllm:* panels fill. Exactly the failure #1516 fixed for the
+# ServiceMonitor's Secret; the CA was missed because it is a different kind.
+#
+# By NAME rather than by kind, because the overlay renders three ConfigMaps and
+# the other two are the tenant's: wva-manager-config and, especially,
+# wva-scaling-policy-config, which a namespace owner is meant to edit. Making
+# every ConfigMap admin-owned to fix one of them would take the scaling policy
+# with it.
+WVA_PREREQ_NAMED=(
+    "ConfigMap/wva-metrics-server-ca"
+)
+
 wva_prereq_kind_filter() {
-    local mode="${1:-select}" k expr=""
+    local mode="${1:-select}" k n expr=""
     for k in "${WVA_PREREQ_KINDS[@]}"; do
         [ -n "$expr" ] && expr="$expr or "
         expr="${expr}.kind == \"$k\""
+    done
+    for n in "${WVA_PREREQ_NAMED[@]}"; do
+        expr="$expr or (.kind == \"${n%%/*}\" and .metadata.name == \"${n##*/}\")"
     done
     if [ "$mode" = "exclude" ]; then
         echo "select(($expr) | not)"
