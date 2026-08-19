@@ -30,7 +30,7 @@ warm GPUs, which is the same as simply running them. The proposition is that
 The pool is **insurance**. The premium is K GPUs held continuously; the payout is
 `T_ordinary - T_wake` seconds of faster capacity, per spike.
 
-```
+```text
 payout per spike  =  T_ordinary - T_wake        # today: ~41 s - ~3 s  =  ~38 s
 premium           =  K GPUs, held whether or not a spike arrives
 ```
@@ -51,7 +51,7 @@ latency and availability**, not by utilisation.
 
 K is the number of slots held concurrently, which is Little's law:
 
-```
+```text
 K  >=  lambda x W
 
   lambda = spike arrival rate (spikes per second, across all models on the pool)
@@ -224,7 +224,7 @@ A level-1 pool differs in exactly two fields:
 
 ### Sizing
 
-```
+```text
 # level 1 — wake bounded by PCIe; RAM-hungry
 pod memory  >=  SUM(weight size of every model in the warm set) + overhead
 pod GPU     >=  awake instance + ~1.4 GiB per sleeper
@@ -258,7 +258,7 @@ time — see [§4.5](#45-handover-from-pool-to-ordinary-replicas).
 
 WVA admits model M to pool P when:
 
-```
+```text
 P.accelerator matches M
 P.gpuCount    == M.tensorParallelSize
 GPU residue and --sleeper-limit permit one more sleeper on the chosen Pod
@@ -623,7 +623,7 @@ no restore timings are quoted.
 The two systems cover **different parts of the same latency curve**, so the useful
 configuration is both, not either.
 
-```
+```text
 t=0        spike arrives
 t~3s       warm pool serving           <- pool covers the head
 t~8s       restored ordinary replica serving   <- snapshot covers the tail
@@ -637,7 +637,7 @@ And the composition is self-reinforcing rather than merely additive. Because
 `W`, the mean slot hold time, becomes the snapshot restore time instead of a cold
 boot, Little's law (§1) gives:
 
-```
+```text
 K  >=  lambda x W        W: ~41 s  ->  ~8 s      so K falls by ~5x
 ```
 
@@ -721,7 +721,7 @@ retrofit.
 
 So WVA's output is **desired tier**, never a mechanism call:
 
-```
+```text
 llm-d.ai/desired-tier: ram | disk | none      # written by WVA, per (Pod, model)
 llm-d.ai/observed-tier: ram | disk | none     # written by whatever actuates
 ```
@@ -730,7 +730,7 @@ That is deliberately the same shape as their design's split between desired
 configuration and agent-reported state, and it maps onto a memory hierarchy in
 which their snapshot is simply the `disk` tier:
 
-```
+```text
 GPU        serving
 host RAM   level-1 sleep     <- tier "ram": this design
 disk        CRIU snapshot     <- tier "disk": theirs, when it lands
@@ -742,7 +742,7 @@ cold        weight load from storage
 The brain must **not** call the launcher API or vLLM endpoints directly. One
 narrow port, with the FMA-based implementation behind it:
 
-```
+```text
 ListWarm(pod)                  -> []{model, tier, lastUsed}
 Warm(pod, model, tier)          # create the instance and sleep it at that tier
 Activate(pod, model)            # wake; make it the live model

@@ -71,7 +71,7 @@ the instance ID is a hash that includes the **GPU UUIDs**
 by the device plugin; launcher pods request **0 GPU**, so the scheduler cannot
 align the two. On a mismatch FMA does not fall back — it destroys the sleeper:
 
-```
+```text
 Got GPU UUIDs                                              <- requester gets GPU-ceb79397
 Ensured vLLM instance absent to reclaim launcher capacity  <- DELETES the sleeper
 Selected launcher Pod, binding first
@@ -233,7 +233,7 @@ a small and already-shared part of a cold start.
 Created a second instance on an idle GPU of an otherwise-quiet node, timed it,
 then deleted it. From its own log:
 
-```
+```text
 init engine (profile, create kv cache, warmup model) took 18.75 s (compilation: 12.35 s)
 torch.compile took 12.35 s in total
 Graph capturing finished in 3 secs, took 0.43 GiB
@@ -258,7 +258,7 @@ Two corrections to earlier drafts of this document fall out:
   by creating an instance with the *same* options as the running one (only the
   port differs) and polling the ENGINE, not the launcher's process status:
 
-  ```
+  ```text
   ENGINE READY at 40954 ms
   ```
 
@@ -290,7 +290,7 @@ The cluster already runs `--sleeper-limit=2` (sleeping servers permitted **per
 GPU**) and `maxInstances: 4` (instances per launcher pod). Creating a second
 instance alongside an existing sleeper **succeeded**, and both coexisted:
 
-```
+```text
 total=2 running=2
   IsOqTGFHyahCVv running ['GPU-fc3875f6-...']   <- the pre-existing sleeper
   efcf6278-7f55- running ['GPU-7af4810a-...']   <- created for this test

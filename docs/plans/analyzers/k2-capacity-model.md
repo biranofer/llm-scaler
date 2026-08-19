@@ -53,7 +53,7 @@ prefill-heavy workloads. Recording them so they are not re-proposed:
 
 ## The split the fix needs
 
-```
+```text
 detector:    rates decide WHEN a replica is at its limit
 measurement: tokens record WHAT that limit is
 ```
@@ -100,7 +100,7 @@ Scale-down asks a question the numbers cannot answer: *would N−1 replicas stil
 cope?* Demand is measured at the current replica count and does not survive the
 change. Arrivals are the one quantity that does not move when replicas do:
 
-```
+```text
 (replicas × μ)  must stay above  (arrivals ÷ scaleDownBoundary)
 ```
 

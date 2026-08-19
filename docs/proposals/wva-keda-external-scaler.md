@@ -189,7 +189,7 @@ means**.
 
 Policies are **identity-free** (no `model_name`) — a named policy is a reusable **scaling tier** (`interactive`, `standard`, `batch`) referenced by many models. Resolution reuses the existing `Merge()` (scalar override), applied across layers, most-specific wins:
 
-```
+```text
 SO metadata            (per-target: cost, engine, pool, ownership, optional priority override)
   ▼ overrides
 named ScalingPolicy    (per-tier: thresholds, default priority, analyzer selection)   ← metadata.scalingPolicy

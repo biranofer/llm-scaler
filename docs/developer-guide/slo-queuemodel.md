@@ -139,7 +139,7 @@ At the target utilisation rho = 1 − 1/k, the steady-state iteration time equal
 The SLO is then the latency that corresponds to that iteration time, with token-processing
 work added at its true cost (see [Section 9](#9-theoretical-background) for the full derivation):
 
-```
+```text
 TargetTTFT = k×alpha + (beta + gamma) × avg_input_len
 TargetITL  = k×alpha + beta + gamma × (avg_input_len + (avg_output_len + 1) / 2)
 ```
@@ -156,7 +156,7 @@ If no variant has learned parameters yet (the first few cycles after deployment,
 variant is freshly added), the SLO is estimated from observed latency metrics with a
 headroom multiplier:
 
-```
+```text
 TargetTTFT = min(avg_observed_TTFT × 1.5,  10000 ms)
 TargetITL  = min(avg_observed_ITL  × 1.5,    500 ms)
 ```
@@ -181,7 +181,7 @@ All components operate on a single workload summary per variant, aggregated from
 metrics. Only pods with active traffic (`arrival_rate > 0`) contribute. Token lengths,
 TTFT, and ITL are averaged **weighted by each pod's arrival rate**:
 
-```
+```text
 avg_input_len  = Σ(arrival_rate_i × input_len_i)  / Σ(arrival_rate_i)
 avg_output_len = Σ(arrival_rate_i × output_len_i) / Σ(arrival_rate_i)
 avg_TTFT       = Σ(arrival_rate_i × TTFT_i)       / Σ(arrival_rate_i)
@@ -217,7 +217,7 @@ Once `(alpha, beta, gamma)` are available, `QueueAnalyzer.Size(targetPerf)` bina
 for the maximum arrival rate `lambda*` at which both predicted TTFT and ITL remain within
 the SLO targets. The required replica count is then:
 
-```
+```text
 required_replicas = ceil(total_arrival_rate / lambda*)
 ```
 
@@ -227,7 +227,7 @@ If analysis of an individual variant fails at any step — no metrics, no active
 learned parameters yet, or a queueing model error — the variant is **not dropped**. Instead
 it is included in the result with a zero-capacity placeholder:
 
-```
+```text
 PerReplicaCapacity = 0,  TotalCapacity = 0,  TotalDemand = 0,  Utilization = 0
 ```
 
@@ -259,7 +259,7 @@ observed latencies to avoid under-provisioning.
 <a name="data-flow"></a>
 ## 6. Data Flow
 
-```
+```text
 Prometheus / vLLM metrics per pod
   (arrival_rate, avg_TTFT, avg_ITL, avg_input_tokens, avg_output_tokens)
         │
@@ -374,13 +374,13 @@ by phase:
 Averaged uniformly over all `o_l + 1` iterations, the marginal work per request per
 iteration is:
 
-```
+```text
 δ = β × (i_l + o_l) / (o_l + 1)  +  γ × (i_l + o_l / 2)
 ```
 
 With `n` concurrent requests, the iteration time is:
 
-```
+```text
 T_iter(n) = α + n × δ
 ```
 
@@ -389,7 +389,7 @@ T_iter(n) = α + n × δ
 By Little's Law, the average number of concurrent requests is `n = λ × (o_l + 1) × T_iter`.
 Substituting into the iteration time equation and solving yields the closed-form result:
 
-```
+```text
 T_iter = α / (1 - ρ)
 
 where  ρ = λ × (o_l + 1) × δ
@@ -405,14 +405,14 @@ Because of Poisson arrivals, an incoming request must wait for the current itera
 finish (residual wait ≈ `T_iter`) before being scheduled. TTFT is that wait plus the
 prefill work:
 
-```
+```text
 TTFT = T_iter + (β + γ) × i_l
 ```
 
 Each decode step takes one full iteration plus the step's own decode work. Averaging over
 all `o_l` decode steps gives:
 
-```
+```text
 ITL = T_iter + β + γ × (i_l + (o_l + 1) / 2)
 ```
 
@@ -428,17 +428,17 @@ light load, where ρ ≈ 0):
 
 **Step 1:** Estimate alpha from observed ITL, since at light load ITL ≈ α plus minimal
 decode work:
-```
+```text
 alpha ≈ BaseFactor × avg_ITL     (BaseFactor = 0.9)
 ```
 
 **Step 2:** Solve for `(beta + gamma)` from the TTFT equation:
-```
+```text
 (beta + gamma) = (avg_TTFT - alpha) / avg_input_len
 ```
 
 **Step 3:** Separate beta and gamma from the ITL equation:
-```
+```text
 gamma = ((avg_ITL - alpha) - (beta+gamma)) / (avg_input_len + (avg_output_len+1)/2 - 1)
 beta  = (beta+gamma) - gamma
 ```

@@ -11,7 +11,7 @@ event.** WVA stops looking for variants and lets them announce themselves.
 
 Before:
 
-```
+```text
 timer ──► List HPAs (cluster-wide)  ──┐
      ──► List ScaledObjects        ──┴─► filter llm-d.ai/managed
                                        ──► synthesize VariantAutoscaling from
@@ -23,7 +23,7 @@ KEDA ──► GetMetrics ──────────────────
 
 After:
 
-```
+```text
 KEDA ──► IsActive / StreamIsActive / GetMetricSpec / GetMetrics
            │  ScaledObjectRef{namespace, name, scalerMetadata}
            ├─► registry.Observe(...)   ◄── THIS is discovery

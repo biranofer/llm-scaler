@@ -187,7 +187,7 @@ Create `docs/user-guide/migrating-from-va-crd.md` covering:
 
 - Before/after side-by-side (from the proposal's table)
 - A `kubectl` / jq recipe for patching annotations onto an existing ScaledObject:
-  ```
+  ```bash
   kubectl annotate scaledobject <name> \
     llm-d.ai/managed=true \
     llm-d.ai/model-id=<id> \

@@ -88,7 +88,7 @@ zero-replica variant.
 
 Demand is also in KV-cache tokens and sums three sources:
 
-```
+```text
 demand = tokens_in_use          (live: kv_cache_usage × capacity)
        + local_queue_tokens     (requests waiting on the pod × avg input tokens)
        + scheduler_queue_tokens  (requests still queued upstream in the EPP flow-control layer,
@@ -110,7 +110,7 @@ We want demand to sit at the target utilization of supply — so the supply we *
 `demand ÷ scaleUpThreshold` (e.g. at 0.85, demand should be 85% of supply). That gives two
 signals:
 
-```
+```text
 RequiredCapacity  = max(0, TotalDemand / scaleUpThreshold  − TotalAnticipatedSupply)   → scale up
 SpareCapacity     = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)             → scale down
 ```
@@ -131,7 +131,7 @@ SpareCapacity     = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)    
 
 ### 4. Replica target
 
-```
+```text
 scale-up replicas   = ceil(RequiredCapacity / per_replica_capacity)
 scale-down replicas = floor(SpareCapacity   / per_replica_capacity)
 ```

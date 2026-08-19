@@ -131,7 +131,7 @@ kubectl get scaledobject,hpa -n ${NAMESPACE}
 
 A working registration looks like this:
 
-```
+```text
 NAME                                        SCALETARGETKIND      SCALETARGETNAME    MIN  MAX  READY  ACTIVE  TRIGGERS
 scaledobject.keda.sh/dev-model-decode-wva   apps/v1.Deployment   dev-model-decode   1    10   True   True    external-push
 
@@ -173,7 +173,7 @@ kubectl logs -n ${NAMESPACE} deploy/wva-controller-manager | grep scaling-decisi
 ```
 <!-- guide:verify.decisions end -->
 
-```
+```text
 scaling-decision {"modelID":"meta/llama","decisions":[{"name":"llama-decode-wva","curr":1,"tgt":3,"action":"scale-up"}]}
 ```
 

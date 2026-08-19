@@ -42,7 +42,7 @@ reusable only by a requester the scheduler happened to hand *that same GPU*.
 Sleeping instances are therefore **not fungible**. The dual-pods controller says
 as much when it gives up:
 
-```
+```text
 Ensured vLLM instance absent to reclaim launcher capacity
 Selected launcher Pod, binding first
 Created vLLM instance          <- full model load
@@ -77,7 +77,7 @@ This is what makes zero FMA change possible. It is the whole idea.
 
 ## 5. Configuration prerequisite in FMA (config only, no code)
 
-```
+```text
 launcherCount x |nodes(enhancedNodeSelector)|  >=  warmPool.max
 ```
 
@@ -112,7 +112,7 @@ pod that happens to be idle.
 
 WVA keeps `free(P)` inside `[min, max]` by pricing the FMA variant:
 
-```
+```text
 price_fma(free) :
     free  >  max   ->  well below the regular variant   # surplus warmth: spend it
     min..max       ->  monotone decreasing in free
@@ -183,7 +183,7 @@ that **budget-scope knobs live in the default/namespace layer, not in a reusable
 policy**. Warm capacity is a shared, namespace-scoped resource — like GPU budget
 — so its bounds belong there, not in a tier.
 
-```
+```text
 ScaledObject metadata     per-target: which pool this target draws from, base cost
   ▼ overrides
 named ScalingPolicy       per-tier: how much this tier values warmth (curve shape)

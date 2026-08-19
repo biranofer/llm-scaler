@@ -36,7 +36,7 @@ go tool cover -html=coverage.out -o coverage.html
 
 Unit tests are co-located with the code they test:
 
-```
+```text
 internal/
 ├── controller/
 │   ├── variantautoscaling_controller.go

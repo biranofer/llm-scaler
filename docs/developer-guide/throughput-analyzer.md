@@ -259,7 +259,7 @@ only: the stale-metrics sanity issue is reported but not currently used to gate 
 
 ### Package Structure
 
-```
+```text
 internal/engines/analyzers/throughput/
 ├── constants.go               thresholds, window params, tuning defaults
 ├── types.go                   WorkloadShape, ITLObservation, SanityIssue, SanityReport,
@@ -329,7 +329,7 @@ On leader failover the incoming leader starts with an empty analyzer. During war
 
 ### Analysis Pipeline
 
-```
+```text
   ┌──────────────────── Per-Variant Processing (each variant v) ──────────────────┐
   │                                                                               │
   │  []ReplicaMetrics (replicas of variant v)                                     │
@@ -375,7 +375,7 @@ On leader failover the incoming leader starts with an empty analyzer. During war
 
 ### Data Flow
 
-```
+```text
 ┌────────────┐
 │ Prometheus │
 └──────┬─────┘
@@ -447,7 +447,7 @@ and demand estimation this cycle.
 
 When the window is not ready, A is estimated with B pinned and only A fitted:
 
-```
+```text
 A = Σ((ITL_i − B) · k_i) / Σ(k_i²)
 ```
 
@@ -472,7 +472,7 @@ model to fall back to.
 
 Per replica `r`:
 
-```
+```text
 IL_eff    = AvgInputTokens × (1 − PrefixCacheHitRate)
 KVreq     = IL_eff + AvgOutputTokens / 2      # time-averaged KV footprint per request
 N_dec_sat = DefaultKSat × KV_max / KVreq      # in-flight requests at k_sat
@@ -495,7 +495,7 @@ per-analyzer constant pending alignment with the EPP system-wide k_sat (see open
 TA's decode demand is a **model-level** quantity, not a sum of per-variant
 contributions:
 
-```
+```text
 avgOL               = Σ_v (nKV_v × shape_v.AvgOutputTokens) / Σ_v nKV_v
                       over non-prefill variants v (tracked WorkloadShape,
                       weighted by each variant's replica count — see below)
@@ -563,7 +563,7 @@ operating knee) is implemented.
 The scheduler queue term is combined **alongside** the arrival decode term at model level —
 not folded into it, not double-counted:
 
-```
+```text
 avgDecodeITLSat  = mean(ITL(k_sat)) over decode/both variants
 queueDemand      = QueueSize / (DefaultQueueDrainFactor × avgDecodeITLSat)
 TotalDemand      = arrivalDecodeDemand + queueDemand
@@ -590,7 +590,7 @@ as a separate engine PR and will not require changes to the TA.
 TA publishes raw `Total*` fields on `AnalyzerResult`; the engine's universal threshold
 post-step writes `RequiredCapacity` and `SpareCapacity` after `Analyze()` returns.
 
-```
+```text
 TotalSupply            = aggregation.SumTotalSupply(VariantCapacities)
                        = Σ_v ReplicaCount_v × PerReplicaCapacity_v
 TotalAnticipatedSupply = aggregation.SumTotalAnticipatedSupply(VariantCapacities)
@@ -605,7 +605,7 @@ Demand Estimation above.
 to suppress redundant scale-up requests while pods are starting.
 
 The engine post-step formula (using the model's configured `scaleUpThreshold` / `scaleDownBoundary`):
-```
+```text
 RC = max(0, TotalDemand / scaleUpThreshold  − TotalAnticipatedSupply)
 SC = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)
 ```
@@ -635,7 +635,7 @@ TA-only deployments with EPP and without persistent GPS mismatches are unaffecte
 replica from `rate(vllm:request_generation_tokens_sum[1m])`. Each cycle, `Analyze()` compares
 this against the ITL model's prediction:
 
-```
+```text
 μ_model(k*) = N_dec(k*) / ITL(k*)
             = (k* × KV_max / KVreq) / (A·k* + B)
 

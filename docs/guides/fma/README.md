@@ -189,7 +189,7 @@ requesters do. Confirmed on a live cluster: 14 nodes match, `launcherCount` is 1
 and there are exactly 14 launcher pods — sitting there with the requester
 Deployment at `replicas: 0`. Launchers exist with no requesters at all.
 
-```
+```text
 ceiling = min( launcher pods,        # one ROUTABLE instance each, see below
                Σ_nodes free GPUs )   # accelerators
 ```
@@ -229,7 +229,7 @@ kubectl logs -n ${WVA_NAMESPACE} -l app.kubernetes.io/name=workload-variant-auto
   | grep "Attributed FMA launcher pods"
 ```
 
-```
+```text
 Attributed FMA launcher pods through their dual-pods pairing  {"count": 4, "example": "launcher-… -> fma-requester-…"}
 ```
 
@@ -242,7 +242,7 @@ kubectl logs -n ${WVA_NAMESPACE} -l app.kubernetes.io/name=workload-variant-auto
   | grep analyzer-result | tail -1
 ```
 
-```
+```text
 analyzer-result  supply: 2137292  demand: 961383  util: 0.45
 ```
 
@@ -279,7 +279,7 @@ It repairs two defects the standup reintroduces every time. Neither produces bad
 numbers — together they produce **no** numbers, and the failure looks like a
 load-generator crash rather than an FMA misconfiguration:
 
-```
+```text
 launcher SA cannot patch pods (403, retried every 5s forever)
   -> a launcher whose requester was deleted keeps llm-d.ai/inferenceServing=true
   -> that dead endpoint stays in the InferencePool
@@ -497,7 +497,7 @@ not by WVA:
 A launcher pod is **not** a model server. It is a process manager: `launcher.py`
 listening on `:8001` with a CRUD API over vLLM child processes.
 
-```
+```text
 launcher pod
 ├─ launcher process            :8001   creates/deletes instances on request
 ├─ vLLM instance A             :8000   from InferenceServerConfig A  → model X
@@ -622,7 +622,7 @@ bound, capacity was available in seconds.
 
 WVA does not ask for it in seconds:
 
-```
+```text
 GLOBAL_OPT_INTERVAL                      60s   one optimization pass a minute
 PROMETHEUS_METRICS_CACHE_FETCH_INTERVAL  30s   metrics up to this stale
 KEDA pollingInterval                      5s

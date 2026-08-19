@@ -15,7 +15,7 @@ over it via shared free functions in `internal/engines/allocation/`.
 
 ### Data flow per optimize cycle
 
-```
+```text
 ┌──────────────────────────────────────────────────────────┐
 │ Config (SaturationScalingConfig per model/namespace)     │
 │   Priority, Analyzers[]:                                 │
@@ -386,7 +386,7 @@ Both optimizers share the same allocation and scale-down primitives from
 
 All scale-up goes through `allocateForModelPaired`:
 
-```
+```text
 initRoleState(s)               → roles, RolePairedState (per-role demand + RoleSpare)
 anyRoleNeedsScaleUp(ps, roles) → loop gate: any role still has demand?
   pick(role, ...)              → (variant, capN): optimizer-specific variant selector
@@ -413,7 +413,7 @@ Both optimizers call `scaleDownRoleIterated`, which handles both disaggregated
 and non-disaggregated models through the same role loop (`"both"` is the
 synthetic role for non-disaggregated):
 
-```
+```text
 for each role (sorted for determinism):
   needsScaleDownForRole(s, role)           → gate: ALL live analyzers have RoleSpare > 0
                                               (no live analyzer → false; see "How results combine")

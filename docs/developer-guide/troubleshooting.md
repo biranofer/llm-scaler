@@ -65,7 +65,7 @@
 
 **Symptom**: the log carries
 
-```
+```text
 Scale-from-zero: EPP metrics scrape failing; reading the flow-control queue from
 Prometheus instead. Wakes still work but are slower and bounded by the scrape
 interval — fix the direct path.

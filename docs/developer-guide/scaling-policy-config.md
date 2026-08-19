@@ -79,7 +79,7 @@ scaleToZero:
 **`retentionPeriod` and KEDA's `cooldownPeriod` add up.** They are sequential, not
 overlapping, and neither knob alone predicts the result:
 
-```
+```text
 last request ──┬─ retentionPeriod ─┬─ ≤1 optimize interval ─┬─ cooldownPeriod ─┬─ 0 replicas
                │ (WVA's idle query)│ (WVA publishes 0, the  │ (KEDA)           │
                │                   │  trigger goes inactive)│                  │
@@ -128,7 +128,7 @@ unavailability for this model: a strict TTFT SLO, or decode nodes that must not
 absorb prefill load. With it set, a model whose prefill cannot be placed is left
 at zero and the engine logs why at INFO:
 
-```
+```text
 Scale-from-zero: no variant woken for a model with pending requests
   namespace=... modelID=... reason=prefill-required
 ```
@@ -377,7 +377,7 @@ engine queue** (`vllm:num_requests_waiting` / `sglang:num_queue_reqs`) — reque
 already admitted to that pod but not yet generating. sat_v2 charges them to the
 replica, so per-replica demand has two terms:
 
-```
+```text
 replicaDemand = <resident KV tokens> + QueueLength × <per-request charge>
 ```
 
@@ -437,7 +437,7 @@ collector's queries, not of the role charge.
 
 The optimizer's per-variant scaling math (`bottleneckReplicas`, `safeRemovalReplicas`, `applyAllocation`) assumes that `n` replicas of variant `v` reduce model-level RC by exactly `n × PRC[v]`. That means `Total*` must equal the canonical sum over variants:
 
-```
+```text
 r.TotalSupply            == Σ_v vc.ReplicaCount × vc.PerReplicaCapacity
 r.TotalAnticipatedSupply == Σ_v (vc.ReplicaCount + vc.PendingReplicas) × vc.PerReplicaCapacity
 r.TotalDemand            == Σ_v vc.TotalDemand
@@ -466,7 +466,7 @@ totals := aggregation.AggregateByRole(variantCapacities)
 
 After each analyzer's `Analyze()` returns, the engine applies the universal threshold formula at **every scope** — model level and each `RoleCapacity` entry:
 
-```
+```text
 RC = max(0, TotalDemand / scaleUpThreshold − TotalAnticipatedSupply)
 SC = max(0, TotalSupply  − TotalDemand / scaleDownBoundary)
 ```
@@ -671,7 +671,7 @@ defaults. Shipping a `default` entry is still recommended so the thresholds are
 explicit and reviewable.
 
 If the ConfigMap is missing, the system will log a warning:
-```
+```text
 WARN Saturation scaling ConfigMap not found
 ```
 
@@ -882,7 +882,7 @@ The controller validates all configuration entries on load. Invalid entries are 
 ```
 
 **Log output:**
-```
+```text
 WARN Invalid saturation scaling config entry, skipping key=invalid-config error=kvCacheThreshold must be between 0 and 1, got 1.50
 ```
 
@@ -943,7 +943,7 @@ The `ConfigMapReconciler` watches the `wva-scaling-policy-config` ConfigMap for 
 ### ConfigMap Not Found
 
 **Symptom:** Warning log message
-```
+```text
 WARN Saturation scaling ConfigMap not found, using hardcoded defaults configmap=wva-scaling-policy-config namespace=<workload-variant-autoscaler-namespace>
 ```
 
@@ -955,7 +955,7 @@ kubectl apply -f deploy/configmap-saturation-scaling.yaml
 ### Invalid Configuration Entry
 
 **Symptom:** Warning log message
-```
+```text
 WARN Invalid saturation scaling config entry, skipping key=my-config error=...
 ```
 
@@ -964,7 +964,7 @@ WARN Invalid saturation scaling config entry, skipping key=my-config error=...
 ### Missing Default Entry
 
 **Symptom:** Warning log message
-```
+```text
 WARN No 'default' entry in saturation scaling ConfigMap, using hardcoded defaults
 ```
 
@@ -1020,7 +1020,7 @@ data:
    ```
 
    Expected logs:
-   ```
+   ```text
    INFO  Saturation scaling ConfigMap changed, reloading cache
    INFO  Saturation scaling config cache updated entries=2 has_default=true
    INFO  Triggering reconciliation for all VariantAutoscaling resources
@@ -1038,7 +1038,7 @@ data:
 ### Cache Initialization Failed
 
 **Symptom:** Warning on controller startup
-```
+```text
 WARN Failed to load initial saturation scaling config, will use defaults
 ```
 

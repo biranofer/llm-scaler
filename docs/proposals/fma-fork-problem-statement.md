@@ -49,7 +49,7 @@ The decisive run, and it moves the root cause. Requesters spread one per node,
 pool warmed by scaling up and back, gate passed (`warm_pool.sh verify` rc=0, 3
 sleepers). Then 2 → 5:
 
-```
+```text
 2bjf2  pokprod-b93r43s3   64s  rebuilt
 4sf2r  pokprod-b93r39s2   64s  rebuilt
 rmwgm  pokprod-b93r43s1   95s  rebuilt
@@ -65,7 +65,7 @@ was impossible before GPU alignment was ever reached.
 Constraining the requester Deployment to the same five nodes the
 `LauncherPopulationPolicy` pins launchers to, and changing nothing else:
 
-```
+```text
 9wcfg  pokprod-b93r39s1   2s  WOKE
 jslr5  pokprod-b93r38s2   3s  WOKE
 mcl96  pokprod-b93r39s0   3s  WOKE
@@ -100,7 +100,7 @@ A follow-up run intended to test Fix 1.5 **failed to apply its node constraint**
 placed by the scheduler as usual. The result is more convincing than the intended
 test would have been, because nothing was arranged:
 
-```
+```text
 j595g  pokprod-b93r39s1   2s   WOKE      <- a node that HAS a launcher
 bfzhq  pokprod-b93r43s1   58s  rebuilt   <- no launcher on this node
 zpw6x  pokprod-b93r43s3   58s  rebuilt   <- no launcher on this node
@@ -162,7 +162,7 @@ requester the same GPU that a sleeper on that same node *happens* to hold.
 On a mismatch FMA does not leave the sleeper alone and build elsewhere. It
 **destroys it**:
 
-```
+```text
 Got GPU UUIDs                                              <- requester gets GPU-ceb79397
 Ensured vLLM instance absent to reclaim launcher capacity  <- DELETES the sleeper
 Selected launcher Pod, binding first
@@ -289,7 +289,7 @@ zero 403s in the reflector, and no unbound launcher carrying a stale serving
 label. They are recorded because the standup reintroduces them, and because
 together they produce **no** numbers rather than bad ones:
 
-```
+```text
 launcher SA cannot patch pods (403, retried every 5s forever)
   -> a launcher whose requester was deleted keeps llm-d.ai/inferenceServing=true
   -> that dead endpoint stays in the InferencePool

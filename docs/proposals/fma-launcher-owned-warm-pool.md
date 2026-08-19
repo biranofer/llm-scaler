@@ -56,7 +56,7 @@ Placement was **solved** and it did not help: replicas landed beside sleepers
 every time. The wake still requires the *exact GPU*, and a pool node has 7-8 of
 them. Coverage across the cluster at the time, from `warm_pool.sh coverage`:
 
-```
+```text
 covered 6 of 44 free GPUs        7 of 12 nodes at 0%
 best node 50%, most nodes 17-33%
 ```
@@ -243,7 +243,7 @@ That yields two pool types, distinguished by what actually bounds them:
 No separate slot count is needed, and none should be introduced. For a level-1
 pool, admission is simply:
 
-```
+```text
 sum(weights of models already warm)  +  weight(new model)  +  overhead  <=  memory request
 ```
 
@@ -301,7 +301,7 @@ spec:
 
 WVA admits model M into pool P when:
 
-```
+```text
 P.accelerator matches M
 P.gpuCount    == M.tensorParallelSize
 GPU residue and --sleeper-limit allow one more sleeper on the chosen Pod
@@ -497,7 +497,7 @@ why even level 2 beats a cold start so heavily.
 
 **Both wake times scale with model size; they differ only in the pipe.**
 
-```
+```text
 level 1 wake  ~=  weight_size / B_h2d       # host->GPU, a hardware constant, ~5-25 GB/s
 level 2 wake  ~=  weight_size / B_storage   # the read path, and the one that varies
 ```
@@ -508,7 +508,7 @@ utterly different regimes -- so it is the only term worth measuring.
 
 **The rule:**
 
-```
+```text
 choose level 2  iff  weight_size / B_storage  <=  T_wake     # costs ~MB of RAM
 else level 1    iff  RAM budget >= weight_size               # costs weight_size of RAM per Pod
 else            do not keep this model warm; a cold start is the honest answer
@@ -703,7 +703,7 @@ spec:
 **Pool Pod sizing follows from the sleep level**, and the GPU figure is the
 small one -- RAM is what bites:
 
-```
+```text
 # level 1 -- wake bounded by PCIe; RAM-hungry
 pod memory request  >=  SUM(weight size of every level-1 model in the warm set) + overhead
 pod GPU memory      >=  awake instance + ~1.4 GiB per sleeper

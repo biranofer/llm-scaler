@@ -72,7 +72,7 @@ lacks is any weight *between* domains. The greedy pass has not answered it at al
 
 For model `m` of namespace `n`, evaluated **within one contention group** `g`:
 
-```
+```text
                             p(m)
   W(m, g) = Wns(n) × ──────────────────────
                       Σ p(m') , m' ∈ n ∩ g

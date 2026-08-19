@@ -39,7 +39,7 @@ The controller reconciles all VariantAutoscaling resources on a periodic interva
 
 Deployment Create events handle a critical race condition:
 
-```
+```text
 Timeline:
 T0: User creates VariantAutoscaling CR for deployment "llama-8b"
 T1: VA reconciliation runs - deployment doesn't exist yet
@@ -196,7 +196,7 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 
 ### Example 1: Deployment Created Before VA
 
-```
+```text
 1. User creates Deployment "llama-8b"
    → No VA exists yet, no action taken
 
@@ -207,7 +207,7 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 
 ### Example 2: VA Created Before Deployment (Race Condition)
 
-```
+```text
 1. User creates VariantAutoscaling "llama-8b-autoscaler"
    → Create event triggers reconciliation
    → Deployment doesn't exist, VA status reflects this
@@ -220,7 +220,7 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 
 ### Example 3: Deployment Deleted
 
-```
+```text
 1. Deployment "llama-8b" is running with VA "llama-8b-autoscaler"
    → VA status shows Ready=True, 3 replicas
 
@@ -237,7 +237,7 @@ This periodic reconciliation is why many Update and Delete events can be safely 
 
 ### Example 4: ConfigMap Updated
 
-```
+```text
 1. Admin updates wva-scaling-policy-config ConfigMap
    → Update event processed by ConfigMap handler
    → Global configuration cache updated

@@ -40,7 +40,7 @@ The two halves fail in opposite directions:
 So there is no workload WVA can both scale and measure. Point a ScaledObject at
 the requester and the controller says so every cycle:
 
-```
+```text
 has 1 ready pod(s) but none attributed
 ```
 
@@ -157,7 +157,7 @@ describe it*. Today WVA assumes one pod answers both.
 **Non-FMA (modelservice).** The chain is one walk, and every link was measured
 on pokprod001:
 
-```
+```text
 ScaledObject  qwen-…-decode-wva            (scaleTargetRef, min=1 max=10)
   └─ Deployment  qwen-…-decode             ← what KEDA scales
        └─ ReplicaSet  …-9cf474444
@@ -173,7 +173,7 @@ direction, one walk, no ambiguity.
 **FMA.** The two roles split across two pods that are deliberately not related
 by ownership:
 
-```
+```text
 ScaledObject  <requester>-wva
   └─ Deployment  fma-requester-qwen-…      ← what KEDA scales
        └─ ReplicaSet
@@ -376,7 +376,7 @@ rejecting pods with `dual-pods.llm-d.ai/sleeping == "true"` as a cheap
 stale-binding check. Measured against the launcher's own CRUD API, that guard is
 not merely weak, it is inverted:
 
-```
+```text
 pod labelled sleeping=false  ->  GET :8001/v2/vllm/instances
                                  {"total_instances":0,"running_instances":0,"instances":[]}
 
@@ -412,7 +412,7 @@ and should not acquire.
 **A real deployment already shows the drift.** Measured on pokprod001 while
 writing this:
 
-```
+```text
 launcher pods:      14
   sleeping=true:     9
   sleeping=false:    5
@@ -460,7 +460,7 @@ under-reports supply — the safe direction.
 divergence "under-reports supply — the safe direction". It does not.
 `internal/engines/aggregation/aggregation.go` is explicit:
 
-```
+```text
 r.TotalSupply            == Σ_v vc.ReplicaCount × vc.PerReplicaCapacity
 r.TotalAnticipatedSupply == Σ_v (vc.ReplicaCount + vc.PendingReplicas) × vc.PerReplicaCapacity
 ```
@@ -643,7 +643,7 @@ dependency.
 The bound is a minimum of two independent things, and conflating them is how a
 sizing bug gets written:
 
-```
+```text
 ceiling = min( Σ_nodes (launcherCount × maxInstances),   # warm slots
                Σ_nodes free GPUs )                        # actual accelerators
 ```
@@ -897,7 +897,7 @@ From that scenario's own header:
 
 The loop is:
 
-```
+```text
 EPP pool saturation (Prometheus)  →  KEDA trigger  →  requester Deployment replicas
    →  dual-pods controller binds each new requester to a sleeping launcher
    →  launcher gets the serving labels AT BIND TIME  →  joins the InferencePool

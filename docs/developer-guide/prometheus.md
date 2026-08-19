@@ -180,7 +180,7 @@ WVA exposes metrics providing insights into autoscaling behavior and optimizatio
 
 ### Notes on **name_space**s in metrics
 With WVA metrics, the value for the label `namespace` is the WVA controller namespace, not the VA's namespace. The VA namespace has the label `exported_namespace`. Here's an example:
-```
+```text
 {
   "metric": "wva_desired_replicas",
   "labels": {
@@ -210,7 +210,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `scale_to_zero_enabled`: Whether scale-to-zero is enabled (`true`, `false`)
 - **Use Case**: Info-style metric to expose WVA configuration via labels for monitoring and debugging
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_config_info",
@@ -237,7 +237,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Labels**: None (global configuration)
 - **Use Case**: Track how frequently the optimization loop runs
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_config_optimization_interval_seconds",
@@ -265,7 +265,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Buckets**: 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5
 - **Use Case**: Monitor metrics collection performance and identify slow queries
 - ***Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_metrics_collection_duration_seconds_bucket",
@@ -294,7 +294,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `reason`: Reason for the error
 - **Use Case**: Track metrics collection failures and identify problematic queries
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_metrics_collection_errors_total",
@@ -322,7 +322,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `namespace`: Kubernetes namespace
 - **Use Case**: Monitor pod discovery to ensure all replicas are being tracked
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_metrics_pods_discovered",
@@ -350,7 +350,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `status`: Status of metrics freshness (`fresh`, `stale`, `missing`, `unavailable`)
 - **Use Case**: Track metric staleness to ensure autoscaling decisions are based on current data
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_metrics_freshness_status",
@@ -379,7 +379,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `reason`: Why the pod was unattributed (currently always `unresolved`)
 - **Use Case**: Alert on a rising rate of unattributed pods — usually a missing `llm-d.ai/variant` label, a scaler missing the `llm-d.ai/managed` annotation, or a shadow-pod layout without the label
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_pod_mapping_miss_total",
@@ -410,7 +410,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Buckets**: 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10
 - **Use Case**: Monitor optimization loop performance and identify slow optimization cycles
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_optimization_duration_seconds_bucket",
@@ -437,7 +437,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Labels**: None (global metric)
 - **Use Case**: Track how many models are being processed per optimization cycle to understand workload
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_models_processed",
@@ -468,7 +468,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `accelerator_type`: Type of accelerator being used
 - **Use Case**: Monitor KV cache utilization to understand saturation levels and trigger scaling decisions
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_saturation_utilization",
@@ -501,7 +501,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `unit`: `continuous` (Token-based analyzer — a token magnitude) or empty (Percentage-based analyzer — 0.0-1.0 fraction)
 - **Use Case**: Track available capacity headroom to prevent saturation and optimize resource allocation
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_spare_capacity",
@@ -534,7 +534,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `unit`: `continuous` (Token-based analyzer — a token magnitude) or `binary` (Percentage-based analyzer — 0/1 signal)
 - **Use Case**: Identify when additional capacity is needed and understand the magnitude of demand
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_required_capacity",
@@ -565,7 +565,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `model_name`: Model name served by the variant
 - **Use Case**: Monitor absolute KV cache token usage across variant replicas
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_kv_cache_tokens_used",
@@ -598,7 +598,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `limiter_name`: Name of the limiter that constrained the decision
 - **Use Case**: Monitor how frequently resource limiters are constraining scaling decisions to understand capacity bottlenecks
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_decisions_limited_total",
@@ -626,7 +626,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Labels**: None (global metric, optional `controller_instance` label when multi-instance deployment is used)
 - **Use Case**: Monitor GPU discovery status to ensure resource discovery is functioning when expected
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_gpu_discovery_up",
@@ -658,7 +658,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
 - **Absence is meaningful**: the series is published on every healthy scrape, so a pool WVA is watching always has one. No series at all means WVA is not reading that pool — a different problem from the fallback being active.
 - **Use Case**: Alert on a sustained `1`. Wakes still happen but are slower — bounded by the Prometheus scrape interval instead of the engine's 100 ms loop — and the underlying cause (EPP metrics token, EPP tokenreview RBAC, or a NetworkPolicy blocking pod-IP egress from the WVA namespace) will not fix itself. See [troubleshooting](troubleshooting.md#the-epp-scrape-is-failing-but-wva-still-wakes-models-slowly).
 - **Example alert**:
-  ```
+  ```promql
   max_over_time(wva_scale_from_zero_queue_fallback_active[10m]) == 1
   ```
 
@@ -671,7 +671,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `accelerator_type`: Type of accelerator (short name of the accelerator)
 - **Use Case**: Track the number of GPUs discovered by WVA and available for allocation
 - **Example**:
-  ```
+  ```json
   {
       "metric": {
         "__name__": "wva_available_gpus",
@@ -700,7 +700,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `policy_type`: Type of enforcement policy applied
 - **Use Case**: Monitor how often the enforcer modifies scaling decisions to enforce policies and understand policy impact
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_enforcer_modifications_total",
@@ -727,7 +727,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `optimizer_name`: Name of the optimizer
 - **Use Case**: Track which optimization strategy is currently in use for scaling decisions
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_optimizer_active",
@@ -758,7 +758,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `accelerator_type`: Type of accelerator being used
 - **Use Case**: Monitor current number of replicas per variant
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_current_replicas",
@@ -789,7 +789,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `accelerator_type`: Type of accelerator being used
 - **Use Case**: Expose the desired optimized number of replicas per variant
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_desired_replicas",
@@ -820,7 +820,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `accelerator_type`: Type of accelerator being used
 - **Use Case**: Compare the desired and current number of replicas per variant, for scaling purposes
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_desired_ratio",
@@ -852,7 +852,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `reason`: Reason for the scaling operation
 - **Use Case**: Detect scaling thrashing — backs the `WVAReplicaScalingThrashing` alert — and audit scaling activity per variant
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_replica_scaling_total",
@@ -878,7 +878,7 @@ With WVA metrics, the value for the label `namespace` is the WVA controller name
   - `error_type`: Type or category of the error
 - **Use Case**: Track error rates across different components to identify problematic areas and monitor system health
 - **Example**:
-  ```
+  ```json
   {
     "metric": {
       "__name__": "wva_errors_total",

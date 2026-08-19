@@ -95,7 +95,7 @@ When metrics are unavailable, WVA implements graceful degradation:
 
 ### Metrics Validation Flow
 
-```
+```text
 1. Controller reconciles VariantAutoscaling
 2. For each variant:
    a. Validate metrics availability (ValidateMetricsAvailability)

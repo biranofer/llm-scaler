@@ -55,7 +55,7 @@ It lives at a different **altitude** from an autoscaler. That distinction is wha
 
 **Layering:**
 
-```
+```text
 Cluster Capacity Planner  ──▶ sets the PARTITION + per-class config + min/max envelope + batch schedule
    │ hours–days, forecast + cost driven, structural
    ▼
@@ -78,7 +78,7 @@ The interactive and batch halves are not two features — they are one optimizat
 
 So Cluster Capacity Planner runs a single **valley-filling** allocation: size the fixed pool so interactive SLOs hold at the peaks and batch deadlines are met by draining backlog into the valleys — bursting to spot / off-peak capacity only when the valleys aren't enough.
 
-```
+```text
 GPU-hours
  │        interactive forecast (peaks)
  │      ╱╲        ╱╲
@@ -211,7 +211,7 @@ Realistic caveat for honesty: the big proprietary clouds (OpenAI, Azure, AWS, GC
 
 ## 8. Ecosystem connection map
 
-```
+```text
                  ┌─ CONSUME (inputs) ──────────────────────────────────┐
   llm-d-benchmark (Benchmark Report v0.2 = perf profiles) ──┐
   llm-d-prism (same data lake, viz)                          │

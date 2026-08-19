@@ -29,7 +29,7 @@ times out anyway — a wake that looks like progress and delivers none.
 
 `DefaultLimiter.ComputeConstraints` builds a `ResourcePool` per accelerator type:
 
-```
+```text
 Limit = sum of node Allocatable for that GPU type, across nodes  (node discovery)
 Used  = GPUs in use, on the basis this provider asked for      (caller-supplied)
 Available() = max(0, Limit - Used)
@@ -192,7 +192,7 @@ The gap opens on unbind. The launcher keeps its vLLM instance resident — that 
 what makes the next bind take seconds — and goes on occupying a physical GPU
 charged to nobody. Measured on pokprod001 with every requester at `replicas: 0`:
 
-```
+```text
 GPU requests charged in the namespace : 1
 launcher pods running a vLLM instance : 9, on 9 distinct GPU UUIDs
 ```

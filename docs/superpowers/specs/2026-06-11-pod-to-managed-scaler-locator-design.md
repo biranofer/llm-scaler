@@ -35,7 +35,7 @@ Out of scope:
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  Caller (saturation analyzer, Coordinator plugin)                │
 │                                                                  │
@@ -148,7 +148,7 @@ Three properties make `LocateByVariant` correct without any extra plumbing:
 
 A managed HPA `ns=llm-d, name=llama-8b` scaling Deployment `llama-8b`. Metric series the saturation analyzer reads:
 
-```
+```text
 vllm:num_requests_running{namespace="llm-d", pod_name="llama-8b-7d4c-x9k2", llm_d_ai_variant="llama-8b"} 12
 ```
 
@@ -175,7 +175,7 @@ Both paths return the same scaler; the synthetic VA built from `ms.HPA` has `nam
 
 Two field indexes are added under `internal/controller/indexers/`, one file per indexed resource type. The existing `indexers.go` is split: shared helpers stay there, and the VA-specific index moves to its own file alongside the new HPA / ScaledObject files:
 
-```
+```text
 internal/controller/indexers/
   indexers.go              # SetupIndexes, shared chainKey/scaleTargetIndexKey helpers
   variantautoscaling.go    # existing — VAScaleTargetKey + VAScaleTargetIndexFunc

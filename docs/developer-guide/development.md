@@ -412,7 +412,7 @@ make create-kind-cluster
 ### InferencePool CRD not found during `make deploy-e2e-infra`
 
 **Symptom:**
-```
+```text
 Error: no matches for kind "InferencePool" in version "inference.networking.x-k8s.io/v1alpha2"
 ensure CRDs are installed first
 ```

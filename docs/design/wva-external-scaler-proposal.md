@@ -23,7 +23,7 @@ You configure **intent** (an SLO / utilization tier), not a hand-derived number.
 
 KEDA and WVA are the same shape — both turn signals into a replica count. The redundancy question is only *who computes the number KEDA actuates*:
 
-```
+```text
             same Deployment · same KEDA ScaledObject · KEDA actuates
                                    │
         ┌──────────────────────────┴──────────────────────────┐

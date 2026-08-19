@@ -123,7 +123,7 @@ make benchmark-install
 
 After this, your workspace will look like:
 
-```
+```text
 llm-d-workload-variant-autoscaler/
 ├── llm-d-benchmark/          ← cloned by make benchmark-install
 ├── test/benchmark/scenarios/
@@ -174,12 +174,12 @@ make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefi
 Repeat with `decode_heavy` or `symmetrical` for the other scenarios.
 
 Wait until you see:
-```
+```text
 ✅ Run complete (mode=full, harness=guidellm).
 ```
 
 Results are saved automatically in a timestamped directory at the repo root:
-```
+```text
 <username>-YYYYMMDD-HHMMSS/
 └── results/
     └── guidellm-<id>/
@@ -195,7 +195,7 @@ make benchmark-teardown BENCHMARK_NAMESPACE=<your-namespace>
 ```
 
 Wait until you see:
-```
+```text
 ✅ Teardown complete (normal).
 ```
 

@@ -62,7 +62,7 @@ WVA collects metrics **per pod**. The collection loop runs once per `(namespace,
 maps each pod to the **ScaledObject** $S$ it belongs to, and derives the rest of an item's labels
 from $S$. So the reported grain is the ScaledObject:
 
-```
+```text
 target  = ScaledObject S                        # the unit that receives a replica count
 item    = (namespace, model, role, analyzer)    # role and other labels are inferred from S
 ```
@@ -164,7 +164,7 @@ WVA emits the results of **every** analyzer it knows — internal and external a
 signals with a small, common label set. Metric names cannot contain dots, so the analyzer label is a
 **label**, not part of the name:
 
-```
+```text
 wva_analyzer_demand{analyzer, namespace, model, role?}          # per model instance (role only if role-specific)
 wva_analyzer_target{analyzer, namespace, model, scaledobject}   # per ScaledObject
 ```
@@ -191,7 +191,7 @@ Internal (Go) analyzers are unchanged.
 $Q$ — a bare metric name or vector selector, carrying no namespace/model matcher of its own — plus the
 label keys to scope by; WVA injects the scoping and the reduction:
 
-```
+```text
 demand  →  sum         ( max_over_time( Q_demand{ <modelLabel>="{{model}}", <nsLabel>="{{ns}}" }[w] ) )   # one series per (model, ns)
 target  →  avg by(pod) ( avg_over_time( Q_target{ <modelLabel>="{{model}}", <nsLabel>="{{ns}}" }[w] ) )    # one value per pod
 ```

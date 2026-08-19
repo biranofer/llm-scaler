@@ -318,7 +318,7 @@ It creates a ScaledObject for the **new** workload and leaves every existing one
 alone — a workload that already has one is reported as such and skipped, so this is
 safe to run as often as you like:
 
-```
+```text
 [SUCCESS]   llm-d-sim/model-new (Deployment) -> ScaledObject model-new-wva (modelID: org/new-model)
 [SUCCESS] Default ScaledObjects: 1 created, 1 not applied
 ```

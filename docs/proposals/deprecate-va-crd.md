@@ -22,7 +22,7 @@ The core value of WVA — computing `wva_desired_replicas` from vLLM/EPP metrics
 
 ### Current Flow (unchanged)
 
-```
+```text
 vLLM/EPP metrics → Prometheus → WVA → wva_desired_replicas → KEDA/HPA → scale
 ```
 
@@ -32,7 +32,7 @@ This flow remains the same. The only change is how WVA discovers which deploymen
 
 Decoupling discovery from the CRD makes the ScaledObject/HPA the stable integration point, not the VA CRD. Any metric producer can drive scaling by writing a compatible Prometheus metric:
 
-```
+```text
 Level 1 — bring your own metric producer:
 
   Simple:       Prometheus / Prometheus recording rules (PromQL) ──────────────────────→ KEDA trigger → scale

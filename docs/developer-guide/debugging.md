@@ -144,7 +144,7 @@ kubectl exec -n debugging deploy/ssh-gateway -- \
 
 - From another pod in the cluster (replace service/namespace if needed):
 
-```
+```text
 https://ssh-gateway.debugging.svc.cluster.local:8443/metrics
 ```
 

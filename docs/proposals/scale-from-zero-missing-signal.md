@@ -87,7 +87,7 @@ own four-file checklist. `applyScaleToZeroEnforcement` alone would justify three
 Instead, one series with a **reason label** — the conditions pattern expressed in
 Prometheus, and the shape `wva_decisions_limited_total{limited_by}` already uses:
 
-```
+```text
 wva_model_scaling_blocked{namespace, model, reason} 1
 ```
 
@@ -151,7 +151,7 @@ Neither is an error and neither should be rejected. Alongside the metric, one
 `Normal`-severity Event and one `logger.Info` on transition, because nothing is
 broken:
 
-```
+```text
 Model %q will not scale to zero: %s.
   reason "scale-to-zero is disabled for this model, though every variant permits it"
   reason "variant %q has minReplicas=%d, so the model cannot reach zero even
@@ -231,7 +231,7 @@ because nobody had.
 
 Both halves look like they already exist as metrics:
 
-```
+```text
 wva_current_replicas == 0
 rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m]) > 0
 ```
@@ -256,7 +256,7 @@ sprawl argument, and its labels are deliberately minimal: adding `variant_name` 
 `accelerator_type` would put the series back on the per-variant side of the join
 it exists to bridge.
 
-```
+```text
 (sum by (namespace, model_name) (wva_model_replicas) == 0)
   and on (model_name)
 (sum by (model_name) (rate(llm_d_epp_request_error_total{error_code="ServiceUnavailable"}[5m])) > 0)

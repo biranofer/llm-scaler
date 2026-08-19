@@ -112,7 +112,7 @@ the cluster — so there is no per-tenant default to set: pinning it would mean
 everyone sees whichever tenant installed last. Each namespace gets its own entry
 point into the one dashboard instead, which the install prints:
 
-```
+```text
 <your-grafana>/d/wva-operational/wva-operational-dashboard?var-namespace=<your-namespace>
 ```
 

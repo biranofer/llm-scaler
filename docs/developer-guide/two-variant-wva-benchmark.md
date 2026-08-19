@@ -23,7 +23,7 @@ model. Each `Deployment` has its own KEDA `ScaledObject`, and both carry the
 same `modelID` in their trigger metadata, so the WVA saturation engine groups
 them and applies cost-weighted scaling.
 
-```
+```text
             +------------- Gateway --------------+
             |  HTTPRoute -> InferencePool (1 EPP)|
             +-------------------------------------+
@@ -64,7 +64,7 @@ Two consequences worth knowing before debugging a run:
 
 The `InferencePool` EPP selects pods by two camelCase labels:
 
-```
+```yaml
 llm-d.ai/inferenceServing: "true"
 llm-d.ai/model:            <model-hash>
 ```
@@ -332,7 +332,7 @@ full-pipeline PNG plot into `<results-dir>/metrics/graphs/`.
 
 **Markdown table** (printed to stdout, copy-paste into `docs/benchmark.md`):
 
-```
+```text
 | Metric                                | Run 1 |
 |---------------------------------------|-------|
 | P99 TTFT (ms)                         | 601   |
@@ -415,7 +415,7 @@ Two structured lines carry it. `analyzer-result`, once per model per cycle
 (`steadystate/engine_v2.go`), with short keys — `supply`, `demand`, `util`,
 `rc` (required capacity), `sc` (spare capacity) — and a `variants` list:
 
-```
+```text
 steadystate/engine_v2.go:995  analyzer-result
   {"modelID":"unsloth/Meta-Llama-3.1-8B-Instruct","analyzer":"saturation",
    "supply":2503400,"demand":2229945,"util":0.89,"rc":120065,"sc":0,...}

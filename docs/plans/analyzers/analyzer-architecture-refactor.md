@@ -82,7 +82,7 @@ the analyzer's output. This substantially de-risks it.
 
 ## 3. Target architecture
 
-```
+```text
 ┌─────────────────────┐     VariantMetadata[]      ┌──────────────────────────────┐
 │  Discovery step      │ ─────────────────────────▶ │  Optimizer                    │
 │  (annotationSourced  │   (identity: Cost, Accel,  │  reads identity from discovery │
@@ -189,7 +189,7 @@ already reads `P` per analyzer via `prcForVariant`; it just reads `P` from `Vari
 
 Emit, for every analyzer WVA runs (internal and external), driven from the `(D, P)` outputs:
 
-```
+```text
 wva_analyzer_demand{analyzer, namespace, model, role?}          # per model instance
 wva_analyzer_target{analyzer, namespace, model, scaledobject}   # per ScaledObject (variant)
 ```

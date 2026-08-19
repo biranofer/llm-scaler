@@ -257,7 +257,7 @@ replicas*.
 **Two timers run in sequence, and they add up.** This is the single most common
 reason a fleet looks like it "will not park":
 
-```
+```text
 last request ──┬─ retentionPeriod ─┬─ ≤1 optimize interval ─┬─ cooldownPeriod ─┬─ 0 replicas
                │ (WVA decides)     │ (trigger goes inactive)│ (KEDA acts)      │
 ```

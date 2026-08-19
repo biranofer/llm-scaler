@@ -75,7 +75,7 @@ the mechanism they already use, and it makes the pool visible to the scheduler.
 
 **Severity: medium.** Two pods, sampled at the same moment:
 
-```
+```text
 pod labelled dual-pods.llm-d.ai/sleeping=false
   GET :8001/v2/vllm/instances → {"total_instances":0,"running_instances":0,"instances":[]}
 
@@ -135,7 +135,7 @@ ports discoverable.
 
 **Severity: medium.** A **bound** launcher carries a rich set of annotations:
 
-```
+```text
 dual-pods.llm-d.ai/requester    = <uid> fma-requester-…-zhlrl
 dual-pods.llm-d.ai/server-port  = 8000
 dual-pods.llm-d.ai/instance-id  = IOOesGI4Otm…
@@ -236,7 +236,7 @@ signal.
 **The probe exists and points at the wrong service.** A launcher already has a
 `readinessProbe` — it just does not measure what pool membership needs:
 
-```
+```text
 launcher readinessProbe   ->  :8001/v2/vllm/instances    the launcher's CRUD API
 EPP dials                 ->  :8000                      the pool's targetPort
 ```
@@ -248,7 +248,7 @@ says nothing about whether anything can serve on 8000.
 
 Contrast the decode pod, which never produced one of these errors:
 
-```
+```text
 decode readinessProbe     ->  /v1/models                 the engine itself
 decode startupProbe       ->  /v1/models
 ```
@@ -265,7 +265,7 @@ Tested on this cluster with a separate `LauncherConfig` — a copy of the live o
 with `readinessProbe: /v1/models` on port 8000, and a population policy pinning a
 single launcher to one node:
 
-```
+```text
 specified in podTemplate:  /v1/models          on 8000
 probe on the created pod:  /v2/vllm/instances  on 8001
 ```
