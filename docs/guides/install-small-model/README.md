@@ -112,6 +112,11 @@ kubectl run probe -n ${NAMESPACE} --rm -i --restart=Never --quiet \
 The `id` it returns is the name every request must use. It is the *served* name,
 which is not always the path the weights were loaded from.
 
+## Benchmarking
+
+Once everything above is deployed — and not before, since it drives real load
+at the model — this is the one command that shows whether WVA is scaling it:
+
 <!-- guide:verify.smoke start -->
 ```bash
 # Drive load through it and snapshot the dashboard.
@@ -119,8 +124,14 @@ make benchmark-smoke NAMESPACE=${NAMESPACE}
 ```
 <!-- guide:verify.smoke end -->
 
-Drives decode-heavy load for five minutes and snapshots the dashboard. See
-[Benchmark WVA](../benchmarking/) for what to look at.
+Decode-heavy at 10 req/s for five minutes, then a snapshot of the dashboard over
+exactly that window. It checks the whole chain first — KEDA, a WVA controller
+managing this namespace, model servers, an EPP, a ScaledObject — and names every
+gap at once rather than failing five minutes in.
+
+For numbers you intend to compare between runs, use
+[Benchmark WVA](../benchmarking/) instead: this one answers "does it scale", not
+"how fast is it".
 
 ## Cleanup
 
