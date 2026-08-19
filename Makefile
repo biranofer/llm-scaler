@@ -487,10 +487,9 @@ so-resume: ## Undo so-park or so-freeze: WVA sizes the workload again from live 
 ## Idempotent: safe to re-run, and it prints the dashboard URL and the
 ## password-retrieval command every time, not only on first creation.
 .PHONY: dashboard
-dashboard: ## Stand up (or re-report) a private Grafana + WVA dashboard in NAMESPACE. Needs grafana-operator.
+dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA dashboard in NAMESPACE. Needs grafana-operator.
 	@$(WVA_SO_ENV) IMG=$(IMG) WVA_PROJECT=$(CURDIR) \
-		bash -c 'source deploy/lib/common.sh; source deploy/lib/infra_monitoring.sh; source deploy/lib/dashboard.sh; wva_bootstrap_env; wva_dashboard'
-
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; source deploy/lib/infra_monitoring.sh; source deploy/lib/dashboard.sh; wva_bootstrap_env; wva_dashboard'
 
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

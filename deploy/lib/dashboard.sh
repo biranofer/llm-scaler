@@ -20,7 +20,9 @@
 #     GrafanaDashboard CR's configMapRef names.
 #
 # Requires vars: WVA_PROJECT, IMG (both already required by install_operational_dashboard).
-# Requires funcs: log_info/log_success/log_warning/log_error, install_operational_dashboard.
+# Requires funcs: log_info/log_success/log_warning/log_error,
+#   install_operational_dashboard, wva_is_openshift, wva_serving_workload_count
+#   (infra_monitoring.sh); so_serving_markers_json (scaledobject.sh).
 
 # WVA_GRAFANA_NAME is the Grafana CR's name, fixed rather than derived from the
 # namespace: it is namespace-scoped already (one instance per namespace this runs
@@ -292,10 +294,110 @@ wva_dashboard_report() {
     echo ""
 }
 
+# wva_dashboard_require_openshift stops on any cluster that is not OpenShift.
+#
+# Everything below assumes one: the Grafana CR asks for a Route, and the
+# datasource is thanos-querier in openshift-monitoring on the tenancy port. The
+# CRD check above does not cover this -- grafana-operator installs happily on
+# plain Kubernetes -- so without this the whole thing SUCCEEDS there and produces
+# a Grafana whose every panel is empty: no Route (the report falls back to
+# port-forward, so that part still reads fine), and a datasource pointing at a
+# Service that does not exist. Nothing errors, and nothing says why.
+#
+# Refused rather than adapted. A vanilla-Kubernetes equivalent needs a different
+# datasource (there is no tenancy port to enforce the namespace, so the isolation
+# this design rests on would have to be re-established some other way) and an
+# Ingress instead of a Route. That is a second design, not a flag.
+wva_dashboard_require_openshift() {
+    wva_is_openshift && return 0
+    log_error "'make dashboard' needs OpenShift, and this cluster is not one.
+
+It stands up a Grafana that reads Thanos through the openshift-monitoring tenancy
+port (9092) and publishes itself through a Route -- neither exists on vanilla
+Kubernetes, and grafana-operator installs there quite happily, so this would have
+built a Grafana with no route and a datasource that can never resolve.
+
+On plain Kubernetes, import deploy/grafana/operational-dashboard.json into your own
+Grafana and point it at the Prometheus WVA already uses:
+    make check-prereqs        # prints the Prometheus it detected"
+}
+
+# wva_dashboard_resolve_ns echoes the namespace this dashboard is FOR, and refuses
+# a namespace with no model servers in it.
+#
+# The namespace matters twice, and both uses are silent when it is wrong. The
+# datasource pins customQueryParameters=namespace=<ns>, which the tenancy port
+# ENFORCES as a label matcher; and install_operational_dashboard pins the
+# dashboard's `namespace` variable to WVA_NS when the scope reads `namespace`,
+# with includeAll off.
+#
+# `make dashboard` cannot take the scope at its word: SCOPE defaults to `namespace`
+# in the Makefile whatever the cluster actually runs, so after a CLUSTER-WIDE
+# install this resolves to the controller's own namespace and pins the view to it.
+# The dashboard compares that against exported_namespace -- the WORKLOAD's
+# namespace, equal to the controller's only for a namespace-scoped install (see
+# docs/deployment/operations.md) -- so it can never match. The result is a
+# correctly built, permanently empty dashboard.
+#
+# So ask the question that actually decides it: are the model servers here? That
+# is the same count the preflight reports, on the same markers discovery uses.
+wva_dashboard_resolve_ns() {
+    local ns="${WVA_WATCH_NS:-$WVA_NS}" watched elsewhere
+
+    [ "$(wva_serving_workload_count "$ns")" != 0 ] && { printf '%s' "$ns"; return 0; }
+
+    # The deployed controller knows what it watches. A real name here means a
+    # namespace-scoped install pointed elsewhere; the literal $(POD_NAMESPACE) is
+    # the base default and means "its own", so it answers nothing.
+    watched="$(kubectl get deploy -n "$WVA_NS" -l app.kubernetes.io/name=workload-variant-autoscaler         -o jsonpath='{.items[0].spec.template.spec.containers[0].env[?(@.name=="WVA_WATCH_NAMESPACE")].value}' 2>/dev/null || true)"
+    case "$watched" in
+        ''|'$(POD_NAMESPACE)'|"$ns") watched="" ;;
+    esac
+    if [ -n "$watched" ] && [ "$(wva_serving_workload_count "$watched")" != 0 ]; then
+        log_info "No model servers in $ns; the controller there watches $watched, which has them. Building the dashboard for $watched."
+        printf '%s' "$watched"
+        return 0
+    fi
+
+    elsewhere="$(wva_dashboard_serving_namespaces | paste -sd' ' -)"
+    log_error "No llm-d model servers in $ns, so a dashboard built for it would be empty.
+
+The namespace is not decoration here: the datasource enforces it (the tenancy port
+rejects a query without one) and the dashboard's namespace variable is pinned to it.
+Point at the namespace running the models:
+
+    make dashboard NAMESPACE=<namespace>
+${elsewhere:+
+Namespaces with llm-d model servers: ${elsewhere}}"
+}
+
+# wva_dashboard_serving_namespaces echoes every namespace holding model servers,
+# for the message above. Best-effort by design: a namespace-scoped caller cannot
+# list Deployments cluster-wide, and being unable to name alternatives is not a
+# reason to withhold the rest of the error.
+wva_dashboard_serving_namespaces() {
+    kubectl get deployments -A -o json 2>/dev/null         | jq -r --argjson markers "$(so_serving_markers_json)" '
+            [ .items[]?
+              | select((.spec.template.metadata.labels // {}) | to_entries
+                       | any(.key + "=" + (.value|tostring) as $kv
+                             | ($markers | index($kv)) != null))
+              | .metadata.namespace ] | unique | .[]' 2>/dev/null || true
+}
+
 # wva_dashboard is the whole target: check, apply, report -- called by `make dashboard`.
 wva_dashboard() {
-    local ns="${WVA_WATCH_NS:-$WVA_NS}"
+    # Only install.sh sets this, and `make dashboard` does not go through it.
+    # install_operational_dashboard reads it (via wva_choose_dashboard_ns and
+    # wva_grafana_dashboard_search_ns) and DASHBOARD_NS covers the first, so the
+    # gap is invisible until someone adds `set -u` or drops DASHBOARD_NS. On
+    # OpenShift -- the only platform this target now accepts -- the answer is not
+    # in doubt.
+    : "${MONITORING_NAMESPACE:=openshift-user-workload-monitoring}"
+
+    local ns
+    wva_dashboard_require_openshift
     wva_dashboard_require_crds
+    ns="$(wva_dashboard_resolve_ns)"
     wva_dashboard_apply "$ns"
     wva_dashboard_report "$ns"
 }

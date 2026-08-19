@@ -196,13 +196,22 @@ make dashboard
 ```
 <!-- guide:visualize.dashboard end -->
 
+**OpenShift only.** It reads Thanos through the platform's tenancy port and
+publishes itself through a Route, neither of which exists on vanilla Kubernetes;
+it checks, and says so rather than building a Grafana that cannot work. On plain
+Kubernetes, import `deploy/grafana/operational-dashboard.json` into your own
+Grafana and point it at the Prometheus `make check-prereqs` reports.
+
 Stands up a Grafana private to this namespace — not the shared cluster
 instance, whose dashboards are read-only — with WVA's operational dashboard
 already imported, reading Thanos through a namespaced role rather than any
 cluster-scoped grant. Requires grafana-operator's CRDs; that is a cluster-admin
 install, so this only creates namespaced objects and says plainly if they are
-missing. Prints the dashboard URL and the admin password on every run, so it is
-safe to re-run for either.
+missing. It also refuses a namespace with no model servers in it: the namespace
+is what the datasource enforces and what the dashboard pins its variable to, so
+the wrong one yields a dashboard that is empty rather than broken. Prints the
+dashboard URL and the admin password on every run, so it is safe to re-run for
+either.
 
 ## Cleanup
 
