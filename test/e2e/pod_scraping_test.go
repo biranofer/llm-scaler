@@ -128,15 +128,16 @@ var _ = Describe("PodScrapingSource", Label("full"), Ordered, func() {
 	// Use shared PodScrapingSource tests with environment-agnostic configuration
 	utils.DescribePodScrapingSourceTests(func() utils.PodScrapingTestConfig {
 		return utils.PodScrapingTestConfig{
-			Environment:      cfg.Environment,
-			ServiceName:      eppServiceName,
-			ServiceNamespace: cfg.LLMDNamespace,
-			MetricsPort:      9090,
-			MetricsPath:      "/metrics",
-			MetricsScheme:    "http",
-			K8sClient:        k8sClient,
-			CRClient:         crClient,
-			Ctx:              ctx,
+			Environment:         cfg.Environment,
+			ServiceName:         eppServiceName,
+			ServiceNamespace:    cfg.LLMDNamespace,
+			ControllerNamespace: cfg.WVANamespace,
+			MetricsPort:         9090,
+			MetricsPath:         "/metrics",
+			MetricsScheme:       "http",
+			K8sClient:           k8sClient,
+			CRClient:            crClient,
+			Ctx:                 ctx,
 		}
 	})
 })

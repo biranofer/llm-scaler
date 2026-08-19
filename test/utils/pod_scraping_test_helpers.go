@@ -82,6 +82,15 @@ const (
 var inClusterPodScrapingTestScript string
 
 // PodScrapingTestConfig holds environment-specific configuration for PodScrapingSource tests
+// controllerNS is where WVA runs. Defaulted rather than required so every
+// existing caller keeps working.
+func (c PodScrapingTestConfig) controllerNS() string {
+	if c.ControllerNamespace != "" {
+		return c.ControllerNamespace
+	}
+	return "workload-variant-autoscaler-system"
+}
+
 type PodScrapingTestConfig struct {
 	// Environment identification
 	Environment string // "kind" or "openshift"
@@ -89,6 +98,21 @@ type PodScrapingTestConfig struct {
 	// Service configuration (required)
 	ServiceName      string
 	ServiceNamespace string
+
+	// ControllerNamespace is where WVA runs -- where its epp-metrics-token Secret
+	// is, and where the in-cluster scraping Job has to run to mount it.
+	//
+	// It was hardcoded to workload-variant-autoscaler-system in two places. That
+	// held only while the suite installed the controller there; once the
+	// controller moved to the namespace it manages, the Job kept being created in
+	// the old one and sat in ContainerCreating forever:
+	//
+	//   FailedMount: secret "wva-epp-metrics-token" not found
+	//
+	// which the spec reported as a 5-minute timeout with no mention of a secret.
+	// Empty falls back to the old constant so a caller that does not set it
+	// behaves as before.
+	ControllerNamespace string
 
 	// Metrics endpoint configuration
 	MetricsPort   int32
@@ -314,7 +338,7 @@ func TestPodScrapingFromController(ctx context.Context, config PodScrapingTestCo
 	}
 	g.Expect(testPod).NotTo(gom.BeNil(), "Should have at least one ready pod with IP")
 
-	controllerPods, err := config.K8sClient.CoreV1().Pods("workload-variant-autoscaler-system").List(ctx, metav1.ListOptions{
+	controllerPods, err := config.K8sClient.CoreV1().Pods(config.controllerNS()).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=workload-variant-autoscaler",
 	})
 	if err == nil && len(controllerPods.Items) > 0 {
@@ -355,7 +379,7 @@ func TestInClusterScraping(ctx context.Context, config PodScrapingTestConfig, g 
 
 	// Run the Job in the controller namespace where the epp-metrics-token secret is
 	// deployed, so it can be mounted the same way the controller mounts it.
-	const jobNS = "workload-variant-autoscaler-system"
+	jobNS := config.controllerNS()
 	jobName := fmt.Sprintf("pod-scraping-test-%d", time.Now().Unix())
 	_, err = CreateInClusterScrapingTestJob(
 		ctx,
