@@ -38,7 +38,22 @@ WVA_LIMITER         ?= none
 # namespace, or "all" for every namespace holding one (cluster-scoped installs).
 WVA_DEFAULT_SO      ?= false
 WVA_DEFAULT_SO_NS   ?=
-CONTROLLER_NAMESPACE ?= workload-variant-autoscaler-system
+# Where the e2e controller runs -- and it is the namespace the models are in.
+#
+# A NAMESPACE-SCOPED controller manages the namespace it lives in, so the suite's
+# controller and its model servers belong together. They were split
+# (workload-variant-autoscaler-system vs llm-d-sim), which only works cluster-
+# scoped: kind used to infer that scope, namespace is now the default everywhere,
+# and the split install could then neither watch nor read the workloads --
+#   scaledobjects.keda.sh "stz-rt-so" is forbidden
+# so an idle model was never evaluated and never parked.
+#
+# Aligned rather than given cluster scope, or split further with WVA_WATCH_NS:
+# namespace scope is the supported shape, cluster scope now warns that it is WIP,
+# and the suite should exercise what people actually run. One variable feeds both
+# the install (WVA_NS) and what the tests read (WVA_NAMESPACE), so they cannot
+# drift apart.
+CONTROLLER_NAMESPACE ?= $(E2E_EMULATED_LLMD_NAMESPACE)
 MONITORING_NAMESPACE ?= openshift-user-workload-monitoring
 LLMD_NAMESPACE       ?= llm-d-optimized-baseline
 GATEWAY_NAME         ?= # discovered automatically in e2es
@@ -573,11 +588,15 @@ dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA da
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
-	@# WVA_SCOPE=cluster and WVA_NS PINNED. The suite puts model servers in
-	@# LLMD_NAMESPACE and the controller in CONTROLLER_NAMESPACE -- two different
-	@# namespaces -- which only works cluster-scoped. kind used to INFER cluster
-	@# scope; namespace is now the default everywhere, and a namespace-scoped
-	@# install both watches only its own namespace and gets namespace-scoped RBAC:
+	@# WVA_WATCH_NS and WVA_NS both PINNED. The suite puts model servers in
+	@# LLMD_NAMESPACE and the controller in CONTROLLER_NAMESPACE, so the namespace
+	@# WVA MANAGES has to be named -- that is what WVA_WATCH_NS is for, and
+	@# wva_apply_watch_namespace_rbac renders the manager Role into it.
+	@#
+	@# Aligning them beats reaching for cluster scope: namespace scope is the
+	@# supported shape, cluster scope now warns that it is WIP, and the suite
+	@# should exercise what users run. Unset, the install watched only its own
+	@# namespace and took namespace-scoped RBAC with it:
 	@#   scaledobjects.keda.sh "stz-rt-so" is forbidden
 	@#   Could not read the ScaledObject for a registered workload
 	@# so the workload was never enriched and never parked.
@@ -613,7 +632,6 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		WVA_NS=$(CONTROLLER_NAMESPACE) \
-		WVA_SCOPE=cluster \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
@@ -625,7 +643,6 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		echo "IMG not set - using default image from registry (latest)"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
 		WVA_NS=$(CONTROLLER_NAMESPACE) \
-		WVA_SCOPE=cluster \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
