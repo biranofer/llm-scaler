@@ -316,3 +316,55 @@ print("  fix 3 (fma warmAffinity): applied")
 PYEOF
 
 echo "patch_harness: done ($REPO_DIR)"
+
+# ---------------------------------------------------------------------------
+# Fix 4 -- defaults.yaml: the GPU memory fraction is hardcoded 0.95 in the clone.
+#
+# This is the value that actually reaches the model server. The scenario's
+# model.gpuMemoryUtilization is read by the capacity validator, but the DEPLOYED
+# fraction comes from a YAML anchor in the clone's own template defaults:
+#
+#   config/templates/values/defaults.yaml:45   gpu_memory_util: &gpu_memory_util 0.95
+#   config/templates/values/defaults.yaml:274  gpuMemoryUtilization: *gpu_memory_util
+#
+# Editing the scenario therefore changed nothing, three times over: the log said
+# 0.90 had been installed and the Deployment came up with
+# VLLM_ACCELERATOR_MEM_UTIL=0.95 anyway. Confirmed by vLLM's own report --
+# "GPU KV cache size: 688,448 tokens", the 0.95 figure, where 0.90 predicts 651k.
+#
+# 0.95 of an 80GB card leaves 4 GiB, which is less than a co-tenant holding the
+# device without requesting it -- an FMA launcher requests ZERO GPUs while
+# running the engine, so the scheduler places a model on a card it believes is
+# empty. Measured on pokprod001: 77.3 of 79.18 GiB free at startup, then
+# `torch.OutOfMemoryError: tried to allocate 594MiB, 500MiB free`. It succeeds
+# whenever the card happens to be emptier, which is why it reads as flakiness.
+#
+# Patched HERE rather than in the scenario because the clone is gitignored and
+# benchmark-install re-checks it out to the pinned tag: anything written before
+# that is discarded, and this target is what re-applies our changes afterwards.
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
+DEFAULTS="$REPO_DIR/config/templates/values/defaults.yaml"
+if [ ! -f "$DEFAULTS" ]; then
+    note "fix 4 (gpu memory fraction): no defaults.yaml, skipped"
+else
+    "$PY" - "$DEFAULTS" "$GPU_MEM_UTIL" <<'PYEOF' || fail "fix 4 (gpu memory fraction) failed"
+import io, re, sys
+
+path, want = sys.argv[1], sys.argv[2]
+src = io.open(path, encoding="utf-8").read()
+
+# Anchored on the anchor itself, not on the number: matching "0.95" would also
+# rewrite unrelated fractions, and the point is to follow THIS definition
+# wherever upstream moves it.
+pat = re.compile(r"^(\s*gpu_memory_util:\s*&gpu_memory_util\s*)([0-9.]+)\s*$", re.M)
+m = pat.search(src)
+if not m:
+    sys.exit("anchor missing (upstream shape changed): gpu_memory_util: &gpu_memory_util")
+if m.group(2) == want:
+    print("  fix 4 (gpu memory fraction): already %s" % want)
+    sys.exit(0)
+src = pat.sub(lambda mm: mm.group(1) + want, src, count=1)
+io.open(path, "w", encoding="utf-8", newline="\n").write(src)
+print("  fix 4 (gpu memory fraction): %s -> %s" % (m.group(2), want))
+PYEOF
+fi

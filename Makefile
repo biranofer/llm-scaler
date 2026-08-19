@@ -832,7 +832,7 @@ benchmark-patch: ## Reapply our fixes to the llm-d-benchmark clone (idempotent; 
 	@# from the checked-out tree, by design ("so a run can use a new/updated
 	@# harness with an older benchmark image").
 	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
-		bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
+		GPU_MEM_UTIL=$(GPU_MEM_UTIL) bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
 	else \
 		echo "benchmark-patch: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
 	fi
