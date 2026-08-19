@@ -1,4 +1,12 @@
-# Proposal: launcher-owned GPUs, and no requesters
+# Exploration: launcher-owned GPUs, and no requesters
+
+> **The design that came out of this is
+> [`fma-warm-pool-design.md`](fma-warm-pool-design.md). Read that first.**
+>
+> This document is kept for its reasoning: what was measured, and why each
+> alternative was rejected on evidence. Its own recommendations were revised
+> repeatedly as measurement arrived, and where they conflict with the design
+> document, the design document wins.
 
 **Status:** design sketch, not implemented. Recorded 2026-08-18 so it is not
 rediscovered. Origin: after measuring that every placement-based approach fails

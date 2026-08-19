@@ -399,6 +399,9 @@ filed. Recorded so it is not rediscovered a third time.
 
 ## See also
 
+- [`fma-warm-pool-design.md`](fma-warm-pool-design.md) — **the current design**:
+  shared pools as ordinary Deployments, sleep level as a pool property, sequencing
+  with measured time costs, and what is reused from FMA
 - [`fma-launcher-owned-warm-pool.md`](fma-launcher-owned-warm-pool.md) — the
   other direction entirely: give launchers their GPUs and drop requesters, so a
   scale-up wakes a chosen instance instead of rolling the scheduler's dice

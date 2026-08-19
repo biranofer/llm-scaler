@@ -21,6 +21,9 @@
 > - **Fix 2 (deliberate provisioning) is bounded by arithmetic, not by FMA.**
 >   Reliable wakes require covering *every free GPU on every node a requester can
 >   reach*, and the free set belongs to other tenants.
+> - The design that replaces this direction is
+>   [`fma-warm-pool-design.md`](fma-warm-pool-design.md); the fork is **not** on
+>   its critical path.
 > - Consequently the strategic direction has moved to
 >   [`fma-launcher-owned-warm-pool.md`](fma-launcher-owned-warm-pool.md), which
 >   removes the per-scale scheduling event rather than trying to win it. The
