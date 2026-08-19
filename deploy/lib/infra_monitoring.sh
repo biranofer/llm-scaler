@@ -106,56 +106,111 @@ deploy_fma_launcher_podmonitor() {
 # below for why creating the PodMonitor automatically was tried and reverted.
 
 # wva_modelserver_scrape_conflict echoes any monitor in $1, other than WVA's own,
-# whose selector keys on llm-d's labels — i.e. something already scrapes these
-# pods.
+# that already scrapes the model servers.
 #
 # Same reasoning as fma_launcher_scrape_conflict: two scrape configs on one pod
 # give it two targets, and WVA's additive queries would double-count throughput
 # while per-replica capacity still looked right. Better to leave an existing,
-# working scrape alone.
+# working scrape alone -- which makes a MISS here actively harmful rather than
+# merely quiet: the report tells the reader to apply config/modelserver-metrics,
+# and doing that on top of a scrape that already exists IS the double-count.
+#
+# Markers come from so_serving_markers, never a private list. Matching the
+# serving ROLE alone missed the shape the llm-d modelservice path actually
+# renders -- a PodMonitor selecting llm-d.ai/inferenceServing=true plus
+# llm-d.ai/model, seen on pokprod as vllm-<model>-<hash> -- and llm-d attaches
+# llm-d.ai/-prefixed labels to non-serving components too (gateway, EPP,
+# requester), so the marker list is the only thing that separates the two. One
+# definition for discovery, the preflight count and this check, or they disagree.
 wva_modelserver_scrape_conflict() {
-    local ns="$1" kind
+    local ns="$1" kind markers services
+    markers="$(so_serving_markers_json)"
+
+    # A ServiceMonitor selects SERVICES, not pods, so a pod label in its selector
+    # proves nothing and a pod-label test against one is answering the wrong
+    # question. Resolve the indirection instead: find the Services this monitor
+    # selects, then ask whether THOSE target a model server. Fetched once.
+    services="$(kubectl get services -n "$ns" -o json 2>/dev/null \
+                | jq -c '[.items[]? | {labels: (.metadata.labels // {}),
+                                       selector: (.spec.selector // {})}]' 2>/dev/null || true)"
+    [ -n "$services" ] || services='[]'
+
     for kind in podmonitors servicemonitors; do
-        kubectl get "$kind" -n "$ns" -o json 2>/dev/null | jq -r --arg kind "$kind" '
+        # `|| true`: this whole function runs inside a command substitution whose
+        # result is assigned, and under `set -o pipefail` a Forbidden or
+        # CRD-absent kubectl makes the loop's status the function's status, which
+        # then aborts the caller's assignment under `set -e`. Measured: with
+        # ServiceMonitors Forbidden -- an ordinary namespace-scoped install --
+        # check-prereqs died silently just before "Preflight passed".
+        kubectl get "$kind" -n "$ns" -o json 2>/dev/null | jq -r \
+            --arg kind "$kind" --argjson markers "$markers" --argjson services "$services" '
+            # A label map is a model server when any of its k=v pairs is a marker.
+            def serving_map($m): ($m | to_entries
+                | any(.key + "=" + (.value|tostring) as $kv
+                      | ($markers | index($kv)) != null));
+            # matchExpressions form: key In [values], any pair of which is a marker.
+            def serving_exprs($e): (($e // [])
+                | any(. as $x
+                      | (($x.values // [])
+                         | any($x.key + "=" + (.|tostring) as $kv
+                               | ($markers | index($kv)) != null))));
             .items[]?
             | select((.metadata.labels["app.kubernetes.io/component"] // "")
                      != "modelserver-metrics")
             | . as $m
-            # The serving ROLE specifically, not any llm-d.ai/-prefixed key: llm-d
-            # attaches those to plenty of non-serving components too (gateway, EPP),
-            # so a monitor for one of those was read as proof the decode/prefill
-            # pods are already scraped when nothing actually scrapes them.
+            | (.spec.selector.matchLabels // {}) as $sel
             | select(
-                (.spec.selector.matchLabels["llm-d.ai/role"] // "" | . == "decode" or . == "prefill")
-                or
-                (.spec.selector.matchExpressions // []
-                 | any(.key == "llm-d.ai/role"
-                       and ((.values // []) | any(. == "decode" or . == "prefill")))))
-            | "\($kind|rtrimstr("s"))/\($m.metadata.name)"' 2>/dev/null
+                if $kind == "podmonitors" then
+                    serving_map($sel) or serving_exprs(.spec.selector.matchExpressions)
+                else
+                    # Service labels satisfy the monitor selector, and that
+                    # Service in turn selects serving pods. An empty selector is
+                    # not treated as "matches everything" here: it would call
+                    # every namespace with a Service already-scraped and suppress
+                    # the warning, which is the failure this check exists to catch.
+                    ($sel | length) > 0
+                    and ($services | any(
+                            (.labels) as $svc
+                            | ($sel | to_entries | all($svc[.key] == .value))
+                              and serving_map(.selector)))
+                end)
+            | "\($kind|rtrimstr("s"))/\($m.metadata.name)"' 2>/dev/null || true
     done
+    return 0
 }
 
-# wva_serving_workload_count echoes how many workloads in $1 carry a serving role,
-# read from the pod template — the same basis discovery uses, so it counts a
+# wva_serving_workload_count echoes how many workloads in $1 are model servers,
+# read from the pod template -- the same basis discovery uses, so it counts a
 # workload scaled to zero.
 #
-# Both Deployment and LeaderWorkerSet, matching how scaledobject.sh itself scans
-# (SO_POD_PATH_DEPLOYMENT / SO_POD_PATH_LWS, `for kind in Deployment
-# LeaderWorkerSet`): multi-node / disaggregated serving is a real, supported
-# shape, and a Deployment-only count would silently no-op this whole check for a
-# namespace whose decode/prefill pods are owned by a LWS instead — reproducing,
-# for exactly that shape, the failure this check exists to catch.
+# Markers and pod paths both come from scaledobject.sh instead of being restated.
+# Undercounting does not produce a wrong number here, it produces NO CHECK: the
+# caller returns early on zero, so a namespace whose servers carry
+# llm-d.ai/inferenceServing but no role label would skip the warning entirely --
+# reproducing, for that shape, the silent no-metrics failure this exists to catch.
+#
+# Both Deployment and LeaderWorkerSet, matching how scaledobject.sh scans:
+# multi-node / disaggregated serving is a supported shape, and a Deployment-only
+# count would silently no-op for a namespace whose decode/prefill pods are owned
+# by a LWS.
 wva_serving_workload_count() {
-    local ns="$1" total=0 kind resource pod n
+    local ns="$1" total=0 kind resource pod n markers
+    markers="$(so_serving_markers_json)"
     for kind in Deployment LeaderWorkerSet; do
-        resource='deployments'; pod='["spec","template"]'
+        resource='deployments'; pod="$SO_POD_PATH_DEPLOYMENT"
         if [ "$kind" = "LeaderWorkerSet" ]; then
-            resource='leaderworkersets'; pod='["spec","leaderWorkerTemplate","leaderTemplate"]'
+            resource='leaderworkersets'; pod="$SO_POD_PATH_LWS"
         fi
-        n=$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null | jq --argjson p "$pod" '
-            [ .items[]?
-              | (getpath($p + ["metadata","labels"]) // {})["llm-d.ai/role"] // ""
-              | select(. == "decode" or . == "prefill") ] | length' 2>/dev/null)
+        # `|| true` for the same reason as above -- most clusters have no
+        # LeaderWorkerSet CRD, and that kubectl exits non-zero.
+        n=$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+            | jq --argjson p "$pod" --argjson markers "$markers" '
+                [ .items[]?
+                  | (getpath($p + ["metadata","labels"]) // {})
+                  | select(to_entries
+                           | any(.key + "=" + (.value|tostring) as $kv
+                                 | ($markers | index($kv)) != null))
+                ] | length' 2>/dev/null || true)
         total=$((total + ${n:-0}))
     done
     echo "$total"
