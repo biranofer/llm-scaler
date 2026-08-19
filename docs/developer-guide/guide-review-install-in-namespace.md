@@ -1,7 +1,7 @@
 # Guide review: installing WVA into a namespace running llm-d
 
 A step-by-step walkthrough of
-[Install WVA in a namespace](../guides/install-in-namespace/README.md), run against a
+[Install WVA in a namespace](../guides/install-in-namespace/), run against a
 real shared cluster, recording what a reader hits and fixing what could be fixed.
 
 The **PR description** below covers everything fixed *in this series*; the *Commits*
@@ -271,7 +271,7 @@ Without a limiter an unresolved accelerator is permissive (`FitsGPUBudget` asks 
 
 And enabling the limiter is what fixes it: declaring `gpu-inventory` flips
 `ObserveAccelerators` to `FromNodes`, and
-[admin-gpu-bounding](../guides/admin-gpu-bounding/README.md) already requires granting
+[admin-gpu-bounding](../guides/admin-gpu-bounding/) already requires granting
 the per-namespace node access that makes node-based resolution work. So the path that
 creates the requirement also supplies the mechanism.
 
