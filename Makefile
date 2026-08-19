@@ -588,6 +588,14 @@ dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA da
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
+	@# CLUSTER-scoped, deliberately, even though the controller now lives with the
+	@# models. smoke_keda_test.go and limiter_test.go create ISOLATED NAMESPACES at
+	@# runtime, and a namespace-scoped controller cannot serve a ScaledObject in a
+	@# namespace that did not exist when it was installed -- KEDA reported the
+	@# ScaledObject Ready=False in smoke-keda-basic-fjr5d because nothing watched it.
+	@# kind used to INFER cluster scope; #24 made namespace the default everywhere and
+	@# nothing here said otherwise. Aligning WVA_NS with the model namespace stays:
+	@# it is the SCOPE that has to be cluster, not the controller's location.
 	@# Installed through `make deploy-wva` -- the target a USER runs -- not by
 	@# calling deploy/install.sh with a hand-assembled environment.
 	@#
@@ -650,7 +658,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 			ENVIRONMENT=$(ENVIRONMENT) \
 			WVA_NS=$(CONTROLLER_NAMESPACE) \
 			NAMESPACE=$(CONTROLLER_NAMESPACE) \
-			SCOPE=namespace \
+			SCOPE=cluster \
 			IMG=$(IMG); \
 	else \
 		echo "IMG not set - using default image from registry (latest)"; \
@@ -661,7 +669,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 			ENVIRONMENT=$(ENVIRONMENT) \
 			WVA_NS=$(CONTROLLER_NAMESPACE) \
 			NAMESPACE=$(CONTROLLER_NAMESPACE) \
-			SCOPE=namespace; \
+			SCOPE=cluster; \
 	fi
 	@ENVIRONMENT=$(ENVIRONMENT) \
 		LLM_D_ROUTER_VERSION=$(LLM_D_ROUTER_VERSION) \
