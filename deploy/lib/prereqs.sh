@@ -464,6 +464,10 @@ almost certainly wrong: a typo, a stale NAMESPACE export, or the wrong cluster.
         # unrelated permission bypassed it for exactly the namespace-scoped
         # tenant this scenario is written for -- the normal RBAC posture here,
         # not an edge case.
+        #
+        # The label set comes from so_serving_markers, not a single marker: model
+        # servers are found by the shared list, and naming only one here would
+        # report "nothing labelled X" for a workload carrying one of the others.
         if ! kubectl auth can-i list deployments -A >/dev/null 2>&1; then
             log_warning "    This check cannot search the rest of the cluster for them (listing workloads cluster-wide is not permitted for you)."
             log_warning "    If your models are elsewhere, name it:  WVA_NS=<their namespace>"

@@ -232,7 +232,8 @@ numbers. Fixed ones are described above by what they are; this is the crosswalk.
 | G-18 | model-server scrape never verified |
 | G-19, G-20 | accelerator warning — see *Still open* |
 | G-21 | PodMonitors left by undeploy — see *Still open* |
-| G-01–G-07, G-12, G-13, G-15, G-17, G-22 | see *Still open* |
+| G-22 | operational dashboard unreachable — `make dashboard`, see *Open work* |
+| G-01–G-07, G-12, G-13, G-15, G-17 | see *Still open* |
 
 ---
 
@@ -293,11 +294,10 @@ Nothing to do. Two facts kept for whoever picks up the limiter work:
 
 ### Open work
 
-**`make dashboard` — designed, not merged.** Neither `deploy/lib/dashboard.sh` nor a
-`dashboard` Makefile target exists on `main`, and `config/grafana-private/` has never
-been in this repository — it was a local experiment. What follows is the design, not
-a description of the tree. The intent is to
-productize what that experiment proved by hand: require the
+**`make dashboard` — shipped in `947a4919`.** `deploy/lib/dashboard.sh` and the
+`dashboard` Makefile target are on `main`. (`config/grafana-private/` has never been in
+this repository — it was a local experiment; what it proved by hand is what this
+productizes.) It: require the
 grafana-operator CRDs and say so plainly if absent; apply a `Grafana` CR, a dedicated
 ServiceAccount + token Secret, and the namespaced RBAC the Thanos tenancy port actually
 checks (`create` on `pods.metrics.k8s.io`, plus `view` for ordinary reads); a
@@ -318,7 +318,7 @@ operator considers its own. `config/grafana-private/` had already avoided this b
 naming it plain `grafana-sa`; the productized version uses an explicit
 `${name}-datasource` suffix instead of relying on that being remembered.
 
-Verified end to end on `dhl-la-1708` against the unmerged branch: `make dashboard` run twice reports everything
+Verified end to end on `dhl-la-1708`: `make dashboard` run twice reports everything
 `unchanged` on the second run with identical URL/password output; the datasource health
 check returns `Successfully queried the Prometheus API`; a real query against
 `wva_config_info` returns data; asking for another namespace explicitly
@@ -414,7 +414,7 @@ rate, and anything derived from the scheduler queue — stay empty while the `vl
 | **G-15** | In namespace scope the overlay renders no Namespace, so the `openshift.io/user-monitoring` patch is inert and never reaches the namespace; the install summary nevertheless lists `Namespace` as applied, because it prints `WVA_PREREQ_KINDS` rather than what was applied. Harmless here — UWM discovers ServiceMonitors without the label — but the comment claims otherwise. |
 | **G-19/20** | `admin-gpu-bounding/README.md:23` checks accelerators resolve with `grep -i AcceleratorNotResolved` — the event *reason*, which appears in the log only inside the failed event emission. `gpu-limiter.md:197` greps `"Accelerator not resolved"`, the prose the working path actually logs. One of the two is wrong, and the wrong one is in the guide a reader follows before enabling a limiter. Point it at the prose form; after that the dead recorder call can be removed freely. |
 | **G-17** | The install summary prints "Grafana: deployed in openshift-user-workload-monitoring" twelve lines after the check reported there is none, and "KEDA: installed or already present" after reporting no operator matched. Print what the check found. |
-| **G-22** | The operational dashboard is published as a ConfigMap labelled `grafana_dashboard=1` — a **sidecar** convention — into `MONITORING_NAMESPACE`, where on OpenShift no Grafana ever runs. It sat unread for four days. grafana-operator ignores labelled ConfigMaps; it imports what a `GrafanaDashboard` CR points at. And the dashboard is only installable as a side effect of the prereqs phase, so the person who wants one cannot install it. **Still open.** `addfa16d` (on `main`) improved the *sidecar* path: it reads the sidecar's watch list, suggests `DASHBOARD_NS` only where it would actually render, warns after publishing into a namespace nothing watches, and points at `deploy/grafana/operational-dashboard.json` for a manual UI import. The grafana-operator path is untouched — `main` still publishes only a labelled ConfigMap and creates no `GrafanaDashboard` CR, so on an OpenShift cluster whose Grafana is operator-managed the dashboard is still never read. `make dashboard` and `deploy/lib/dashboard.sh` are not in the tree. |
+| **G-22** | The operational dashboard is published as a ConfigMap labelled `grafana_dashboard=1` — a **sidecar** convention — into `MONITORING_NAMESPACE`, where on OpenShift no Grafana ever runs. It sat unread for four days. grafana-operator ignores labelled ConfigMaps; it imports what a `GrafanaDashboard` CR points at. And the dashboard is only installable as a side effect of the prereqs phase, so the person who wants one cannot install it. **Fixed**, in two halves. `addfa16d` covered the *sidecar* path: it reads the sidecar's watch list, suggests `DASHBOARD_NS` only where it would actually render, warns after publishing into a namespace nothing watches, and points at `deploy/grafana/operational-dashboard.json` for a manual UI import. `947a4919` covered the *grafana-operator* path that this gap was actually about: `make dashboard` (`deploy/lib/dashboard.sh`) applies a `Grafana`, a `GrafanaDatasource` and a `GrafanaDashboard` CR into the namespace, so the dashboard is installable on its own rather than only as a side effect of the prereqs phase. |
 
 ### Deferred: registration at cluster scale
 

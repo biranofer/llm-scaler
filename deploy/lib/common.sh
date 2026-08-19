@@ -577,54 +577,12 @@ wva_require_namespace() {
     # the e2e suite to enforce a rule about a scenario the suite is not running.
     [ "${ENVIRONMENT:-}" != "kind-emulator" ] || return 0
 
-    local found="" count=0 hint="" reply=""
-    # ON DEMAND, not automatically.
-    #
-    # Finding the candidates means listing Deployments in every namespace, which took
-    # ~4s on pokprod001 and is pure cost for the common case: somebody who simply
-    # forgot the variable, knows their namespace, and wants the one-line answer. It is
-    # also exactly what a namespace admin may not do, so it can fail for reasons that
-    # have nothing to do with the mistake being reported.
-    #
-    # So it is offered rather than performed: asked for when there is a terminal to ask
-    # at, and otherwise reduced to a command the reader can run knowingly. Nobody waits
-    # for a search they did not request.
-    if [ -t 0 ] && kubectl auth can-i list deployments -A >/dev/null 2>&1; then
-        printf '\n' >&2
-        # `|| reply=""` matters under the caller's `set -e`: `read` returns
-        # non-zero on EOF with nothing read (Ctrl-D at the prompt -- a normal
-        # way to answer "no" -- or a pty with no real input stream behind it),
-        # and a bare `read` with no guard is a plain command whose failure
-        # exits the whole script right here, before the log_error below ever
-        # runs. Exactly the silent failure this preflight exists to prevent.
-        read -r -p "  NAMESPACE is not set. Search the cluster for namespaces running llm-d? [y/N] " reply || reply=""
-        case "$reply" in
-            [Yy]*)
-                found="$(wva_namespaces_with_model_servers 2>/dev/null || true)"
-                count=$(printf '%s' "$found" | grep -c . || true) ;;
-        esac
-    fi
-    if [ "${count:-0}" -eq 0 ]; then
-        # Reads the POD TEMPLATE's labels, not the Deployment's own. `kubectl get
-        # deploy -l llm-d.ai/role=decode` matches only the object, and llm-d puts these
-        # labels where they do the work -- on the template and the selector -- so on
-        # this cluster the -l form found 55 namespaces where the template form found
-        # 108. Suggesting the short one would send half of all readers looking in the
-        # wrong place, which is the same mistake SO_SERVING_MARKER was fixed for.
-        # Every marker, not the role alone. so_serving_markers is the one definition
-        # -- discovery, the preflight count and the scrape check all go through it --
-        # and llm-d's modelservice path renders servers carrying
-        # llm-d.ai/inferenceServing with no role label at all. A command that finds
-        # fewer namespaces than the tool itself searches is the fourth definition of
-        # "model server" this repo has had, and each previous one cost a bug.
-        hint="
-To find them yourself:
-
-    kubectl get deploy -A -o json | jq -r --argjson m '$(so_serving_markers_json)' '.items[]
-      | select((.spec.template.metadata.labels // {}) | to_entries
-               | any(.key + \"=\" + (.value|tostring) as \$kv | (\$m | index(\$kv)) != null))
-      | .metadata.namespace' | sort -u
-"
+    local found="" count=0 hint=""
+    # A hint, not a choice. Listing workloads cluster-wide is exactly what a namespace
+    # admin may not do, so this is best-effort and its absence is not an error.
+    if kubectl auth can-i list deployments -A >/dev/null 2>&1; then
+        found="$(wva_namespaces_with_model_servers 2>/dev/null || true)"
+        count=$(printf '%s' "$found" | grep -c . || true)
     fi
     # Capped. On a shared cluster this list is long -- 100+ namespaces on pokprod001 --
     # and an error message that scrolls the instruction off the screen has buried the

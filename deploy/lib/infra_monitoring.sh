@@ -729,7 +729,7 @@ wva_epp_services() {
 # the ConfigMap and therefore the key. Guessing "<service>-plugins.yaml" would be
 # right here and wrong for any guide that names its file differently.
 wva_epp_flowcontrol_state() {
-    local ns="$1" svc="$2" sel pod cfg key cm data
+    local ns="$1" svc="$2" sel pod cfg key sub cm data
     sel=$(kubectl get svc "$svc" -n "$ns" -o json 2>/dev/null \
         | jq -r '(.spec.selector // {}) | to_entries | map(.key + "=" + .value) | join(",")')
     [ -n "$sel" ] || { echo unreadable; return 0; }
@@ -747,13 +747,22 @@ wva_epp_flowcontrol_state() {
         | select(. != null and . != "")' 2>/dev/null | head -1)
     [ -n "$cfg" ] || { echo unreadable; return 0; }
     key="${cfg##*/}"
+    # A subPath mount places ONE ConfigMap key at the exact file path, and that key
+    # is the subPath -- which need not equal the file's basename. Read it when the
+    # mount is a file mount rather than assuming the two agree.
+    sub=$(printf '%s' "$pod" | jq -r --arg cfg "$cfg" '
+        .spec.containers[].volumeMounts[]? | select(.mountPath == $cfg) | .subPath // empty' 2>/dev/null | head -1)
+    [ -n "$sub" ] && key="$sub"
 
     # Resolved the way the container resolves it: the volumeMount covering the
     # config's directory names a volume, and that volume names the ConfigMap and
     # therefore the key. Guessing "<service>-plugins.yaml" is right for one guide and
     # wrong for the next.
-    cm=$(printf '%s' "$pod" | jq -r --arg dir "${cfg%/*}" '
-        (.spec.containers[].volumeMounts[]? | select(.mountPath == $dir) | .name) as $v
+    # Either shape of mount: the DIRECTORY, or the file itself via subPath, which
+    # is a standard way to place a single config file and previously resolved to no
+    # ConfigMap at all -- reported as unreadable, which now refuses the install.
+    cm=$(printf '%s' "$pod" | jq -r --arg dir "${cfg%/*}" --arg cfg "$cfg" '
+        (.spec.containers[].volumeMounts[]? | select(.mountPath == $dir or .mountPath == $cfg) | .name) as $v
         | .spec.volumes[]? | select(.name == $v) | .configMap.name // empty' 2>/dev/null | head -1)
     [ -n "$cm" ] || { echo unreadable; return 0; }
 
@@ -769,7 +778,7 @@ wva_epp_flowcontrol_state() {
     # same thing and is how this gate is described in prose. Quotes and a trailing
     # comment are stripped for the same reason. Reading a correctly enabled gate as
     # off would refuse a working cluster, and the only way past it -- SKIP_CHECKS=true
-    # -- switches off every check rather than correcting this one.
+    # -- switches off every preflight check rather than correcting this one.
     # \042 and \047 are " and ', which would otherwise fight the shell quoting here.
     if printf '%s' "$data" | awk '
         # inline: featureGates: [flowControl, other]
