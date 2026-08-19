@@ -127,9 +127,9 @@ After this, your workspace will look like:
 llm-d-workload-variant-autoscaler/
 ├── llm-d-benchmark/          ← cloned by make benchmark-install
 ├── test/benchmark/scenarios/
-│   ├── prefill_heavy.yaml
-│   ├── decode_heavy.yaml
-│   └── symmetrical.yaml
+│   ├── prefill_heavy.yaml.in   ← pass the bare name: BENCHMARK_WORKLOAD=prefill_heavy
+│   ├── decode_heavy.yaml.in
+│   └── symmetrical.yaml.in
 └── Makefile
 ```
 
