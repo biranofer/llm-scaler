@@ -134,6 +134,42 @@ models will land there. So the level cannot be chosen per model at placement tim
 `B_storage` approaches `B_h2d`, level 2 strictly dominates — the same wake time
 without any of the RAM.
 
+**`B_storage` measured, 2026-08-19.** Read a 1.5 GB safetensors file off
+`/model-cache` from inside a launcher Pod, using `dd iflag=direct` to bypass the
+page cache:
+
+| | measured |
+| --- | --- |
+| backing store | **IBM Spectrum Scale (GPFS)**, `ReadWriteMany`, 1 TiB |
+| **cold read, O_DIRECT** | **1.7 GB/s** steady (1.1 GB/s on the first run) |
+| cached read | **5.6 GB/s** |
+
+That is **4x faster than the ~430 MB/s previously assumed here.** The earlier
+figure came from a ~2.8 s weight-load observation which evidently included open,
+metadata and Python overhead rather than raw bandwidth. A shared RWX filesystem is
+not automatically slow — GPFS on a fast fabric is within a few times of local NVMe.
+
+With `B_storage = 1.7 GB/s` and a 5 s wake target, the crossover lands near
+**~8.5 GB of weights**, so level 2 covers much more of the range than the earlier
+estimate implied:
+
+| model | weights | level 1 (~7 GB/s) | level 2 (1.7 GB/s) | level-1 RAM |
+| --- | --- | --- | --- | --- |
+| 0.6 B | ~1.5 GB | ~0.2 s | **~0.9 s** | 1.5 GB |
+| 4 B | ~8 GB | ~1.1 s | **~4.7 s** | 8 GB |
+| 8 B | ~16 GB | ~2.3 s | ~9.4 s | 16 GB |
+| 70 B | ~140 GB | ~20 s | ~82 s | 140 GB |
+
+**So on this cluster level 2 is the right default up to roughly 4 B parameters**,
+and level 1 earns its RAM only above that.
+
+**But `B_storage` is shared, and that measurement is single-reader.** 1.7 GB/s is
+what *one* Pod gets. K Pods waking together divide it, so a level-2 wake degrades
+precisely during a correlated burst — the case the pool exists for. Level 1 has no
+such coupling, since each Pod restores from its own host RAM. That is an argument
+for level 1 on pools sized for concurrent wakes, **independent of model size**, and
+it is the part of `B_storage` still unmeasured.
+
 ---
 
 ## 3. Configuration
@@ -265,7 +301,7 @@ or restarted.
 | --- | --- |
 | `POST /v2/vllm/instances` — launcher forks a vLLM process | sub-second **[?]** |
 | process start, vLLM import, API startup | ~29 s **[M]** (the residue of a 41 s cold start after compile and weight load) |
-| weight load from `/model-cache` | ~2.8 s for ~1.2 GB **[M]**, i.e. ~430 MB/s — may have been a page-cache hit |
+| weight load from `/model-cache` | ~2.8 s observed **[M]**; raw bandwidth since measured at **1.7 GB/s cold** (§2), so most of that 2.8 s is open/metadata/Python overhead rather than transfer |
 | `torch.compile` | 3.08 s **[M]** with the shared cache hitting; 12.35 s on a miss |
 | engine init: profile, KV cache, warmup | 9.29 s **[M]** |
 | `POST /sleep?level=N` | **[?]** |
@@ -778,7 +814,7 @@ does not exist anywhere else today (§8) — is untouched by the swap.
 
 ## 9. Prerequisites, before any of this is built
 
-Two of the remaining four can invalidate the design, so they are not
+Two of the remaining three can invalidate the design, so they are not
 follow-ups. All five
 concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkerset).
 
@@ -827,9 +863,14 @@ concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkers
    time-to-Ready; nothing verified output correctness.** A pool serving garbage in
    3 s is worse than one serving correctly in 41 s. Those issues predate the
    v0.26.0 engine in use and may be fixed — check, do not assume.
-3. **Measure `B_storage` properly.** Drop caches, read a known-size weight file
-   from `/model-cache`, and time it. The single 430 MB/s figure may have been a
-   page-cache hit. This sets the level-1/level-2 crossover.
+3. ~~**Measure `B_storage` properly.**~~ **ANSWERED 2026-08-19.**
+   `dd iflag=direct` against `/model-cache` from inside a launcher Pod:
+   **1.7 GB/s cold, 5.6 GB/s cached**, on IBM Spectrum Scale (GPFS) RWX — 4x
+   faster than assumed, which moves the level-1/level-2 crossover from ~2 GB to
+   ~8.5 GB of weights (§2). **Still open:** how that bandwidth divides under
+   *concurrent* wakes, which is the case that decides level 1 versus level 2 for a
+   burst.
+
 4. **Measure the label → EndpointSlice → InferencePool propagation delay.** It is
    on the critical path and may dominate a 3 s wake.
 5. **Confirm several instances co-reside on one card** — one awake at
