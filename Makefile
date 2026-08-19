@@ -1512,8 +1512,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@$(MAKE) benchmark-report
 	@$(MAKE) benchmark-plot-two-variant || true
 
-.PHONY: benchmark-report
-benchmark-report: ## The one benchmark to run after installing: decode-heavy at 10 req/s for five
+## The one benchmark to run after installing: decode-heavy at 10 req/s for five
 ## minutes, then a dashboard snapshot over exactly that window and a pointer to it.
 ## Answers "is WVA actually scaling this?" -- not "how fast is this model".
 .PHONY: benchmark-smoke
@@ -1521,6 +1520,8 @@ benchmark-smoke: ## Post-install check: drive decode-heavy load, snapshot the da
 	@bash hack/benchmark/smoke.sh $(if $(NAMESPACE),$(NAMESPACE),$(BENCHMARK_NAMESPACE))
 
 ## Generate a markdown table from the latest benchmark results
+.PHONY: benchmark-report
+benchmark-report: ## Generate a markdown table from the latest benchmark results
 	@LATEST_DIR=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
 	if [ -z "$$LATEST_DIR" ]; then \
 		echo "ERROR: No benchmark results found in $(BENCHMARK_WORKSPACE)"; \
