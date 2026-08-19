@@ -25,7 +25,18 @@ It serves two needs with one mechanism:
 warm GPUs, which is the same as simply running them. The proposition is that
 **K shared GPUs give fast-start coverage for N models**.
 
+### Scope: phase 1 is single-Pod
+
+**Phase 1** covers models that fit within one Pod — any tensor-parallel size, so
+long as the GPUs are on one node. That is the whole of this document apart from
+§8.
+
+**Phase 2** is `LeaderWorkerSet`: models spanning several nodes. It is deliberately
+out of scope here. Its prerequisite is not yet checked and does not gate phase 1 —
+see [§8](#8-phase-2-leaderworkerset).
+
 ### What it is not
+
 
 Not a serving fleet. The pool covers the gap until ordinary replicas arrive, or
 until a hold timeout expires. Ordinary Deployments continue to do the serving, and
@@ -352,7 +363,8 @@ toward anticipated supply.
 
 ## 7. Prerequisites, before any of this is built
 
-Two of these can invalidate the design, so they are not follow-ups.
+Two of these can invalidate the design, so they are not follow-ups. All four
+concern phase 1; the phase-2 prerequisite is in [§8](#8-phase-2-leaderworkerset).
 
 1. **Does a woken engine return CORRECT output?** Open vLLM issues report that it
    may not: [#16234](https://github.com/vllm-project/vllm/issues/16234) (improper
@@ -370,17 +382,51 @@ Two of these can invalidate the design, so they are not follow-ups.
 4. **Confirm several instances co-reside on one card** — one awake at
    `gpu-memory-utilization 0.95` plus N sleepers, with a clean swap between them.
    `--sleeper-limit` is 2 on pokprod, so this is cheap to try.
-5. **For LWS only: does sleep/wake work across NODES?** vLLM claims TP and PP
-   support, but the docs never mention Ray or cross-node, every published benchmark
-   is single-node (largest: Qwen3-235B at TP=4 on one host), and
-   [#21231](https://github.com/vllm-project/vllm/issues/21231) reports
-   `--enable-sleep-mode` having no effect on Ray workers. If it does not work, LWS
-   support ends there — a warm group would hold full GPU memory and keep exactly
-   one model warm, which is plain over-provisioning.
 
 ---
 
-## 8. References
+## 8. Phase 2: LeaderWorkerSet
+
+Out of scope for phase 1, recorded so the shape is known and the open question is
+not rediscovered.
+
+Models too large for one node are served by `LeaderWorkerSet` — a leader plus
+workers forming one group. WVA already treats LWS as a scale target
+(`internal/collector/locator/walk.go` walks ownerReferences to `Deployment` or
+`LeaderWorkerSet`), so the policy half generalises for free.
+
+The mechanism generalises too, with the unit becoming a **group** instead of a Pod:
+
+| phase 1 | phase 2 |
+| --- | --- |
+| pool Pod owns N GPUs | pool **group** owns N Pods across nodes |
+| one awake instance per Pod | one awake instance per **group** |
+| Pod readiness gates the endpoint | **leader** readiness gates it; LWS already has group-level readiness |
+| `llm-d.ai/model` on the Pod | the same label on the leader |
+| `spec.replicas` sizes the pool | `replicas` x `size`; `replicas` still sizes the pool |
+
+**The prerequisite, to be answered when phase 2 starts:** does sleep/wake work
+across NODES? vLLM claims tensor- and pipeline-parallel support, but its docs never
+mention Ray or cross-node, every published benchmark is single-node (the largest
+being Qwen3-235B at TP=4 on one host), and
+[#21231](https://github.com/vllm-project/vllm/issues/21231) reports
+`--enable-sleep-mode` having no effect on Ray workers in a multi-node deployment.
+
+If it does not work, phase 2 ends there: a warm group would hold *full* GPU memory
+and could keep exactly one model warm, which is plain over-provisioning with none
+of the multi-model sharing that justifies a pool.
+
+**A second obstacle waits behind it.** FMA's launcher is a per-Pod process manager,
+so a multi-node instance needs create/sleep/wake coordinated across every Pod of
+the group. That is the one place where "we only reuse the launcher" stops holding.
+
+**And the economics invert in both directions.** A warm group holds an entire
+multi-node allocation, far more than a one-GPU Pod — but multi-node models have the
+longest cold starts, paying Pod scheduling across nodes, image pulls, distributed
+rendezvous *and* a large weight load. The cheap first step, needing none of this
+machinery, is to measure that cold start.
+
+## 9. References
 
 **vLLM**
 
