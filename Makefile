@@ -970,13 +970,6 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-standup BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
-	@# Install the scenarios FIRST. Only benchmark-run did this, and standup is the
-	@# target that deploys the model -- so every substitution the scenarios carry
-	@# (WARM_REPLICAS, gpuMemoryUtilization) reached a RUN and never reached the
-	@# standup that reads them. Standup therefore deployed whatever the clone held,
-	@# which after benchmark-install is the pinned upstream copy: 0.95, tuned for a
-	@# 32B, for a model the caller had replaced with a 0.6B.
-	@$(MAKE) --no-print-directory benchmark-scenarios
 	@# Standing a guide up into a namespace that already runs FMA silently breaks
 	@# it. Both render a PodMonitor named vllm-<model>, and a scenario without
 	@# `fma.enabled` renders the port-NAME form, which generates no target for a
@@ -1049,6 +1042,12 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		cd $(BENCHMARK_REPO_DIR) && git checkout -- config/scenarios config/specification config/templates 2>/dev/null || true; \
 	fi
 	@$(MAKE) benchmark-install BENCHMARK_REPO_REF=$(BENCHMARK_REPO_REF)
+	@# AFTER benchmark-install, not before. That target git-checkouts the clone to
+	@# the pinned tag, so scenarios installed first are discarded -- which is how a
+	@# standup kept deploying the upstream 0.95 while the log said 0.90 had been
+	@# installed. Only benchmark-run called this before, and run happens after any
+	@# install, which is why the ordering never mattered there.
+	@$(MAKE) --no-print-directory benchmark-scenarios
 	@cd $(BENCHMARK_REPO_DIR) && git reset --hard origin/$(BENCHMARK_REPO_REF) 2>/dev/null || true
 	@if [ -f "$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml" ]; then \
 		echo "Copying local scenario: hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml -> $(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml"; \
