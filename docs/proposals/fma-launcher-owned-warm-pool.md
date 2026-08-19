@@ -19,6 +19,12 @@ wakes a pool instance on scale-up and sleeps it again once the ordinary replica
 is serving, so the pool is sized by *concurrent spikes x ramp time* rather than
 by peak capacity — and it degrades to today's slow start when empty.
 
+**No new controller is required.** Each pool is an ordinary Deployment per
+(model, accelerator type) whose pods self-initialise to warm-and-asleep, and
+readiness gates endpoint membership, so Kubernetes performs the traffic switch.
+WVA drives the whole sequence from its existing loop. The only new code is a
+readiness shim that reflects `is_sleeping`.
+
 ---
 
 ## The defect this removes
@@ -220,48 +226,67 @@ WVA borrows and returns, not a serving fleet it has to own.
    keeps warm is WVA's decision, and it is the same budgeting problem
    `fma-shared-warm-pool.md` describes.
 
-### Where the controller lives
+### No separate controller: the pool is a Deployment and readiness does the rest
 
-**A separate reconciliation loop — but not necessarily a separate repo, and not
-inside WVA's optimizer.** The split that matters is loop and privilege, not
-ownership:
+An earlier revision proposed an actuator reconciling a `desired-model` annotation
+into a `llm-d.ai/model` label, on the grounds that it must react to events in
+seconds while WVA's optimizer runs on a 15 s cycle. **That reasoning was wrong.**
+The latency-critical action — the wake — is initiated by WVA's own scale-up
+decision, not by an external event, so there is no rhythm to race. The only
+reactive step is sleeping the pool pod once the real replica serves, and being a
+second late there costs nothing.
 
-| | responsibility | where |
-| --- | --- | --- |
-| **Actuator** | make the live model on a Pod match what was asked: sleep one instance, wake another, swap the label | its own controller/loop |
-| **Policy** | which models are live and warm where, pool size, when to hand over | WVA |
+Removing that constraint collapses the design.
 
-Three reasons to keep it out of the optimizer loop:
+**Make each pool a Deployment per (model, accelerator type), and gate endpoint
+membership on READINESS:**
 
-1. **Cadence.** The actuator reacts to Pod and instance events in seconds — the
-   launcher already exposes a Kubernetes-watch-style NDJSON stream at
-   `GET /v2/vllm/instances/watch?since=<rev>`. WVA's optimizer runs on a 15 s
-   cycle behind KEDA polling. Sharing one loop makes the slow rhythm gate the
-   fast one.
-2. **Privilege.** The actuator needs Pod CRUD in the launcher namespace, which is
-   wider than WVA otherwise holds. Separate loops keep that blast radius separate.
-3. **FMA's own rule** — mechanism and state in FMA, allocation in the brain —
-   which keeps the actuator usable by anyone running llm-d, with or without WVA.
+- instance asleep → pod **not ready** → out of the EndpointSlice → no traffic
+- instance awake → pod **ready** → in the InferencePool → serving
 
-**Two viable homes, and the choice is not forced by the design:**
+Kubernetes performs the endpoint churn. That deletes the label swap, the
+annotation contract and the actuator in one move — all three existed to hand-roll
+what readiness already does. Pool pods are already labelled for their model, so
+there is nothing to swap.
 
-- **In the WVA repo, as a second manager.** Attractive now: no dependency on a
-  forked FMA, ships and versions with WVA, and can be contributed to llm-d later.
-  Keeps the fork small — only `removeGPUResourceLimits` has to change there.
-- **In the FMA fork**, replacing the dual-pods controller. Natural if the change
-  is ever upstreamed, since it lives beside the launcher it drives.
+**The pool pod self-initialises.** On startup: create the instance, load the
+model, sleep, report not-ready. It arrives warm and idle by construction, so
+nothing has to place instances into it. Scaling the pool Deployment *is* scaling
+warm capacity.
 
-Either way the contract is declarative and boringly Kubernetes-shaped — desired
-state in an annotation, actual state in a label:
+**What WVA does, entirely within its existing loop and RBAC:**
 
-```
-annotation  fma.llm-d.ai/desired-model: <isc-name>     # written by WVA
-label       llm-d.ai/model:             <isc-name>     # written by the actuator
-```
+1. scale the pool Deployment — pool size;
+2. on scale-up, pick a sleeping pool pod and `POST /wake_up` — ready and serving
+   in ~3 s;
+3. scale the real Deployment as usual;
+4. when the real replicas are **serving**, `POST /sleep` the pool pod — not
+   ready, and it leaves the InferencePool.
 
-The actuator's whole job is "make the label match the annotation", and WVA reads
-the label back to know when a wake has landed — ordinary level-triggered
-reconciliation, no handshake. Anyone can drive it by writing an annotation.
+Crash-safety is free and level-triggered: on any later pass WVA sees awake pool
+pods it does not need and sleeps them, exactly like the rest of its
+reconciliation. No new CRD, no new controller, no handshake.
+
+**The one piece of new code** is a readiness shim reflecting sleep state. Today
+the launcher's readiness probe is `GET /v2/vllm/instances`
+(`pkg/controller/utils/pod-helper.go:258-289`), which answers 200 whenever the
+*launcher* is up regardless of whether its instance sleeps. It must instead
+reflect `is_sleeping`. That is ~50 lines inside the Pod, and the pattern already
+exists in-tree — `pkg/server/requester/probes` served precisely this kind of
+gated `/ready`.
+
+### What this trades away, and when to revisit
+
+A Deployment per model means **at least one GPU per model kept warm**. The
+denser variant — several models co-resident on one card at ~1.4 GiB each, so
+twenty models might occupy seven cards rather than twenty — is cheaper at scale,
+but it is exactly what reintroduces the label swap and therefore an actuator.
+
+So: **build the simple version first, and let the per-model GPU cost decide
+whether density is ever worth the machinery.** The bridge economics do not need
+density — pool size is driven by concurrent spike arrivals and ramp time, not by
+how many models exist — so density only starts to matter when the number of
+models kept warm, rather than the spike rate, dominates the bill.
 
 ## RECOMMENDED: an elastic pool of GPU-holding launchers, one GPU each
 
