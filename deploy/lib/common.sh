@@ -179,7 +179,13 @@ WVA_SHARED_CLUSTER_ROLE_BINDINGS=(
     wva-manager-rolebinding
     wva-metrics-auth-rolebinding
     wva-metrics-reader-rolebinding
-    wva-prometheus-cluster-monitoring-view
+    # wva-prometheus-cluster-monitoring-view was here. The binding is gone —
+    # see components/openshift/kustomization.yaml for why it never did anything.
+    # Dropped from this list too, rather than kept as a no-op: the rename patch
+    # only matches objects the overlay renders, so a name listed here for an
+    # object that no longer exists implies a cleanup that does not happen.
+    # An install made BEFORE its removal keeps its suffixed copy until that
+    # install is uninstalled with the tree that still rendered it.
     # Namespace scope only (the cluster-scoped manager role already reads nodes).
     # Listed unconditionally anyway: the rename patch is a no-op when the object
     # is absent, and leaving it out meant two installs shared one binding — the
