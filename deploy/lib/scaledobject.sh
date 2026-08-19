@@ -1400,9 +1400,35 @@ so_pause_target_replicas() {
 so_pause_target_gpus() {
     local ns="$1" kind="$2" name="$3"
     kubectl get "$kind" "$name" -n "$ns" -o json 2>/dev/null | jq -r '
-        [ (.spec.template // .spec.leaderWorkerTemplate.workerTemplate // {})
-          | .spec.containers[]? | .resources.limits["nvidia.com/gpu"] // "0" | tonumber ]
-        | add // 0' 2>/dev/null | tr -cd '0-9' | sed 's/^$/0/'
+        # Same arithmetic as the controller, so the number an operator reads here is
+        # the number WVA is working from. See GetTotalGPUsPerReplica in
+        # internal/utils/scaletarget/{deployment,lws}.go:
+        #   Deployment  sum over the pod templates containers.
+        #   LWS         leader_GPUs + (size - 1) * worker_GPUs, size defaulting to 1.
+        #               .spec.replicas is the GROUP count, so this is per group --
+        #               reading workerTemplate alone ignored both the leader and the
+        #               group size and under-reported every LWS workload.
+        #   either      0 means "no explicit request", which for an inference
+        #               workload usually means one GPU rather than none. The
+        #               controller defaults to 1 there and so must this, or parking
+        #               such a workload reports freeing nothing.
+        # Every vendor resource the controller counts (internal/constants), not
+        # nvidia alone. requests is what the controller reads; limits is a fallback,
+        # and Kubernetes constrains the two equal for extended resources.
+        def gpus($cs):
+          [ $cs[]? | .resources as $r
+            | ( [ "nvidia.com/gpu", "amd.com/gpu", "habana.ai/gaudi",
+                  "gpu.intel.com/i915", "gpu.intel.com/xe" ]
+                | map(. as $k | (($r.requests[$k] // $r.limits[$k] // 0) | tonumber))
+                | add ) ] | add // 0;
+        ( if .spec.leaderWorkerTemplate then
+            .spec.leaderWorkerTemplate as $t
+            | (if $t.leaderTemplate then gpus($t.leaderTemplate.spec.containers) else 0 end)
+              + ((($t.size // 1) - 1) * gpus($t.workerTemplate.spec.containers))
+          else
+            gpus(.spec.template.spec.containers)
+          end )
+        | if . <= 0 then 1 else . end' 2>/dev/null | tr -cd '0-9' | sed 's/^$/0/'
 }
 
 # SO_PAUSE_NOTHING_TO_DO is a sentinel exit code, not an error: it means the
@@ -1544,7 +1570,7 @@ so_pause_apply() {
                 case "$state" in
                     park:*)
                         log_warning "  $ns/$name is parked at ${state#park:} — not freezing it. Freeze holds the CURRENT count, so this would just hold it at ${state#park:}."
-                        log_info "    To have it serving and then frozen:  make so-resume SO=$name   (wait for it to be ready)   make so-freeze SO=$name"
+                        log_info "    To have it serving and then frozen:  make so-resume SO=$ns/$name   (wait for it to be ready)   make so-freeze SO=$ns/$name"
                         continue ;;
                 esac
                 kubectl annotate scaledobject "$name" -n "$ns" \
