@@ -1503,7 +1503,7 @@ so_pause_select() {
 
     local reply
     printf '\n' >&2
-    read -r -p "  ${verb^} which? number(s) separated by spaces, 'a' for all, or Ctrl-C to stop: " reply
+    read -r -p "  Which to $verb? number(s) separated by spaces, 'a' for all, or Ctrl-C to stop: " reply
     [ -n "$reply" ] || { log_warning "Nothing selected — no change made."; return "$SO_PAUSE_NOTHING_TO_DO"; }
     if [ "$reply" = "a" ] || [ "$reply" = "all" ]; then printf '%s\n' "$rows"; return 0; fi
 
@@ -1523,15 +1523,32 @@ so_pause_select() {
 
 # so_pause_show prints the numbered table the prompt refers to.
 so_pause_show() {
+    local rows="$1" nscount
+    # ScaledObject names are unique only WITHIN a namespace. SO= already refuses a
+    # bare name matching in several, but this numbered list had no namespace
+    # column -- so two same-named objects rendered as two identical rows and the
+    # prompt asked the operator to choose between them blind. Choosing wrong is
+    # exactly what the prompt exists to prevent. Shown only when the scope really
+    # spans more than one namespace, since the kind column was already dropped
+    # (below) to keep GPUS and STATE on the width of a normal terminal.
+    nscount=$(printf '%s\n' "$rows" | awk -F'\t' 'NF{print $1}' | sort -u | grep -c .)
     printf '\n  WVA-managed workloads in %s:\n\n' "$(so_target_namespaces | paste -sd, -)"
-    printf '    #  %-46s %-40s %4s %4s %5s %s\n' NAME TARGET MIN MAX GPUS STATE
     # The kind is shown only when it is not a Deployment: it is "Deployment" for
     # almost every row, and spelling it out pushed the columns that carry the
     # decision -- GPUS and STATE -- off the width of a normal terminal.
-    printf '%s\n' "$1" | awk -F'\t' '{
-        t = ($3 == "Deployment") ? $4 : $3 "/" $4
-        printf "    %d  %-46s %-40s %4s %4s %5s %s\n", NR, $2, t, $5, $6, $9, $7
-    }'
+    if [ "${nscount:-0}" -gt 1 ]; then
+        printf '    #  %-22s %-38s %-30s %4s %4s %5s %s\n' NAMESPACE NAME TARGET MIN MAX GPUS STATE
+        printf '%s\n' "$rows" | awk -F'\t' '{
+            t = ($3 == "Deployment") ? $4 : $3 "/" $4
+            printf "    %d  %-22s %-38s %-30s %4s %4s %5s %s\n", NR, $1, $2, t, $5, $6, $9, $7
+        }'
+    else
+        printf '    #  %-46s %-40s %4s %4s %5s %s\n' NAME TARGET MIN MAX GPUS STATE
+        printf '%s\n' "$rows" | awk -F'\t' '{
+            t = ($3 == "Deployment") ? $4 : $3 "/" $4
+            printf "    %d  %-46s %-40s %4s %4s %5s %s\n", NR, $2, t, $5, $6, $9, $7
+        }'
+    fi
 }
 
 # so_pause_apply parks, freezes or resumes the rows on stdin.
