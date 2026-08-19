@@ -970,6 +970,13 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-standup BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
+	@# Install the scenarios FIRST. Only benchmark-run did this, and standup is the
+	@# target that deploys the model -- so every substitution the scenarios carry
+	@# (WARM_REPLICAS, gpuMemoryUtilization) reached a RUN and never reached the
+	@# standup that reads them. Standup therefore deployed whatever the clone held,
+	@# which after benchmark-install is the pinned upstream copy: 0.95, tuned for a
+	@# 32B, for a model the caller had replaced with a 0.6B.
+	@$(MAKE) --no-print-directory benchmark-scenarios
 	@# Standing a guide up into a namespace that already runs FMA silently breaks
 	@# it. Both render a PodMonitor named vllm-<model>, and a scenario without
 	@# `fma.enabled` renders the port-NAME form, which generates no target for a
