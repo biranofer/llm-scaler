@@ -1,4 +1,4 @@
-## Unified Configuration System
+# Unified Configuration System
 
 WVA uses a unified configuration system that consolidates all settings into a single `Config` structure. This provides clear precedence rules, type safety, and separation between static (immutable) and dynamic (runtime-updatable) configuration.
 

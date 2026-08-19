@@ -10,6 +10,11 @@
 # nobody has verified turns a working install into a refused one.
 readonly MIN_KUBECTL_VERSION="1.24"
 readonly MIN_HELM_VERSION="3.8"
+# The overlay filters use go-yq v4 syntax (strenv(), -o=json). yq v3 takes a
+# different command form entirely, and the python "yq" is a jq wrapper that
+# accepts the expressions and emits JSON. Both pass a presence check and then
+# behave differently, so the version is gated, not just the name.
+readonly MIN_YQ_VERSION="4.0"
 
 # version_at_least compares dotted versions without sort -V, which BSD/macOS
 # lacks in the form this needs. Compares major.minor only: patch levels have
@@ -85,6 +90,7 @@ check_prerequisites() {
         case "$tool" in
             kubectl) want="$MIN_KUBECTL_VERSION" ;;
             helm)    want="$MIN_HELM_VERSION" ;;
+            yq)      want="$MIN_YQ_VERSION" ;;
         esac
         if [ -n "$want" ] && [ -n "$have" ] && ! version_at_least "$have" "$want"; then
             outdated_tools+=("$tool $have (need >= $want)")
@@ -467,10 +473,11 @@ check_permissions() {
 
     # What this install creates, read from the RENDERED overlay rather than
     # inferred from the scope name. The scope does not decide it: the
-    # namespace-scoped overlay creates no cluster-scoped object on Kubernetes and
-    # eight of them on OpenShift, where the platform's monitoring wiring —
-    # cluster-monitoring-view for Thanos, among others — is cluster-scoped and
-    # components/tenant-installable does not subtract it.
+    # namespace-scoped overlay creates eight cluster-scoped objects on Kubernetes
+    # (four ClusterRoles and four ClusterRoleBindings) and ten on OpenShift, where
+    # the platform's monitoring wiring — cluster-monitoring-view for Thanos, among
+    # others — adds two more bindings that components/tenant-installable does not
+    # subtract.
     #
     # Inferring it meant a non-admin passed `--check` on OpenShift and then failed
     # partway through `kubectl apply -k`, in exactly the half-installed state this

@@ -42,8 +42,8 @@ This script automates the complete deployment process on kubernetes cluster incl
 - **kubectl** - Kubernetes CLI
 - **helm** (v3+) - Package manager
 - **git** - Version control
-- **jq** - JSON processor (optional, for verification)
-- **yq** (v4+) - YAML processor (optional, used if available)
+- **jq** - JSON processor (patches the shipped ConfigMaps)
+- **yq** (v4+) - YAML processor (filters the rendered overlay; go-yq, not the python jq wrapper)
 
 ### Required Access
 

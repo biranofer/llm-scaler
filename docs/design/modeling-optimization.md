@@ -104,7 +104,7 @@ infernoConfig.OptimizerSpec{
 
 ### Future Work: Limited Mode
 
-Limited mode support is planned for future releases. In limited mode, the optimizer would respect cluster capacity constraints and implement resource accounting. However, operating in limited mode introduces challenges around degraded mode operations and potential SLO violations under resource pressure. More design work is needed to integrate limited mode with the llmd stack before it can be enabled.
+Limited mode support is planned for future releases. In limited mode, the optimizer would respect cluster capacity constraints and implement resource accounting. However, operating in limited mode introduces challenges around degraded mode operations and potential SLO violations under resource pressure. More design work is needed to integrate limited mode with the llm-d stack before it can be enabled.
 
 When implemented, limited mode will support the following parameters:
 

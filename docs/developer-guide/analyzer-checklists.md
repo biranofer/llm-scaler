@@ -4,7 +4,7 @@ This document defines the benchmark-based checklists that will enable a analyzer
 
 ## Reference Workloads
 
-Every candidate analyzer in WVA must be periodically benchmarked against scenario(s) which it plan's to improve. Benchmarking should be done using llmd components by installing Gateway and the llmd request scheduler plugins with flow controller enabled on GPU cluster. below are few sample current scenarios.
+Every candidate analyzer in WVA must be periodically benchmarked against scenario(s) which it plan's to improve. Benchmarking should be done using llm-d components by installing Gateway and the llm-d request scheduler plugins with flow controller enabled on GPU cluster. below are few sample current scenarios.
 
 | Scenario | Input Tokens | Output Tokens | Request Rate | Duration |
 |---|---|---|---|---|
