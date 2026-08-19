@@ -215,6 +215,18 @@ BENCHMARK_ALLOW_EPP_REUSE ?= false
 # Where benchmark-deploy-wva writes its ScaledObject plan. A named file, not a
 # temp path, so a run that scaled something unexpected can be explained after it.
 BENCHMARK_SO_PLAN ?= $(CURDIR)/benchmark-scaledobject-plan.yaml
+# Which install target the benchmark reuses. ASKED OF THE CLUSTER, not inferred
+# from ENVIRONMENT, which defaults to kind-emulator and is left unset by anyone
+# running a benchmark against a real cluster.
+#
+# Inferring it picked deploy-wva-on-k8s on an OpenShift cluster, and the
+# Kubernetes overlay omits config/components/openshift/manager-cluster-monitoring
+# -view-clusterrolebinding.yaml. The controller then came up without
+# cluster-monitoring-view and crash-looped on
+#   Prometheus API validation failed ... "error": "client_error: client error: 403"
+# against thanos-querier:9091 -- a failure that says nothing about the overlay
+# that caused it. Evaluated inside the recipe so it costs one API call when a
+# benchmark runs, not on every make invocation.
 BENCHMARK_WVA_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),deploy-wva-on-openshift,deploy-wva-on-k8s)
 BENCHMARK_WVA_UNDEPLOY_TARGET = $(if $(filter openshift,$(ENVIRONMENT)),undeploy-wva-on-openshift,undeploy-wva-on-k8s)
 # Where the installed WVA reads metrics. Empty lets deploy/install.sh detect the
@@ -561,6 +573,17 @@ dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA da
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
+	@# WVA_NS is PINNED. Without it the install lands wherever namespace discovery
+	@# points, and the suite builds scalerAddress from CONTROLLER_NAMESPACE -- so a
+	@# controller that moves is one KEDA can never reach.
+	@#
+	@# It moved when the scope default changed: wva_autoselect_namespace runs only
+	@# in NAMESPACE scope, which used to be inferred as `cluster` on kind, so it was
+	@# skipped. Now that namespace is the default everywhere it runs, finds the one
+	@# namespace with model servers (llm-d-sim) and installs the controller there.
+	@# Measured: the controller came up in llm-d-sim while every ScaledObject named
+	@# wva-external-scaler.workload-variant-autoscaler-system, so no decision ever
+	@# reached KEDA and four specs sat at one replica for their full 600s.
 	@echo "Deploying e2e test infrastructure..."
 	@if [ -n "$(IMG)" ]; then \
 		echo "IMG is set to '$(IMG)'"; \
@@ -580,6 +603,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 		fi; \
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
+		WVA_NS=$(CONTROLLER_NAMESPACE) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
@@ -590,6 +614,7 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 	else \
 		echo "IMG not set - using default image from registry (latest)"; \
 		ENVIRONMENT=$(ENVIRONMENT) \
+		WVA_NS=$(CONTROLLER_NAMESPACE) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
@@ -1272,7 +1297,14 @@ benchmark-deploy-wva: ## Install WVA from deploy/ into BENCHMARK_NAMESPACE (name
 	@# refuse and print 105 candidate namespaces. Here the two are the same
 	@# namespace by construction: the benchmark stands the model up and installs
 	@# the controller beside it.
-	$(MAKE) $(BENCHMARK_WVA_TARGET) \
+	@target=$(BENCHMARK_WVA_TARGET); \
+	if [ "$(ENVIRONMENT)" != "openshift" ] && \
+	   kubectl api-resources --api-group=route.openshift.io -o name >/dev/null 2>&1 && \
+	   [ -n "$$(kubectl api-resources --api-group=route.openshift.io -o name 2>/dev/null)" ]; then \
+		echo "OpenShift detected; installing with the OpenShift overlay (cluster-monitoring-view)."; \
+		target=deploy-wva-on-openshift; \
+	fi; \
+	$(MAKE) $$target \
 		WVA_NS=$(BENCHMARK_NAMESPACE) \
 		NAMESPACE=$(BENCHMARK_NAMESPACE) \
 		WVA_SCOPE=namespace \
