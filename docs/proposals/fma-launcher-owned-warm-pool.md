@@ -10,20 +10,19 @@ population of such launchers, and scale by **waking and sleeping instances insid
 them** — instead of creating a requester Pod per replica and hoping the scheduler
 hands it the GPU a sleeper already occupies.
 
-**Read "THE OPERATING MODEL: the pool is a bridge, not a fleet" first**, then
-"RECOMMENDED: an elastic pool of GPU-holding launchers". Together they supersede
-the earlier framings kept further down.
+**Read in this order:** "THE OPERATING MODEL: one shared pool, many models",
+then "Lifecycle", then "What we must build, and what we reuse". Those three carry
+the current design. Everything after them is earlier reasoning, kept because it
+records why the alternatives were rejected -- their verdicts are superseded where
+they disagree.
 
-The short version: the pool does not serve the load, it **covers the ramp**. WVA
-wakes a pool instance on scale-up and sleeps it again once the ordinary replica
-is serving, so the pool is sized by *concurrent spikes x ramp time* rather than
-by peak capacity — and it degrades to today's slow start when empty.
-
-**No new controller is required.** Each pool is an ordinary Deployment per
-(model, accelerator type) whose pods self-initialise to warm-and-asleep, and
-readiness gates endpoint membership, so Kubernetes performs the traffic switch.
-WVA drives the whole sequence from its existing loop. The only new code is a
-readiness shim that reflects `is_sleeping`.
+The short version: **one shared pool per accelerator type, not one per model.**
+Each pool Pod owns a GPU and keeps several models asleep on it (~1.4 GiB each),
+at most one awake. WVA wakes a model on scale-up -- serving in ~3 s -- and sleeps
+it again when ordinary replicas take over, or holds it when they cannot arrive.
+The same mechanism parks scaled-to-zero models. **No new controller**: the pool is
+an ordinary Deployment, readiness gates traffic, and WVA drives it from its
+existing loop.
 
 ---
 
@@ -155,138 +154,185 @@ does not get to choose the GPU. Everything measured above is that price.
 | Who picks the GPU | Kubernetes, per scale-up | you, once at creation |
 | Wake reliability | lottery | **deterministic** |
 
-## THE OPERATING MODEL: the pool is a bridge, not a fleet
+## THE OPERATING MODEL: one shared pool, many models
 
-This is the framing that makes the cost work, and it changes how the pool is
-sized. Read it before the architecture below.
+**Per-model pools are not the goal and do not pay.** N models would need N warm
+GPUs, which is the same as simply running them. The entire proposition is that
+**K shared GPUs give fast-start coverage for N models** -- K=4 covering twenty
+models is worth building; twenty pools of one is not.
 
-**Several pools, one per accelerator type, each holding warm instances of the
-models that run on that type.** On a scale-up WVA wakes the corresponding
-instances from the pool *and* scales the ordinary Deployment as usual. The pool
-serves while the real replicas start; as each real replica begins **serving**,
-WVA sleeps the pool instance and hands the traffic over. The slot returns to
-standby, ready for the next spike.
+**Several pools, one per accelerator type.** Each pool Pod holds one GPU and
+several vLLM instances on it: at most one awake, the rest asleep at ~1.4 GiB
+each. Any model in a Pod's warm set can be serving within ~2-3 s.
 
-### Why this changes the economics
+### The pool has two jobs, and they are the same mechanism
 
-Every other version of this design sized the pool against **load** — cover the
-free GPUs, hold enough warm capacity to serve the peak. That is expensive, and it
-is why "hold the GPUs" kept looking unaffordable.
+1. **A parking lot for scaled-to-zero models.** A parked model holds no replicas
+   and no GPU of its own, yet returns to service in seconds because its weights
+   sit asleep in the pool.
+2. **A burst buffer for running models.** A spike is covered from the pool while
+   ordinary replicas start.
 
-As a bridge, the pool is sized against **ramp time**. A slot is occupied only for
-the ~41-90 s a normal replica needs to become ready, then it sleeps and is
-reusable:
+Both are "wake an instance that is already there". Nothing distinguishes them
+mechanically, which is why one pool serves both.
 
+### Sizing, corrected for long drain
+
+An earlier revision sized the pool as *concurrent spikes x ramp time*, assuming a
+slot frees in ~41-90 s. **That assumption does not hold.** A slot may be held far
+longer: no free GPUs cluster-wide, a node scale-up in progress, a sustained spike
+rather than a burst, or a large model loading. So:
+
+- **K is driven by concurrent sustained burst demand**, not by ramp time.
+- **The pool can be exhausted**, which forces an explicit policy -- fall back to a
+  cold start, queue, or preempt a lower tier.
+- The pool is therefore **fast-start shared burst capacity that usually hands
+  back**, rather than a bridge that always does.
+
+It remains worth having: capacity arrives in ~3 s instead of ~41 s, shared across
+every model on that accelerator. But the honest description is "K GPUs of elastic
+burst headroom plus a parking lot", not "a cheap latency trick".
+
+### The constraint that governs placement: awake-slot contention
+
+Models co-resident on one card are cheap in memory (~1.4 GiB asleep) but they
+**contend for the single awake slot**. While a Pod serves model X, models Y and Z
+warm on that same card cannot be woken -- for the whole drain, which may be long.
+
+So co-location is not free, and the instinct to pack densely is wrong. The warm
+set assignment wants the opposite: **spread models that may spike together across
+different cards, and co-locate models unlikely to spike simultaneously.** It is
+an anti-affinity problem, not a packing problem.
+
+There is a dial against it. "One awake per card" follows from
+`--gpu-memory-utilization 0.95`. At ~0.45 a card could hold two awake instances,
+halving each model's KV cache to double concurrency. For long drain that may be
+the better trade, and it is a per-pool decision.
+
+## Lifecycle: how several models come to be parked on one Pod
+
+This is the part that has to be concrete, because it is where scale-up and
+scale-down actually touch the pool.
+
+### Parking, on scale-down to zero
+
+A terminating replica cannot donate its warmth -- the process dies and the
+weights go with it. Parking is therefore an **asynchronous re-creation** in the
+pool:
+
+1. WVA scales model X's Deployment to zero (its ordinary replicas terminate and
+   release their GPUs).
+2. WVA picks a pool Pod on the right accelerator with a free instance slot, and
+   asks its launcher to `POST /v2/vllm/instances` for X.
+3. That instance loads the model -- ~41 s, in the background, with nothing
+   waiting on it -- and is then put to sleep.
+4. X is now parked: ~1.4 GiB of a shared card, no GPU of its own, wakeable in
+   ~2-3 s.
+
+The cost of parking is paid once, off the critical path, at the moment demand has
+already gone.
+
+### Waking, on scale-up from zero
+
+1. WVA wakes X's instance in the pool and labels that Pod into X's InferencePool
+   -- serving in **~3 s**.
+2. In parallel it scales X's ordinary Deployment up.
+3. When the ordinary replicas are **serving**, WVA sleeps the pool instance and
+   removes the label. X stays parked, ready for next time.
+4. If the ordinary replicas never arrive (no GPUs), the pool keeps serving until
+   `maxHoldSeconds`, then WVA decides whether to hold or release.
+
+### How a Pod comes to hold several models
+
+Two ways, and both are wanted:
+
+- **Assigned.** WVA places a model's warm instance on a chosen Pod when parking
+  it, or when it predicts a spike. This is the deliberate path and the one the
+  allocation policy drives.
+- **Accumulated.** A Pod that served model Y during a burst keeps Y's instance
+  asleep afterwards rather than deleting it. The warm set therefore drifts toward
+  models actually used -- an LRU cache of weights, filled by real traffic.
+
+Eviction is the counterpart: when a Pod is at `maxInstances`, or the card's
+sleeper budget is full, WVA deletes the least valuable instance to make room.
+That decision -- least recently used, lowest tier, least likely to spike -- is
+policy, and it is the same budgeting problem `fma-shared-warm-pool.md` describes.
+
+### Why scaling the pool Deployment is safe
+
+Scaling the pool **up** adds an empty Pod which fills over time, by assignment or
+by use. Scaling it **down** destroys warm sets, so the victim choice matters --
+prefer Pods whose models are also warm elsewhere, and never a Pod currently
+serving. Both are ordinary Deployment operations otherwise; no special machinery.
+
+## What we must build, and what we reuse
+
+Working this through changes the answer sharply, and in our favour.
+
+### Reused from FMA -- essentially just the launcher
+
+| component | role here | verdict |
+| --- | --- | --- |
+| `inference_server/launcher/launcher.py` (967) | the multi-process vLLM host: create/delete instances, pin each to a GPU via `gpu_uuids` to `CUDA_VISIBLE_DEVICES`, list and watch them | **as is** |
+| `launcher/gputranslator.py` (247) | lets the Pod discover its own GPUs through `pynvml`, with no requester to report them | **as is** |
+| `dockerfiles/Dockerfile.launcher.*` | the image | **as is** |
+| vLLM's own `/sleep`, `/wake_up`, `/is_sleeping` | the actual sleep and wake, reached on each instance's own port; needs `VLLM_SERVER_DEV_MODE=1` | **as is** |
+
+### Not needed at all
+
+**The entire Kubernetes half of FMA.** Because the pool is an ordinary Deployment:
+
+- `dual-pods-controller` (~3.5k lines) -- nothing binds requesters to providers;
+- `launcher-populator` and `LauncherPopulationPolicy` -- the Deployment
+  controller places Pods, so nothing has to reconcile per-node launcher counts;
+- `InferenceServerConfig` / `LauncherConfig` CRDs -- optional: the launcher's API
+  takes a `VllmConfig` (options, `gpu_uuids`, env, annotations) directly, so WVA
+  can supply it from its own model configuration;
+- `pod-helper.go` and its `removeGPUResourceLimits` -- **we never call it**, since
+  we author the pool Deployment ourselves and simply request the GPU.
+
+**Consequence: the FMA fork is not on the critical path for this design.** Commit
+`aa072ef` fixes the dual-pods reclaim path, which this architecture does not use.
+It remains correct and useful for the *current* deployment model and should stay,
+but nothing here waits on it.
+
+### To be built
+
+| piece | size | where |
+| --- | --- | --- |
+| **Pool Deployment manifest** -- launcher image, `nvidia.com/gpu: 1`, model-cache volume, readiness probe | config | GitOps, beside the models |
+| **Readiness gate** reflecting instance state -- Pod ready only while an instance is awake and serving | ~50 lines, sidecar or exec probe | in the Pod. Today's launcher readiness is `GET /v2/vllm/instances` (`pod-helper.go:258-289`), which answers 200 whenever the *launcher* lives, regardless of sleep. The pattern exists at `pkg/server/requester/probes`. |
+| **Pool discovery and state** -- find pool Pods by label, read their warm sets | small | WVA. No sidecar or annotation needed: `GET /v2/vllm/instances` on each pool Pod already returns exactly this. |
+| **Actuation** -- wake/sleep an instance, patch `llm-d.ai/model`, gate readiness | small | WVA, in the loop and RBAC it already has |
+| **Allocation policy** -- which models are warm where, spike anti-affinity, eviction, exhaustion behaviour, hold timeouts | the real work | WVA |
+
+So the engineering is concentrated in WVA policy, the mechanism is reused, and
+the only new artefact outside WVA is a readiness shim and a Deployment YAML.
+
+### Configuration shape
+
+```yaml
+# One per accelerator type. Sized in replicas; that is the whole knob.
+metadata:
+  labels:
+    llm-d.ai/warm-pool: "true"
+    llm-d.ai/accelerator: NVIDIA-H100-80GB-HBM3   # no model label: it hosts several
+spec:
+  replicas: 4
 ```
-pool size  ~=  concurrent spike arrivals  x  ramp time
+
+Per tier, eligibility and the behaviours long drain forces:
+
+```yaml
+warmPool:
+  eligible: true
+  maxSlots: 2             # cap per model, so one spike cannot take the whole pool
+  onExhausted: fallback   # fallback | queue | preempt-lower-tier
+  maxHoldSeconds: 900     # give the slot back even if no ordinary replica arrived
 ```
 
-not peak capacity. A handful of permanently-held slots can bridge many models'
-spikes, serially. That is a small, affordable, fixed cost — the first version of
-this proposal that plausibly survives a cost review.
-
-### And it degrades to today's behaviour
-
-If the pool is empty, or the model is not in that pool's warm set, the scale-up
-is exactly what happens today: a slow start. Nothing goes `Pending`, nothing
-breaks. That is the property the extended-resource idea could not offer, and it
-means the pool can be introduced incrementally and switched off without risk.
-
-It also fits WVA's existing shape: pool instances are a **transient** resource
-WVA borrows and returns, not a serving fleet it has to own.
-
-### Sequence
-
-1. WVA decides 1 → 4.
-2. Wake 3 pool instances of that model, apply the live label — traffic flows in
-   **~3 s**.
-3. In parallel, scale the ordinary Deployment 1 → 4.
-4. As each real replica begins serving, sleep one pool instance and remove its
-   label.
-
-### Four sharp edges, in the order they bite
-
-1. **Hand over on *serving*, not on `Ready`.** `readyReplicas` is not the same
-   condition as being in the EndpointSlice and reachable through the router. This
-   repo already paid for that distinction — `hack/benchmark/wait_serving.sh`
-   exists because a 503 in exactly that window killed whole runs. The trigger
-   must be the InferencePool's view.
-2. **The bridge needs GPUs on both sides at once.** During handover the pool
-   holds its GPUs *and* the new replicas hold theirs. On a full cluster the real
-   replicas never schedule, the bridge never completes, and the pool stays awake
-   — silently turning a burst buffer into permanent capacity. Needs an explicit
-   timeout and a decision: keep serving from the pool, or give up and release.
-3. **Attribution must not double-count.** Capacity is genuinely doubled for the
-   bridge window. If WVA counts pool instances as durable supply it will suppress
-   the very scale-up they exist to cover — the same failure mode as pending
-   replicas counting toward anticipated supply.
-4. **Pool composition is still the allocation question.** A model absent from a
-   pool's warm set gets no bridge. Per-accelerator-type pools match the
-   accelerator-aware modelling WVA already does, but *which* models each pool
-   keeps warm is WVA's decision, and it is the same budgeting problem
-   `fma-shared-warm-pool.md` describes.
-
-### No separate controller: the pool is a Deployment and readiness does the rest
-
-An earlier revision proposed an actuator reconciling a `desired-model` annotation
-into a `llm-d.ai/model` label, on the grounds that it must react to events in
-seconds while WVA's optimizer runs on a 15 s cycle. **That reasoning was wrong.**
-The latency-critical action — the wake — is initiated by WVA's own scale-up
-decision, not by an external event, so there is no rhythm to race. The only
-reactive step is sleeping the pool pod once the real replica serves, and being a
-second late there costs nothing.
-
-Removing that constraint collapses the design.
-
-**Make each pool a Deployment per (model, accelerator type), and gate endpoint
-membership on READINESS:**
-
-- instance asleep → pod **not ready** → out of the EndpointSlice → no traffic
-- instance awake → pod **ready** → in the InferencePool → serving
-
-Kubernetes performs the endpoint churn. That deletes the label swap, the
-annotation contract and the actuator in one move — all three existed to hand-roll
-what readiness already does. Pool pods are already labelled for their model, so
-there is nothing to swap.
-
-**The pool pod self-initialises.** On startup: create the instance, load the
-model, sleep, report not-ready. It arrives warm and idle by construction, so
-nothing has to place instances into it. Scaling the pool Deployment *is* scaling
-warm capacity.
-
-**What WVA does, entirely within its existing loop and RBAC:**
-
-1. scale the pool Deployment — pool size;
-2. on scale-up, pick a sleeping pool pod and `POST /wake_up` — ready and serving
-   in ~3 s;
-3. scale the real Deployment as usual;
-4. when the real replicas are **serving**, `POST /sleep` the pool pod — not
-   ready, and it leaves the InferencePool.
-
-Crash-safety is free and level-triggered: on any later pass WVA sees awake pool
-pods it does not need and sleeps them, exactly like the rest of its
-reconciliation. No new CRD, no new controller, no handshake.
-
-**The one piece of new code** is a readiness shim reflecting sleep state. Today
-the launcher's readiness probe is `GET /v2/vllm/instances`
-(`pkg/controller/utils/pod-helper.go:258-289`), which answers 200 whenever the
-*launcher* is up regardless of whether its instance sleeps. It must instead
-reflect `is_sleeping`. That is ~50 lines inside the Pod, and the pattern already
-exists in-tree — `pkg/server/requester/probes` served precisely this kind of
-gated `/ready`.
-
-### What this trades away, and when to revisit
-
-A Deployment per model means **at least one GPU per model kept warm**. The
-denser variant — several models co-resident on one card at ~1.4 GiB each, so
-twenty models might occupy seven cards rather than twenty — is cheaper at scale,
-but it is exactly what reintroduces the label swap and therefore an actuator.
-
-So: **build the simple version first, and let the per-model GPU cost decide
-whether density is ever worth the machinery.** The bridge economics do not need
-density — pool size is driven by concurrent spike arrivals and ramp time, not by
-how many models exist — so density only starts to matter when the number of
-models kept warm, rather than the spike rate, dominates the bill.
+`onExhausted` and `maxHoldSeconds` exist only because a slot may be held for a
+long time; a bounded bridge would need neither.
 
 ## RECOMMENDED: an elastic pool of GPU-holding launchers, one GPU each
 
@@ -408,7 +454,16 @@ them is normal, and predictable wake latency is the product. It is wrong for a
 shared research cluster, where the appeal of releasing GPUs between spikes is
 exactly what makes warmth unreliable.
 
-## What of FMA is reusable, component by component
+## Appendix: full component survey of the FMA tree
+
+*(Surveyed at `aa072ef`. Kept for its file-level detail, which is still accurate.
+Its VERDICTS were written for the earlier architecture, where a controller
+replaced the dual-pods controller and the launcher-populator was retained. Under
+the current design -- pool as an ordinary Deployment -- less is needed than this
+section claims: the populator, the LauncherPopulationPolicy and `pod-helper.go`
+all fall away too. Where the two disagree, "What we must build, and what we
+reuse" above is authoritative.)*
+
 
 Surveyed at `aa072ef`. The headline: **the launcher half is already
 requester-free and needs almost nothing done to it**, while the dual-pods
