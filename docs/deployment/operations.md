@@ -64,13 +64,18 @@ kubectl port-forward -n <monitoring-namespace> svc/kube-prometheus-stack-grafana
 # then http://localhost:3000  (default admin password: prom-operator)
 ```
 
-It ships as a labelled ConfigMap, so **an existing Grafana picks it up too** — you
-do not need to have let this install deploy Prometheus:
+It ships as a labelled ConfigMap, so **an existing Grafana picks it up** — you do
+not need to have let this install deploy Prometheus — *provided you publish into a
+namespace that Grafana's sidecar actually watches*:
 
 ```bash
 # publish into whichever namespace your Grafana's sidecar watches
 DASHBOARD_NS=my-monitoring ./deploy/install.sh   # DEPLOY_PROMETHEUS=false is fine
 ```
+
+A sidecar watches only its own namespace by default, so picking the wrong
+`DASHBOARD_NS` produces a ConfigMap nobody reads and no error. See
+[If you cannot write to the monitoring namespace](#if-you-cannot-write-to-the-monitoring-namespace).
 
 Skip it entirely with `DEPLOY_OPERATIONAL_DASHBOARD=false`.
 
@@ -86,11 +91,42 @@ is normally not the namespace WVA runs in — so publishing the shared one is a
 | | can do |
 | --- | --- |
 | Cluster admin | publish and update the shared dashboard in the monitoring namespace; decide the datasource, and therefore who sees what |
-| Namespace admin | publish a private copy into their own namespace (`DASHBOARD_NS=<own>`); use the shared one through their `?var-namespace=` link |
+| Namespace admin | use the shared dashboard through their `?var-namespace=` link; or import the JSON into Grafana by hand; or publish into a namespace **their Grafana already watches** — see the caveat below |
 
 A namespace admin running `make deploy-wva` without rights to the monitoring
 namespace gets a message saying so — the install continues, and only the
 dashboard step is skipped. Nothing about WVA's scaling depends on it.
+
+#### If you cannot write to the monitoring namespace
+
+`DASHBOARD_NS=<your-namespace>` is **not** sufficient on its own, and it fails
+quietly. The Grafana sidecar discovers dashboards by **label within the namespaces
+it is told to watch**, and `kube-prometheus-stack` defaults
+`sidecar.dashboards.searchNamespace` to the sidecar's *own* namespace. This
+installer does not override it. So a ConfigMap published into your namespace is
+created successfully, is correctly labelled, and is **never picked up** — there is
+no error to see.
+
+Four ways out, cheapest first:
+
+1. **Import the JSON by hand.** `deploy/grafana/operational-dashboard.json` is an
+   ordinary Grafana dashboard. Anyone with Grafana editor rights can import it
+   through the UI — *Dashboards → New → Import* — with **no Kubernetes permission
+   at all**. This is the fastest self-service route and the right answer for most
+   namespace admins.
+2. **Use the shared dashboard, scoped to you.** If an admin has already published
+   it, you need nothing: open the link the install prints,
+   `…/d/wva-operational/wva-operational-dashboard?var-namespace=<your-namespace>`.
+3. **Ask for the sidecar to watch all namespaces.** A one-time cluster change —
+   `grafana.sidecar.dashboards.searchNamespace=ALL`, or an explicit list — after
+   which `DASHBOARD_NS=<your-namespace>` works for every tenant, self-service, for
+   good. This is the change that makes option 4 and the table above actually true.
+4. **Run your own Grafana in your namespace**, then publish to it with
+   `DASHBOARD_NS=<your-namespace>`. Fully self-service and needs no admin, at the
+   cost of operating another Grafana.
+
+On OpenShift, note that user-workload monitoring ships **no Grafana** — so options
+1 and 4 are the practical ones there unless your cluster runs its own.
 
 #### One dashboard, many installs
 
@@ -123,6 +159,10 @@ into your own namespace:
 ```bash
 DASHBOARD_NS=<your-namespace> make deploy-wva   # pinned to that namespace
 ```
+
+This only renders if a Grafana sidecar watches that namespace — your own Grafana,
+or a shared one configured with `searchNamespace: ALL`. Otherwise the ConfigMap is
+inert; import the JSON by hand instead.
 
 **Namespace label:** `wva_*` metrics carry both `namespace` and
 `exported_namespace`. `exported_namespace` is the *workload's* namespace and
