@@ -108,7 +108,7 @@ introduced incrementally and switched off without risk.
 | instances per Pod | 1 awake + N asleep | `LauncherConfig.maxInstances` caps N |
 | pool identity | (accelerator type, TP size, **sleep level**) | each is immutable per Pod, so each needs its own Deployment |
 | pool size | `spec.replicas` | ordinary scaling; `kubectl scale` works |
-| traffic switch | **Pod readiness gate** | asleep → gate false → out of the EndpointSlice. Kubernetes does the endpoint churn — **conditional on EPP honouring readiness, which is prerequisite 1 in §9 and is not yet verified in this stack** |
+| traffic switch | **Pod readiness gate** | asleep → gate false → EPP drops the Pod from its active set entirely. **Verified on kind: a NotReady Pod receives no dispatch and no polling** (§9.1). Order matters: gate false *before* `/sleep` |
 | which model is live | `llm-d.ai/model` label | selects the InferencePool the Pod joins |
 
 **Why one GPU (or one TP group) per Pod:** a 4-GPU Pod running four independent
@@ -778,27 +778,46 @@ does not exist anywhere else today (§8) — is untouched by the swap.
 
 ## 9. Prerequisites, before any of this is built
 
-Three of these can invalidate the design, so they are not follow-ups. All five
+Two of the remaining four can invalidate the design, so they are not
+follow-ups. All five
 concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkerset).
 
-1. **Does a NotReady Pod actually stop receiving EPP traffic?** This design rests
-   on readiness gating the traffic switch, and that assumption is **unverified in
-   this stack**. Two documented facts undercut it: the launcher's readiness probe
-   hits `:8001` (its own CRUD API, which answers whenever the process manager is
-   up) while EPP dials `:8000`, so the Pod reads `Ready` for its whole life
-   regardless of whether anything can serve; and pool membership is label-driven,
-   which already caused EPP to dispatch to launchers that could not serve and
-   return **~20 % 503s**, destroying benchmark runs. See
-   `../guides/fma/README.md` and upstream request 7.
+1. ~~**Does a NotReady Pod actually stop receiving EPP traffic?**~~
+   **ANSWERED 2026-08-19 — yes. Measured on kind against a live InferencePool and
+   EPP** (`inference.networking.k8s.io`, EPP with `FailOpen`).
 
-   The Snapshot Orchestrator's answer is to **patch the llm-d EPP** with a
-   fail-closed scheduling filter keyed on its lifecycle label, which is evidence
-   that its authors did not consider readiness sufficient either.
+   Method: a backend Pod matching the pool selector, held NotReady by an
+   unsatisfied `readinessGate`, then the gate satisfied as a control arm. The
+   measurement instrument was validated first — a request sent straight to the Pod
+   was confirmed to leave a trace — so a "no traffic" reading means something.
 
-   **If readiness does not gate dispatch, a sleeping pool Pod serves 503s** and
-   this design needs the same EPP filter — which would cost it the "no new
-   components" property. Cheap to settle: place a pool Pod in an InferencePool,
-   force its gate false, send traffic, count 503s. **Do this first.**
+   | arm | EPP interaction with the Pod |
+   | --- | --- |
+   | gate false (NotReady) | **zero** — no dispatch, and no polling either |
+   | gate true (Ready) | continuous polling, ~20 `GET /` per second |
+
+   EPP does not merely decline to dispatch to a NotReady Pod; **it does not touch
+   it at all.** So the traffic switch this design relies on is sound, and no EPP
+   filter is required.
+
+   **Caveat on what was proven.** No user request completed successfully in either
+   arm, because the probe backend was `agnhost` rather than a vLLM and returns 404
+   for `/v1/completions`. What is established is *admission* — whether EPP
+   considers the Pod part of its active set — not the response path. For this
+   design's safety question, "will a sleeping Pod receive user traffic", admission
+   is the property that matters and it fails closed.
+
+   **And a design requirement falls out of it.** Readiness gates *admission*; it
+   does nothing about a Pod that is Ready but cannot serve. That is precisely the
+   historical failure here — launchers retaining `inferenceServing=true` while
+   unable to answer, giving ~20 % 503s. So the ordering is load-bearing:
+
+   > **Set the gate false and wait for EPP to drop the Pod BEFORE calling
+   > `/sleep`.** Sleeping first leaves a window in which the Pod is Ready and
+   > asleep, which is exactly the 503 condition.
+
+   The reverse ordering applies on wake: `/wake_up`, confirm the engine answers,
+   *then* set the gate true.
 
 2. **Does a woken engine return CORRECT output?** Open vLLM issues report that it
    may not: [#16234](https://github.com/vllm-project/vllm/issues/16234) (improper
