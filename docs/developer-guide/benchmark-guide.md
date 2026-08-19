@@ -127,9 +127,9 @@ After this, your workspace will look like:
 llm-d-workload-variant-autoscaler/
 ├── llm-d-benchmark/          ← cloned by make benchmark-install
 ├── test/benchmark/scenarios/
-│   ├── prefill_heavy.yaml
-│   ├── decode_heavy.yaml
-│   └── symmetrical.yaml
+│   ├── prefill_heavy.yaml.in   ← pass the bare name: BENCHMARK_WORKLOAD=prefill_heavy
+│   ├── decode_heavy.yaml.in
+│   └── symmetrical.yaml.in
 └── Makefile
 ```
 
@@ -162,16 +162,16 @@ Wait until you see `✅ All smoketest steps complete.`
 **2. Run a scenario:**
 
 ```bash
-make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefill_heavy.yaml
+make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefill_heavy
 ```
 
 If you stood up with a non-default model, pass the same `MODEL_ID`:
 
 ```bash
-make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefill_heavy.yaml MODEL_ID=Qwen/Qwen3-0.6B
+make benchmark-run BENCHMARK_NAMESPACE=<your-namespace> BENCHMARK_WORKLOAD=prefill_heavy MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-Repeat with `decode_heavy.yaml` or `symmetrical.yaml` for the other scenarios.
+Repeat with `decode_heavy` or `symmetrical` for the other scenarios.
 
 Wait until you see:
 ```
