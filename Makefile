@@ -112,6 +112,24 @@ BENCHMARK_SCENARIOS_DIR ?= $(CURDIR)/test/benchmark/scenarios
 # kind-emulator targets pass MODEL_ID= into their sub-makes, so origin reads
 # "command line" there and they keep the dummy.
 BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID)),$(MODEL_ID),Qwen/Qwen3-0.6B)
+
+# The fraction of each GPU vLLM may use, substituted into the scenario.
+#
+# It has to follow the MODEL, and did not: the scenarios are written around
+# Qwen3-32B and carry 0.95, which is right for a model that genuinely needs most
+# of an 80GB card. Overriding MODEL_ID swaps the model and left the 32B's budget
+# in place, so a 0.6B -- 1.12GiB of weights -- claimed 73.5GiB of KV cache.
+#
+# That works on an empty GPU and fails on a shared one, which is why it looked
+# intermittent rather than wrong. gpu_memory_utilization is a fraction of TOTAL,
+# not of FREE, and on this cluster the memory that is already gone belongs to FMA
+# launcher pods -- which request ZERO GPUs, so the scheduler places our pod on a
+# card it believes is empty. Measured: 77.3 of 79.18 GiB free at startup, then
+# `torch.OutOfMemoryError: tried to allocate 594MiB, 500MiB free`.
+#
+# So: 0.95 for the scenario's own big model, and a small fraction when the caller
+# has substituted a small one. Both are overridable.
+GPU_MEM_UTIL         ?= $(if $(filter Qwen/Qwen3-0.6B,$(BENCHMARK_MODEL_ID)),0.30,0.95)
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
@@ -924,11 +942,11 @@ benchmark-scenarios: ## Copy our scenario specs into the llm-d-benchmark clone (
 		for f in $(BENCHMARK_SPECS_DIR)/*.yaml; do \
 			[ -f "$$f" ] || continue; \
 			dest="$(BENCHMARK_REPO_DIR)/config/scenarios/guides/$$(basename $$f)"; \
-			sed 's/__WARM_REPLICAS__/$(WARM_REPLICAS)/g' "$$f" > "$$dest"; \
+			sed -e 's/__WARM_REPLICAS__/$(WARM_REPLICAS)/g' -e 's/^\([ 	]*\)gpuMemoryUtilization:.*/\1gpuMemoryUtilization: $(GPU_MEM_UTIL)/' "$$f" > "$$dest"; \
 			if grep -q '__WARM_REPLICAS__' "$$dest"; then \
 				echo "ERROR: unsubstituted token left in $$dest"; exit 1; \
 			fi; \
-			echo "  installed scenario $$(basename $$f) (WARM_REPLICAS=$(WARM_REPLICAS))"; \
+			echo "  installed scenario $$(basename $$f) (WARM_REPLICAS=$(WARM_REPLICAS), gpuMemoryUtilization=$(GPU_MEM_UTIL))"; \
 			n=$$((n+1)); \
 		done; \
 		[ "$$n" -gt 0 ] || echo "  no specs in $(BENCHMARK_SPECS_DIR)"; \
