@@ -334,6 +334,39 @@ the wake itself**.
 Against a cold start of ~41 s **[M]**, this is the ~15× saving that motivates
 everything above.
 
+### The failure this design exists to prevent, now measured
+
+Attempting to wake the **unbound** sleeping launchers on pokprod — the ones whose
+GPU was released when their requester went away — produced this:
+
+| launcher | `POST /wake_up` |
+| --- | --- |
+| one | `CUDA Error: invalid argument at cumem_allocator.cpp:145` |
+| another | **`CUDA Error: out of memory at cumem_allocator.cpp:139`** |
+| a third | succeeded, and served correct output |
+
+**Two of three sleeping instances could not be woken at all.** Not slowly, not
+incorrectly — the call returns HTTP 500 and the instance stays asleep.
+
+The mechanism follows from the dual-pods design. The launcher requests **no GPU**;
+the *requester* holds it. When the requester goes away the GPU allocation is
+released, but the sleeping instance's `cumem` handles still refer to memory on that
+device. Another workload can then take it. On wake there is either nothing valid to
+restore into (`invalid argument`) or no room to restore into (`out of memory`). The
+third launcher woke because its card happened to still have space.
+
+**This is the strongest argument for the design in this document.** A warm pool of
+GPU-*holding* Pods cannot hit either error: the device stays allocated to the Pod
+for its lifetime, so the memory a sleeper needs is reserved by construction and
+nobody else can take it. Holding the GPU is not merely what makes the wake *fast* —
+it is what makes the wake *possible*.
+
+It also re-explains this project's measurement history better than the GPU-UUID
+account did. Runs recorded 0 woke / 3 rebuilt, twice, then 1 woke / 2 rebuilt. If
+roughly one sleeper in three is wakeable because its card still has room, those
+numbers are exactly what one would expect — and no GPU-identity mismatch is needed
+to explain them. Both effects are real; this one is larger and had been invisible.
+
 ### 4.4 Sleep
 
 | step | cost |
@@ -814,8 +847,7 @@ does not exist anywhere else today (§8) — is untouched by the swap.
 
 ## 9. Prerequisites, before any of this is built
 
-Two of the remaining three can invalidate the design, so they are not
-follow-ups. All five
+The two that could have invalidated the design are answered. All five
 concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkerset).
 
 1. ~~**Does a NotReady Pod actually stop receiving EPP traffic?**~~
@@ -855,14 +887,23 @@ concern phase 1; the phase-2 prerequisite is in [§10](#10-phase-2-leaderworkers
    The reverse ordering applies on wake: `/wake_up`, confirm the engine answers,
    *then* set the gate true.
 
-2. **Does a woken engine return CORRECT output?** Open vLLM issues report that it
-   may not: [#16234](https://github.com/vllm-project/vllm/issues/16234) (improper
-   response after `/wake_up`) and
-   [#17103](https://github.com/vllm-project/vllm/issues/17103) (meaningless
-   outputs after sleep→wake). **Every measurement taken on pokprod was
-   time-to-Ready; nothing verified output correctness.** A pool serving garbage in
-   3 s is worse than one serving correctly in 41 s. Those issues predate the
-   v0.26.0 engine in use and may be fixed — check, do not assume.
+2. ~~**Does a woken engine return CORRECT output?**~~ **ANSWERED 2026-08-19 — yes,
+   byte-identical.** Tested on pokprod with greedy decoding (`temperature: 0`),
+   comparing a woken instance against a never-slept instance of the same model as
+   reference:
+
+   ```text
+   reference (never slept):  "Paris. The capital of France is also the capital of
+                              the French Republic. The capital of France is ..."
+   after /wake_up:          " Paris. The capital of France is also the capital of
+                              the French Republic. The capital of France is ..."
+   ```
+
+   Identical. Issues [#16234](https://github.com/vllm-project/vllm/issues/16234)
+   and [#17103](https://github.com/vllm-project/vllm/issues/17103) do **not**
+   reproduce on the engine in use here. The risk that a woken pool serves fast
+   garbage is retired.
+
 3. ~~**Measure `B_storage` properly.**~~ **ANSWERED 2026-08-19.**
    `dd iflag=direct` against `/model-cache` from inside a launcher Pod:
    **1.7 GB/s cold, 5.6 GB/s cached**, on IBM Spectrum Scale (GPFS) RWX — 4x
