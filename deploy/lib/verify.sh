@@ -104,6 +104,98 @@ verify_deployment() {
         log_success "WVA is reading model-server metrics and emitting scaling decisions"
     fi
 
+    # --- WVA's own metrics: was the ServiceMonitor ACCEPTED, not merely created?
+    #
+    # The prometheus-operator resolves a ServiceMonitor's bearerTokenSecret the
+    # first time it sees the object. If that Secret is absent it REJECTS the
+    # ServiceMonitor -- `reason=InvalidConfiguration`, "unable to get secret" --
+    # and never reconsiders: a metadata write does not re-trigger it, and
+    # re-applying identical content is a no-op, so `kubectl apply` says
+    # "unchanged" and the operator does not look again. The rejection lasts as
+    # long as the object does.
+    #
+    # A two-phase install used to create the ServiceMonitor in the admin phase and
+    # its Secret in the controller phase, half an hour apart, and so produced
+    # exactly that state: no `up` series, no `wva_*` series, and an install that
+    # printed "All components verified successfully!" over the top of it. Both
+    # kinds are in WVA_PREREQ_KINDS now (see common.sh) so they land together, but
+    # an install whose admin phase predates that change still carries the rejected
+    # object -- and only the operator's log or this check will ever say so.
+    #
+    # Checked by cause rather than by event: events expire, the missing Secret does
+    # not. Not fatal -- WVA scales from llm-d's metrics, a different path entirely.
+    # What is lost is WVA's own telemetry, which fails by rendering empty.
+    # `|| true` because the ServiceMonitor CRD is absent on any cluster without
+    # the prometheus-operator -- the common case on plain Kubernetes -- and kubectl
+    # exits non-zero there. An assignment carries that status and `set -e` turns it
+    # into an exit. Today the only caller is `verify_deployment || verified=false`,
+    # which suppresses `set -e` for the whole body; this no longer depends on that.
+    local sm_json sm_refs
+    sm_json=$(kubectl get servicemonitor -n "$WVA_NS" -o json 2>/dev/null) || true
+    if [ -n "$sm_json" ]; then
+        local sm_missing
+        sm_refs=$(printf '%s' "$sm_json" | jq -r '
+            .items[]?
+            | .metadata.name as $sm
+            | .spec.endpoints[]?
+            | select(.bearerTokenSecret.name != null)
+            | "\($sm) \(.bearerTokenSecret.name)"' 2>/dev/null) || true
+        sm_missing=$(printf '%s\n' "$sm_refs" \
+          | while read -r sm secret; do
+                [ -n "$secret" ] || continue
+                kubectl get secret "$secret" -n "$WVA_NS" >/dev/null 2>&1 \
+                    || echo "$sm -> $secret"
+            done)
+        # Two different failures, and the second is the one a naive check misses.
+        #
+        #   the Secret is absent      the cause. Deterministic, and the state a
+        #                             fresh mis-ordered install lands in.
+        #   the Secret is present     but the operator already rejected the
+        #     and it was rejected     ServiceMonitor when it was not, and does not
+        #                             re-evaluate. This is the RECOVERY state: an
+        #                             install that creates the missing Secret is
+        #                             still not scraped, and checking only for the
+        #                             Secret would call that healthy.
+        #
+        # The rejection is only visible as an event, and events expire (an hour by
+        # default), so this catches it within an install's own window and cannot
+        # prove its absence later. That asymmetry is the right way round: a false
+        # "still rejected" costs one spec touch, a false "healthy" costs all of
+        # WVA's telemetry, silently.
+        # `|| true`: no matching events is grep exit 1, which pipefail makes the
+        # assignment's status and `set -e` makes an exit -- and NO rejection events
+        # is the healthy case, so without this the check kills the rest of
+        # verify_deployment on exactly the clusters where nothing is wrong.
+        local sm_rejected
+        sm_rejected=$(kubectl get events -n "$WVA_NS" \
+            --field-selector reason=InvalidConfiguration \
+            -o jsonpath='{range .items[*]}{.involvedObject.kind}/{.involvedObject.name}{"\n"}{end}' 2>/dev/null \
+            | grep '^ServiceMonitor/' | sort -u) || true
+
+        if [ -n "$sm_missing" ]; then
+            log_warning "A ServiceMonitor names a bearerTokenSecret that does not exist, so the prometheus-operator has rejected it and WVA's own metrics are NOT being collected:"
+            printf '%s\n' "$sm_missing" | sed 's/^/      /' >&2
+            log_warning "  Scaling is unaffected (that reads llm-d's metrics), but no wva_* series will appear and the dashboard will be empty."
+            log_warning "  Fix: create the Secret, then force ONE re-evaluation — the operator ignores metadata-only writes, so change the spec, or delete and re-apply the ServiceMonitor."
+        elif [ -n "$sm_rejected" ]; then
+            log_warning "A ServiceMonitor was rejected by the prometheus-operator (InvalidConfiguration). Its Secret exists NOW, so this is very likely the earlier rejection standing after the cause was fixed — the operator does not re-evaluate on its own:"
+            printf '%s\n' "$sm_rejected" | sed 's/^/      /' >&2
+            log_warning "  Until it is re-evaluated there is no scrape target and no wva_* series. Force one:"
+            log_warning "    kubectl -n $WVA_NS delete servicemonitor <name> && NAMESPACE=$WVA_NS make setup-prereqs"
+            log_warning "  Then confirm a target exists — a re-apply of unchanged content will NOT do it."
+        elif [ -n "$sm_refs" ]; then
+            log_success "WVA metrics ServiceMonitor references resolve (its scrape config is valid)"
+        else
+            # Nothing here authenticates with a Secret, so there is no reference for
+            # the operator to resolve and nothing for this check to confirm. Claiming
+            # "valid" would be the same false green the check exists to remove: on
+            # plain Kubernetes the ServiceMonitor uses bearerTokenFile -- a projected
+            # token the kubelet supplies, which the operator never resolves -- and a
+            # namespace with no ServiceMonitor at all reaches this branch too.
+            log_info "No ServiceMonitor in $WVA_NS authenticates with a Secret, so there is nothing for the prometheus-operator to resolve or reject (only the OpenShift overlay uses bearerTokenSecret; Kubernetes uses bearerTokenFile)."
+        fi
+    fi
+
     # --- Monitoring
     if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
         log_info "Checking Prometheus..."
