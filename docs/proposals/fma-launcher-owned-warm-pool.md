@@ -258,12 +258,100 @@ sleeper budget is full, WVA deletes the least valuable instance to make room.
 That decision -- least recently used, lowest tier, least likely to spike -- is
 policy, and it is the same budgeting problem `fma-shared-warm-pool.md` describes.
 
+### When a model can be added to a Pod: transient memory, not scaling
+
+Adding a model to the pool **never involves scaling anything**. It is one call to
+a running Pod's launcher -- `POST /v2/vllm/instances` -- which forks a vLLM
+process on that card, loads the weights, and is then put to sleep. The Pod does
+not restart and its other instances are untouched. `maxInstances` is the only
+ceiling on how many models a Pod accumulates.
+
+The real constraint is **transient** memory. Steady state, a sleeper costs
+~1.4 GiB. Creating one costs **the full weight size**, because vLLM loads to the
+GPU first and only offloads on `/sleep`. On an 80 GiB card:
+
+| card state | free for a load | outcome |
+| --- | --- | --- |
+| idle (all instances asleep) | ~80 GiB less `M x 1.4` | almost anything loads |
+| serving at `--gpu-memory-utilization 0.95` | ~4 GiB less sleepers | a ~0.6 B model may fit; an 8 B model cannot |
+
+So the operating rule is:
+
+> **Add models to a pool Pod while it is idle.** A Pod that is currently serving
+> has its warm set effectively frozen.
+
+This interacts badly with long drain: a Pod held serving for a long time cannot
+have its warm set changed for the whole period. WVA should therefore prefer idle
+Pods when placing a model, treat serving Pods as unavailable for warm-set changes
+rather than retrying into failure, and -- if models must be parked while every
+Pod is busy -- either wait or use the headroom dial below.
+
+**The headroom dial.** Running pool Pods at `--gpu-memory-utilization 0.85`
+instead of `0.95` costs KV cache on whatever is serving, but leaves ~12 GiB free
+so the warm set can be updated *while* the Pod serves. That is a per-pool
+decision, and it is worth taking when drain is long.
+
 ### Why scaling the pool Deployment is safe
 
 Scaling the pool **up** adds an empty Pod which fills over time, by assignment or
 by use. Scaling it **down** destroys warm sets, so the victim choice matters --
 prefer Pods whose models are also warm elsewhere, and never a Pod currently
 serving. Both are ordinary Deployment operations otherwise; no special machinery.
+
+## Multi-GPU models (tensor parallelism)
+
+**Supported, and by the part we are reusing.** The launcher already takes a
+*list* of GPUs per instance: `VllmConfig.gpu_uuids` is `[]string`
+(`pkg/controller/dual-pods/launcherclient.go:90`), and the launcher translates
+each UUID to a CUDA index and joins them
+(`inference_server/launcher/launcher.py:176-191`):
+
+```python
+config.env_vars["CUDA_VISIBLE_DEVICES"] = ",".join(cuda_indices)
+```
+
+The instance ID hashes the joined list too, so a TP=4 instance is keyed to its
+whole set of four cards. Nothing about multi-GPU has to be added.
+
+### The rule that keeps it clean: Pod GPU count == TP size
+
+A pool Pod should request exactly as many GPUs as the models it hosts need:
+
+| models hosted | pool Pod requests | awake at a time |
+| --- | --- | --- |
+| TP=1 | `nvidia.com/gpu: 1` | one |
+| TP=8 | `nvidia.com/gpu: 8` | one, spanning all eight |
+
+Then one awake instance always occupies the whole Pod, which preserves everything
+the single-GPU design depends on: **one live model per Pod**, so Pod-level
+readiness is meaningful, the `llm-d.ai/model` label is unambiguous, and Services
+and the InferencePool keep working untouched.
+
+The tempting alternative -- a 4-GPU Pod hosting four independent TP=1 instances,
+up to four awake at once -- breaks exactly that. Pod readiness cannot express
+"model A serving, model B asleep" for two instances in one Pod, and one label
+cannot name two live models. It reintroduces the endpoint problem that one
+GPU per Pod was chosen to avoid. Avoid it.
+
+**So pools are per (accelerator type, TP size)**, not merely per accelerator. A
+cluster serving TP=1 and TP=8 models on H100s runs two pools.
+
+### What it costs
+
+The pool holds whole **devices**, not just memory. A TP=8 warm slot occupies
+eight GPUs for as long as the Pod exists, even while every instance on it sleeps
+using ~1.4 GiB per shard. That is the same trade as the single-GPU case --
+determinism is bought by holding the allocation -- multiplied by the TP size.
+
+Two consequences worth planning around:
+
+- **Large-model parking is expensive.** Keeping an 8-way model wakeable costs
+  eight held GPUs, whatever its resting memory. Whether that beats a ~41 s cold
+  start is a cost decision per model, not a property of the design.
+- **The warm set is cheap once the Pod exists.** Adding a second and third TP=8
+  model to that same Pod costs only their resting shards. So a large-TP pool Pod
+  should hold *several* large models, or it is poor value -- the opposite of the
+  TP=1 case, where a Pod is cheap enough to be lightly loaded.
 
 ## What we must build, and what we reuse
 
