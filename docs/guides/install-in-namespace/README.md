@@ -218,6 +218,23 @@ the wrong one yields a dashboard that is empty rather than broken. Prints the
 dashboard URL and the admin password on every run, so it is safe to re-run for
 either.
 
+### 4. (Optional) Drive some load and look at it
+
+<!-- guide:visualize.smoke start -->
+```bash
+make benchmark-smoke NAMESPACE=${NAMESPACE}
+```
+<!-- guide:visualize.smoke end -->
+
+Decode-heavy at 10 req/s for five minutes, then a snapshot of the dashboard over
+exactly that window, and a line telling you where it is. It answers one question
+— is WVA actually scaling this? — and it needs a GPU cluster, because
+that is what serving a model needs.
+
+It is not a measurement of the model: five minutes of Poisson arrivals is not a
+latency study, and a small model's TTFT says nothing about a large one's. For
+numbers worth comparing, see [Benchmark WVA](../benchmarking/).
+
 ## Cleanup
 
 <!-- guide:cleanup.uninstall start -->

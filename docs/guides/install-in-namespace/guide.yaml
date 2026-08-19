@@ -32,6 +32,8 @@ verify:
 visualize:
   dashboard:
     run: make dashboard
+  smoke:
+    run: make benchmark-smoke NAMESPACE=${NAMESPACE}
 
 cleanup:
   uninstall:

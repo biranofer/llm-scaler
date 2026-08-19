@@ -20,4 +20,7 @@ spec:
     output_tokens: 4000
   constraints:
   - kind: max_duration
-    seconds: 600
+    # Substituted from MAX_DURATION, like the rate above. The post-install
+    # smoke (hack/benchmark/smoke.sh) wants five minutes; a scenario run wants
+    # the full ten, which is the default.
+    seconds: __MAX_DURATION__

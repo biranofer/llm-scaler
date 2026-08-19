@@ -45,6 +45,9 @@ GATEWAY_NAME         ?= # discovered automatically in e2es
 MODEL_ID             ?= e2ewva/dummy-model
 DEPLOYMENT           ?= # discovered automatically in e2es
 REQUEST_RATE         ?= 10
+# How long a workload drives load for, substituted into __MAX_DURATION__ the
+# same way REQUEST_RATE is. A profile that hardcodes its seconds is unaffected.
+MAX_DURATION         ?= 600
 NUM_PROMPTS          ?= 3000
 
 # E2E test configuration (for test/e2e/ suite)
@@ -717,7 +720,7 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 		echo ""; \
 		echo "  # helmfile -- the version llm-d-benchmark pins (tool_version_for)"; \
 		echo "  HF=$$(sed -n 's/.*helmfile)[[:space:]]*echo[[:space:]]*\"\([0-9.]*\)\".*/\1/p' \"$(BENCHMARK_REPO_DIR)/install.sh\" 2>/dev/null | head -1); HF=$${HF:-1.5.1}; \\"; \
-		echo "  curl -sSL \"https://github.com/helmfile/helmfile/releases/download/v$$HF/helmfile_$${HF}_linux_amd64.tar.gz\" \\"; \
+		echo "  curl -sSL \"https://github.com/helmfile/helmfile/releases/download/v\$$HF/helmfile_\$${HF}_linux_amd64.tar.gz\" \\"; \
 		echo "    | tar -xz -C \"\$$HOME/bin\" helmfile && chmod +x \"\$$HOME/bin/helmfile\""; \
 		echo ""; \
 		echo "Then re-run: make benchmark-install BENCHMARK_UV=true"; \
@@ -1297,7 +1300,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# that rewrote every rate line would flatten them into one number.
 	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" ]; then \
 		echo "Copying local workload $(BENCHMARK_WORKLOAD).yaml.in to the $(BENCHMARK_HARNESS) harness (REQUEST_RATE=$(REQUEST_RATE))..."; \
-		sed 's/__REQUEST_RATE__/$(REQUEST_RATE)/g' \
+		sed -e 's/__REQUEST_RATE__/$(REQUEST_RATE)/g' -e 's/__MAX_DURATION__/$(MAX_DURATION)/g' \
 		   "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" \
 		   > "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml.in"; \
 		rm -f "$(BENCHMARK_REPO_DIR)/workload/profiles/$(BENCHMARK_HARNESS)/$(BENCHMARK_WORKLOAD).yaml"; \
@@ -1389,7 +1392,14 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@$(MAKE) benchmark-plot-two-variant || true
 
 .PHONY: benchmark-report
-benchmark-report: ## Generate a markdown table from the latest benchmark results
+benchmark-report: ## The one benchmark to run after installing: decode-heavy at 10 req/s for five
+## minutes, then a dashboard snapshot over exactly that window and a pointer to it.
+## Answers "is WVA actually scaling this?" -- not "how fast is this model".
+.PHONY: benchmark-smoke
+benchmark-smoke: ## Post-install check: drive decode-heavy load, snapshot the dashboard, print where it is (NAMESPACE=<ns>)
+	@bash hack/benchmark/smoke.sh $(if $(NAMESPACE),$(NAMESPACE),$(BENCHMARK_NAMESPACE))
+
+## Generate a markdown table from the latest benchmark results
 	@LATEST_DIR=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
 	if [ -z "$$LATEST_DIR" ]; then \
 		echo "ERROR: No benchmark results found in $(BENCHMARK_WORKSPACE)"; \
