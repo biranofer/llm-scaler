@@ -209,6 +209,116 @@ There is a dial against it. "One awake per card" follows from
 halving each model's KV cache to double concurrency. For long drain that may be
 the better trade, and it is a per-pool decision.
 
+## Sleep level is a property of the POOL, and RAM follows from it
+
+**This is the first thing to implement**, because it is forced rather than chosen.
+
+A Pod's resource requests are **immutable after admission** -- the same constraint
+that makes a launcher unable to acquire a GPU later applies to memory. So a Pod
+that might ever hold a level-1 model must reserve that RAM **at creation**, before
+anything knows which models will land on it. The level therefore cannot be a
+per-model decision made at placement time. It is a property of the pool, and the
+pool's memory request follows from it.
+
+That yields two pool types, distinguished by what actually bounds them:
+
+| | **level-1 pool** | **level-2 pool** |
+| --- | --- | --- |
+| sleeping weights live in | host RAM | discarded; re-read on wake |
+| memory request | **sized for its warm set** | small and constant |
+| warm set bounded by | **host RAM** | GPU residue and `--sleeper-limit` |
+| wake time | `size / B_h2d` -- fast, storage-independent | `size / B_storage` |
+| suits | large models, or slow storage | small models, or fast storage |
+
+### The Pod's memory request IS the warm-set budget
+
+No separate slot count is needed, and none should be introduced. For a level-1
+pool, admission is simply:
+
+```
+sum(weights of models already warm)  +  weight(new model)  +  overhead  <=  memory request
+```
+
+That handles heterogeneous model sizes naturally -- a Pod might hold one 16 GB
+model or five 3 GB ones -- where a fixed `warmSlots: N` would either waste the
+budget or overcommit it. The operator sizes the pool by asking "how much warm
+capacity am I buying", which is a question with a currency, and Kubernetes
+enforces the reservation.
+
+For a level-2 pool the same admission test is trivially satisfied, and the real
+limits are the ~1.4 GiB of GPU residue per sleeper and the controller-global
+`--sleeper-limit`.
+
+### Manifest shape
+
+```yaml
+# A level-1 pool: fast wake, pays host RAM.
+metadata:
+  labels:
+    llm-d.ai/warm-pool: "true"
+    llm-d.ai/warm-pool-level: "1"
+    llm-d.ai/accelerator: NVIDIA-H100-80GB-HBM3
+spec:
+  replicas: 4                      # K shared slots
+  template:
+    spec:
+      containers:
+        - name: launcher
+          resources:
+            limits:
+              nvidia.com/gpu: 1    # == TP size of the models this pool serves
+              memory: 64Gi         # <- the warm-set budget. WVA admits models against this.
+```
+
+```yaml
+# A level-2 pool: RAM-cheap, wake bounded by the read path.
+metadata:
+  labels:
+    llm-d.ai/warm-pool: "true"
+    llm-d.ai/warm-pool-level: "2"
+    llm-d.ai/accelerator: NVIDIA-H100-80GB-HBM3
+spec:
+  replicas: 4
+  template:
+    spec:
+      containers:
+        - name: launcher
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              memory: 8Gi          # buffers and process overhead only
+```
+
+### Placement rule
+
+WVA admits model M into pool P when:
+
+```
+P.accelerator matches M
+P.gpuCount    == M.tensorParallelSize
+GPU residue and --sleeper-limit allow one more sleeper on the chosen Pod
+
+and either
+    P.level == 2  and  weight(M) / B_storage <= T_wake
+or  P.level == 1  and  warmBytes(Pod) + weight(M) + overhead <= P.memoryRequest
+```
+
+If no pool admits M, the honest outcome is a cold start -- and it should be
+**visible** rather than silent. Following this repo's existing convention, that
+belongs as a `reason` on `wva_model_scaling_blocked` (for example
+`no_warm_pool_admits_model`) rather than as a new gauge, since WVA owns no API
+object on which to place a status condition.
+
+### Why start here
+
+It is the smallest piece that is independently useful and hard to retrofit.
+Getting the level and RAM onto the pool at creation is a prerequisite for
+everything else -- placement, admission, eviction -- and because requests are
+immutable, discovering later that pools were sized wrong means recreating every
+Pod in them. The measurement it depends on (`B_storage`) can be taken
+independently and only affects which pool a model is *routed to*, not how the
+pools are built.
+
 ## Lifecycle: how several models come to be parked on one Pod
 
 This is the part that has to be concrete, because it is where scale-up and
