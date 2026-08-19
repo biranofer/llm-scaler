@@ -645,3 +645,300 @@ deploy_monitoring_stack() {
 
     deploy_prometheus_stack
 }
+
+# --- EPP flow control ---------------------------------------------------------
+#
+# WVA needs the EPP's flow-control queue, and the guide understates it as a
+# scale-from-zero concern. Three things depend on it:
+#
+#   scale-from-zero   at 0 replicas there are no engine metrics, so the scheduler
+#                     queue is the ONLY evidence anyone is asking for the model.
+#                     Without it a parked workload never wakes.
+#   arrival rate      domain/analyzer.go: "Zero when the metric is unavailable (EPP
+#                     absent or no traffic yet)". Absence is indistinguishable from
+#                     idleness, so requests queued but not yet dispatched are
+#                     invisible to the demand model.
+#   wva_unmeasured_queue
+#                     the detector for "serving traffic through pods WVA cannot
+#                     attribute" — an unscraped FMA launcher, a PodMonitor naming a
+#                     port the pods do not declare, ownerReferences reaching no
+#                     scale target. It is sourced from this queue PRECISELY because
+#                     it does not depend on any engine pod being scraped. With the
+#                     gate off it reads 0 forever, so the safety net is disabled by
+#                     the same absence it exists to catch.
+#
+# The gate is not a container flag. It is declared in the EPP's own plugins config:
+#
+#     featureGates:
+#       - flowControl
+#
+# Measured on pokprod001: the namespaces whose EPP config carries that list have
+# inference_extension_flow_control_queue_size series; the one built from llm-d's
+# optimized-baseline guide has no featureGates section and no series.
+#
+# WVA reads the queue by scraping the EPP directly with a token mounted at
+# /var/run/secrets/epp-metrics/token, and falls back to the same metric in
+# Prometheus. Either path is fine — but neither has anything to read while the gate
+# is off, which is why this checks the gate rather than the plumbing.
+
+# wva_epp_services echoes the EPP Service each InferencePool in $1 points at.
+# Read from the pool's endpointPickerRef rather than guessed from a name, because
+# that reference is what the gateway itself dials.
+wva_epp_services() {
+    local ns="$1" kind
+    for kind in inferencepools.inference.networking.k8s.io inferencepools.inference.networking.x-k8s.io; do
+        kubectl get "$kind" -n "$ns" -o json 2>/dev/null | jq -r '
+            .items[]?
+            | (.spec.endpointPickerRef // .spec.extensionRef // {})
+            | select((.name // "") != "")
+            | .name' 2>/dev/null
+    done | sort -u
+}
+
+# wva_epp_flowcontrol_state echoes on|off|unknown for the EPP behind Service $2.
+#
+# Resolves the config the way the container does: the --config-file argument names
+# a path, the volumeMount covering that path names a volume, and the volume names
+# the ConfigMap and therefore the key. Guessing "<service>-plugins.yaml" would be
+# right here and wrong for any guide that names its file differently.
+wva_epp_flowcontrol_state() {
+    local ns="$1" svc="$2" sel pod cfg key cm data
+    sel=$(kubectl get svc "$svc" -n "$ns" -o json 2>/dev/null \
+        | jq -r '(.spec.selector // {}) | to_entries | map(.key + "=" + .value) | join(",")')
+    [ -n "$sel" ] || { echo unreadable; return 0; }
+    # One fetch, reused for every field below.
+    pod=$(kubectl get pods -n "$ns" -l "$sel" -o json 2>/dev/null | jq -c '.items[0] // empty')
+    # No EPP pod RIGHT NOW is not a gate that is off: an EPP restarting, or one
+    # scaled to zero, would otherwise refuse the install.
+    [ -n "$pod" ] || { echo nopod; return 0; }
+
+    # `--config-file <path>` and `--config-file=<path>` are both legal.
+    cfg=$(printf '%s' "$pod" | jq -r '
+        (.spec.containers[] | select((.args // []) | any(. == "--config-file"))
+         | (.args | index("--config-file")) as $i | .args[$i + 1]),
+        (.spec.containers[].args[]? | select(startswith("--config-file=")) | sub("^--config-file="; ""))
+        | select(. != null and . != "")' 2>/dev/null | head -1)
+    [ -n "$cfg" ] || { echo unreadable; return 0; }
+    key="${cfg##*/}"
+
+    # Resolved the way the container resolves it: the volumeMount covering the
+    # config's directory names a volume, and that volume names the ConfigMap and
+    # therefore the key. Guessing "<service>-plugins.yaml" is right for one guide and
+    # wrong for the next.
+    cm=$(printf '%s' "$pod" | jq -r --arg dir "${cfg%/*}" '
+        (.spec.containers[].volumeMounts[]? | select(.mountPath == $dir) | .name) as $v
+        | .spec.volumes[]? | select(.name == $v) | .configMap.name // empty' 2>/dev/null | head -1)
+    [ -n "$cm" ] || { echo unreadable; return 0; }
+
+    data=$(kubectl get configmap "$cm" -n "$ns" -o jsonpath="{.data.${key//./\\.}}" 2>/dev/null)
+    [ -n "$data" ] || { echo unreadable; return 0; }
+    # The gate is an ENTRY in a featureGates list. Matched on the entry rather than on
+    # the word appearing anywhere in the file, so a plugin merely named after flow
+    # control does not read as the gate being on.
+    #
+    # Both YAML spellings of a list, because this now REFUSES an install: the block
+    # form is what llm-d's guides/flow-control/tuning.md and this repo's own
+    # epp-flow-control.values.yaml write, but `featureGates: [flowControl]` is the
+    # same thing and is how this gate is described in prose. Quotes and a trailing
+    # comment are stripped for the same reason. Reading a correctly enabled gate as
+    # off would refuse a working cluster, and the only way past it -- passing
+    # WVA_ALLOW_NO_EPP_METRICS=true -- asserts something untrue about that cluster
+    # and switches the check off rather than correcting it.
+    # \042 and \047 are " and ', which would otherwise fight the shell quoting here.
+    if printf '%s' "$data" | awk '
+        # inline: featureGates: [flowControl, other]
+        /^[[:space:]]*featureGates:[[:space:]]*\[/ {
+            line = $0
+            sub(/^[^[]*\[/, "", line); sub(/\].*$/, "", line)
+            n = split(line, a, ",")
+            for (i = 1; i <= n; i++) {
+                gsub(/[[:space:]\042\047]/, "", a[i])
+                if (a[i] == "flowControl") { found = 1; exit }
+            }
+            next
+        }
+        /^[[:space:]]*featureGates:/ { inlist = 1; next }
+        inlist && /^[[:space:]]*#/ { next }
+        inlist && /^[[:space:]]*-/ {
+            item = $0
+            sub(/^[[:space:]]*-[[:space:]]*/, "", item)
+            sub(/[[:space:]]+#.*$/, "", item)
+            gsub(/^[\042\047]|[\042\047]$/, "", item)
+            sub(/[[:space:]]+$/, "", item)
+            if (item == "flowControl") { found = 1; exit }
+            next
+        }
+        inlist && /^[[:space:]]*[^-[:space:]]/ { inlist = 0 }
+        END { exit !found }'; then
+        echo on
+    else
+        echo off
+    fi
+}
+
+# wva_epp_scrapers echoes any PodMonitor/ServiceMonitor in $1 whose matchLabels
+# select the EPP pods behind Service $2 — i.e. something scrapes the EPP.
+#
+# Checked structurally rather than by querying Prometheus, because the Prometheus
+# URL is in-cluster and unreachable from wherever the installer runs. matchLabels
+# only: a matchExpressions selector is reported as "cannot tell" rather than
+# guessed at, since a wrong "yes" here would suppress the warning that matters.
+wva_epp_scrapers() {
+    local ns="$1" svc="$2" svc_json sel pod svc_labels pod_labels
+
+    # Each object is fetched ONCE. An earlier version re-read the Service twice and
+    # the pod three times across this function and the gate check, which cost ~13s
+    # per EPP on a real cluster and pushed the preflight past two minutes.
+    svc_json=$(kubectl get svc "$svc" -n "$ns" -o json 2>/dev/null)
+    [ -n "$svc_json" ] || return 0
+    svc_labels=$(printf '%s' "$svc_json" | jq -c '.metadata.labels // {}')
+    sel=$(printf '%s' "$svc_json" | jq -r '(.spec.selector // {}) | to_entries | map(.key + "=" + .value) | join(",")')
+
+    pod_labels='{}'
+    if [ -n "$sel" ]; then
+        pod=$(kubectl get pods -n "$ns" -l "$sel" -o json 2>/dev/null \
+            | jq -c '.items[0] // empty')
+        [ -n "$pod" ] && pod_labels=$(printf '%s' "$pod" | jq -c '.metadata.labels // {}')
+    fi
+
+    # A ServiceMonitor selects SERVICES and a PodMonitor selects PODS, so each is
+    # matched against the labels of the object it actually selects. Comparing both
+    # against pod labels reported "nothing scrapes the EPP" for a namespace whose EPP
+    # ServiceMonitor was working -- its selector names the SERVICE's
+    # app.kubernetes.io/name and version, which the pods do not both carry.
+    #
+    # matchLabels is a subset test: every key/value the monitor names must be present
+    # on the target. matchExpressions is not evaluated, so a monitor using only those
+    # reads as "not scraping" -- the safe direction, since a wrong "yes" would
+    # suppress the warning that matters.
+    local subset='
+        .items[]?
+        | . as $m
+        | (.spec.selector.matchLabels // {}) as $ml
+        | select(($ml | length) > 0)
+        | select([ $ml | to_entries[] | select($l[.key] == .value) ] | length == ($ml | length))
+        | $kind + "/" + $m.metadata.name'
+
+    # matchExpressions is still not evaluated, but a monitor using ONLY those is now
+    # reported as unevaluated rather than counted as absent. Ignoring them was called
+    # "the safe direction, since a wrong yes would suppress the warning that matters"
+    # -- true while this was a warning. It now refuses the install, so a wrong NO
+    # blocks a correctly monitored cluster, and the safe direction is to say "cannot
+    # tell" out loud.
+    local unevaluated='
+        .items[]?
+        | . as $m
+        | select((.spec.selector.matchLabels // {} | length) == 0)
+        | select((.spec.selector.matchExpressions // [] | length) > 0)
+        | "unevaluated:" + $kind + "/" + $m.metadata.name'
+
+    kubectl get servicemonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$svc_labels" --arg kind servicemonitor "$subset, $unevaluated" 2>/dev/null
+    kubectl get podmonitors -n "$ns" -o json 2>/dev/null         | jq -r --argjson l "$pod_labels" --arg kind podmonitor "$subset, $unevaluated" 2>/dev/null
+}
+
+# wva_report_epp_flowcontrol reports both EPP requirements and returns non-zero
+# when either is missing, so the caller decides whether that is fatal.
+#
+# They are SEPARATE requirements with different fixes, measured on pokprod001:
+#
+#   inference_extension_scheduler_attempts_total   19 namespaces — published
+#     (arrival rate -> throughput analyzer)        whenever the EPP is SCRAPED.
+#                                                  No gate needed.
+#   inference_extension_flow_control_queue_size     4 namespaces — only where the
+#     (scale-from-zero, wva_unmeasured_queue)       flowControl GATE is on.
+#
+# The arrival-rate query is PromQL (registration/throughput_analyzer.go), so it
+# needs Prometheus to scrape the EPP; WVA's direct EPP scrape covers only the queue
+# fallback. So "the gate is on" and "the EPP is scraped" are both required, and
+# neither implies the other.
+wva_report_epp_flowcontrol() {
+    local ns="${WVA_WATCH_NS:-$WVA_NS}" svc state scrapers unevaluated any=false missing=0 unconfirmed=0
+
+    for svc in $(wva_epp_services "$ns"); do
+        any=true
+
+        # Called ONCE and split, not twice: this function issues four kubectl reads
+        # per EPP, and calling it again to pick out the unevaluated monitors would
+        # undo the fetch-once work above that took a real cluster from ~13s to ~9s.
+        local monitors
+        monitors="$(wva_epp_scrapers "$ns" "$svc")"
+        scrapers="$(printf '%s
+' "$monitors" | grep -v '^unevaluated:' | grep -v '^$' | paste -sd, -)"
+        unevaluated="$(printf '%s
+' "$monitors" | sed -n 's/^unevaluated://p' | paste -sd, -)"
+        if [ -n "$scrapers" ]; then
+            log_success "  EPP metrics: $svc is scraped by $scrapers (arrival rate, and so the throughput analyzer, depends on this)."
+        elif [ -n "$unevaluated" ]; then
+            unconfirmed=$((unconfirmed + 1))
+            log_warning "  EPP metrics: cannot tell whether $svc is scraped — $unevaluated select by matchExpressions, which this check does not evaluate."
+            log_warning "    Not treated as missing: refusing an install over a selector form this script declines to read would block a correctly monitored cluster."
+            log_warning "    Confirm by hand:  kubectl get --raw /api/v1/namespaces/$ns/services/$svc:metrics/proxy/metrics | head"
+        else
+            missing=$((missing + 1))
+            log_warning "  EPP metrics: NOTHING scrapes $svc."
+            log_warning "    The model-level arrival rate is a PromQL query over inference_extension_scheduler_attempts_total, so with the EPP unscraped it reads 0 and the THROUGHPUT ANALYZER has no demand to size from."
+            log_warning "    llm-d ships the monitors: kubectl apply -n $ns -k \$REPO_ROOT/guides/recipes/observability   (or the epp-metrics PodMonitor/ServiceMonitor its guides create)"
+        fi
+
+        state=$(wva_epp_flowcontrol_state "$ns" "$svc")
+        case "$state" in
+            on)
+                log_success "  EPP flow control: enabled on $svc (its config declares featureGates: [flowControl])." ;;
+            off)
+                missing=$((missing + 1))
+                log_warning "  EPP flow control: NOT enabled on $svc — the scheduler queue is missing."
+                log_warning "    Scale-from-zero can never fire: at 0 replicas that queue is the only evidence anyone is asking for the model."
+                log_warning "    wva_unmeasured_queue — the detector for 'serving through pods WVA cannot attribute' — also reads 0 forever, because it is sourced from this same queue. The safety net is disabled by the absence it exists to catch."
+                log_warning "    Enable it in the EPP's EndpointPickerConfig:"
+                log_warning "        featureGates:"
+                log_warning "        - flowControl"
+                log_warning "    llm-d documents it in guides/flow-control/tuning.md, and ships a ready router values file for this path:"
+                log_warning "        guides/workload-autoscaling/keda-epp-queue/<guide>/router.values.yaml"
+                log_warning "    Re-run your llm-d router install with that layered on, then restart the EPP." ;;
+            nopod)
+                # No EPP pod at this instant. A restarting or scaled-to-zero EPP is
+                # not a gate that is off, and refusing the install for it would block
+                # on a condition that resolves itself.
+                unconfirmed=$((unconfirmed + 1))
+                log_warning "  EPP flow control: no running pod behind $svc, so the gate cannot be read right now. Not treated as missing; re-run once the EPP is up." ;;
+            *)
+                # Fails CLOSED, deliberately: "cannot READ the config" is the case
+                # where this kubectl identity can see the Service but not the Pods or
+                # ConfigMaps -- check_permissions verifies only create rights on what
+                # the install creates, never read rights on these -- and an unconfirmed
+                # signal is exactly what this check exists to stop. Distinct from
+                # `nopod` above, which is transient rather than a permissions gap.
+                missing=$((missing + 1))
+                log_warning "  EPP flow control: could not read $svc's plugins config, so this cannot confirm the gate is on. Check that its EndpointPickerConfig declares the flowControl feature gate, and that this kubectl identity can read Pods and ConfigMaps in $ns." ;;
+        esac
+    done
+
+    if [ "$any" = false ]; then
+        log_info "  EPP: no InferencePool in $ns names an endpoint picker, so there is no EPP to check yet."
+        return 0
+    fi
+    [ "$unconfirmed" -eq 0 ] || log_info "  $unconfirmed EPP signal(s) could not be confirmed either way; these do not block the install."
+    # Only CONFIRMED-absent signals are fatal. "I could not look" and "I looked and
+    # it is not there" are different answers, and only the second is evidence about
+    # the cluster.
+    [ "$missing" -eq 0 ]
+}
+
+# wva_require_epp_metrics turns the report into a gate.
+#
+# Fatal by default, because every symptom of these being absent is silent: WVA
+# still emits decisions, the HPA still reads a healthy ratio, and the one metric
+# that would have flagged it is sourced from the missing signal. An install that
+# cannot see demand is not a working install, and saying so at install time is the
+# only place anybody is looking.
+wva_require_epp_metrics() {
+    wva_report_epp_flowcontrol && return 0
+    if [ "${WVA_ALLOW_NO_EPP_METRICS:-}" = "true" ]; then
+        log_warning "  Continuing anyway (WVA_ALLOW_NO_EPP_METRICS=true). WVA will size from engine metrics alone: no scale-from-zero, no queued-demand signal, and wva_unmeasured_queue blind."
+        return 0
+    fi
+    log_error "Refusing to continue: WVA cannot see the EPP signals it sizes workloads from (details above).
+
+Fix the EPP, or pass WVA_ALLOW_NO_EPP_METRICS=true to install anyway — the controller
+will run and scale from engine metrics only, with the limitations listed above."
+}
