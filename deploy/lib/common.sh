@@ -234,6 +234,61 @@ wva_ns_suffix() {
     fi
 }
 
+# WVA_LEGACY_CLUSTER_ROLE_BINDINGS are cluster-scoped bindings this project used
+# to render and no longer does.
+#
+# They need deleting BY NAME, because the uninstall works by rendering the overlay
+# and deleting what it renders -- so the moment a resource file leaves the overlay,
+# `delete -k` can no longer see it and every copy already on the cluster is
+# stranded. Measured on pokprod when the Prometheus binding was dropped: 12 of them
+# were sitting there, aged 2 to 78 days, one per install, with no tooling left that
+# could remove any of them.
+WVA_LEGACY_CLUSTER_ROLE_BINDINGS=(
+    # Granted the user-workload Prometheus SA cluster-monitoring-view "so it can
+    # scrape the controller's secure /metrics endpoint". It never did: that
+    # ClusterRole carries `namespaces get` and `prometheuses/api` and no
+    # nonResourceURLs rule, so it cannot authorize a /metrics scrape at all --
+    # confirmed by reading it off a live cluster. The scrape is authorized by
+    # WVA's OWN SA via the ServiceMonitor's bearerTokenSecret plus the
+    # metrics-reader nonResourceURLs rule. So this only ever handed a
+    # cluster-wide platform-API read to a service account that did not need it.
+    wva-prometheus-cluster-monitoring-view
+)
+
+# wva_delete_legacy_crbs removes THIS INSTALL's copies of the bindings above.
+#
+# Scoped by name to this install, never a label sweep. These are cluster-scoped
+# objects on a shared cluster with one copy per install, and this repo has already
+# paid for getting that wrong once -- an uninstall that resolved fixed names
+# stripped a different, healthy install of its permissions (see
+# wva_append_crb_name_patches). Deleting only the names this namespace would have
+# produced keeps other tenants' copies untouched.
+#
+# TWO SUFFIX GENERATIONS, both tried: the current suffix is a hash of the
+# namespace, an older one used the namespace name verbatim. A cluster upgraded
+# through both carries both, which is exactly what pokprod shows --
+# `...-016f647d` beside `...-benchmark-epp-keda`. Computing only the hash would
+# have left half of them behind.
+#
+# Failure is reported, not fatal: a namespace-scoped install has no rights to
+# delete a ClusterRoleBinding, and the object is inert anyway.
+wva_delete_legacy_crbs() {
+    local ns="$1" crb name
+    [ -n "$ns" ] || return 0
+    for crb in "${WVA_LEGACY_CLUSTER_ROLE_BINDINGS[@]}"; do
+        for name in "${crb}-$(wva_ns_suffix "$ns")" "${crb}-${ns}"; do
+            kubectl get clusterrolebinding "$name" >/dev/null 2>&1 || continue
+            if kubectl delete clusterrolebinding "$name" >/dev/null 2>&1; then
+                log_info "Removed obsolete ClusterRoleBinding $name (granted the user-workload Prometheus SA cluster-monitoring-view; it never authorized a scrape)."
+            else
+                log_warning "Obsolete ClusterRoleBinding $name is still present and needs a cluster admin to remove:"
+                log_warning "    kubectl delete clusterrolebinding $name"
+                log_info   "  It grants the user-workload Prometheus SA cluster-wide monitoring read and is not used by anything."
+            fi
+        done
+    done
+}
+
 # wva_append_crb_name_patches appends the rename patches to a kustomization file.
 #
 # Deploy AND undeploy must both use this. They diverged once, with real cost: the

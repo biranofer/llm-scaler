@@ -188,6 +188,12 @@ EOF
     # lingers, and `undeploy` removes both.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
+    # Prune on INSTALL as well as uninstall. Waiting for an uninstall would leave
+    # the grant in place on every cluster that already has it, since upgrading is
+    # what people actually do -- and the whole reason the binding was dropped is
+    # that it handed out access nobody needed.
+    wva_delete_legacy_crbs "$WVA_NS"
+
     # WVA_REPLICAS runs the controller with a warm standby.
     #
     # The manifest already sets --leader-elect=true, and cmd/main.go exposes the

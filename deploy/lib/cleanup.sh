@@ -103,6 +103,11 @@ EOF
     # uninstalling side by side on kind.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
 
+    # Bindings the overlay no longer renders cannot be reached by the filtered
+    # delete below -- it removes what is rendered, and these are not. Without this
+    # they survive every uninstall, forever.
+    wva_delete_legacy_crbs "$WVA_NS"
+
     # Render and FILTER, rather than `kubectl delete -k`. One kind in the rendered
     # set does not belong to this install and must survive it:
     #
