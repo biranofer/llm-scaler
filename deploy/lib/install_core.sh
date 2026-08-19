@@ -152,10 +152,29 @@ print_prereqs_summary() {
 main() {
     parse_args "$@"
 
+    # Before ANY check that exempts kind-emulator -- the preflight and the install
+    # both have one. A caller relying on CLUSTER_TYPE=kind auto-detection rather
+    # than passing ENVIRONMENT=kind-emulator must resolve to it first, or the
+    # exemption silently does not apply. This lived in the install path only, so
+    # `CLUSTER_TYPE=kind` passed the install and failed the preflight on the same
+    # cluster.
+    if [[ "${CLUSTER_TYPE:-}" == "kind" ]]; then
+        log_info "Kind cluster detected - setting environment to kind-emulated"
+        ENVIRONMENT="kind-emulator"
+    fi
+
     # Before anything reads WVA_NS — the check, the undeploy and the install all
     # need the same answer, or `export NAMESPACE=…` works for one and silently
     # not the others.
     wva_resolve_namespace
+    # Says once, up front, when the selected scenario is not the supported one.
+    wva_warn_unsupported_scope
+
+    # NOTE on wva_require_namespace, which refuses to guess the managed namespace:
+    # it is called in the CHECK and INSTALL paths below, NOT here, and NOT on the
+    # undeploy path. Undeploy's input is WVA_NS -- the namespace the controller was
+    # installed into -- and asking it for NAMESPACE would make removing an install
+    # depend on knowing what that install managed.
 
     # Preflight-only mode: the same check the install runs, run on its own so it
     # can be answered before committing to an install that creates namespaces and
@@ -175,8 +194,15 @@ main() {
                 check_specific_prerequisites
             fi
         fi
+        # The managed namespace is an input, not a guess. See wva_require_namespace.
+        wva_require_namespace
         # The two questions a reader actually arrives with — which namespace, and
         # what do I pass for PROMETHEUS_URL — both answerable from here.
+        #
+        # wva_autoselect_namespace is unreachable in namespace scope now: it runs only
+        # while the namespace source is still "default", and requiring NAMESPACE means
+        # it never is. Kept for CLUSTER scope, where discovering the namespaces to
+        # manage is its actual purpose.
         wva_autoselect_namespace
         wva_report_namespace
         # The preflight must ask about the same phase the install will run, or it
@@ -188,12 +214,27 @@ main() {
         # "Prometheus: <url>" answers whether an endpoint resolved, which reads as
         # though it answered whether the metrics WVA needs are in it. They are
         # different questions and only the second one decides whether WVA can work.
-        wva_report_modelserver_metrics
-        # The other half of "can WVA see anything": the model servers supply the
-        # engine metrics, the EPP supplies the scheduler queue. Missing either is
-        # silent, and missing the queue also disables the detector that would have
-        # reported the rest.
-        wva_require_epp_metrics
+        # Gated on SKIP_CHECKS so the escape hatch these messages advertise is real
+        # here too: they say "install without the checks: SKIP_CHECKS=true", and a
+        # preflight that refused anyway would be telling the reader something false.
+        if [ "$SKIP_CHECKS" != "true" ]; then
+            wva_require_modelserver_metrics
+            # The other half of "can WVA see anything": the model servers supply the
+            # engine metrics, the EPP supplies the scheduler queue. Missing either is
+            # silent, and missing the queue also disables the detector that would have
+            # reported the rest.
+            wva_require_epp_metrics
+        else
+            # Still SAY what is missing -- skipping the gate should not mean skipping
+            # the finding, or SKIP_CHECKS becomes a way to be uninformed.
+            wva_report_modelserver_metrics || true
+            wva_report_epp_flowcontrol || true
+        fi
+        # Informational only. No ScaledObject yet is the EXPECTED state here, because
+        # registration is the step AFTER this one -- objects to scale are WVA's
+        # premise, ScaledObjects are its own output. This reports what is already
+        # registered, so the reader knows whether 'adopt' will come up in the plan.
+        wva_report_scaledobjects
         log_success "Preflight passed for ENVIRONMENT=$ENVIRONMENT, WVA_SCOPE=${WVA_SCOPE:-<platform default>}, WVA_LIMITER=${WVA_LIMITER:-none}"
         exit 0
     fi
@@ -223,9 +264,13 @@ main() {
         check_prerequisites
     fi
 
+    # Before ANY object is created: refuse to guess the managed namespace.
+    wva_require_namespace
+
     # Before ANY object is created, and before the permission checks that depend
     # on which namespace this is: point a namespace-scoped install at the
-    # namespace actually running llm-d, when the caller named none.
+    # namespace actually running llm-d, when the caller named none. Unreachable in
+    # namespace scope now; kept for cluster scope.
     wva_autoselect_namespace
 
     # Which half of the install is left, before anything asks what this caller may
@@ -244,22 +289,20 @@ main() {
         fi
         check_single_installation
         # Before anything is created, for the same reason as check_permissions: an
-        # install that cannot see the EPP's signals sizes workloads from engine
-        # metrics alone, and every symptom of that is silent. Refusing here beats
-        # refusing after the objects exist, and WVA_ALLOW_NO_EPP_METRICS=true is the
-        # way past it. kind-emulator is exempt: the e2e path builds its own stack.
+        # install that cannot see llm-d's metrics sizes nothing, and every symptom of
+        # that is silent -- the controller reports healthy and the HPA reads a healthy
+        # ratio. Refusing here beats refusing after the objects exist.
+        #
+        # SKIP_CHECKS=true is the way past both, and the only one. kind-emulator is
+        # exempt: the e2e path builds its own stack in one sequence.
         if [ "$SKIP_CHECKS" != "true" ] && [ "${ENVIRONMENT:-}" != "kind-emulator" ]; then
+            wva_require_modelserver_metrics
             wva_require_epp_metrics
         fi
     fi
 
     set_tls_verification
     set_wva_logging_level
-
-    if [[ "${CLUSTER_TYPE:-}" == "kind" ]]; then
-        log_info "Kind cluster detected - setting environment to kind-emulated"
-        ENVIRONMENT="kind-emulator"
-    fi
 
     log_info "Loading environment-specific functions for $ENVIRONMENT..."
     if [ -f "$SCRIPT_DIR/$ENVIRONMENT/install.sh" ]; then
