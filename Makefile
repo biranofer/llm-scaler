@@ -479,6 +479,19 @@ so-resume: ## Undo so-park or so-freeze: WVA sizes the workload again from live 
 	@$(WVA_SO_ENV) $(if $(SO),SO=$(SO),) \
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; so_resume'
 
+## A private Grafana for one namespace, with WVA's operational dashboard already
+## imported -- productizes config/grafana-private/, see deploy/lib/dashboard.sh for
+## the design this carries over (grafana-operator, the Thanos TENANCY port instead
+## of cluster-monitoring-view, a GrafanaDashboard CR as the import bridge).
+##
+## Idempotent: safe to re-run, and it prints the dashboard URL and the
+## password-retrieval command every time, not only on first creation.
+.PHONY: dashboard
+dashboard: ## Stand up (or re-report) a private Grafana + WVA dashboard in NAMESPACE. Needs grafana-operator.
+	@$(WVA_SO_ENV) IMG=$(IMG) WVA_PROJECT=$(CURDIR) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/infra_monitoring.sh; source deploy/lib/dashboard.sh; wva_bootstrap_env; wva_dashboard'
+
+
 # E2E tests on Kind cluster for saturation-based autoscaling
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # Supports FOCUS and SKIP variables for ginkgo test filtering.
