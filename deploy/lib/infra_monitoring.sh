@@ -777,9 +777,8 @@ wva_epp_flowcontrol_state() {
     # epp-flow-control.values.yaml write, but `featureGates: [flowControl]` is the
     # same thing and is how this gate is described in prose. Quotes and a trailing
     # comment are stripped for the same reason. Reading a correctly enabled gate as
-    # off would refuse a working cluster, and the only way past it -- passing
-    # WVA_ALLOW_NO_EPP_METRICS=true -- asserts something untrue about that cluster
-    # and switches the check off rather than correcting it.
+    # off would refuse a working cluster, and the only way past it -- SKIP_CHECKS=true
+    # -- switches off every preflight check rather than correcting this one.
     # \042 and \047 are " and ', which would otherwise fight the shell quoting here.
     if printf '%s' "$data" | awk '
         # inline: featureGates: [flowControl, other]

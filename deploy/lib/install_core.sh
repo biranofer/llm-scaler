@@ -152,6 +152,17 @@ print_prereqs_summary() {
 main() {
     parse_args "$@"
 
+    # Before ANY check that exempts kind-emulator -- the preflight and the install
+    # both have one. A caller relying on CLUSTER_TYPE=kind auto-detection rather
+    # than passing ENVIRONMENT=kind-emulator must resolve to it first, or the
+    # exemption silently does not apply. This lived in the install path only, so
+    # `CLUSTER_TYPE=kind` passed the install and failed the preflight on the same
+    # cluster.
+    if [[ "${CLUSTER_TYPE:-}" == "kind" ]]; then
+        log_info "Kind cluster detected - setting environment to kind-emulated"
+        ENVIRONMENT="kind-emulator"
+    fi
+
     # Before anything reads WVA_NS — the check, the undeploy and the install all
     # need the same answer, or `export NAMESPACE=…` works for one and silently
     # not the others.
@@ -251,15 +262,6 @@ main() {
 
     if [ "$SKIP_CHECKS" != "true" ]; then
         check_prerequisites
-    fi
-
-    # Before the kind-emulator exemption below is checked by anything: a caller
-    # relying on CLUSTER_TYPE=kind auto-detection (rather than passing
-    # ENVIRONMENT=kind-emulator explicitly) must resolve to kind-emulator before
-    # wva_require_namespace's own exemption check, or it is silently not exempt.
-    if [[ "${CLUSTER_TYPE:-}" == "kind" ]]; then
-        log_info "Kind cluster detected - setting environment to kind-emulated"
-        ENVIRONMENT="kind-emulator"
     fi
 
     # Before ANY object is created: refuse to guess the managed namespace.
