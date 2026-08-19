@@ -76,6 +76,40 @@ make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 The ScaledObject is the registration: WVA has no watch and no listing, so until
 one exists it is never called and scales nothing.
 
+### The EPP setting the next guide will refuse without
+
+**The EPP needs the `flowControl` feature gate.** WVA's install preflight is
+fatal on its absence — `wva_require_epp_metrics` refuses to continue, and the
+only way past it, `SKIP_CHECKS=true`, switches off *every* preflight check rather
+than that one. So an EPP without the gate does not produce a degraded install; it
+produces no install at all.
+
+The standup above enables it for you. This matters when you bring your own EPP,
+or reuse one an llm-d guide deployed, because those have it off unless you turned
+it on. Check what an EPP is running with:
+
+```bash
+kubectl get cm -n ${NAMESPACE} -o yaml | grep -A3 featureGates
+```
+
+Enable it in the EPP's `EndpointPickerConfig`:
+
+```yaml
+featureGates:
+- flowControl
+```
+
+Then restart the EPP. llm-d documents the gate in `guides/flow-control/tuning.md`.
+
+**What it changes about the numbers you will see.** Flow control queues requests
+at the *router* and admits only what an engine can absorb. That is why a loaded
+model can show `vllm:num_requests_waiting` flat at **0** while hundreds of
+requests are genuinely queued: the backlog is in the EPP, not the engine. On this
+guide's own stack, 786 requests queued at the EPP while the engine queue never
+left 0. Read the **EPP Flow-Control Queue** panel for demand, and the engine
+queue only for whether an engine itself is behind. Without the gate, neither the
+queue nor scale-from-zero has anything to read.
+
 ### The one setting that matters for a small model
 
 **`gpuMemoryUtilization` has to follow the model.** vLLM reads it as a fraction
@@ -90,10 +124,21 @@ torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 594.00 MiB.
 GPU 0 has 79.18 GiB of which 500.69 MiB is free.
 ```
 
-The standup sets this for you now: `GPU_MEM_UTIL` defaults to `0.30` when
-`MODEL_ID` names the small model and `0.95` otherwise. At 0.30 the same model
-takes 22 GiB of KV cache — 206,592 tokens, far more than a 16k context needs —
-and leaves 56 GiB of the card for everyone else.
+The standup sets `GPU_MEM_UTIL` to **0.90** — one value, for every model. It is
+deliberately *not* lowered for small models, and the reason is worth knowing
+before you reach for it: per-replica capacity IS the KV cache size, so shrinking
+KV to make a small model scale sooner does the autoscaler's job in the wrong
+layer. It throws away GPU you paid for to buy an effect `kvCacheThreshold`
+gives you for free. Size the card for serving; tune when a replica counts as
+full in the scaling policy.
+
+The practical consequence on a small model is worth expecting. At 0.90 a 0.6B
+model gets **651,328 tokens** of KV cache, and one replica then absorbs an
+enormous amount of traffic without ever looking full. Measured on this guide's
+own stack: 121 concurrent requests, KV utilisation peaking at **10.5%**, and WVA
+holding at one replica — correctly, because by the signal it sizes on nothing
+was saturated. If you want a small model to scale on a small load, lower
+`kvCacheThreshold` in the scaling policy. Do not shrink the cache.
 
 **Why it looks intermittent.** 0.95 works on an empty GPU, so this failed only
 sometimes and looked like flakiness. It is not: the memory that is already gone
@@ -173,7 +218,7 @@ creates cluster-scoped RBAC, which deleting the namespace would leave behind.
 | `BENCHMARK_NAMESPACE` | — (required) | where everything lands |
 | `MODEL_ID` | `Qwen/Qwen3-0.6B` | the served model |
 | `IMG` | a build of this branch | released images reject this branch's flags |
-| `GPU_MEM_UTIL` | `0.30` small model / `0.95` otherwise | fraction of **total** GPU memory |
+| `GPU_MEM_UTIL` | `0.90` | fraction of **total** GPU memory; one value for every model, deliberately |
 | `WARM_REPLICAS` | `0` | FMA warm pool size, if the scenario uses one |
 
 ## Next

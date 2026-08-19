@@ -163,12 +163,12 @@
       },
       "targets": [
         {
-          "expr": "vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"}",
+          "expr": "max by (pod) (vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"})",
           "legendFormat": "{{pod}}",
           "refId": "A"
         },
         {
-          "expr": "avg(vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"})",
+          "expr": "avg(max by (pod) (vllm:kv_cache_usage_perc{$namespace_label=~\"$namespace\"}))",
           "legendFormat": "avg",
           "refId": "B"
         }
@@ -182,7 +182,7 @@
     },
     {
       "id": 4,
-      "title": "Queue Depth (Requests Waiting)",
+      "title": "Engine Queue and Running Requests (per pod)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -211,12 +211,12 @@
       },
       "targets": [
         {
-          "expr": "vllm:num_requests_waiting{$namespace_label=~\"$namespace\"}",
+          "expr": "max by (pod) (vllm:num_requests_waiting{$namespace_label=~\"$namespace\"})",
           "legendFormat": "{{pod}} waiting",
           "refId": "A"
         },
         {
-          "expr": "vllm:num_requests_running{$namespace_label=~\"$namespace\"}",
+          "expr": "max by (pod) (vllm:num_requests_running{$namespace_label=~\"$namespace\"})",
           "legendFormat": "{{pod}} running",
           "refId": "B"
         }
@@ -226,7 +226,8 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "description": "Per-pod engine state. 'waiting' is vllm:num_requests_waiting -- the queue INSIDE the engine. With EPP flow control enabled this normally reads 0 even under heavy load, because flow control holds the backlog at the router instead; see the EPP Flow-Control Queue panel.\n\nAggregated with max by (pod) so a pod scraped by two PodMonitors still draws one line per replica."
     },
     {
       "id": 5,
@@ -279,6 +280,35 @@
           "displayMode": "list",
           "placement": "bottom"
         }
+      }
+    },
+    {
+      "id": 6,
+      "title": "EPP Flow-Control Queue (Requests Queued at the Router)",
+      "type": "timeseries",
+      "description": "Requests held by the EPP's flow-control layer, before they reach an engine.\n\nThis is where a backlog appears when flow control is enabled: it admits only what the engine can absorb, so vllm:num_requests_waiting can sit at 0 while hundreds of requests are queued here. A rising queue with a flat engine queue means demand exceeds decode throughput, not KV capacity.\n\nNot filtered by namespace: these EPP series carry no namespace label (llm-d #2309).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "sum by (model_name) (inference_extension_flow_control_queue_size) or sum by (model_name) (llm_d_epp_flow_control_queue_size)",
+          "legendFormat": "{{model_name}} queued",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
       }
     }
   ],
