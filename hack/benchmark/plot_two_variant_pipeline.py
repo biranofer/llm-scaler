@@ -9,9 +9,15 @@ import argparse
 import json
 import os
 import re
+import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 # Plotting is optional. matplotlib is not a dependency of running a benchmark —
 # it is only needed to draw the picture afterwards — so a machine without it must
@@ -21,6 +27,7 @@ from pathlib import Path
 try:
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
+    from matplotlib.transforms import blended_transform_factory
 except ImportError:
     print("Skipping the two-variant plot: matplotlib is not installed "
           "(pip install matplotlib). The benchmark results are unaffected.")
@@ -244,6 +251,158 @@ def to_dt(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+def _load_experiment_metadata(results_dir: Path):
+    """Best-effort description of the workload and its load schedule, for the
+    plot title and the stage-boundary markers. Reads run_metadata.yaml (always
+    written by the harness) plus the saved workload file it points at, and
+    understands both scenario shapes used in this repo: inference-perf's
+    `load.stages` / `data.*_distribution`, and guidellm's `spec.profile.rate`
+    (a scalar or a sweep list) / `spec.constraints[].max_duration` /
+    `spec.data[0].prompt_tokens`/`output_tokens`.
+
+    Returns {} (not an error) if yaml is unavailable, or run_metadata.yaml or
+    the workload file is missing/unrecognized — the plot still renders, just
+    without these extras.
+    """
+    meta = {}
+    if yaml is None:
+        return meta
+    run_meta_path = results_dir / "run_metadata.yaml"
+    if not run_meta_path.is_file():
+        return meta
+    try:
+        run_meta = yaml.safe_load(run_meta_path.read_text()) or {}
+    except Exception:
+        return meta
+
+    meta["namespace"] = run_meta.get("namespace")
+    meta["model"] = run_meta.get("model")
+    start = run_meta.get("harness_start")
+    if start:
+        try:
+            meta["harness_start_epoch"] = int(datetime.fromisoformat(start).timestamp())
+        except ValueError:
+            pass
+
+    workload = {}
+    workload_name = run_meta.get("harness_workload")
+    if workload_name:
+        wp = results_dir / workload_name
+        if wp.is_file():
+            try:
+                workload = yaml.safe_load(wp.read_text()) or {}
+            except Exception:
+                workload = {}
+
+    stages = []
+    input_tokens = output_tokens = None
+    if "load" in workload:  # inference-perf shape
+        for s in workload.get("load", {}).get("stages", []) or []:
+            stages.append((s.get("rate"), s.get("duration")))
+        din = (workload.get("data") or {}).get("input_distribution") or {}
+        dout = (workload.get("data") or {}).get("output_distribution") or {}
+        input_tokens = din.get("mean", din.get("max"))
+        output_tokens = dout.get("mean", dout.get("max"))
+    elif "spec" in workload:  # guidellm shape
+        spec = workload["spec"]
+        rate = (spec.get("profile") or {}).get("rate")
+        duration = None
+        for c in spec.get("constraints") or []:
+            if c.get("kind") == "max_duration":
+                duration = c.get("seconds")
+        for r in (rate if isinstance(rate, list) else [rate]):
+            stages.append((r, duration))
+        data0 = (spec.get("data") or [{}])[0]
+        input_tokens = data0.get("prompt_tokens")
+        output_tokens = data0.get("output_tokens")
+
+    meta["stages"] = stages
+    meta["input_tokens"] = input_tokens
+    meta["output_tokens"] = output_tokens
+    return meta
+
+
+def _load_keda_policy(namespace, model_id):
+    """Best-effort KEDA scaleUp/scaleDown behavior for this model's
+    ScaledObject, read live via kubectl. Matches on the `llm-d.ai/model-id`
+    annotation (current annotation-based discovery) or, failing that, the
+    trigger's `modelID` (older ScaledObjects predating that migration).
+    Returns None if kubectl is unavailable, times out, or nothing matches —
+    the title simply omits this line rather than failing the plot.
+    """
+    if not namespace:
+        return None
+    try:
+        proc = subprocess.run(
+            ["kubectl", "get", "scaledobject", "-n", namespace, "-o", "json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode != 0:
+            return None
+        data = json.loads(proc.stdout)
+    except Exception:
+        return None
+    for item in data.get("items", []):
+        ann = (item.get("metadata") or {}).get("annotations") or {}
+        triggers = (item.get("spec") or {}).get("triggers") or []
+        trig_model = next((t.get("metadata", {}).get("modelID") for t in triggers), None)
+        if model_id and ann.get("llm-d.ai/model-id") != model_id and trig_model != model_id:
+            continue
+        behavior = ((item.get("spec") or {}).get("advanced", {}) or {}) \
+            .get("horizontalPodAutoscalerConfig", {}).get("behavior")
+        if behavior:
+            return behavior
+    return None
+
+
+def _format_workload_line(meta):
+    parts = []
+    if meta.get("input_tokens") is not None and meta.get("output_tokens") is not None:
+        parts.append(f"{meta['input_tokens']:g}/{meta['output_tokens']:g} in/out tokens")
+    stages = meta.get("stages")
+    if stages:
+        stage_str = " → ".join(
+            f"{r:g} RPS" + (f" ({d:g}s)" if d else "")
+            for r, d in stages if r is not None
+        )
+        parts.append(f"RPS stages: {stage_str}")
+    return "   |   ".join(parts) if parts else None
+
+
+def _format_keda_line(behavior):
+    if not behavior:
+        return None
+    up = behavior.get("scaleUp") or {}
+    down = behavior.get("scaleDown") or {}
+    up_pol = (up.get("policies") or [{}])[0]
+    down_pol = (down.get("policies") or [{}])[0]
+    return (
+        f"KEDA: scaleUp +{up_pol.get('value', '?')}%/{up_pol.get('periodSeconds', '?')}s"
+        f" (stab {up.get('stabilizationWindowSeconds', '?')}s)"
+        f"   scaleDown +{down_pol.get('value', '?')}%/{down_pol.get('periodSeconds', '?')}s"
+        f" (stab {down.get('stabilizationWindowSeconds', '?')}s)"
+    )
+
+
+def _stage_boundaries(meta):
+    """Absolute epoch timestamps (and the new rate) at each load-schedule
+    transition, for vertical markers. Excludes the run's own start — stage 0
+    needs no marker, it's the left edge of the plot."""
+    start = meta.get("harness_start_epoch")
+    stages = meta.get("stages") or []
+    if start is None:
+        return []
+    boundaries = []
+    t = start
+    for i, (rate, duration) in enumerate(stages):
+        if i > 0:
+            boundaries.append((t, rate))
+        if not duration:
+            break
+        t += duration
+    return boundaries
+
+
 def plot(results_dir: Path, out_path: Path, title_suffix: str):
     decode_series, epp_series = collect(results_dir / "metrics" / "raw")
     drows = aggregate_decode(decode_series)
@@ -252,6 +411,8 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     wva_targets = wva_target_timeseries(results_dir)
     wva_sd = wva_supply_demand_timeseries(results_dir)
     cd_est = capacity_demand_estimate(results_dir)
+    exp_meta = _load_experiment_metadata(results_dir)
+    keda_behavior = _load_keda_policy(exp_meta.get("namespace"), exp_meta.get("model"))
 
     has_supply_demand = bool(wva_sd or cd_est)
     epp_rates = epp_throughput(results_dir)
@@ -280,7 +441,7 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     title = "Replica Count"
     if wva_targets:
         title += " — solid: ready,  dashed: WVA desired"
-    ax.set_title(title)
+    ax.set_title(title, pad=8)
     if repls:
         x = [to_dt(r[0]) for r in repls]
         ax.step(x, [r[1] for r in repls], where="post", color=PRIMARY_COLOR, label="primary (ready)", linewidth=2)
@@ -466,6 +627,14 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     act = [r["timestamp"] for r in cd_est] if cd_est else []
     if repls:
         act += [t[0] for t in repls if (t[1] or 0) > 1 or (t[2] or 0) > 1]
+    # When the full experiment schedule is known, show it in its entirety --
+    # otherwise the stage-boundary markers below can fall outside the
+    # "active" window above (e.g. a stage that never pushed replicas past 1)
+    # or bunch up against its edge.
+    exp_start = exp_meta.get("harness_start_epoch")
+    exp_stages = exp_meta.get("stages") or []
+    if exp_start is not None and exp_stages and all(d for _, d in exp_stages):
+        act += [exp_start, exp_start + sum(d for _, d in exp_stages)]
     if act:
         lo, hi = min(act), max(act)
         span = max(hi - lo, 60)
@@ -476,12 +645,51 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
 
     final_prim = repls[-1][1] if repls else 0
     final_v2 = repls[-1][2] if repls else 0
-    fig.suptitle(
-        f"Two-Variant V2 — FULL PIPELINE {title_suffix}\n"
+    title_lines = [
+        f"Two-Variant V2 — FULL PIPELINE {title_suffix}",
         f"primary={final_prim}, v2={final_v2}  cost-aware",
-        fontsize=10,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    ]
+    wl_line = _format_workload_line(exp_meta)
+    if wl_line:
+        title_lines.append(wl_line)
+    keda_line = _format_keda_line(keda_behavior)
+    if keda_line:
+        title_lines.append(keda_line)
+    fig.suptitle("\n".join(title_lines), fontsize=9)
+    fig.tight_layout(rect=[0, 0, 1, 0.94 if len(title_lines) > 2 else 0.97])
+
+    # Free a thin strip above panel 0 for the stage-rate labels: shrink its
+    # axes slightly (lifting its top frame down) rather than guessing at a
+    # pad/position that has to clear both this panel's own (long, with the
+    # solid/dashed legend suffix) title text AND the label -- tight_layout
+    # already gave the title just enough room for itself, not for anything
+    # above it too. Only panel 0 moves; every other panel's position from
+    # tight_layout is untouched. The label sits near the TOP of the freed
+    # strip in absolute figure coordinates (not axes-fraction), so its
+    # position doesn't depend on exactly how tall the title renders --
+    # the title (pinned to the new, lower axes edge by a small pad) sits
+    # near the strip's bottom, with clear separation from the label above.
+    stage_boundaries = _stage_boundaries(exp_meta)
+    label_y = None
+    if stage_boundaries:
+        pos = axes[0].get_position()
+        shrink = 0.05
+        label_y = pos.y0 + pos.height - 0.008
+        axes[0].set_position([pos.x0, pos.y0, pos.width, pos.height - shrink])
+
+    # Vertical markers at each load-schedule transition (e.g. RPS 4 -> 14 ->
+    # 4), drawn on every panel since they all share the x-axis. The new rate
+    # is labeled once, in the strip just freed above panel 0, to avoid
+    # repeating it 8x.
+    if stage_boundaries:
+        trans = blended_transform_factory(axes[0].transData, fig.transFigure)
+        for b_ts, b_rate in stage_boundaries:
+            b_dt = to_dt(b_ts)
+            for ax in axes:
+                ax.axvline(b_dt, color="gray", linestyle=":", linewidth=1.2, alpha=0.7, zorder=0)
+            axes[0].text(b_dt, label_y, f"{b_rate:g} RPS", transform=trans,
+                         fontsize=7, ha="center", va="top", color="gray")
+
     fig.savefig(out_path, dpi=120)
     print(f"Wrote {out_path}")
 
