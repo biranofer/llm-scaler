@@ -3,7 +3,10 @@
 ## Overview
 
 Deploys one small model — `Qwen/Qwen3-0.6B` — with an EPP and an InferencePool,
-on a single GPU, so there is something real for WVA to scale. Use it to try WVA,
+on a single GPU, so there is something real for WVA to scale. The model only:
+[Install WVA in a namespace](../install-in-namespace/) is the step after it, and
+the two are separate because WVA's preflight refuses a namespace with no model
+servers — the model has to exist first. Use it to try WVA,
 to reproduce a scaling question, or as the target for
 [`make benchmark-smoke`](../benchmarking/).
 
@@ -43,16 +46,35 @@ kubectl get nodes -o custom-columns=NODE:.metadata.name,GPU:.status.allocatable.
 
 <!-- guide:deploy.standup start -->
 ```bash
-# Deploys llm-d (model server + EPP + InferencePool) and WVA, then registers
-# the workload. Set IMG to a build of this branch.
-make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID} IMG=${IMG}
+# Deploys the model server, its EPP and the InferencePool -- and NOTHING else.
+# BENCHMARK_WVA_DEPLOY=false is what keeps the autoscaler out of it: this guide
+# gets you a model to scale, and installing WVA is the next guide's job.
+make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID}         BENCHMARK_WVA_DEPLOY=false ENVIRONMENT=openshift
 ```
 <!-- guide:deploy.standup end -->
 
-This deploys the model server, the EPP and its InferencePool, installs WVA from
-this repo, and registers the workload as a ScaledObject. `IMG` should be a build
-of this branch: released images reject `--external-scaler-bind-address`, which
-these manifests pass.
+This deploys the model server, its EPP and the InferencePool — and stops
+there. `BENCHMARK_WVA_DEPLOY=false` is what keeps the autoscaler out: this guide
+gets you something to scale, and installing WVA is the next guide's job. Doing
+them together hides which half failed, and WVA's own preflight refuses a
+namespace with no model servers in it, so the order is not arbitrary.
+
+### Then install WVA into that namespace
+
+Follow [Install WVA in a namespace](../install-in-namespace/) with the same
+`NAMESPACE`. In short:
+
+```bash
+export NAMESPACE=<the namespace you just used>
+make setup-prereqs        # cluster admin, once per namespace
+make deploy-wva           # the controller
+make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+# edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
+make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+```
+
+The ScaledObject is the registration: WVA has no watch and no listing, so until
+one exists it is never called and scales nothing.
 
 ### The one setting that matters for a small model
 

@@ -588,7 +588,17 @@ dashboard: ## OpenShift only: stand up (or re-report) a private Grafana + WVA da
 # If IMG is set, builds the image locally first (unless SKIP_BUILD=true).
 .PHONY: deploy-e2e-infra
 deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server or VA/HPA). Works for kind-emulator, openshift, kubernetes.
-	@# WVA_WATCH_NS and WVA_NS both PINNED. The suite puts model servers in
+	@# Installed through `make deploy-wva` -- the target a USER runs -- not by
+	@# calling deploy/install.sh with a hand-assembled environment.
+	@#
+	@# The suite shared the script but not the invocation, so it never passed
+	@# WVA_SCOPE, NAMESPACE, WVA_LIMITER or INSTALL_PHASE. When the scope
+	@# default changed from platform-inferred to `namespace`, the e2e silently
+	@# changed shape and nothing in the suite covered the path users take: a
+	@# change to install semantics could land green here and break `make
+	@# deploy-wva`. Now the same macro serves both.
+	@#
+	@# WVA_NS and NAMESPACE are both PINNED. The suite puts model servers in
 	@# LLMD_NAMESPACE and the controller in CONTROLLER_NAMESPACE, so the namespace
 	@# WVA MANAGES has to be named -- that is what WVA_WATCH_NS is for, and
 	@# wva_apply_watch_namespace_rbac renders the manager Role into it.
@@ -630,23 +640,28 @@ deploy-e2e-infra: ## Deploy e2e test infrastructure (WVA + EPP; no model server 
 			IMAGE_TAG="latest"; \
 		fi; \
 		echo "Using local image: $$IMAGE_REPO:$$IMAGE_TAG"; \
-		ENVIRONMENT=$(ENVIRONMENT) \
-		WVA_NS=$(CONTROLLER_NAMESPACE) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 		WVA_IMAGE_REPO=$$IMAGE_REPO \
 		WVA_IMAGE_TAG=$$IMAGE_TAG \
 		WVA_IMAGE_PULL_POLICY=IfNotPresent \
-		./deploy/install.sh; \
+		$(MAKE) deploy-wva \
+			ENVIRONMENT=$(ENVIRONMENT) \
+			WVA_NS=$(CONTROLLER_NAMESPACE) \
+			NAMESPACE=$(CONTROLLER_NAMESPACE) \
+			SCOPE=namespace \
+			IMG=$(IMG); \
 	else \
 		echo "IMG not set - using default image from registry (latest)"; \
-		ENVIRONMENT=$(ENVIRONMENT) \
-		WVA_NS=$(CONTROLLER_NAMESPACE) \
 		SCALER_BACKEND=$(SCALER_BACKEND) \
 		ENABLE_SCALE_TO_ZERO=$(SCALE_TO_ZERO_ENABLED) \
 		DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
-		./deploy/install.sh; \
+		$(MAKE) deploy-wva \
+			ENVIRONMENT=$(ENVIRONMENT) \
+			WVA_NS=$(CONTROLLER_NAMESPACE) \
+			NAMESPACE=$(CONTROLLER_NAMESPACE) \
+			SCOPE=namespace; \
 	fi
 	@ENVIRONMENT=$(ENVIRONMENT) \
 		LLM_D_ROUTER_VERSION=$(LLM_D_ROUTER_VERSION) \

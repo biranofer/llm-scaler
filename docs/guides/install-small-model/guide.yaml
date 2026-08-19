@@ -17,9 +17,11 @@ prerequisites:
 deploy:
   standup:
     note: |
-      Deploys llm-d (model server + EPP + InferencePool) and WVA, then registers
-      the workload. Set IMG to a build of this branch.
-    run: make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID} IMG=${IMG}
+      Deploys the model server, its EPP and the InferencePool -- and NOTHING else.
+      BENCHMARK_WVA_DEPLOY=false is what keeps the autoscaler out of it: this guide
+      gets you a model to scale, and installing WVA is the next guide's job.
+    run: |
+      make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID}         BENCHMARK_WVA_DEPLOY=false ENVIRONMENT=openshift
 
 verify:
   serving:
