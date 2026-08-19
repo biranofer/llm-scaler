@@ -391,6 +391,42 @@ def _extract_pod_startup_avg(results_dir):
     return mean(times) if times else None
 
 
+def _collection_failure(results_dir):
+    """Why the metrics columns are empty, if they are.
+
+    A "?" means a value was not collected, and the reason is two levels down in
+    files nobody reads: metrics_summary.json says "no raw files found" and then
+    GUESSES ("label selector may not match"), while metrics/raw/
+    collection_debug.log holds what actually happened. On a real run that was
+
+        open /home/shjohn/.kube/pokprod.token: no such file or directory
+
+    -- the collector inheriting a kubeconfig whose tokenFile does not exist where
+    collection runs, so every kubectl call failed. Each of those calls ends in
+    `2>/dev/null || true`, which makes an auth failure and an empty cluster the
+    same answer. Surfacing the log turns a table of "?" into a diagnosis.
+    """
+    dbg = os.path.join(results_dir, "metrics", "raw", "collection_debug.log")
+    if not os.path.isfile(dbg):
+        return None
+    seen = []
+    try:
+        with open(dbg, errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line in seen:
+                    continue
+                low = line.lower()
+                if any(t in low for t in ("error", "no such file", "forbidden",
+                                          "unauthorized", "refused", "not found")):
+                    seen.append(line)
+                if len(seen) >= 3:
+                    break
+    except OSError:
+        return None
+    return seen or None
+
+
 def _fmt(metric, value):
     """Format a value to match the benchmark.md number style."""
     if value is None:
@@ -573,6 +609,20 @@ def main():
         print(f"### {args.scenario}\n")
     print(format_table(runs, labels, metrics))
     print()
+
+    # A "?" is not a measurement of zero, and the reason is knowable.
+    # Printed once, after the table, so a reader who sees empty columns is
+    # told why instead of concluding the run had no KV cache or no queue.
+    for _d in args.results_dirs:
+        _why = _collection_failure(_d)
+        if _why:
+            print("Some columns are '?' because metrics collection failed:")
+            for _line in _why:
+                print("    " + _line)
+            print("  KV cache, queue depth and pod startup come from in-cluster")
+            print("  scrapes, so none were taken.")
+            print()
+            break
 
 
 if __name__ == "__main__":
