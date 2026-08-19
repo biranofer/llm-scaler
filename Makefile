@@ -58,7 +58,25 @@ SCALE_TO_ZERO_ENABLED       ?= false
 # gates (SCALE_TO_ZERO_ENABLED=true) adds inherently slow scale-from-zero
 # specs and 35m is not enough -- the suite panics with "test timed out"
 # mid-run, which looks like a hang rather than a budget.
-E2E_TIMEOUT                 ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),75m,35m)
+E2E_TIMEOUT                 ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),120m,35m)
+# go test's timeout must be LARGER than ginkgo's, not equal to it.
+#
+# Ginkgo's own suite timeout defaults to one hour, so raising only go test's
+# limit bought nothing: a SCALE_TO_ZERO_ENABLED=true run died at exactly 3600s
+# with `FAIL! - Suite Timeout Elapsed`, 30 of 96 specs run.
+#
+# Setting them EQUAL was worse. go test won the race and panicked the binary, so
+# ginkgo never printed a summary at all -- 75 minutes of work and the only output
+# was a goroutine dump and `FAIL ... 4500.036s`. A run you cannot read is worth
+# less than one that stops early and says where it got to.
+#
+# So ginkgo gets E2E_TIMEOUT and go test gets a margin on top: ginkgo hits its
+# limit first, tears down cleanly, and reports which specs passed.
+#
+# 120m from measurement, not taste: the 75m run completed 56 specs in 4432s and
+# was still going, with individual scale-from-zero specs taking 720s, 605s and
+# 600s. Those are inherently slow -- they wait on real parking and waking.
+E2E_GO_TIMEOUT              ?= $(if $(filter true,$(SCALE_TO_ZERO_ENABLED)),130m,45m)
 # Passed to BOTH `go test -timeout` and `-ginkgo.timeout`. Ginkgo keeps its own
 # suite timeout, which defaults to ONE HOUR, so raising only go test's limit
 # bought nothing: a SCALE_TO_ZERO_ENABLED=true run died at exactly 3600s with
@@ -621,7 +639,7 @@ test-e2e-smoke: ## Run smoke e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=keda \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
+	go test ./test/e2e/ -timeout $(E2E_GO_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -646,7 +664,7 @@ test-e2e-full: ## Run full e2e test suite
 	SCALER_BACKEND=keda \
 	KEDA_NAMESPACE=$(E2E_KEDA_NAMESPACE) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
+	go test ./test/e2e/ -timeout $(E2E_GO_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="full && !smoke && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
@@ -681,7 +699,7 @@ test-e2e-multi-controller: ## Run multi-controller e2e tests
 	DEPLOY_ALERTING_RULES=$(DEPLOY_ALERTING_RULES) \
 	SCALER_BACKEND=$(SCALER_BACKEND) \
 	MODEL_ID=$(MODEL_ID) \
-	go test ./test/e2e/ -timeout $(E2E_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
+	go test ./test/e2e/ -timeout $(E2E_GO_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="multi-controller" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
 	echo ""; \
