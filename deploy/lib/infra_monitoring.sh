@@ -229,6 +229,17 @@ wva_report_modelserver_metrics() {
     servers="$(wva_serving_workload_count "$ns")"
     [ "${servers:-0}" -gt 0 ] || return 0
 
+    # Can this identity actually SEE monitors here? A Forbidden list is not an empty
+    # one, and this check refuses installs -- so "I could not look" must not be
+    # reported as "nothing scrapes them". Matches how the EPP gate above separates a
+    # confirmed-absent signal from an unconfirmed one; the two gates refuse on the
+    # same grounds or neither is trustworthy.
+    if ! kubectl auth can-i list podmonitors -n "$ns" >/dev/null 2>&1; then
+        log_warning "  Model-server metrics: cannot tell whether anything scrapes the $servers model server(s) in $ns — listing PodMonitors there is not permitted for this identity."
+        log_warning "    Not treated as missing: refusing an install over a question this check was not allowed to ask would block a correctly monitored namespace."
+        return 0
+    fi
+
     conflict="$(wva_modelserver_scrape_conflict "$ns" | paste -sd, -)"
     if [ -n "$conflict" ]; then
         log_success "  Model-server metrics: $conflict already scrapes them."

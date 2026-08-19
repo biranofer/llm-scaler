@@ -207,14 +207,14 @@ repository, which made the index unusable for the thing it is for.
 | `0dfb4b71`, `78e4eb0a` | drop the `cluster-monitoring-view` binding for the Prometheus SA |
 | `056ed5cc` | verify the model servers are scraped; report, do not create |
 | `dcfdb79c`, `0a6720b2`, `5701c4cf` | `so-park`, `so-freeze`, `so-resume`, `so-list` |
-| *not on `main`* | check the EPP's `flowControl` gate and scrape, and refuse without them |
-| *not on `main`* | default to namespace everywhere, require `NAMESPACE` in it |
-| *not on `main`* | stop when llm-d is incomplete; ScaledObjects are not a precondition |
+| `77f20216`, `4b24a95c`, `09c4a408` | check the EPP's `flowControl` gate and scrape, and refuse without them |
+| `04954614`, `6bdcb934` | default to namespace everywhere, require `NAMESPACE` in it |
+| `04954614` | stop when llm-d is incomplete; ScaledObjects are not a precondition |
 | *not on `main`* | fold the per-install args read; scan for namespaces on demand |
-| *not on `main`* | revert of a first attempt that inverted the policy |
+| `04954614` | the premise/output inversion, caught and reverted before it landed |
 
-The five marked *not on `main`* were part of this series but have not landed;
-they are work still to merge, not work already done.
+One row is still marked *not on `main`*: it was part of this series but has not
+landed, and is work still to merge rather than work already done.
 
 ### Gap IDs
 
