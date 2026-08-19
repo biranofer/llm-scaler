@@ -4,8 +4,10 @@ A step-by-step walkthrough of
 [Install WVA in a namespace](../guides/install-in-namespace/README.md), run against a
 real shared cluster, recording what a reader hits and fixing what could be fixed.
 
-The **PR description** below covers everything fixed. **Still open** lists what was
-found and deliberately not changed, with the reasoning.
+The **PR description** below covers everything fixed *in this series*; the *Commits*
+table says which of it has landed on `main` and which has not, so the narrative is
+not read as a description of the tree. **Still open** lists what was found and
+deliberately not changed, with the reasoning.
 
 | | |
 | --- | --- |
@@ -29,9 +31,9 @@ on it, and point at llm-d when llm-d is what needs finishing.
 
 ---
 
-# PR description
+## PR description
 
-## Make a WVA install fail loudly instead of silently doing nothing
+### Make a WVA install fail loudly instead of silently doing nothing
 
 Walking the install guide end to end on a shared OpenShift cluster surfaced a family
 of defects with one shape: the install succeeds, every status reads healthy, and
@@ -41,7 +43,7 @@ now refuses rather than installing something that cannot work.
 Nothing here changes what WVA decides. It changes what it can *see*, and what it says
 when it cannot see.
 
-### Discovery: WVA could not find llm-d's own model servers
+#### Discovery: WVA could not find llm-d's own model servers
 
 - **Serving marker.** Discovery matched only `llm-d.ai/inferenceServing=true`, which
   llm-d's guides never set — `guides/recipes/modelserver/base/single-host/default`
@@ -57,7 +59,7 @@ when it cannot see.
   preflight contradicting itself, listing a namespace in its own "look elsewhere" list.
   All five now share one definition.
 
-### Metrics: the install could not see what it sizes from
+#### Metrics: the install could not see what it sizes from
 
 - **Model-server scrape.** WVA's capacity model is built entirely on `vllm:*` series.
   llm-d ships the PodMonitors, but as **"### 3. (Optional) Enable monitoring"** —
@@ -74,7 +76,7 @@ when it cannot see.
   detector for "serving through pods WVA cannot attribute" reads 0 forever — the safety
   net is disabled by the absence it exists to catch.
 
-### The two-phase install broke its own observability
+#### The two-phase install broke its own observability
 
 `ServiceMonitor` is an admin-phase object (a namespace admin cannot create
 `monitoring.coreos.com` resources — the reason the admin phase exists), while its
@@ -94,7 +96,7 @@ objects land together, and `verify_deployment` now reports a rejected ServiceMon
 checking both the missing Secret and a standing rejection, because an install that
 *creates* the missing Secret is still not scraped.
 
-### Preconditions, driven by scope
+#### Preconditions, driven by scope
 
 `WVA_SCOPE` already selected the scenario, so it is the only control; the per-check
 `WVA_ALLOW_*` flags that were briefly added are gone and `SKIP_CHECKS=true` is the
@@ -121,7 +123,7 @@ single bypass, which still prints the findings.
   `SKIP_CHECKS=true`. Its discovery code stays, because finding the namespaces to
   manage is its actual purpose.
 
-### Operating a WVA-managed workload
+#### Operating a WVA-managed workload
 
 `so-park`, `so-freeze`, `so-resume`, `so-list`. Idling one is not obvious and every
 obvious move fails — `kubectl scale --replicas=0` is restored by the HPA within
@@ -136,7 +138,7 @@ without a terminal), select by trigger address so an `apply: adopt` object is in
 and report the GPUs released. They deliberately do **not** replay the pre-park replica
 count on resume: `minReplicaCount` plus WVA's decision from live metrics should govern.
 
-### Smaller fixes
+#### Smaller fixes
 
 - The `cluster-monitoring-view` binding for the user-workload Prometheus SA is removed.
   It was introduced to let UWM scrape the controller's `/metrics`, and cannot: that
@@ -148,7 +150,7 @@ count on resume: `minReplicaCount` plus WVA's decision from live metrics should 
 - The candidate-namespace search is offered rather than performed: it is what a
   namespace admin may not do, and pure cost for someone who simply forgot the variable.
 
-## Testing
+### Testing
 
 Verified on the live cluster, using `evgensh-wva-test` as a positive control
 throughout — every check was confirmed to both fire and *not* fire.
@@ -189,25 +191,32 @@ throughout — every check was confirmed to both fire and *not* fire.
 
 `make check-prereqs` on `dhl-la-1708`: ~2min → 50s, with identical findings.
 
-## Commits
+### Commits
 
-| | |
+The SHAs below are the commits **as merged**. An earlier revision of this table
+listed the pre-rebase hashes from the local branch; none of them existed in the
+repository, which made the index unusable for the thing it is for.
+
+| commit | change |
 | --- | --- |
-| `ec14306c` | read the positional model of `vllm serve <model>` |
-| `d1b16ab8` | discover model servers by `llm-d.ai/role` |
-| `8b28ec4d` | count model servers by the shared marker list |
-| `1c83c42a` | apply the ServiceAccount and token Secret in the prereqs phase |
-| `71f3d2cb` | report a ServiceMonitor the prometheus-operator has rejected |
-| `0939e549` | drop the `cluster-monitoring-view` binding for the Prometheus SA |
-| `903d83fe`, `59900a28`, `02612181` | verify the model servers are scraped; report, do not create |
-| `56e0eb7a`, `e97c1f67` | check the EPP's `flowControl` gate and scrape, and refuse without them |
-| `600c284e` | `so-park`, `so-freeze`, `so-resume`, `so-list` |
-| `1fb4f8db` | default to namespace everywhere, require `NAMESPACE` in it |
-| `cce5cb38` | stop when llm-d is incomplete; ScaledObjects are not a precondition |
-| `6eab56c0` | fold the per-install args read; scan for namespaces on demand |
-| `17b4800a` | revert of a first attempt that inverted the policy |
+| `7bea1503`, `ea311a8b` | read the positional model of `vllm serve <model>`, anchored on `serve` |
+| `08f59ef4` | discover model servers by `llm-d.ai/role` |
+| `db2215f3`, `365d3664` | count model servers by the shared marker list, and survive Forbidden |
+| `66f82a82` | apply the ServiceAccount and token Secret in the prereqs phase |
+| `1af150a1`, `8c0e1970` | report a ServiceMonitor the prometheus-operator has rejected |
+| `0dfb4b71`, `78e4eb0a` | drop the `cluster-monitoring-view` binding for the Prometheus SA |
+| `056ed5cc` | verify the model servers are scraped; report, do not create |
+| `dcfdb79c`, `0a6720b2`, `5701c4cf` | `so-park`, `so-freeze`, `so-resume`, `so-list` |
+| *not on `main`* | check the EPP's `flowControl` gate and scrape, and refuse without them |
+| *not on `main`* | default to namespace everywhere, require `NAMESPACE` in it |
+| *not on `main`* | stop when llm-d is incomplete; ScaledObjects are not a precondition |
+| *not on `main`* | fold the per-install args read; scan for namespaces on demand |
+| *not on `main`* | revert of a first attempt that inverted the policy |
 
-## Gap IDs
+The five marked *not on `main`* were part of this series but have not landed;
+they are work still to merge, not work already done.
+
+### Gap IDs
 
 The walkthrough numbered findings as it went, and the commit messages use those
 numbers. Fixed ones are described above by what they are; this is the crosswalk.
@@ -227,11 +236,11 @@ numbers. Fixed ones are described above by what they are; this is the crosswalk.
 
 ---
 
-# Still open
+## Still open
 
 Recorded, deliberately not changed. Documentation-only unless noted.
 
-## Decided: leave as is
+### Decided: leave as is
 
 **PodMonitors are not WVA's to remove.** `undeploy-wva` leaves behind PodMonitors
 applied into the workload namespace, including the FMA one the installer creates when
@@ -250,7 +259,7 @@ cluster the same calls take seconds. Batching `wva_missing_prereqs` (18 per-obje
 17s) would help but trades a readable existence check for name-set bookkeeping. Caching
 was rejected as overkill. ~1 minute is acceptable.
 
-## Decided: ignore the accelerator warning for now
+### Decided: ignore the accelerator warning for now
 
 *(was G-19, G-20)*
 
@@ -282,10 +291,13 @@ Nothing to do. Two facts kept for whoever picks up the limiter work:
   live diagnostic is `policy_report.go`'s prose line, deduped per change. See the
   documentation table for the guide that greps the wrong one of the two.
 
-## Open work
+### Open work
 
-**`make dashboard` — shipped.** `deploy/lib/dashboard.sh` + the `dashboard` Makefile
-target productize what `config/grafana-private/` proved by hand: require the
+**`make dashboard` — designed, not merged.** Neither `deploy/lib/dashboard.sh` nor a
+`dashboard` Makefile target exists on `main`, and `config/grafana-private/` has never
+been in this repository — it was a local experiment. What follows is the design, not
+a description of the tree. The intent is to
+productize what that experiment proved by hand: require the
 grafana-operator CRDs and say so plainly if absent; apply a `Grafana` CR, a dedicated
 ServiceAccount + token Secret, and the namespaced RBAC the Thanos tenancy port actually
 checks (`create` on `pods.metrics.k8s.io`, plus `view` for ordinary reads); a
@@ -306,7 +318,7 @@ operator considers its own. `config/grafana-private/` had already avoided this b
 naming it plain `grafana-sa`; the productized version uses an explicit
 `${name}-datasource` suffix instead of relying on that being remembered.
 
-Verified end to end on `dhl-la-1708`: `make dashboard` run twice reports everything
+Verified end to end on `dhl-la-1708` against the unmerged branch: `make dashboard` run twice reports everything
 `unchanged` on the second run with identical URL/password output; the datasource health
 check returns `Successfully queried the Prometheus API`; a real query against
 `wva_config_info` returns data; asking for another namespace explicitly
@@ -366,12 +378,12 @@ the workload ran. Plausibly WVA's direct EPP scrape (it reads a token from
 `/var/run/secrets/epp-metrics/token`) failing against an EPP that publishes nothing,
 but that is a guess and has not been checked.
 
-## What the missing EPP wiring looks like on the dashboard
+### What the missing EPP wiring looks like on the dashboard
 
 Worth recording because it is the first *user-visible* consequence of the EPP gap, and
 it presents as WVA malfunctioning when it is not:
 
-```
+```text
 wva_metrics_collection_errors_total{query_type=arrival_rate, reason=unknown} = 785
 ```
 
@@ -386,7 +398,7 @@ Measured in this namespace: gate `off`, no scrapers, and `0 series` for both
 rate, and anything derived from the scheduler queue — stay empty while the `vllm:*` and
 `wva_*` panels populate normally.
 
-## Documentation
+### Documentation
 
 | | |
 | --- | --- |
@@ -402,9 +414,9 @@ rate, and anything derived from the scheduler queue — stay empty while the `vl
 | **G-15** | In namespace scope the overlay renders no Namespace, so the `openshift.io/user-monitoring` patch is inert and never reaches the namespace; the install summary nevertheless lists `Namespace` as applied, because it prints `WVA_PREREQ_KINDS` rather than what was applied. Harmless here — UWM discovers ServiceMonitors without the label — but the comment claims otherwise. |
 | **G-19/20** | `admin-gpu-bounding/README.md:23` checks accelerators resolve with `grep -i AcceleratorNotResolved` — the event *reason*, which appears in the log only inside the failed event emission. `gpu-limiter.md:197` greps `"Accelerator not resolved"`, the prose the working path actually logs. One of the two is wrong, and the wrong one is in the guide a reader follows before enabling a limiter. Point it at the prose form; after that the dead recorder call can be removed freely. |
 | **G-17** | The install summary prints "Grafana: deployed in openshift-user-workload-monitoring" twelve lines after the check reported there is none, and "KEDA: installed or already present" after reporting no operator matched. Print what the check found. |
-| **G-22** | The operational dashboard is published as a ConfigMap labelled `grafana_dashboard=1` — a **sidecar** convention — into `MONITORING_NAMESPACE`, where on OpenShift no Grafana ever runs. It sat unread for four days. grafana-operator ignores labelled ConfigMaps; it imports what a `GrafanaDashboard` CR points at. And the dashboard is only installable as a side effect of the prereqs phase, so the person who wants one cannot install it. **Fixed** — `make dashboard` (see *Open work* above) ships this; `config/grafana-private/` is retired in favour of it. |
+| **G-22** | The operational dashboard is published as a ConfigMap labelled `grafana_dashboard=1` — a **sidecar** convention — into `MONITORING_NAMESPACE`, where on OpenShift no Grafana ever runs. It sat unread for four days. grafana-operator ignores labelled ConfigMaps; it imports what a `GrafanaDashboard` CR points at. And the dashboard is only installable as a side effect of the prereqs phase, so the person who wants one cannot install it. **Still open.** `addfa16d` (on `main`) improved the *sidecar* path: it reads the sidecar's watch list, suggests `DASHBOARD_NS` only where it would actually render, warns after publishing into a namespace nothing watches, and points at `deploy/grafana/operational-dashboard.json` for a manual UI import. The grafana-operator path is untouched — `main` still publishes only a labelled ConfigMap and creates no `GrafanaDashboard` CR, so on an OpenShift cluster whose Grafana is operator-managed the dashboard is still never read. `make dashboard` and `deploy/lib/dashboard.sh` are not in the tree. |
 
-## Deferred: registration at cluster scale
+### Deferred: registration at cluster scale
 
 Registration is per-workload — `scaledobjects-plan` writes an entry per model server, a
 human edits it, `scaledobjects-apply` creates one ScaledObject each. Tractable for one
