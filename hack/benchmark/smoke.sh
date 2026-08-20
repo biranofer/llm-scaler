@@ -33,7 +33,14 @@ esac
 NS="${1:-${BENCHMARK_NAMESPACE:-${NAMESPACE:-}}}"
 [ -n "$NS" ] || { echo "usage: smoke.sh <namespace>   (or set NAMESPACE)" >&2; exit 2; }
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RATE="${REQUEST_RATE:-10}"
+# 10 req/s could not saturate anything and so could not demonstrate scaling: on
+# Qwen3-0.6B it held ~115 concurrent requests, KV at 27%, both queues at 0, and
+# utilisation flat at 0.46 against a 0.85 threshold. 40 req/s overshoots -- it
+# drove KV to 99.9% and the engine queue to 431 running / 12 waiting, scaling
+# 1 -> 8 in one step, which measures a stampede rather than a scaling decision.
+# 20 is the middle: enough offered concurrency to pass the engine's default
+# batch width of 256 and produce a real queue, without burying the engine.
+RATE="${REQUEST_RATE:-20}"
 MINUTES="${SMOKE_MINUTES:-5}"
 
 # Workload shape.
