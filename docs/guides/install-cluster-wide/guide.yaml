@@ -24,3 +24,5 @@ troubleshoot:
 cleanup:
   uninstall:
     run: make undeploy-wva SCOPE=cluster
+  model:
+    run: make benchmark-teardown BENCHMARK_NAMESPACE=<the model namespace>

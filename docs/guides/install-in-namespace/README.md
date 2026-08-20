@@ -262,6 +262,32 @@ and a workload parked at zero can never be woken.
 
 `UNDEPLOY_SCALEDOBJECTS=false` keeps everything, for reinstalling in place.
 
+### The model servers are still running
+
+`make undeploy-wva` removes the **autoscaler only**. Every model server, EPP and
+InferencePool in the namespace keeps serving — which is usually what you want,
+since WVA did not create them and something else may depend on them.
+
+If you stood the model up with
+[Install a small llm-d model](../install-small-model/), that is what removes it:
+
+<!-- guide:cleanup.model start -->
+```bash
+make benchmark-teardown BENCHMARK_NAMESPACE=${NAMESPACE}
+```
+<!-- guide:cleanup.model end -->
+
+Run it **after** `make undeploy-wva`, not instead of it. It tears down the llm-d
+releases and the namespace, and a controller left behind would keep calling a
+scaler for workloads that no longer exist.
+
+To check nothing was missed — a namespace-scoped install still creates
+cluster-scoped RBAC, which deleting the namespace alone would strand:
+
+```bash
+kubectl get clusterrole,clusterrolebinding -o name | grep -i "${NAMESPACE}"
+```
+
 ## Configuration
 
 Optional. Everything below is detected; set one only to override what the

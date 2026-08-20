@@ -38,3 +38,5 @@ visualize:
 cleanup:
   uninstall:
     run: make undeploy-wva
+  model:
+    run: make benchmark-teardown BENCHMARK_NAMESPACE=${NAMESPACE}

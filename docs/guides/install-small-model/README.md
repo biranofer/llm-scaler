@@ -213,8 +213,19 @@ make benchmark-teardown BENCHMARK_NAMESPACE=${NAMESPACE}
 ```
 <!-- guide:cleanup.teardown end -->
 
-Removes WVA first, then the llm-d releases: a namespace-scoped install still
-creates cluster-scoped RBAC, which deleting the namespace would leave behind.
+This removes **both halves** — the autoscaler and the model — in that order. WVA
+goes first deliberately: a namespace-scoped install still creates cluster-scoped
+RBAC, which deleting the namespace would strand, and a controller outliving its
+workloads keeps calling a scaler for things that are gone.
+
+To remove only the autoscaler and keep the model serving, use `make undeploy-wva`
+instead, as [Install WVA in a namespace](../install-in-namespace/) describes.
+
+Verify nothing cluster-scoped was stranded:
+
+```bash
+kubectl get clusterrole,clusterrolebinding -o name | grep -i "${NAMESPACE}"
+```
 
 ## Configuration
 

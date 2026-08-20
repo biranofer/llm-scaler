@@ -125,6 +125,19 @@ make undeploy-wva SCOPE=cluster
 Prometheus, KEDA and the namespaces stay — they are shared, and this install may
 not have created them. `UNDEPLOY_SHARED=true` removes them too.
 
+That removes the **autoscaler only**. Model servers keep serving in every
+namespace the controller was managing, which matters more here than in a
+single-namespace install: one `undeploy` can leave many namespaces running.
+
+If a namespace's model came from
+[Install a small llm-d model](../install-small-model/), remove it per namespace:
+
+<!-- guide:cleanup.model start -->
+```bash
+make benchmark-teardown BENCHMARK_NAMESPACE=<the model namespace>
+```
+<!-- guide:cleanup.model end -->
+
 ## Configuration
 
 Optional.

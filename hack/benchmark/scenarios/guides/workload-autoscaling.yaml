@@ -181,34 +181,22 @@ scenario:
     # The following sections configure the llm-d modelservice Helm chart
     # deployment including decode pods, prefill pods, router, and gateway.
     # =========================================================================
-    # =========================================================================
-    # PodMonitor (top level) -- deliberately OFF
+    # PodMonitor (top level): NOT configurable from here.
     #
-    # The harness default is `true` (config/templates/values/defaults.yaml),
-    # which renders 18_podmonitor.yaml.j2 as an UNMANAGED PodMonitor named
-    # vllm-<model>. The modelservice chart independently renders its own,
-    # <model>-decode-podmonitor, from modelservice.decode.monitoring.podmonitor
-    # below. Both on gives ONE pod TWO scrape targets, and every vllm:* series
-    # then exists twice, distinguished only by `job`. Measured on pokprod: a
-    # single decode replica drew TWO lines in the benchmark dashboard's
-    # vllm:num_requests_running panel -- which plots the raw series, not an
-    # aggregate -- and read as two replicas. Any additive query over vllm:*
-    # double-counts for the same reason.
+    # `monitoring` is a DEPLOYMENT-level field in the harness schema
+    # (llmdbenchmark/parser/config_schema.py, DeploymentBaseConfig), so a
+    # top-level `monitoring:` written into a scenario item is silently ignored
+    # and config/templates/values/defaults.yaml still decides. Setting it here
+    # was tried and the harness rendered the duplicate PodMonitor anyway.
     #
-    # WVA itself is not fooled: its queries are `max by (model_name, instance,
-    # pod)`, which collapses two scrapes of one pod back to one sample. This is
-    # a dashboard and query-hygiene problem, not a scaling-decision one.
+    # It is switched off in hack/benchmark/patch_harness.sh (fix 5) instead,
+    # which is also where the clone's other defaults are corrected -- the clone
+    # is gitignored and re-checked-out to a pinned tag, so that is the only
+    # place a change to it survives.
     #
-    # The chart's monitor is the one kept: it belongs to the Helm release, so it
-    # is removed with it, and it selects the decode role rather than the broader
-    # inferenceServing marker.
-    #
-    # FMA scenarios must NOT copy this. There the top-level monitor is the only
-    # thing scraping launcher pods, which no modelservice release owns.
-    # =========================================================================
-    monitoring:
-      podmonitor:
-        enabled: false
+    # The monitor that remains is the modelservice chart's, from
+    # modelservice.decode.monitoring.podmonitor below -- a field the schema does
+    # accept.
 
     modelservice:
       enabled: true
