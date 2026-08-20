@@ -110,6 +110,12 @@ jobs:
       - name: Run make guides-check
         run: make guides-check
 
+      # The dashboards are checked here for the same reason: nine overlapping
+      # panel pairs sat in the operational dashboard for months because Grafana
+      # repacks a broken layout on load and shows something plausible.
+      - name: Run make dashboards-check
+        run: make dashboards-check
+
   kustomize-build:
     runs-on: ubuntu-latest
     steps:

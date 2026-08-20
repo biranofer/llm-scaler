@@ -322,6 +322,10 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: dashboards-check
+dashboards-check: ## Fail if a Grafana dashboard has overlapping panels, duplicate ids/titles or the wrong namespace label (CI).
+	python3 hack/check-dashboards.py
+
 .PHONY: test
 test: manifests generate fmt vet setup-envtest helm ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" PATH="$(LOCALBIN):$(PATH)" go test $$(go list ./... | grep -v /e2e | grep -v /benchmark) -coverprofile cover.out
