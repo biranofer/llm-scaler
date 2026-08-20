@@ -350,6 +350,63 @@
       }
     },
     {
+      "id": 59,
+      "type": "stat",
+      "title": "Queued but unmeasured",
+      "description": "Requests queued for a model that WVA has no attributed replica to act on. Zero is normal, including for an idle model scaled to zero. Above zero means traffic is waiting while the autoscaler is blind to the pods serving it - most often FMA launcher pods that nothing scrapes, or a PodMonitor selecting a port the pods do not declare. See docs/deployment/operations.md, 'FMA launcher pods'.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "sum(wva_unmeasured_queue) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource_uid"
@@ -378,8 +435,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 0,
-        "y": 8
+        "x": 6,
+        "y": 4
       },
       "id": 47,
       "options": {
@@ -443,8 +500,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
-        "y": 8
+        "x": 12,
+        "y": 4
       },
       "id": 54,
       "options": {
@@ -506,8 +563,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 12,
-        "y": 8
+        "x": 18,
+        "y": 4
       },
       "id": 50,
       "options": {
@@ -587,7 +644,7 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 18,
+        "x": 0,
         "y": 8
       },
       "id": 10,
@@ -669,8 +726,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 0,
-        "y": 12
+        "x": 6,
+        "y": 8
       },
       "id": 49,
       "options": {
@@ -720,6 +777,63 @@
       "type": "gauge"
     },
     {
+      "id": 61,
+      "type": "stat",
+      "title": "Models blocked from scaling",
+      "description": "Models that cannot reach the scaling state their configuration implies, counted by reason. Zero is the normal state. Non-zero is not necessarily an error: 'variant-floor' and 'policy-forbids-zero' are valid configurations whose two halves contradict each other, so the model quietly never parks and the accelerators are billed indefinitely with no other symptom. 'no-wake-signal' IS a fault - EPP exports no flow-control queue, so a parked model can never be woken. See the by-reason panel for which.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(wva_model_scaling_blocked == 1) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource_uid"
@@ -751,8 +865,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
-        "y": 12
+        "x": 18,
+        "y": 8
       },
       "id": 53,
       "options": {
@@ -833,7 +947,7 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 12,
+        "x": 0,
         "y": 12
       },
       "id": 24,
@@ -958,7 +1072,7 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 18,
+        "x": 6,
         "y": 12
       },
       "id": 25,
@@ -1026,8 +1140,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 0,
-        "y": 16
+        "x": 12,
+        "y": 12
       },
       "id": 26,
       "options": {
@@ -1075,6 +1189,122 @@
       ],
       "title": "Metric Collection Errors",
       "type": "gauge"
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "Queued but unmeasured, by model",
+      "description": "Which model is queueing without a measurable replica, and for how long. A flat non-zero line is an autoscaler that will never react: the demand is real and no variant carries it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_unmeasured_queue{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "Models that will not scale, by reason",
+      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: the model runs both vLLM and SGLang, so no single request counter measures its idleness (either alone is supported). activation-retention: just woken from zero and held for the retention period so the wake is not undone -- transient, and clears itself. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_scaling_blocked{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}} - {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
     },
     {
       "datasource": {
@@ -1138,7 +1368,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 32
       },
       "id": 40,
       "options": {
@@ -1211,105 +1441,62 @@
       "type": "timeseries"
     },
     {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Models at zero replicas",
+      "description": "Total replicas serving each model, summed across its variants. Zero is normal for an idle model that scaled to zero, and a fault only when demand exists - which is what the WVAModelParkedWhileRequestsRefused alert joins against, using this series as the key. EPP's request metrics carry model_name and no namespace, and the per-variant wva_current_replicas carries no model_name, so this is the only series the two sides can be joined on. A line sitting flat at zero while traffic arrives is a stranded model.",
       "datasource": {
         "type": "prometheus",
-        "uid": "$datasource_uid"
+        "uid": "${datasource_uid}"
       },
-      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_replicas{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "lineWidth": 2,
+            "fillOpacity": 10
           },
-          "mappings": [],
-          "max": 1,
+          "unit": "short",
           "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "red",
-                "value": 0.8
+                "color": "green",
+                "value": 1
               }
             ]
-          },
-          "unit": "percentunit"
+          }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 36
-      },
-      "id": 41,
       "options": {
         "legend": {
-          "calcs": [],
           "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
+          "placement": "bottom"
         }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name, accelerator_type) (wva_saturation_utilization{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - {{accelerator_type}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Saturation Utilization",
-      "type": "timeseries"
+      }
     },
     {
       "datasource": {
@@ -1392,7 +1579,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 48
       },
       "id": 42,
       "options": {
@@ -1440,11 +1627,70 @@
       "type": "timeseries"
     },
     {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Variants pinned at their ceiling",
+      "description": "1 while a variant's target sits on its own maxReplicas. On its own this is unremarkable - a correctly sized variant sits at its ceiling under load. It matters together with utilization above the scale-up threshold, which is demand going unserved: the remedy there is to raise maxReplicas, NOT to add accelerators (that is wva_decisions_limited_total, which means GPUs ran out). Also read it when interpreting a benchmark - a run pinned at its ceiling measures the ceiling, not the autoscaler.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_variant_at_max_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}",
+          "legendFormat": "{{$namespace_label}}/{{variant_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Number of scaling operations per second over the last 5 minutes, grouped by decision reason. Metric is wva_replica_scaling_total.",
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1458,8 +1704,8 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
-            "drawStyle": "bars",
-            "fillOpacity": 80,
+            "drawStyle": "line",
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1477,39 +1723,43 @@
             "spanNulls": false,
             "stacking": {
               "group": "A",
-              "mode": "normal"
+              "mode": "none"
             },
             "thresholdsStyle": {
               "mode": "off"
             }
           },
           "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
               }
             ]
           },
-          "unit": "short"
+          "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 24,
         "x": 0,
-        "y": 51
+        "y": 64
       },
-      "id": 52,
+      "id": 41,
       "options": {
         "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
+          "calcs": [],
+          "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
@@ -1526,14 +1776,14 @@
             "uid": "$datasource_uid"
           },
           "editorMode": "code",
-          "expr": "sum by (reason, direction) (rate(wva_replica_scaling_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[5m]))",
+          "expr": "max by ($namespace_label, variant_name, accelerator_type) (wva_saturation_utilization{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
           "instant": false,
-          "legendFormat": "{{reason}}: {{direction}}",
+          "legendFormat": "{{variant_name}} - {{accelerator_type}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Scaling Decision Rate",
+      "title": "Saturation Utilization",
       "type": "timeseries"
     },
     {
@@ -1618,7 +1868,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 71
       },
       "id": 43,
       "options": {
@@ -1663,6 +1913,103 @@
         }
       ],
       "title": "Replica Overview",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Number of scaling operations per second over the last 5 minutes, grouped by decision reason. Metric is wva_replica_scaling_total.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 52,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason, direction) (rate(wva_replica_scaling_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[5m]))",
+          "instant": false,
+          "legendFormat": "{{reason}}: {{direction}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scaling Decision Rate",
       "type": "timeseries"
     },
     {
@@ -1727,7 +2074,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 87
       },
       "id": 51,
       "options": {
@@ -1896,7 +2243,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 95
       },
       "id": 30,
       "options": {
@@ -1969,353 +2316,6 @@
       "type": "timeseries"
     },
     {
-      "id": 59,
-      "type": "stat",
-      "title": "Queued but unmeasured",
-      "description": "Requests queued for a model that WVA has no attributed replica to act on. Zero is normal, including for an idle model scaled to zero. Above zero means traffic is waiting while the autoscaler is blind to the pods serving it - most often FMA launcher pods that nothing scrapes, or a PodMonitor selecting a port the pods do not declare. See docs/deployment/operations.md, 'FMA launcher pods'.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "sum(wva_unmeasured_queue) or vector(0)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "colorMode": "value"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      }
-    },
-    {
-      "id": 60,
-      "type": "timeseries",
-      "title": "Queued but unmeasured, by model",
-      "description": "Which model is queueing without a measurable replica, and for how long. A flat non-zero line is an autoscaler that will never react: the demand is real and no variant carries it.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 6,
-        "y": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_unmeasured_queue{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "id": 61,
-      "type": "stat",
-      "title": "Models blocked from scaling",
-      "description": "Models that cannot reach the scaling state their configuration implies, counted by reason. Zero is the normal state. Non-zero is not necessarily an error: 'variant-floor' and 'policy-forbids-zero' are valid configurations whose two halves contradict each other, so the model quietly never parks and the accelerators are billed indefinitely with no other symptom. 'no-wake-signal' IS a fault - EPP exports no flow-control queue, so a parked model can never be woken. See the by-reason panel for which.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 12
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "count(wva_model_scaling_blocked == 1) or vector(0)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "colorMode": "value"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      }
-    },
-    {
-      "id": 62,
-      "type": "timeseries",
-      "title": "Models that will not scale, by reason",
-      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: the model runs both vLLM and SGLang, so no single request counter measures its idleness (either alone is supported). activation-retention: just woken from zero and held for the retention period so the wake is not undone -- transient, and clears itself. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 6,
-        "y": 12
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_model_scaling_blocked{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}} - {{reason}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "id": 63,
-      "type": "timeseries",
-      "title": "Models at zero replicas",
-      "description": "Total replicas serving each model, summed across its variants. Zero is normal for an idle model that scaled to zero, and a fault only when demand exists - which is what the WVAModelParkedWhileRequestsRefused alert joins against, using this series as the key. EPP's request metrics carry model_name and no namespace, and the per-variant wva_current_replicas carries no model_name, so this is the only series the two sides can be joined on. A line sitting flat at zero while traffic arrives is a stranded model.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 20
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_model_replicas{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "id": 64,
-      "type": "timeseries",
-      "title": "Variants pinned at their ceiling",
-      "description": "1 while a variant's target sits on its own maxReplicas. On its own this is unremarkable - a correctly sized variant sits at its ceiling under load. It matters together with utilization above the scale-up threshold, which is demand going unserved: the remedy there is to raise maxReplicas, NOT to add accelerators (that is wva_decisions_limited_total, which means GPUs ran out). Also read it when interpreting a benchmark - a run pinned at its ceiling measures the ceiling, not the autoscaler.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 28
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_variant_at_max_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}",
-          "legendFormat": "{{$namespace_label}}/{{variant_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
       "id": 65,
       "type": "heatmap",
       "title": "How long a wake from zero took",
@@ -2328,7 +2328,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 103
       },
       "targets": [
         {
@@ -2386,7 +2386,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 112
       },
       "targets": [
         {
@@ -2429,7 +2429,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 92
+        "y": 120
       },
       "collapsed": true,
       "panels": [

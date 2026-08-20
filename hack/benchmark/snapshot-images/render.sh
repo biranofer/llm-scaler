@@ -17,7 +17,10 @@ SNAP_DIR="${1:?usage: render.sh <snapshot-dir>}"
 SNAP_DIR="$(cd "$SNAP_DIR" && pwd)"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-DASHBOARD="$REPO/deploy/grafana/benchmark-dashboard.json"
+# Overridable so the operational dashboard can be rendered too -- useful for
+# checking a layout change without a Grafana image renderer on the cluster
+# (pokprod has none: /render returns "No image renderer available/installed").
+DASHBOARD="${DASHBOARD:-$REPO/deploy/grafana/benchmark-dashboard.json}"
 
 [ -f "$SNAP_DIR/panels.json" ] || { echo "no panels.json in $SNAP_DIR"; exit 1; }
 [ -f "$DASHBOARD" ] || { echo "dashboard not found: $DASHBOARD"; exit 1; }
