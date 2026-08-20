@@ -2431,202 +2431,203 @@
         "x": 0,
         "y": 92
       },
-      "collapsed": false,
-      "panels": []
-    },
-    {
-      "id": 68,
-      "title": "TTFT p95 (EPP)",
-      "type": "timeseries",
-      "description": "Time to first token, measured at the ROUTER rather than in an engine, so it includes flow-control queueing.\n\nEngine-agnostic: the EPP reports it identically for vLLM and SGLang, which is why this is preferred over the per-engine histograms.\n\nSourced from llm_d_epp_request_ttft_seconds. Upstream gateway-api-inference-extension does not publish a TTFT histogram; on a stock EPP this panel is empty and the request-duration and NTPOT panels are the substitutes.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 93
-      },
-      "targets": [
+      "collapsed": true,
+      "panels": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
-          "legendFormat": "{{model_name}} p95",
-          "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.50, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
-          "legendFormat": "{{model_name}} p50",
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 68,
+          "title": "TTFT p95 (EPP)",
+          "type": "timeseries",
+          "description": "Time to first token, measured at the ROUTER rather than in an engine, so it includes flow-control queueing.\n\nEngine-agnostic: the EPP reports it identically for vLLM and SGLang, which is why this is preferred over the per-engine histograms.\n\nSourced from llm_d_epp_request_ttft_seconds. Upstream gateway-api-inference-extension does not publish a TTFT histogram; on a stock EPP this panel is empty and the request-duration and NTPOT panels are the substitutes.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 93
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "{{model_name}} p95",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "{{model_name}} p50",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
         },
-        "overrides": []
-      }
-    },
-    {
-      "id": 69,
-      "title": "Inter-token latency p95 (EPP, normalized per output token)",
-      "type": "timeseries",
-      "description": "Normalized time per output token -- the EPP's inter-token latency.\n\nThe `or` covers both builds: llm-d's EPP publishes llm_d_epp_request_ntpot_seconds, upstream publishes inference_objective_normalized_time_per_output_token_seconds. PromQL `or` takes the left where it has series and the right only where it does not.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 93
-      },
-      "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ntpot_seconds_bucket{namespace=~\"$namespace\"}[5m]))) or histogram_quantile(0.95, sum by (le, model_name) (rate(inference_objective_normalized_time_per_output_token_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
-          "legendFormat": "{{model_name}} p95",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 69,
+          "title": "Inter-token latency p95 (EPP, normalized per output token)",
+          "type": "timeseries",
+          "description": "Normalized time per output token -- the EPP's inter-token latency.\n\nThe `or` covers both builds: llm-d's EPP publishes llm_d_epp_request_ntpot_seconds, upstream publishes inference_objective_normalized_time_per_output_token_seconds. PromQL `or` takes the left where it has series and the right only where it does not.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 93
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ntpot_seconds_bucket{namespace=~\"$namespace\"}[5m]))) or histogram_quantile(0.95, sum by (le, model_name) (rate(inference_objective_normalized_time_per_output_token_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "{{model_name}} p95",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
         },
-        "overrides": []
-      }
-    },
-    {
-      "id": 70,
-      "title": "EPP flow-control queue (requests queued at the router)",
-      "type": "timeseries",
-      "description": "Requests held by flow control before they reach any engine.\n\nThis is where a backlog appears when the flowControl gate is on: the EPP admits only what an engine can absorb, so vllm:num_requests_waiting can read 0 while hundreds queue here. At zero replicas it is the ONLY evidence of demand, and it is what scale-from-zero wakes on.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 101
-      },
-      "targets": [
         {
-          "expr": "sum by (model_name) (llm_d_epp_flow_control_queue_size{namespace=~\"$namespace\"}) or sum by (model_name) (inference_extension_flow_control_queue_size{namespace=~\"$namespace\"})",
-          "legendFormat": "{{model_name}} queued",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 70,
+          "title": "EPP flow-control queue (requests queued at the router)",
+          "type": "timeseries",
+          "description": "Requests held by flow control before they reach any engine.\n\nThis is where a backlog appears when the flowControl gate is on: the EPP admits only what an engine can absorb, so vllm:num_requests_waiting can read 0 while hundreds queue here. At zero replicas it is the ONLY evidence of demand, and it is what scale-from-zero wakes on.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 101
+          },
+          "targets": [
+            {
+              "expr": "sum by (model_name) (llm_d_epp_flow_control_queue_size{namespace=~\"$namespace\"}) or sum by (model_name) (inference_extension_flow_control_queue_size{namespace=~\"$namespace\"})",
+              "legendFormat": "{{model_name}} queued",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
         },
-        "overrides": []
-      }
-    },
-    {
-      "id": 71,
-      "title": "Waiting per replica (EPP per-endpoint queue)",
-      "type": "timeseries",
-      "description": "Queue depth broken down per model-server replica, as the EPP sees it.\n\nEngine-agnostic and per-replica at once, which no single engine metric gives: llm-d publishes llm_d_epp_per_endpoint_queue_size (keyed by model_server_endpoint), upstream publishes inference_pool_per_pod_queue_size (keyed by model_server_pod). Both are plotted; only one will have series on a given cluster.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 101
-      },
-      "targets": [
         {
-          "expr": "llm_d_epp_per_endpoint_queue_size{namespace=~\"$namespace\"}",
-          "legendFormat": "{{model_server_endpoint}}",
-          "refId": "A"
-        },
-        {
-          "expr": "inference_pool_per_pod_queue_size{namespace=~\"$namespace\"}",
-          "legendFormat": "{{model_server_pod}}",
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 71,
+          "title": "Waiting per replica (EPP per-endpoint queue)",
+          "type": "timeseries",
+          "description": "Queue depth broken down per model-server replica, as the EPP sees it.\n\nEngine-agnostic and per-replica at once, which no single engine metric gives: llm-d publishes llm_d_epp_per_endpoint_queue_size (keyed by model_server_endpoint), upstream publishes inference_pool_per_pod_queue_size (keyed by model_server_pod). Both are plotted; only one will have series on a given cluster.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 101
+          },
+          "targets": [
+            {
+              "expr": "llm_d_epp_per_endpoint_queue_size{namespace=~\"$namespace\"}",
+              "legendFormat": "{{model_server_endpoint}}",
+              "refId": "A"
+            },
+            {
+              "expr": "inference_pool_per_pod_queue_size{namespace=~\"$namespace\"}",
+              "legendFormat": "{{model_server_pod}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
         },
-        "overrides": []
-      }
-    },
-    {
-      "id": 72,
-      "title": "Running per replica (engine)",
-      "type": "timeseries",
-      "description": "The one quantity the EPP does NOT break down per replica: it publishes llm_d_epp_request_running as a model-level total and inference_pool_average_running_requests as a pool average, but nothing per pod. So the per-replica series has to come from the engine, with vLLM and SGLang spelled differently and joined by `or`.\n\nAggregated max by (pod) so a replica scraped by two PodMonitors still draws one line.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 109
-      },
-      "targets": [
         {
-          "expr": "max by (pod) (vllm:num_requests_running{namespace=~\"$namespace\"}) or max by (pod) (sglang:num_running_reqs{namespace=~\"$namespace\"})",
-          "legendFormat": "{{pod}} running",
-          "refId": "A"
-        },
-        {
-          "expr": "sum by (model_name) (llm_d_epp_request_running{namespace=~\"$namespace\"})",
-          "legendFormat": "{{model_name}} total (EPP)",
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 72,
+          "title": "Running per replica (engine)",
+          "type": "timeseries",
+          "description": "The one quantity the EPP does NOT break down per replica: it publishes llm_d_epp_request_running as a model-level total and inference_pool_average_running_requests as a pool average, but nothing per pod. So the per-replica series has to come from the engine, with vLLM and SGLang spelled differently and joined by `or`.\n\nAggregated max by (pod) so a replica scraped by two PodMonitors still draws one line.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 109
+          },
+          "targets": [
+            {
+              "expr": "max by (pod) (vllm:num_requests_running{namespace=~\"$namespace\"}) or max by (pod) (sglang:num_running_reqs{namespace=~\"$namespace\"})",
+              "legendFormat": "{{pod}} running",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (model_name) (llm_d_epp_request_running{namespace=~\"$namespace\"})",
+              "legendFormat": "{{model_name}} total (EPP)",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
         },
-        "overrides": []
-      }
-    },
-    {
-      "id": 73,
-      "title": "Pool KV-cache utilization (EPP)",
-      "type": "timeseries",
-      "description": "Pool-average KV utilization as the EPP computes it, with the per-replica engine values alongside.\n\nThe average is what the scheduler routes on; the spread between it and the individual replicas is what tells you whether load is balanced.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 109
-      },
-      "targets": [
         {
-          "expr": "llm_d_epp_average_kv_cache_utilization{namespace=~\"$namespace\"} or inference_pool_average_kv_cache_utilization{namespace=~\"$namespace\"}",
-          "legendFormat": "{{name}} pool avg",
-          "refId": "A"
-        },
-        {
-          "expr": "max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}) or max by (pod) (sglang:token_usage{namespace=~\"$namespace\"})",
-          "legendFormat": "{{pod}}",
-          "refId": "B"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8
+          "id": 73,
+          "title": "Pool KV-cache utilization (EPP)",
+          "type": "timeseries",
+          "description": "Pool-average KV utilization as the EPP computes it, with the per-replica engine values alongside.\n\nThe average is what the scheduler routes on; the spread between it and the individual replicas is what tells you whether load is balanced.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 109
+          },
+          "targets": [
+            {
+              "expr": "llm_d_epp_average_kv_cache_utilization{namespace=~\"$namespace\"} or inference_pool_average_kv_cache_utilization{namespace=~\"$namespace\"}",
+              "legendFormat": "{{name}} pool avg",
+              "refId": "A"
+            },
+            {
+              "expr": "max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}) or max by (pod) (sglang:token_usage{namespace=~\"$namespace\"})",
+              "legendFormat": "{{pod}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 8
+              }
+            },
+            "overrides": []
           }
-        },
-        "overrides": []
-      }
+        }
+      ]
     }
   ],
   "refresh": "",
