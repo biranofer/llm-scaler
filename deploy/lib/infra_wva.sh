@@ -152,6 +152,34 @@ deploy_wva_controller() {
     # to the published release image. The overlay must match the POST-transform name.
     local base_image
     base_image=$(grep 'newName:' "$WVA_PROJECT/config/base/manager/kustomization.yaml" | awk '{print $2}' | head -1)
+    # A MOVING tag has to be re-pulled, or a redeploy silently runs old code.
+    #
+    # config/base/manager/deployment.yaml pins imagePullPolicy: IfNotPresent,
+    # which is correct for a digest or a release tag and wrong for :main. A node
+    # that cached :main once keeps it forever: measured on pokprod, a controller
+    # restarted on 2026-08-19 was still running an image built 2026-08-14, six
+    # days and many commits stale. Two log lines that had been added in between
+    # were simply absent from the binary, which reads exactly like a metrics
+    # signal that never arrives -- and cost a long investigation to tell apart.
+    #
+    # Not forced to Always unconditionally: the kind e2e builds the image and
+    # loads it into the cluster under this same :main tag, with no registry
+    # behind it, so Always there would pull the REMOTE image over the one under
+    # test. That path sets WVA_IMAGE_PULL_POLICY=IfNotPresent explicitly.
+    local pull_policy="${WVA_IMAGE_PULL_POLICY:-}"
+    if [ -z "$pull_policy" ]; then
+        case "$WVA_IMAGE_TAG" in
+            main|latest|dev|nightly) pull_policy=Always ;;
+            *)                       pull_policy=IfNotPresent ;;
+        esac
+    fi
+
+    cat > "$tmp_overlay/pull-policy-patch.yaml" <<EOF
+- op: replace
+  path: /spec/template/spec/containers/0/imagePullPolicy
+  value: $pull_policy
+EOF
+
     cat > "$tmp_overlay/kustomization.yaml" <<EOF
 namespace: $WVA_NS
 resources:
@@ -187,6 +215,19 @@ EOF
     # binding still names the same ServiceAccount, so nothing is lost while it
     # lingers, and `undeploy` removes both.
     wva_append_crb_name_patches "$tmp_overlay/kustomization.yaml" "$WVA_NS"
+
+    # Appended here, not in the heredoc above: wva_append_crb_name_patches writes
+    # its own `patches:` key, and a second one is a duplicate mapping key that
+    # kustomize resolves by keeping the last -- which silently dropped this patch
+    # and left a stale image running while the deploy reported success.
+    grep -q '^patches:' "$tmp_overlay/kustomization.yaml" || printf 'patches:
+' >> "$tmp_overlay/kustomization.yaml"
+    cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- path: pull-policy-patch.yaml
+  target:
+    kind: Deployment
+    labelSelector: control-plane=controller-manager
+EOF
 
     # Prune on INSTALL as well as uninstall. Waiting for an uninstall would leave
     # the grant in place on every cluster that already has it, since upgrading is

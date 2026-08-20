@@ -38,9 +38,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # utilisation flat at 0.46 against a 0.85 threshold. 40 req/s overshoots -- it
 # drove KV to 99.9% and the engine queue to 431 running / 12 waiting, scaling
 # 1 -> 8 in one step, which measures a stampede rather than a scaling decision.
-# 20 is the middle: enough offered concurrency to pass the engine's default
+# 15 is the middle: enough offered concurrency to pass the engine's default
 # batch width of 256 and produce a real queue, without burying the engine.
-RATE="${REQUEST_RATE:-20}"
+RATE="${REQUEST_RATE:-15}"
 MINUTES="${SMOKE_MINUTES:-5}"
 
 # Workload shape.
