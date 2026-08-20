@@ -369,56 +369,71 @@ print("  fix 4 (gpu memory fraction): %s -> %s" % (m.group(2), want))
 PYEOF
 fi
 
-# Fix 5 -- defaults.yaml: the top-level PodMonitor duplicates the chart's.
+# Fix 5 -- 18_podmonitor.yaml.j2: stop duplicating the chart's PodMonitor.
 #
 # Two independent toggles each render a PodMonitor over the SAME decode pods:
 #
-#   monitoring.podmonitor.enabled            -> 18_podmonitor.yaml.j2, an
-#                                               UNMANAGED PodMonitor vllm-<model>
-#   <deployment>.monitoring.podmonitor       -> the modelservice Helm chart's
-#                                               <model>-decode-podmonitor
+#   monitoring.podmonitor.enabled       -> 18_podmonitor.yaml.j2, an UNMANAGED
+#                                          PodMonitor named vllm-<model>
+#   <deployment>.monitoring.podmonitor  -> the modelservice Helm chart's
+#                                          <model>-decode-podmonitor
 #
 # One pod, two scrape jobs, so every vllm:* series exists twice distinguished
 # only by `job`. Measured on pokprod: vllm:num_requests_running returned two
 # series both peaking at 121 for a single replica, and the benchmark dashboard --
-# which plots the raw series -- drew it as two replicas. Additive queries over
+# which plots the raw series -- drew that as two replicas. Additive queries over
 # vllm:* double-count for the same reason.
 #
-# Patched HERE and not in the scenario: `monitoring` is a DEPLOYMENT-level field
-# in the harness schema (config_schema.py, DeploymentBaseConfig), so a top-level
-# `monitoring:` written into a scenario item is silently ignored and defaults.yaml
-# still wins. That was tried first and rendered the PodMonitor anyway.
+# Patched in the TEMPLATE, after two attempts that could not work:
 #
-# The chart's monitor is the one kept: it belongs to a Helm release, so it is
-# removed with it, and it selects the decode role rather than the broader
-# inferenceServing marker.
+#   1. setting monitoring.podmonitor.enabled=false in the scenario
+#   2. setting the same key in config/templates/values/defaults.yaml
 #
-# Safe for FMA, which is the one path that needs the top-level monitor -- it is
-# the only thing that would scrape launcher pods, which no modelservice release
-# owns. WVA installs its own for them; see deploy_fma_launcher_podmonitor in
-# deploy/lib/infra_monitoring.sh.
-DEFAULTS="$REPO_DIR/config/templates/values/defaults.yaml"
-if [ ! -f "$DEFAULTS" ]; then
-    note "fix 5 (duplicate podmonitor): no defaults.yaml, skipped"
+# Both are overridden at render time. `make benchmark-standup` passes
+# --monitoring (BENCHMARK_MONITORING defaults to true), and the flag FORCES the
+# value regardless of scenario or defaults -- render_plans.py:
+#
+#   if self.cli_monitoring:
+#       podmonitor_config["enabled"] = True
+#
+# Dropping --monitoring is not the fix either: --no-monitoring also switches off
+# router.monitoring.prometheus.enabled, and that ServiceMonitor is how the EPP is
+# scraped -- which the throughput analyzer's arrival rate depends on.
+#
+# So the condition itself has to know about the other monitor: render only when
+# the modelservice chart is NOT already covering these pods, or when FMA is on.
+# FMA is the one path that genuinely needs this template -- launcher pods belong
+# to no modelservice release, so nothing else would scrape them.
+TPL="$REPO_DIR/config/templates/jinja/18_podmonitor.yaml.j2"
+if [ ! -f "$TPL" ]; then
+    note "fix 5 (duplicate podmonitor): no 18_podmonitor.yaml.j2, skipped"
 else
-    "$PY" - "$DEFAULTS" <<'PYEOF' || fail "fix 5 (duplicate podmonitor) failed"
-import io, re, sys
+    "$PY" - "$TPL" <<'PYEOF' || fail "fix 5 (duplicate podmonitor) failed"
+import io, sys
 
 path = sys.argv[1]
 src = io.open(path, encoding="utf-8").read()
 
-# Scoped to the podmonitor block INSIDE the top-level monitoring mapping, so a
-# deployment-level monitoring.podmonitor elsewhere in the file is left alone --
-# that one is the monitor we are keeping.
-pat = re.compile(r"(^monitoring:\n(?:[ \t].*\n|\n)*?[ \t]+podmonitor:\n[ \t]+enabled:[ \t]*)(\w+)", re.M)
-m = pat.search(src)
-if not m:
-    sys.exit("anchor missing (upstream shape changed): top-level monitoring.podmonitor.enabled")
-if m.group(2) == "false":
-    print("  fix 5 (duplicate podmonitor): already false")
+GUARD = "_ms_podmonitor"
+if GUARD in src:
+    print("  fix 5 (duplicate podmonitor): already applied")
     sys.exit(0)
-src = pat.sub(lambda mm: mm.group(1) + "false", src, count=1)
-io.open(path, "w", encoding="utf-8", newline="\n").write(src)
-print("  fix 5 (duplicate podmonitor): %s -> false" % m.group(2))
+
+old = ("{% if monitoring is defined and monitoring.podmonitor is defined "
+       "and monitoring.podmonitor.enabled | default(false) %}")
+if old not in src:
+    sys.exit("anchor missing (upstream shape changed): 18_podmonitor.yaml.j2 outer if")
+
+new = (
+    "{% set _ms_podmonitor = (decode is defined and decode.monitoring is defined"
+    " and decode.monitoring.podmonitor is defined"
+    " and decode.monitoring.podmonitor.enabled | default(false)) %}\n"
+    "{% set _fma_on = (fma is defined and fma.enabled | default(false)) %}\n"
+    "{% if monitoring is defined and monitoring.podmonitor is defined"
+    " and monitoring.podmonitor.enabled | default(false)"
+    " and (not _ms_podmonitor or _fma_on) %}"
+)
+io.open(path, "w", encoding="utf-8", newline="\n").write(src.replace(old, new, 1))
+print("  fix 5 (duplicate podmonitor): template guarded on the chart's monitor")
 PYEOF
 fi

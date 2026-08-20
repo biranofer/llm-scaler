@@ -181,22 +181,26 @@ scenario:
     # The following sections configure the llm-d modelservice Helm chart
     # deployment including decode pods, prefill pods, router, and gateway.
     # =========================================================================
-    # PodMonitor (top level): NOT configurable from here.
+    # PodMonitor (top level): NOT configurable from here, or from defaults.yaml.
     #
-    # `monitoring` is a DEPLOYMENT-level field in the harness schema
-    # (llmdbenchmark/parser/config_schema.py, DeploymentBaseConfig), so a
-    # top-level `monitoring:` written into a scenario item is silently ignored
-    # and config/templates/values/defaults.yaml still decides. Setting it here
-    # was tried and the harness rendered the duplicate PodMonitor anyway.
+    # `make benchmark-standup` passes --monitoring (BENCHMARK_MONITORING defaults
+    # to true), and that flag FORCES the value at render time regardless of what
+    # the scenario or defaults.yaml say -- render_plans.py:
     #
-    # It is switched off in hack/benchmark/patch_harness.sh (fix 5) instead,
-    # which is also where the clone's other defaults are corrected -- the clone
-    # is gitignored and re-checked-out to a pinned tag, so that is the only
-    # place a change to it survives.
+    #     if self.cli_monitoring:
+    #         podmonitor_config["enabled"] = True
     #
-    # The monitor that remains is the modelservice chart's, from
-    # modelservice.decode.monitoring.podmonitor below -- a field the schema does
-    # accept.
+    # Setting it here was tried and the harness rendered the duplicate PodMonitor
+    # anyway; so was setting it in defaults.yaml, with the same result.
+    #
+    # Dropping --monitoring is not the alternative: --no-monitoring also switches
+    # off router.monitoring.prometheus.enabled, and that ServiceMonitor is how the
+    # EPP is scraped -- which the throughput analyzer's arrival rate needs.
+    #
+    # It is fixed in hack/benchmark/patch_harness.sh (fix 5), which guards
+    # 18_podmonitor.yaml.j2 on whether the modelservice chart is already covering
+    # these pods. The monitor that remains is the chart's, from
+    # modelservice.decode.monitoring.podmonitor below.
 
     modelservice:
       enabled: true
