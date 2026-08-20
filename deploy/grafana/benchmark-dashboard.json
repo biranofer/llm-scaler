@@ -72,49 +72,6 @@
       }
     },
     {
-      "id": 2,
-      "title": "WVA Desired Ratio",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "datasource": {
-        "type": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "spanNulls": true
-          },
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "expr": "wva_desired_ratio{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "ratio {{variant_name}}",
-          "refId": "A"
-        }
-      ],
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
       "id": 3,
       "title": "KV Cache Usage",
       "type": "timeseries",
@@ -290,8 +247,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 24
+        "x": 12,
+        "y": 0
       },
       "targets": [
         {
