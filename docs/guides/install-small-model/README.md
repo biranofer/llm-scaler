@@ -102,13 +102,18 @@ featureGates:
 Then restart the EPP. llm-d documents the gate in `guides/flow-control/tuning.md`.
 
 **What it changes about the numbers you will see.** Flow control queues requests
-at the *router* and admits only what an engine can absorb. That is why a loaded
-model can show `vllm:num_requests_waiting` flat at **0** while hundreds of
-requests are genuinely queued: the backlog is in the EPP, not the engine. On this
-guide's own stack, 786 requests queued at the EPP while the engine queue never
-left 0. Read the **EPP Flow-Control Queue** panel for demand, and the engine
-queue only for whether an engine itself is behind. Without the gate, neither the
-queue nor scale-from-zero has anything to read.
+at the *router* and admits only what an engine can absorb, so a backlog shows up
+in the EPP rather than as `vllm:num_requests_waiting`. Read the **EPP
+Flow-Control Queue** panel for queued demand, and the engine queue only for
+whether an engine itself is behind.
+
+On this guide's stack neither queue ever forms, and that is the expected result
+rather than a fault: measured on Qwen3-0.6B at 10 req/s, the engine held ~115
+concurrent requests with KV at 27% and both queues flat at 0. One replica of a
+model this small absorbs the load outright. Queues appear only once offered
+concurrency exceeds the engine's batch width (vLLM's default is 256 sequences).
+
+Without the gate neither the queue nor scale-from-zero has anything to read.
 
 ### The one setting that matters for a small model
 
