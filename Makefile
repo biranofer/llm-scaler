@@ -1697,6 +1697,25 @@ benchmark-teardown: ## Tear down the benchmark environment (set BENCHMARK_NAMESP
 			WVA_NS=$(BENCHMARK_NAMESPACE) WVA_SCOPE=namespace || \
 		echo "WARNING: WVA undeploy reported a failure; check for leftovers with 'kubectl get clusterrole,clusterrolebinding | grep wva'"; \
 	fi
+	@# The controller is removed by the step ABOVE, and that step is authoritative.
+	@#
+	@# The harness teardown below tries to uninstall it a second time, through the
+	@# scenario's own WVA install -- which pulls kustomize resources from
+	@#   github.com/llm-d/llm-d/guides/workload-autoscaling/wva-config/platform/ocp?ref=main
+	@# a path that does not exist. benchmark-standup disables the scenario's WVA for
+	@# exactly that reason, then RESTORES the scenario from its .bak, so by teardown
+	@# time the flag is back on and the harness dies on it:
+	@#   [01] uninstall_helm: FAILED - Helm uninstall had errors
+	@#   accumulating resources from '...wva-config/platform/ocp?ref=main'
+	@# Measured tearing a guide namespace down on pokprod. The namespace deleted
+	@# cleanly and left no cluster-scoped RBAC behind, so this reads as a failed
+	@# teardown that in fact tore everything down -- the worst kind to debug.
+	@#
+	@# Disabling it loses nothing: there is nothing left for it to uninstall.
+	@if [ -f "$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml" ]; then \
+		yq -i '(.scenario[] | select(has("wva")) | .wva.enabled) = false' \
+			"$(BENCHMARK_REPO_DIR)/config/scenarios/$(BENCHMARK_SPEC).yaml" 2>/dev/null || true; \
+	fi
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) teardown \
 		-p $(BENCHMARK_NAMESPACE)
 
