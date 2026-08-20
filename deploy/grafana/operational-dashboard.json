@@ -353,7 +353,7 @@
       "id": 59,
       "type": "stat",
       "title": "Queued but unmeasured",
-      "description": "Requests queued for a model that WVA has no attributed replica to act on. Zero is normal, including for an idle model scaled to zero. Above zero means traffic is waiting while the autoscaler is blind to the pods serving it - most often FMA launcher pods that nothing scrapes, or a PodMonitor selecting a port the pods do not declare. See docs/deployment/operations.md, 'FMA launcher pods'.",
+      "description": "Requests queued at engines the collector could not measure, in the selected namespace. Broken down per model in the chart of the same name below.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource_uid}"
@@ -370,7 +370,7 @@
             "type": "prometheus",
             "uid": "${datasource_uid}"
           },
-          "expr": "sum(wva_unmeasured_queue) or vector(0)",
+          "expr": "sum(wva_unmeasured_queue{$namespace_label=~\"$namespace\"}) or vector(0)",
           "refId": "A",
           "instant": true
         }
@@ -780,7 +780,7 @@
       "id": 61,
       "type": "stat",
       "title": "Models blocked from scaling",
-      "description": "Models that cannot reach the scaling state their configuration implies, counted by reason. Zero is the normal state. Non-zero is not necessarily an error: 'variant-floor' and 'policy-forbids-zero' are valid configurations whose two halves contradict each other, so the model quietly never parks and the accelerators are billed indefinitely with no other symptom. 'no-wake-signal' IS a fault - EPP exports no flow-control queue, so a parked model can never be woken. See the by-reason panel for which.",
+      "description": "Models the optimizer decided not to scale, in the selected namespace. Its reasons are in the 'Models that will not scale, by reason' chart below; the two disagreed while this one counted the whole cluster and that one the namespace.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource_uid}"
@@ -797,7 +797,7 @@
             "type": "prometheus",
             "uid": "${datasource_uid}"
           },
-          "expr": "count(wva_model_scaling_blocked == 1) or vector(0)",
+          "expr": "count(wva_model_scaling_blocked{$namespace_label=~\"$namespace\"} == 1) or vector(0)",
           "refId": "A",
           "instant": true
         }
