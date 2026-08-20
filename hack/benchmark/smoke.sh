@@ -50,6 +50,15 @@ MINUTES="${SMOKE_MINUTES:-5}"
 # per request, which does cross the threshold. It is the default for that
 # reason; decode-heavy stays available for stacks already large enough to
 # saturate without it.
+# In-flight ceiling for the open loop. This has to sit ABOVE the engine's batch
+# width or the load generator becomes the bottleneck instead of the engine: vLLM
+# batches 256 sequences by default, and the old hard-coded cap of 200 meant the
+# engine never filled, never queued, and so never produced the saturation signal
+# the autoscaler needs. computeK2's Priority 1 ("observed") requires a saturated
+# queue; below the batch width it can never fire, capacity stays a formula-based
+# estimate, and utilisation sits flat however much load is offered.
+MAX_INFLIGHT="${MAX_INFLIGHT:-600}"
+
 PROFILE="${SMOKE_PROFILE:-symmetric}"
 case "$PROFILE" in
     symmetric)    PROMPT_TOKENS="${PROMPT_TOKENS:-1024}" ; MAX_TOKENS="${MAX_TOKENS:-1024}" ;;
@@ -214,7 +223,7 @@ FILLER="$(awk -v n="$REPS" 'BEGIN{s="";for(i=0;i<n;i++)s=s "The quick brown fox 
 LOAD_SCRIPT="end=\$(( \$(date +%s) + ${DURATION} ))
 sent=0
 while [ \$(date +%s) -lt \$end ]; do
-  if [ \$(jobs -p | wc -l) -lt 200 ]; then
+  if [ \$(jobs -p | wc -l) -lt ${MAX_INFLIGHT} ]; then
     # The nonce goes FIRST, and it is what makes a long prompt cost anything.
     # Every request used to send a byte-identical prompt, so vLLM prefix-cached
     # it once and every later request reused those blocks -- a 1024-token prompt
