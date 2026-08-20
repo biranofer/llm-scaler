@@ -25,6 +25,25 @@ asking the wrong questions. `SKIP_CHECKS=true` installs without them.
 - KEDA, installed for you if the cluster has none
 - a Prometheus scraping those model servers
 
+Every EPP the controller will size from needs the `flowControl` feature gate.
+`make check-prereqs` is **fatal** without it — not degraded, refused — and the
+only way past, `SKIP_CHECKS=true`, disables every preflight check rather than
+that one. Cluster-wide this matters more than in a single namespace, because one
+EPP missing the gate blocks the install for all of them. Enable it in each EPP's
+`EndpointPickerConfig`:
+
+```yaml
+featureGates:
+- flowControl
+```
+
+The gate is what publishes the queue depth. At zero replicas there are no
+model-server metrics at all, so that queue is the only evidence anyone is asking
+for a model — without it scale-from-zero can never fire. It also changes what the
+engine metrics mean while running: flow control admits only what an engine can
+absorb, so `vllm:num_requests_waiting` can sit at 0 while requests are genuinely
+queued at the router.
+
 <!-- guide:prerequisites.check start -->
 ```bash
 make check-prereqs SCOPE=cluster

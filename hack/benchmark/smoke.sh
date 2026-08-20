@@ -35,6 +35,27 @@ NS="${1:-${BENCHMARK_NAMESPACE:-${NAMESPACE:-}}}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RATE="${REQUEST_RATE:-10}"
 MINUTES="${SMOKE_MINUTES:-5}"
+
+# Workload shape.
+#
+# decode-heavy -- a short prompt, a long generation -- was the original default
+# and is what a chat-style stack looks like. It does not move the autoscaler on
+# a small model. Measured on Qwen3-0.6B at 10 req/s: ~115 concurrent requests
+# holding ~570 KV tokens each, 65k against a 135k-token supply, so utilisation
+# peaked at 48% against a scale-up threshold of 85%. Nothing was saturated and
+# WVA correctly held at one replica -- a run that cannot demonstrate the thing
+# the smoke test exists to demonstrate.
+#
+# symmetric sends a prompt the same size as the generation, roughly 3.6x the KV
+# per request, which does cross the threshold. It is the default for that
+# reason; decode-heavy stays available for stacks already large enough to
+# saturate without it.
+PROFILE="${SMOKE_PROFILE:-symmetric}"
+case "$PROFILE" in
+    symmetric)    PROMPT_TOKENS="${PROMPT_TOKENS:-1024}" ; MAX_TOKENS="${MAX_TOKENS:-1024}" ;;
+    decode-heavy) PROMPT_TOKENS="${PROMPT_TOKENS:-16}"   ; MAX_TOKENS="${MAX_TOKENS:-1024}" ;;
+    *) echo "SMOKE_PROFILE must be 'symmetric' or 'decode-heavy' (got: $PROFILE)" >&2; exit 2 ;;
+esac
 OUT="${SMOKE_OUT:-$REPO/benchmark-smoke-$NS}"
 # A Kubernetes test image, not a Docker Hub one: registry.k8s.io is mirrored
 # where docker.io often is not, and this has to pull on the cluster under test.
@@ -175,12 +196,16 @@ fi
 echo "  Model:    $MODEL"
 
 # ------------------------------------------------------------------------ load
-say "Driving decode-heavy load at ${RATE} req/s for ${MINUTES}m"
+say "Driving ${PROFILE} load at ${RATE} req/s for ${MINUTES}m (prompt ~${PROMPT_TOKENS} tok, generation ${MAX_TOKENS} tok)"
 START_EPOCH="$(date -u +%s)"
 JOB="wva-smoke-$(date -u +%H%M%S)"
 DURATION="$((MINUTES * 60))"
 GAP="$(awk "BEGIN{printf \"%.3f\", 1/${RATE}}")"
-BODY="{\"model\":\"${MODEL}\",\"prompt\":\"Summarize the history of computing in as much detail as you can.\",\"max_tokens\":1024,\"temperature\":0.7}"
+# Prompt filler, built here so the in-pod script stays small. ~18 tokens per
+# sentence, so PROMPT_TOKENS/18 repeats lands near the requested size without
+# needing a tokenizer in the pod.
+REPS="$(awk "BEGIN{n=int(${PROMPT_TOKENS}/18); if(n<1)n=1; print n}")"
+FILLER="$(awk -v n="$REPS" 'BEGIN{s="";for(i=0;i<n;i++)s=s "The quick brown fox jumps over the lazy dog and then continues running through the forest. ";print s}')"
 
 # One pod, open loop: a request every 1/RATE seconds whether or not the previous
 # one finished. A closed loop (N workers in lockstep) throttles itself exactly
@@ -190,8 +215,16 @@ LOAD_SCRIPT="end=\$(( \$(date +%s) + ${DURATION} ))
 sent=0
 while [ \$(date +%s) -lt \$end ]; do
   if [ \$(jobs -p | wc -l) -lt 200 ]; then
-    curl -s -o /dev/null --max-time 120 -H 'Content-Type: application/json' \\
-         -d '${BODY}' '${BASE}/v1/completions' &
+    # The nonce goes FIRST, and it is what makes a long prompt cost anything.
+    # Every request used to send a byte-identical prompt, so vLLM prefix-cached
+    # it once and every later request reused those blocks -- a 1024-token prompt
+    # would have added no KV at all and the run would have measured decode while
+    # calling itself symmetric. A unique leading nonce misses on the first block
+    # and forces the whole prompt to be computed and held per request.
+    printf '{\"model\":\"%s\",\"prompt\":\"%s %s\",\"max_tokens\":${MAX_TOKENS},\"temperature\":0.7}' \
+           '${MODEL}' \"req\$sent-\$(date +%s%N)\" '${FILLER}' \
+      | curl -s -o /dev/null --max-time 120 -H 'Content-Type: application/json' \\
+             --data-binary @- '${BASE}/v1/completions' &
     sent=\$((sent+1))
   fi
   sleep ${GAP}
