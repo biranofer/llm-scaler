@@ -243,7 +243,7 @@
       "id": 6,
       "title": "EPP Flow-Control Queue (Requests Queued at the Router)",
       "type": "timeseries",
-      "description": "Requests held by the EPP's flow-control layer, before they reach an engine.\n\nThis is where a backlog appears when flow control is enabled: it admits only what the engine can absorb, so vllm:num_requests_waiting can sit at 0 while hundreds of requests are queued here. A rising queue with a flat engine queue means demand exceeds decode throughput, not KV capacity.\n\nNot filtered by namespace: these EPP series carry no namespace label (llm-d #2309).",
+      "description": "Requests held by the EPP's flow-control layer, before they reach an engine.\n\nThis is where a backlog appears when flow control is enabled: it admits only what the engine can absorb, so vllm:num_requests_waiting can sit at 0 while hundreds of requests are queued here. A rising queue with a flat engine queue means demand exceeds decode throughput, not KV capacity.\n\nMatched on `namespace`, not $namespace_label: that variable exists because wva_* series carry the workload namespace as exported_namespace, while EPP series carry a plain namespace. Without the filter this panel plots every tenant on the cluster -- it was drawing three models for a namespace that has one.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -252,7 +252,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (model_name) (inference_extension_flow_control_queue_size) or sum by (model_name) (llm_d_epp_flow_control_queue_size)",
+          "expr": "sum by (model_name) (llm_d_epp_flow_control_queue_size{namespace=~\"$namespace\"}) or sum by (model_name) (inference_extension_flow_control_queue_size{namespace=~\"$namespace\"})",
           "legendFormat": "{{model_name}} queued",
           "refId": "A"
         }

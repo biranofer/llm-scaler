@@ -85,12 +85,28 @@ NS_VAR=$(python3 -c "import json;print(json.load(open('$SNAP_DIR/panels.json')).
 # queried, or the panels render empty against a perfectly good snapshot.
 NS_LABEL=$(python3 -c "import json;print(json.load(open('$SNAP_DIR/panels.json')).get('namespace_label') or 'namespace')")
 echo "rendering panels from $DASHBOARD (namespace=${NS_VAR:-<all>}, label=$NS_LABEL)"
-python3 - "$SNAP_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" "$NS_VAR" "$NS_LABEL" <<'PY'
+python3 - "$SNAP_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" "$NS_VAR" "$NS_LABEL" "$DASHBOARD" <<'PY'
 import json, subprocess, sys, re, pathlib
 snap_dir, port, uid, slug, frm, to = sys.argv[1:7]
 ns_var = sys.argv[7] if len(sys.argv) > 7 else ""
 ns_label = sys.argv[8] if len(sys.argv) > 8 else "namespace"
-panels = json.load(open(pathlib.Path(snap_dir) / "panels.json"))["panels"]
+# Panels come from the DASHBOARD being rendered, not from the snapshot.
+#
+# The snapshot records the panels that existed when it was captured. Driving the
+# loop from that list renders panel ids the dashboard may no longer have, and
+# Grafana answers those with a near-empty PNG rather than an error: re-rendering
+# an August snapshot after a panel was deleted produced a 5KB
+# panel-wva-desired-ratio.png that looked like a successful render of a panel
+# that does not exist, and silently skipped a panel added since.
+#
+# Reading the dashboard instead means the images always match what a viewer
+# would see. Panels whose queries the snapshot lacks render empty, which is
+# honest and already visible in shim.log as NO MATCH.
+dash = json.load(open(sys.argv[9])) if len(sys.argv) > 9 else None
+if dash:
+    panels = [q for q in dash.get("panels", []) if q.get("type") != "row" and "id" in q]
+else:
+    panels = json.load(open(pathlib.Path(snap_dir) / "panels.json"))["panels"]
 for panel in panels:
     safe = re.sub(r"[^a-z0-9]+", "-", panel["title"].lower()).strip("-")
     out = pathlib.Path(snap_dir) / f"panel-{safe}.png"
