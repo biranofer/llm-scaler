@@ -237,12 +237,33 @@ hack/benchmark/snapshot-images/render.sh <run-dir>/snapshot
 
 Grafana and its image renderer come up in docker, provisioned with this repo's
 own dashboard, and read the snapshot through a shim that speaks the Prometheus
-API. The output is one PNG per panel plus the whole dashboard. Because the data
-is a file, a run can be re-rendered months later with no cluster at all, and the
-images cannot drift from the dashboard — they *are* the dashboard.
+API. The output is one PNG per panel plus the whole dashboard, written to
+`<run-dir>/snapshot/<dashboard-slug>/` — a directory per dashboard, because both
+dashboards have a panel called "Deployment Replicas" and a flat layout would have
+the second render quietly overwrite the first. Because the data is a file, a run
+can be re-rendered months later with no cluster at all, and the images cannot
+drift from the dashboard — they *are* the dashboard.
 
-The dashboard takes a **Namespace** variable, populated from the vLLM metrics
-Prometheus actually holds, so the KV-cache and queue-depth panels work wherever
-the benchmark runs. Pick your namespace at the top of the dashboard when viewing
-it live; `--namespace` does it for a capture, and the render passes it through.
+Both steps take a dashboard, so the operational one can be captured and rendered
+the same way — useful for checking a layout change, since a cluster Grafana
+without the image-renderer plugin answers `/render` with "No image renderer
+available/installed":
+
+```bash
+hack/benchmark/snapshot.py --dashboard deploy/grafana/operational-dashboard.json ...
+DASHBOARD=$PWD/deploy/grafana/operational-dashboard.json \
+  hack/benchmark/snapshot-images/render.sh <run-dir>/snapshot
+```
+
+The dashboard takes a **Namespace** variable, populated from `wva_current_replicas`
+so the list follows whichever label the **Namespace label** variable selects. That
+variable is for the `wva_*` panels only: those series carry the workload namespace
+as `exported_namespace` and the controller's as `namespace`, while engine and EPP
+series carry a plain `namespace` and nothing else, so those panels always match on
+it. Pick your namespace at the top of the dashboard when viewing it live;
+`--namespace` does it for a capture, and the render passes it through.
+
+`make dashboards-check` enforces that split, along with the panel layout — Grafana
+repacks overlapping panels on load, so a broken layout still displays and only the
+JSON shows it.
 

@@ -24,8 +24,33 @@ DASHBOARD="${DASHBOARD:-$REPO/deploy/grafana/benchmark-dashboard.json}"
 
 [ -f "$SNAP_DIR/panels.json" ] || { echo "no panels.json in $SNAP_DIR"; exit 1; }
 [ -f "$DASHBOARD" ] || { echo "dashboard not found: $DASHBOARD"; exit 1; }
+# compose bind-mounts this path, and a relative one resolves against the compose
+# file's directory instead of the caller's -- which mounts a directory that does
+# not exist and leaves Grafana with no dashboard at all.
+DASHBOARD="$(cd "$(dirname "$DASHBOARD")" && pwd)/$(basename "$DASHBOARD")"
 
 command -v docker >/dev/null || { echo "docker is required"; exit 1; }
+
+UID_DASH=$(python3 -c "import json;d=json.load(open('$DASHBOARD'));print(d.get('uid') or 'wva-benchmark')")
+SLUG=$(python3 -c "import json,re;d=json.load(open('$DASHBOARD'));print(re.sub(r'[^a-z0-9]+','-',(d.get('title') or 'dashboard').lower()).strip('-'))")
+
+# Images go in a directory named for the DASHBOARD, not straight into the
+# snapshot. One snapshot can be rendered through both dashboards, and they share
+# panel titles ("Deployment Replicas"), so a flat layout has the second render
+# silently overwrite the first -- and dashboard.png always belonged to whichever
+# ran last.
+OUT_DIR="$SNAP_DIR/$SLUG"
+mkdir -p "$OUT_DIR"
+
+# `timeout` in a render URL becomes puppeteer's NAVIGATION timeout, and 15s is not
+# enough on a laptop: Grafana 11.6 fails to preload a bundled plugin
+# (grafana-lokiexplore-app) on every page load, and the retry pushes a cold panel
+# past it. Whole panels then come back as HTTP 500 with no file written, which
+# reads as "that panel is broken" rather than "the renderer ran out of time".
+RENDER_TIMEOUT="${SNAPSHOT_RENDER_TIMEOUT:-60}"
+# Set RENDER_PANELS=none to render only the full dashboard. A layout change needs
+# that one image, and the per-panel loop is a minute a panel on a 29-panel board.
+RENDER_PANELS="${RENDER_PANELS:-all}"
 
 # Ports are chosen free rather than fixed. Under WSL2 the port space is shared
 # with Windows, so a fixed default collides with whatever the host happens to be
@@ -54,10 +79,10 @@ trap cleanup EXIT
 # host networking differs across platforms. Grafana reaches it through
 # host.docker.internal, which the compose file maps for Linux too.
 python3 "$HERE/promshim.py" --snapshot "$SNAP_DIR/panels.json" --port "$PORT_SHIM" \
-    > "$SNAP_DIR/shim.log" 2>&1 &
+    > "$OUT_DIR/shim.log" 2>&1 &
 SHIM_PID=$!
 sleep 1
-kill -0 "$SHIM_PID" 2>/dev/null || { echo "shim failed to start:"; cat "$SNAP_DIR/shim.log"; exit 1; }
+kill -0 "$SHIM_PID" 2>/dev/null || { echo "shim failed to start:"; cat "$OUT_DIR/shim.log"; exit 1; }
 
 # The window the snapshot covers -- Grafana is asked for exactly this range, so
 # the images show the run and not "now", which would be empty.
@@ -76,9 +101,6 @@ done
 curl -sf "http://localhost:$PORT_GRAFANA/api/health" >/dev/null || {
     echo "grafana did not come up"; docker compose -p "$PROJECT" -f "$HERE/docker-compose.yml" logs --tail=30; exit 1; }
 
-UID_DASH=$(python3 -c "import json;d=json.load(open('$DASHBOARD'));print(d.get('uid') or 'wva-benchmark')")
-SLUG=$(python3 -c "import json,re;d=json.load(open('$DASHBOARD'));print(re.sub(r'[^a-z0-9]+','-',(d.get('title') or 'dashboard').lower()).strip('-'))")
-
 # The dashboard takes a namespace variable, so the render URL has to say which
 # one -- otherwise Grafana renders the variable's default ("All") and the panel
 # titles claim a scope the snapshot does not have.
@@ -87,12 +109,16 @@ NS_VAR=$(python3 -c "import json;print(json.load(open('$SNAP_DIR/panels.json')).
 # wrong wherever the metric was not relabelled. Pass what capture actually
 # queried, or the panels render empty against a perfectly good snapshot.
 NS_LABEL=$(python3 -c "import json;print(json.load(open('$SNAP_DIR/panels.json')).get('namespace_label') or 'namespace')")
+if [ "$RENDER_PANELS" = "none" ]; then
+    echo "RENDER_PANELS=none: skipping the per-panel images"
+else
 echo "rendering panels from $DASHBOARD (namespace=${NS_VAR:-<all>}, label=$NS_LABEL)"
-python3 - "$SNAP_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" "$NS_VAR" "$NS_LABEL" "$DASHBOARD" <<'PY'
+python3 - "$OUT_DIR" "$PORT_GRAFANA" "$UID_DASH" "$SLUG" "$FROM_MS" "$TO_MS" "$NS_VAR" "$NS_LABEL" "$DASHBOARD" "$RENDER_TIMEOUT" <<'PY'
 import json, subprocess, sys, re, pathlib
-snap_dir, port, uid, slug, frm, to = sys.argv[1:7]
+out_dir, port, uid, slug, frm, to = sys.argv[1:7]
 ns_var = sys.argv[7] if len(sys.argv) > 7 else ""
 ns_label = sys.argv[8] if len(sys.argv) > 8 else "namespace"
+timeout = sys.argv[10] if len(sys.argv) > 10 else "60"
 # Panels come from the DASHBOARD being rendered, not from the snapshot.
 #
 # The snapshot records the panels that existed when it was captured. Driving the
@@ -105,30 +131,56 @@ ns_label = sys.argv[8] if len(sys.argv) > 8 else "namespace"
 # Reading the dashboard instead means the images always match what a viewer
 # would see. Panels whose queries the snapshot lacks render empty, which is
 # honest and already visible in shim.log as NO MATCH.
-dash = json.load(open(sys.argv[9])) if len(sys.argv) > 9 else None
-if dash:
-    panels = [q for q in dash.get("panels", []) if q.get("type") != "row" and "id" in q]
-else:
-    panels = json.load(open(pathlib.Path(snap_dir) / "panels.json"))["panels"]
+#
+# Panels nested in a ROW count too. A collapsed row hides its children in the
+# dashboard view, but they are still panels and /render/d-solo answers for them
+# by id -- so the Serving row's six would otherwise be the only ones with no
+# image, precisely because the row is collapsed by default.
+dash = json.load(open(sys.argv[9]))
+
+
+def flatten(panel_list):
+    out = []
+    for panel in panel_list:
+        if panel.get("type") == "row":
+            out += flatten(panel.get("panels") or [])
+        elif "id" in panel:
+            out.append(panel)
+    return out
+
+
+panels = flatten(dash.get("panels", []))
 for panel in panels:
     safe = re.sub(r"[^a-z0-9]+", "-", panel["title"].lower()).strip("-")
-    out = pathlib.Path(snap_dir) / f"panel-{safe}.png"
+    out = pathlib.Path(out_dir) / f"panel-{safe}.png"
     url = (f"http://localhost:{port}/render/d-solo/{uid}/{slug}"
-           f"?panelId={panel['id']}&from={frm}&to={to}&width=1000&height=400&tz=UTC&timeout=15"
+           f"?panelId={panel['id']}&from={frm}&to={to}&width=1000&height=400&tz=UTC&timeout={timeout}"
            + (f"&var-namespace={ns_var}" if ns_var else "")
            + f"&var-namespace_label={ns_label}")
     rc = subprocess.run(["curl", "-sf", "-o", str(out), url]).returncode
     size = out.stat().st_size if out.exists() else 0
     print(f"  {panel['title'][:34]:34} {out.name:44} {'ok' if rc==0 and size>1000 else 'FAILED'} ({size}B)")
 PY
+fi
 
-FULL="$SNAP_DIR/dashboard.png"
+# The full-dashboard height comes from the grid, not a constant. 1400px suits a
+# five-panel benchmark dashboard and CROPS the operational one, which runs to 121
+# grid rows -- so the layout, the only thing this image is really good for, was
+# the part cut off. Grafana's grid cell is 30px on an 8px margin; panels inside a
+# COLLAPSED row take no vertical space, which the top-level scan already reflects.
+FULL_H=$(python3 -c "
+import json
+d = json.load(open('$DASHBOARD'))
+rows = max((p['gridPos']['y'] + p['gridPos']['h'] for p in d.get('panels', []) if 'gridPos' in p), default=20)
+print(min(max(rows * 38 + 80, 600), 8000))
+")
+FULL="$OUT_DIR/dashboard.png"
 curl -sf -o "$FULL" \
-  "http://localhost:$PORT_GRAFANA/render/d/$UID_DASH/$SLUG?from=$FROM_MS&to=$TO_MS&width=1200&height=1400&tz=UTC&timeout=30${NS_VAR:+&var-namespace=$NS_VAR}&var-namespace_label=$NS_LABEL" \
-  && echo "  full dashboard -> $(basename "$FULL") ($(wc -c < "$FULL")B)" \
+  "http://localhost:$PORT_GRAFANA/render/d/$UID_DASH/$SLUG?from=$FROM_MS&to=$TO_MS&width=1200&height=$FULL_H&tz=UTC&timeout=$((RENDER_TIMEOUT * 2))${NS_VAR:+&var-namespace=$NS_VAR}&var-namespace_label=$NS_LABEL" \
+  && echo "  full dashboard -> $(basename "$FULL") ${FULL_H}px ($(wc -c < "$FULL")B)" \
   || echo "  full dashboard render FAILED"
 
 echo
-echo "images in $SNAP_DIR:"
-ls -1 "$SNAP_DIR"/*.png 2>/dev/null | sed 's/^/  /' || echo "  none produced"
-echo "shim log: $SNAP_DIR/shim.log (grep 'NO MATCH' for queries the snapshot lacks)"
+echo "images in $OUT_DIR:"
+ls -1 "$OUT_DIR"/*.png 2>/dev/null | sed 's/^/  /' || echo "  none produced"
+echo "shim log: $OUT_DIR/shim.log (grep 'NO MATCH' for queries the snapshot lacks)"

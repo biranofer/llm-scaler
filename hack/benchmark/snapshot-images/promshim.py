@@ -43,8 +43,26 @@ def normalise(expr):
     # The label is a variable too ($namespace_label), and interpolates to either
     # namespace or exported_namespace depending on how the metric was relabelled
     # -- so collapse the whole matcher, label included.
-    return re.sub(r'(?:\$namespace_label|\w*namespace)\s*=~?\s*"[^"]*"',
+    text = re.sub(r'(?:\$namespace_label|\w*namespace)\s*=~?\s*"[^"]*"',
                   'namespace=<NS>', text)
+    # A filter left on "All" constrains nothing, and each side spells that
+    # differently: the dashboard says variant_name=~"$variant", capture writes
+    # `.*`, and Grafana -- whose variable has no options here, because the shim
+    # serves no label values -- sends the empty alternation `()`. Eight panels of
+    # the operational dashboard rendered empty over that spelling difference with
+    # the data sitting in the snapshot.
+    text = re.sub(r'(\w+)\s*=~\s*"(?:\.\*|\.\+|\(\)|\$\w+|)"', r'\1=<ALL>', text)
+    # Range windows are compared in seconds, because the same window is spelled
+    # differently at each end: a panel asking for $__rate_interval reaches capture
+    # as `60s` and Grafana as `1m0s`.
+    return re.sub(r"\[(\d+[smhd](?:\d+[smhd])*)\]",
+                  lambda m: "[%ds]" % duration_seconds(m.group(1)), text)
+
+
+def duration_seconds(text):
+    unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return sum(int(value) * unit[suffix]
+               for value, suffix in re.findall(r"(\d+)([smhd])", text))
 
 
 def build_index(snapshot):

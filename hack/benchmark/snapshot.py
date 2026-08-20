@@ -38,12 +38,26 @@ def load_panels(dashboard_path):
 
     The panel id is kept because Grafana renders a single panel by id
     (/render/d-solo/...?panelId=N), so the image step needs it.
+
+    Panels nested in a row are included. A collapsed row keeps its children
+    inside itself rather than in the top-level list, so a flat scan captures no
+    data for them -- and they then render empty from a snapshot that looks
+    complete. The operational dashboard's Serving row is collapsed by default.
     """
     with open(dashboard_path, encoding="utf-8") as handle:
         dashboard = json.load(handle)
 
+    def walk(panel_list):
+        flat = []
+        for panel in panel_list:
+            if panel.get("type") == "row":
+                flat += walk(panel.get("panels") or [])
+            else:
+                flat.append(panel)
+        return flat
+
     panels = []
-    for index, panel in enumerate(dashboard.get("panels", []), start=1):
+    for index, panel in enumerate(walk(dashboard.get("panels", [])), start=1):
         exprs = [
             target["expr"].strip()
             for target in panel.get("targets", [])
@@ -58,11 +72,12 @@ def load_panels(dashboard_path):
     return panels
 
 
-# A namespace matcher, however the dashboard spells it:
-#   namespace=~"..."            plain
-#   exported_namespace=~"..."   relabelled on the way into Prometheus
-#   $namespace_label=~"..."     the dashboard's own variable, uninterpolated
-NAMESPACE_MATCHER = re.compile(r'(?:\$namespace_label|\w*namespace)\s*=~?\s*"[^"]*"')
+# The dashboard's own variable, left for the reader to resolve: only wva_* series
+# carry the namespace under two possible labels, so only they use it.
+VARIABLE_MATCHER = re.compile(r'\$namespace_label\s*=~?\s*"[^"]*"')
+# A matcher that already names its label -- `namespace` on engine and EPP series,
+# `exported_namespace` where Prometheus relabelled it.
+LITERAL_MATCHER = re.compile(r'(\w*namespace)\s*=~?\s*"[^"]*"')
 
 
 def retarget_namespace(expr, namespace, label="namespace"):
@@ -73,10 +88,42 @@ def retarget_namespace(expr, namespace, label="namespace"):
     Those are Grafana's to interpolate; querying Prometheus directly means
     substituting them here, or every panel comes back empty and reads as a
     broken exporter rather than an unexpanded variable.
+
+    Only the variable takes `label`. A query that spells its label out keeps it:
+    engine and EPP series carry a plain `namespace` and nothing else, so
+    capturing with --namespace-label exported_namespace used to rewrite those
+    matchers to a label the series does not have and record an empty result for a
+    perfectly healthy engine.
     """
     if not namespace:
         return expr
-    return NAMESPACE_MATCHER.sub('%s="%s"' % (label, namespace), expr)
+    expr = VARIABLE_MATCHER.sub('%s="%s"' % (label, namespace), expr)
+    return LITERAL_MATCHER.sub(r'\1="%s"' % namespace, expr)
+
+
+# What is left once the namespace is resolved: the label variable used as a
+# GROUPING key, Grafana's computed interval, and the filter variables a reader
+# leaves on "All".
+REMAINING_VARIABLE_MATCHER = re.compile(r'(\w+)\s*=~?\s*"\$\w+"')
+RATE_INTERVAL = re.compile(r"\$__rate_interval|\$__interval")
+
+
+def resolve_variables(expr, label, step):
+    """Substitute the dashboard variables Prometheus cannot interpret.
+
+    retarget_namespace only rewrites namespace MATCHERS. The operational
+    dashboard also groups by the variable -- `max by ($namespace_label,
+    variant_name) (...)` -- and filters on $variant, and asks for
+    $__rate_interval. Sent to Prometheus as written, the first two are a parse
+    error and the third a regex that matches nothing, which is how a capture of
+    that dashboard came back with ten failures and several silently empty panels
+    while the metrics were there all along.
+
+    Filter variables resolve to `.*`, which is what "All" means on the dashboard.
+    """
+    expr = expr.replace("$namespace_label", label)
+    expr = RATE_INTERVAL.sub("%ds" % max(4 * int(step), 60), expr)
+    return REMAINING_VARIABLE_MATCHER.sub(r'\1=~".*"', expr)
 
 
 def query_range(base_url, token, expr, start, end, step, insecure):
@@ -147,6 +194,7 @@ def main():
         series = []
         for expr in panel["queries"]:
             targeted = retarget_namespace(expr, args.namespace, args.namespace_label)
+            targeted = resolve_variables(targeted, args.namespace_label, args.step)
             try:
                 result = query_range(args.prometheus_url, token, targeted,
                                      start, end, args.step, args.insecure)
