@@ -130,6 +130,20 @@
   "liveNow": false,
   "panels": [
     {
+      "type": "row",
+      "title": "Fleet health \u2014 all namespaces",
+      "description": "Controller and cluster health. These panels do NOT follow the Namespace variable: they answer \"is WVA working\", across every namespace it manages.",
+      "collapsed": false,
+      "id": 74,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
       "id": 55,
       "type": "stat",
       "title": "WVA installs present",
@@ -142,7 +156,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -195,7 +209,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -252,7 +266,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -309,7 +323,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 1
       },
       "targets": [
         {
@@ -350,63 +364,6 @@
       }
     },
     {
-      "id": 59,
-      "type": "stat",
-      "title": "Queued but unmeasured",
-      "description": "Requests queued at engines the collector could not measure, in the selected namespace. Broken down per model in the chart of the same name below.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 4
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "sum(wva_unmeasured_queue{$namespace_label=~\"$namespace\"}) or vector(0)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "colorMode": "value"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      }
-    },
-    {
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource_uid"
@@ -435,8 +392,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
-        "y": 4
+        "x": 0,
+        "y": 5
       },
       "id": 47,
       "options": {
@@ -500,8 +457,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 12,
-        "y": 4
+        "x": 6,
+        "y": 5
       },
       "id": 54,
       "options": {
@@ -563,8 +520,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 18,
-        "y": 4
+        "x": 12,
+        "y": 5
       },
       "id": 50,
       "options": {
@@ -644,8 +601,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 0,
-        "y": 8
+        "x": 18,
+        "y": 5
       },
       "id": 10,
       "options": {
@@ -726,8 +683,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
-        "y": 8
+        "x": 0,
+        "y": 9
       },
       "id": 49,
       "options": {
@@ -775,213 +732,6 @@
       ],
       "title": "WVA Errors",
       "type": "gauge"
-    },
-    {
-      "id": 61,
-      "type": "stat",
-      "title": "Models blocked from scaling",
-      "description": "Models the optimizer decided not to scale, in the selected namespace. Its reasons are in the 'Models that will not scale, by reason' chart below; the two disagreed while this one counted the whole cluster and that one the namespace.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "count(wva_model_scaling_blocked{$namespace_label=~\"$namespace\"} == 1) or vector(0)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "colorMode": "value"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      }
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Pod-to-variant mapping misses in the selected namespace over the last hour.\n\nAbsence of the series means no miss ever happened, so this reads 0 rather than 'No data' -- which on a counter is the same fact told twice as ambiguously. Not applied to the two error gauges beside it: they group by component and query_type, and `or vector(0)` appends an unlabelled zero series next to the real ones (measured on Thanos).",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 8
-      },
-      "id": 53,
-      "options": {
-        "barShape": "flat",
-        "barWidthFactor": 0.3,
-        "effects": {
-          "barGlow": false,
-          "centerGlow": false,
-          "gradient": true
-        },
-        "endpointMarker": "point",
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "segmentCount": 1,
-        "segmentSpacing": 0.3,
-        "shape": "gauge",
-        "showThresholdLabels": false,
-        "showThresholdMarkers": false,
-        "sizing": "auto",
-        "sparkline": true,
-        "textMode": "auto"
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "floor(sum(increase(wva_pod_mapping_miss_total{$namespace_label=~\"$namespace\"}[1h]))) or vector(0)",
-          "instant": false,
-          "legendFormat": "total",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Pod Mapping Misses",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Number of pods with metrics discovered for a namespace. Metric is wva_metrics_pods_discovered.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 12
-      },
-      "id": 24,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "sum(wva_metrics_pods_discovered{$namespace_label=~\"$namespace\"}) by ($namespace_label)",
-          "instant": false,
-          "legendFormat": "{{$namespace_label}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Pods with Metrics",
-      "type": "stat"
     },
     {
       "datasource": {
@@ -1073,7 +823,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 12
+        "y": 9
       },
       "id": 25,
       "options": {
@@ -1141,7 +891,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 12
+        "y": 9
       },
       "id": 26,
       "options": {
@@ -1189,122 +939,6 @@
       ],
       "title": "Metric Collection Errors",
       "type": "gauge"
-    },
-    {
-      "id": 60,
-      "type": "timeseries",
-      "title": "Queued but unmeasured, by model",
-      "description": "Which model is queueing without a measurable replica, and for how long. A flat non-zero line is an autoscaler that will never react: the demand is real and no variant carries it.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 16
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_unmeasured_queue{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "id": 62,
-      "type": "timeseries",
-      "title": "Models that will not scale, by reason",
-      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: the model runs both vLLM and SGLang, so no single request counter measures its idleness (either alone is supported). activation-retention: just woken from zero and held for the retention period so the wake is not undone -- transient, and clears itself. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_model_scaling_blocked{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}} - {{reason}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
     },
     {
       "datasource": {
@@ -1368,7 +1002,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 13
       },
       "id": 40,
       "options": {
@@ -1438,676 +1072,6 @@
         }
       ],
       "title": "Metrics Collection Duration - Percentiles and Average",
-      "type": "timeseries"
-    },
-    {
-      "id": 63,
-      "type": "timeseries",
-      "title": "Models at zero replicas",
-      "description": "Total replicas serving each model, summed across its variants. Zero is normal for an idle model that scaled to zero, and a fault only when demand exists - which is what the WVAModelParkedWhileRequestsRefused alert joins against, using this series as the key. EPP's request metrics carry model_name and no namespace, and the per-variant wva_current_replicas carries no model_name, so this is the only series the two sides can be joined on. A line sitting flat at zero while traffic arrives is a stranded model.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 40
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_model_replicas{$namespace_label=~\"$namespace\"}",
-          "legendFormat": "{{$namespace_label}}/{{model_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "KV cache token usage vs capacity. wva_kv_cache_tokens_used: Total KV cache tokens currently in use across all replicas of a variant (sum of vLLM TokensInUse). wva_kv_cache_tokens_capacity: Total KV cache token capacity across all replicas of a variant (sum of vLLM TotalKvCapacityTokens).",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*capacity.*"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    10,
-                    10
-                  ],
-                  "fill": "dash"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 48
-      },
-      "id": 42,
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name) (wva_kv_cache_tokens_used{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - used",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name) (wva_kv_cache_tokens_capacity{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - capacity",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Capacity Breakdown",
-      "type": "timeseries"
-    },
-    {
-      "id": 64,
-      "type": "timeseries",
-      "title": "Variants pinned at their ceiling",
-      "description": "1 while a variant's target sits on its own maxReplicas. On its own this is unremarkable - a correctly sized variant sits at its ceiling under load. It matters together with utilization above the scale-up threshold, which is demand going unserved: the remedy there is to raise maxReplicas, NOT to add accelerators (that is wva_decisions_limited_total, which means GPUs ran out). Also read it when interpreting a benchmark - a run pinned at its ceiling measures the ceiling, not the autoscaler.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource_uid}"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 56
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource_uid}"
-          },
-          "expr": "wva_variant_at_max_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}",
-          "legendFormat": "{{$namespace_label}}/{{variant_name}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 10
-          },
-          "unit": "short",
-          "min": 0,
-          "max": 1,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 0.8
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 64
-      },
-      "id": 41,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name, accelerator_type) (wva_saturation_utilization{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - {{accelerator_type}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Saturation Utilization",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Replica count comparison. wva_current_replicas: Current number of replicas for each variant. wva_desired_replicas: Desired number of replicas for each variant.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 0,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*desired.*"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    10,
-                    10
-                  ],
-                  "fill": "dash"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 71
-      },
-      "id": 43,
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name) (wva_current_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - current",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "max by ($namespace_label, variant_name) (wva_desired_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - desired",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Replica Overview",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Number of scaling operations per second over the last 5 minutes, grouped by decision reason. Metric is wva_replica_scaling_total.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 79
-      },
-      "id": 52,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "sum by (reason, direction) (rate(wva_replica_scaling_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[5m]))",
-          "instant": false,
-          "legendFormat": "{{reason}}: {{direction}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Scaling Decision Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$datasource_uid"
-      },
-      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds \u00f7 30 seconds), then the average is 36 \u00f7 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 87
-      },
-      "id": 51,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$datasource_uid"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(wva_decisions_limited_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[1h])) by ($namespace_label, variant_name, limiter_name) * scalar(max(wva_config_optimization_interval_seconds))",
-          "instant": false,
-          "legendFormat": "{{variant_name}} - {{limiter_name}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Limiter Impact",
       "type": "timeseries"
     },
     {
@@ -2243,7 +1207,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 95
+        "y": 21
       },
       "id": 30,
       "options": {
@@ -2316,6 +1280,1070 @@
       "type": "timeseries"
     },
     {
+      "type": "row",
+      "title": "Selected namespace: $namespace",
+      "description": "What WVA did to the workloads in the selected namespace. Every panel here follows the Namespace variable.",
+      "collapsed": false,
+      "id": 75,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      }
+    },
+    {
+      "id": 59,
+      "type": "stat",
+      "title": "Queued but unmeasured",
+      "description": "Requests queued at engines the collector could not measure, in the selected namespace. Broken down per model in the chart of the same name below.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "sum(wva_unmeasured_queue{$namespace_label=~\"$namespace\"}) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 61,
+      "type": "stat",
+      "title": "Models blocked from scaling",
+      "description": "Models the optimizer decided not to scale, in the selected namespace. Its reasons are in the 'Models that will not scale, by reason' chart below; the two disagreed while this one counted the whole cluster and that one the namespace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "count(wva_model_scaling_blocked{$namespace_label=~\"$namespace\"} == 1) or vector(0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Pod-to-variant mapping misses in the selected namespace over the last hour.\n\nAbsence of the series means no miss ever happened, so this reads 0 rather than 'No data' -- which on a counter is the same fact told twice as ambiguously. Not applied to the two error gauges beside it: they group by component and query_type, and `or vector(0)` appends an unlabelled zero series next to the real ones (measured on Thanos).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 30
+      },
+      "id": 53,
+      "options": {
+        "barShape": "flat",
+        "barWidthFactor": 0.3,
+        "effects": {
+          "barGlow": false,
+          "centerGlow": false,
+          "gradient": true
+        },
+        "endpointMarker": "point",
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "segmentCount": 1,
+        "segmentSpacing": 0.3,
+        "shape": "gauge",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": false,
+        "sizing": "auto",
+        "sparkline": true,
+        "textMode": "auto"
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "floor(sum(increase(wva_pod_mapping_miss_total{$namespace_label=~\"$namespace\"}[1h]))) or vector(0)",
+          "instant": false,
+          "legendFormat": "total",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Pod Mapping Misses",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Number of pods with metrics discovered for a namespace. Metric is wva_metrics_pods_discovered.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 30
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "sum(wva_metrics_pods_discovered{$namespace_label=~\"$namespace\"}) by ($namespace_label)",
+          "instant": false,
+          "legendFormat": "{{$namespace_label}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Pods with Metrics",
+      "type": "stat"
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "Queued but unmeasured, by model",
+      "description": "Which model is queueing without a measurable replica, and for how long. A flat non-zero line is an autoscaler that will never react: the demand is real and no variant carries it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_unmeasured_queue{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "Models that will not scale, by reason",
+      "description": "One line per (model, reason) for as long as the reason holds; the series disappears when it is resolved, so a flat line is a standing condition nobody has acted on. variant-floor: scale-to-zero is enabled but a variant declares minReplicas > 0, so the model never reaches zero and the setting is inert. policy-forbids-zero: every variant permits zero but the model's policy disables scale-to-zero, so the bounds are inert - most misleading with a single variant. engine-unsupported: the model runs both vLLM and SGLang, so no single request counter measures its idleness (either alone is supported). activation-retention: just woken from zero and held for the retention period so the wake is not undone -- transient, and clears itself. no-wake-signal: EPP is exporting no flow-control queue at all, so nothing can wake a parked model - usually an EPP pod older than the ConfigMap that enabled flowControl.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_scaling_blocked{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}} - {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Models at zero replicas",
+      "description": "Total replicas serving each model, summed across its variants. Zero is normal for an idle model that scaled to zero, and a fault only when demand exists - which is what the WVAModelParkedWhileRequestsRefused alert joins against, using this series as the key. EPP's request metrics carry model_name and no namespace, and the per-variant wva_current_replicas carries no model_name, so this is the only series the two sides can be joined on. A line sitting flat at zero while traffic arrives is a stranded model.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_model_replicas{$namespace_label=~\"$namespace\"}",
+          "legendFormat": "{{$namespace_label}}/{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "KV cache token usage vs capacity. wva_kv_cache_tokens_used: Total KV cache tokens currently in use across all replicas of a variant (sum of vLLM TokensInUse). wva_kv_cache_tokens_capacity: Total KV cache token capacity across all replicas of a variant (sum of vLLM TotalKvCapacityTokens).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*capacity.*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 42,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "max by ($namespace_label, variant_name) (wva_kv_cache_tokens_used{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - used",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "max by ($namespace_label, variant_name) (wva_kv_cache_tokens_capacity{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - capacity",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Capacity Breakdown",
+      "type": "timeseries"
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "Variants pinned at their ceiling",
+      "description": "1 while a variant's target sits on its own maxReplicas. On its own this is unremarkable - a correctly sized variant sits at its ceiling under load. It matters together with utilization above the scale-up threshold, which is demand going unserved: the remedy there is to raise maxReplicas, NOT to add accelerators (that is wva_decisions_limited_total, which means GPUs ran out). Also read it when interpreting a benchmark - a run pinned at its ceiling measures the ceiling, not the autoscaler.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource_uid}"
+          },
+          "expr": "wva_variant_at_max_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}",
+          "legendFormat": "{{$namespace_label}}/{{variant_name}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Per-variant utilization ratio from saturation analysis: TotalDemand / TotalCapacity from the analyzer result. Capacity-weighted and unbounded above \u2014 a value > 1.0 means demand exceeds supply. wva_saturation_utilization.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 74
+      },
+      "id": 41,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "max by ($namespace_label, variant_name, accelerator_type) (wva_saturation_utilization{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - {{accelerator_type}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Saturation Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Replica count comparison. wva_current_replicas: Current number of replicas for each variant. wva_desired_replicas: Desired number of replicas for each variant.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*desired.*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 81
+      },
+      "id": 43,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "max by ($namespace_label, variant_name) (wva_current_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - current",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "max by ($namespace_label, variant_name) (wva_desired_replicas{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"})",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - desired",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Replica Overview",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Number of scaling operations per second over the last 5 minutes, grouped by decision reason. Metric is wva_replica_scaling_total.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "id": 52,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason, direction) (rate(wva_replica_scaling_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[5m]))",
+          "instant": false,
+          "legendFormat": "{{reason}}: {{direction}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scaling Decision Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource_uid"
+      },
+      "description": "Average number of scaling decisions limited by constraints per optimization cycle (averaged over 1 hour). Shows how often limiters prevent scaling due to insufficient capacity. For example, there were 36 limited decisions total in the last hour for 30 seconds optimization interval, and there are 120 optimization cycles per hour (3600 seconds \u00f7 30 seconds), then the average is 36 \u00f7 120 = 0.3 decisions per cycle. The metric is wva_decisions_limited_total.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 97
+      },
+      "id": 51,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource_uid"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(wva_decisions_limited_total{$namespace_label=~\"$namespace\", variant_name=~\"$variant\"}[1h])) by ($namespace_label, variant_name, limiter_name) * scalar(max(wva_config_optimization_interval_seconds))",
+          "instant": false,
+          "legendFormat": "{{variant_name}} - {{limiter_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Limiter Impact",
+      "type": "timeseries"
+    },
+    {
       "id": 65,
       "type": "heatmap",
       "title": "How long a wake from zero took",
@@ -2328,7 +2356,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 105
       },
       "targets": [
         {
@@ -2386,7 +2414,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 112
+        "y": 114
       },
       "targets": [
         {
@@ -2429,7 +2457,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 120
+        "y": 122
       },
       "collapsed": true,
       "panels": [

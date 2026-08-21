@@ -27,6 +27,23 @@ Once the operational dashboard is enabled, Grafana is installed, configured, and
 
 - Browse to "Dashboards", you should see a dashboard called `WVA Operational Dashboard`.
 
+## How the Dashboard is Organised
+
+The panels sit in three rows, and the row says what a panel is scoped to:
+
+| row | scope | what it answers |
+| --- | --- | --- |
+| **Fleet health — all namespaces** | every namespace WVA manages | Is WVA itself working? Installs present, controllers reporting, scrape targets down, collection and optimization timings. |
+| **Selected namespace: `$namespace`** | the **Namespace** variable | What did WVA do here? Replicas, capacity, saturation, scaling decisions, limiters, wake-from-zero. |
+| **Serving** (collapsed) | the **Namespace** variable | What the workload experienced: TTFT, inter-token latency, router and per-replica queues, KV utilization. Mostly from the EPP, so it reads the same for vLLM and SGLang. |
+
+The split exists because the two audiences differ. A panel in the fleet row does
+not change when you pick a namespace, and one in either lower row does — before
+the rows, that was invisible, and a "Models blocked from scaling" stat counting
+the whole cluster sat beside a chart of the same thing counting one namespace.
+`make dashboards-check` now fails if a panel's query disagrees with the row it
+sits under.
+
 
 ## Import Operational Dashboard
 The pre-installed `WVA Operational Dashboard` is read-only. You can import `WVA Operational Dashboard` to a new dashboard so you can update the dashboard as follows:

@@ -43,6 +43,24 @@ def panels_of(dashboard):
             yield child, f"row:{panel.get('title', panel.get('id'))}"
 
 
+def rows_of(dashboard):
+    """Every panel with the row it belongs to, or None.
+
+    A row that is EXPANDED holds nothing: Grafana leaves its panels in the
+    top-level list and membership is "everything until the next row". Only a
+    COLLAPSED row nests its children. Both spellings mean the same thing to a
+    reader, so both have to mean the same thing here.
+    """
+    current = None
+    for panel in dashboard.get("panels", []):
+        if panel.get("type") == "row":
+            current = panel.get("title")
+            for child in panel.get("panels") or []:
+                yield child, current
+            continue
+        yield panel, current
+
+
 def overlaps(a, b):
     ax, ay, aw, ah = (a["gridPos"][k] for k in "xywh")
     bx, by, bw, bh = (b["gridPos"][k] for k in "xywh")
@@ -122,6 +140,42 @@ def check_namespace_labels(name, dashboard, fail):
                              f"so it plots every tenant on the cluster")
 
 
+# A row saying its panels are not namespace-scoped. Everything else is.
+CLUSTER_ROW = "all namespaces"
+
+
+def check_row_scope(name, dashboard, fail):
+    """A row promises a scope; the queries under it have to keep that promise.
+
+    The operational dashboard mixes cluster-wide health with namespace-scoped
+    workload panels, and a reader can only tell them apart by the row they sit
+    under. Nothing enforced that: "Models blocked from scaling" sat among the
+    scoped panels while counting the whole cluster, and read 1 next to a chart of
+    the same thing reading zero.
+    """
+    if not any(p.get("type") == "row" for p in dashboard.get("panels", [])):
+        return  # a dashboard with no rows makes no promise to keep
+
+    for panel, row in rows_of(dashboard):
+        if panel.get("type") == "row":
+            continue
+        title = panel.get("title")
+        if row is None:
+            fail(f"NO ROW        {name}: {title} sits outside every row, so its scope is unstated")
+            continue
+        exprs = " ".join((t.get("expr") or "") for t in panel.get("targets") or [])
+        if not exprs.strip():
+            continue
+        scoped = any("namespace" in labels or "$namespace_label" in labels
+                     for _, labels in selectors(exprs))
+        if CLUSTER_ROW in row.lower() and scoped:
+            fail(f"ROW SCOPE     {name}: {title} filters on the namespace but sits under "
+                 f"{row!r}, which tells the reader it does not")
+        elif CLUSTER_ROW not in row.lower() and not scoped:
+            fail(f"ROW SCOPE     {name}: {title} sits under {row!r} but has no namespace "
+                 f"matcher, so it ignores the Namespace variable it appears to follow")
+
+
 def check_format(name, text, dashboard, fail):
     """Both files are exactly json.dumps(indent=2). Keeping them that way is what
     makes a one-line change show up as a one-line diff -- a Grafana export or a
@@ -143,6 +197,7 @@ def main():
         check_layout(name, dashboard, failures.append)
         check_identity(name, dashboard, failures.append)
         check_namespace_labels(name, dashboard, failures.append)
+        check_row_scope(name, dashboard, failures.append)
 
     for line in failures:
         print(line)
