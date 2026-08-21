@@ -42,12 +42,16 @@ SLUG=$(python3 -c "import json,re;d=json.load(open('$DASHBOARD'));print(re.sub(r
 OUT_DIR="$SNAP_DIR/$SLUG"
 mkdir -p "$OUT_DIR"
 
-# `timeout` in a render URL becomes puppeteer's NAVIGATION timeout, and 15s is not
-# enough on a laptop: Grafana 11.6 fails to preload a bundled plugin
-# (grafana-lokiexplore-app) on every page load, and the retry pushes a cold panel
-# past it. Whole panels then come back as HTTP 500 with no file written, which
-# reads as "that panel is broken" rather than "the renderer ran out of time".
-RENDER_TIMEOUT="${SNAPSHOT_RENDER_TIMEOUT:-60}"
+# `timeout` in a render URL is puppeteer's NAVIGATION timeout, and the page never
+# reaches network-idle -- so EVERY panel waits it out and is screenshotted when
+# the wait expires. It is dead time, not work: the same two panels rendered
+# BYTE-IDENTICAL at 10s, 20s, 30s and 60s. Ten seconds plus headroom it is; a
+# 34-panel pass costs 8 minutes instead of 35.
+#
+# It has to be long enough to survive the plugin failure that used to turn the
+# wait into an outright 500 (see GF_PLUGINS_PREINSTALL_DISABLED in the compose
+# file); raise it with SNAPSHOT_RENDER_TIMEOUT if a panel ever comes back blank.
+RENDER_TIMEOUT="${SNAPSHOT_RENDER_TIMEOUT:-15}"
 # Set RENDER_PANELS=none to render only the full dashboard. A layout change needs
 # that one image, and the per-panel loop is a minute a panel on a 29-panel board.
 RENDER_PANELS="${RENDER_PANELS:-all}"

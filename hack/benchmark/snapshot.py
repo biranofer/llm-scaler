@@ -227,6 +227,20 @@ def main():
     print("\nwrote %s (%d panels, %d query failures, %d points)"
           % (out_file, len(captured), failures, total))
 
+    # Which panels came back with nothing. A panel that renders "No data" looks
+    # the same whether the condition never occurred, the metric is not emitted by
+    # this install, or the query is wrong -- and it is the last of those that a
+    # capture is in a position to catch, by listing them where someone will read
+    # it rather than leaving them to be spotted in an image.
+    barren = [panel["title"] for panel in captured
+              if not any(entry["result"] for entry in panel["series"])]
+    if barren:
+        print("\n%d of %d panels have no data:" % (len(barren), len(captured)))
+        for title in barren:
+            print("  - %s" % title)
+        print("Expected for a condition that did not occur; check the query or "
+              "the exporter if it is one you know should be populated.")
+
     # An empty snapshot is not a success -- it renders as a blank dashboard and
     # reads like a quiet run rather than a bad window or namespace.
     if total == 0:
