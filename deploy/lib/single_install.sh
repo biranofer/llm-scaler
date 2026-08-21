@@ -68,7 +68,13 @@ wva_installations() {
 # cluster that already had one and be told nothing.
 wva_installations_raw() {
     local out rc
-    out=$(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler         -o go-template="$WVA_INSTALLS_TEMPLATE" 2>&1); rc=$?
+    # control-plane=controller-manager narrows this to the controller itself.
+    # Sub-components (e.g. the FMA warm-pool launcher, app.kubernetes.io/
+    # component=warm-pool) carry the same app.kubernetes.io/name and were
+    # otherwise mistaken for a second, cluster-scoped WVA install -- a
+    # launcher.py process, not the controller, with no scope of its own to
+    # collide on.
+    out=$(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler,control-plane=controller-manager -o go-template="$WVA_INSTALLS_TEMPLATE" 2>&1); rc=$?
     if [ $rc -ne 0 ]; then
         if printf '%s' "$out" | grep -qi 'forbidden'; then
             log_warning "Cannot check whether another WVA is already installed (listing Deployments cluster-wide is not permitted for you)."
