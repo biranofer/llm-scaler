@@ -176,6 +176,51 @@ def check_row_scope(name, dashboard, fail):
                  f"matcher, so it ignores the Namespace variable it appears to follow")
 
 
+METRIC_CONSTANTS = ROOT / "internal" / "constants" / "metrics.go"
+WVA_METRIC = re.compile(r"\b(wva_[a-z0-9_]+)\b")
+HISTOGRAM_SUFFIXES = ("_bucket", "_sum", "_count")
+
+
+def declared_metrics():
+    """Every wva_* metric name the controller declares, or None if unreadable."""
+    if not METRIC_CONSTANTS.is_file():
+        return None
+    return set(re.findall(r'"(wva_[a-z0-9_]+)"',
+                          METRIC_CONSTANTS.read_text(encoding="utf-8")))
+
+
+def check_metric_names(name, dashboard, fail):
+    """A panel querying a metric nobody emits renders "No data", which is exactly
+    what a healthy quiet cluster looks like -- so a renamed or deleted metric can
+    sit on a dashboard indefinitely. Only wva_* names are checkable: engine and
+    EPP names belong to other projects."""
+    declared = declared_metrics()
+    if declared is None:
+        return
+
+    def known(metric):
+        if metric in declared:
+            return True
+        return any(metric.endswith(s) and metric[: -len(s)] in declared
+                   for s in HISTOGRAM_SUFFIXES)
+
+    queries = []
+    for panel, _ in panels_of(dashboard):
+        for target in panel.get("targets") or []:
+            queries.append((panel.get("title"), target.get("expr") or ""))
+    for variable in dashboard.get("templating", {}).get("list", []):
+        query = variable.get("query")
+        query = query.get("query") if isinstance(query, dict) else query
+        if isinstance(query, str):
+            queries.append((f"${variable.get('name')} (variable)", query))
+
+    for where, expr in queries:
+        for metric in WVA_METRIC.findall(expr):
+            if not known(metric):
+                fail(f"NO SUCH METRIC {name}: {where}: {metric} is not declared in "
+                     f"{METRIC_CONSTANTS.relative_to(ROOT).as_posix()}")
+
+
 def check_format(name, text, dashboard, fail):
     """Both files are exactly json.dumps(indent=2). Keeping them that way is what
     makes a one-line change show up as a one-line diff -- a Grafana export or a
@@ -198,6 +243,7 @@ def main():
         check_identity(name, dashboard, failures.append)
         check_namespace_labels(name, dashboard, failures.append)
         check_row_scope(name, dashboard, failures.append)
+        check_metric_names(name, dashboard, failures.append)
 
     for line in failures:
         print(line)
