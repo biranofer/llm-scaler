@@ -535,7 +535,7 @@ wva_model_server_count() {
                 [ .items[]
                   | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
                   | select(to_entries
-                           | any(.key + "=" + (.value|tostring) as $kv
+                           | any((.key + "=" + (.value|tostring)) as $kv
                                  | ($markers | index($kv)) != null))
                 ] | length' 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
         total=$((total + ${n:-0}))
