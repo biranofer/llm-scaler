@@ -838,7 +838,7 @@
         "type": "prometheus",
         "uid": "$datasource_uid"
       },
-      "description": "Number of pods whose metrics could not be attributed to a managed scaler in the last hour - filtered by namespace(s). Non-zero indicates mapping issues. Metric is wva_pod_mapping_miss_total.",
+      "description": "Pod-to-variant mapping misses in the selected namespace over the last hour.\n\nAbsence of the series means no miss ever happened, so this reads 0 rather than 'No data' -- which on a counter is the same fact told twice as ambiguously. Not applied to the two error gauges beside it: they group by component and query_type, and `or vector(0)` appends an unlabelled zero series next to the real ones (measured on Thanos).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -905,7 +905,7 @@
             "uid": "$datasource_uid"
           },
           "editorMode": "code",
-          "expr": "floor(sum(increase(wva_pod_mapping_miss_total{$namespace_label=~\"$namespace\"}[1h])))",
+          "expr": "floor(sum(increase(wva_pod_mapping_miss_total{$namespace_label=~\"$namespace\"}[1h]))) or vector(0)",
           "instant": false,
           "legendFormat": "total",
           "range": true,
