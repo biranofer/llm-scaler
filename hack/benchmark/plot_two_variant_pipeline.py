@@ -405,6 +405,12 @@ def _stage_boundaries(meta):
 
 def plot(results_dir: Path, out_path: Path, title_suffix: str):
     decode_series, epp_series = collect(results_dir / "metrics" / "raw")
+    # Ground truth for "is this actually a two-variant run": a decode pod
+    # whose name matches the -v2- convention was scraped at least once.
+    # Every v2 series in a single-variant run is otherwise just a flat zero
+    # line -- worth omitting rather than cluttering every legend with an
+    # entry that never carries information.
+    has_v2 = any(is_v2(pod) for pods in decode_series.values() for pod, _ in pods)
     drows = aggregate_decode(decode_series)
     erows = epp_panels(epp_series)
     repls = replica_timeseries(results_dir)
@@ -445,17 +451,19 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     if repls:
         x = [to_dt(r[0]) for r in repls]
         ax.step(x, [r[1] for r in repls], where="post", color=PRIMARY_COLOR, label="primary (ready)", linewidth=2)
-        ax.step(x, [r[2] for r in repls], where="post", color=V2_COLOR, label="v2 (ready)", linewidth=2)
+        if has_v2:
+            ax.step(x, [r[2] for r in repls], where="post", color=V2_COLOR, label="v2 (ready)", linewidth=2)
     if wva_targets:
         xt = [to_dt(t[0]) for t in wva_targets]
         prim_t = [t[1] for t in wva_targets]
-        v2_t = [t[2] for t in wva_targets]
         ax.step(xt, prim_t, where="post", color=PRIMARY_COLOR, linestyle="--", linewidth=1.4,
                 label="primary (WVA target)", alpha=0.8)
-        ax.step(xt, v2_t, where="post", color=V2_COLOR, linestyle="--", linewidth=1.4,
-                label="v2 (WVA target)", alpha=0.8)
+        if has_v2:
+            v2_t = [t[2] for t in wva_targets]
+            ax.step(xt, v2_t, where="post", color=V2_COLOR, linestyle="--", linewidth=1.4,
+                    label="v2 (WVA target)", alpha=0.8)
     ax.set_ylabel("Replicas")
-    ax.legend(loc="upper left", fontsize=7)
+    ax.legend(loc="best", fontsize=7)
     ax.grid(alpha=0.3)
 
     # 1b. (Optional) Estimated Capacity & Demand — tokens
@@ -520,7 +528,8 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
         ax.plot(x, [r["kv_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
-        ax.plot(x, [r["kv_v2"] for r in drows], color=V2_COLOR, label="v2")
+        if has_v2:
+            ax.plot(x, [r["kv_v2"] for r in drows], color=V2_COLOR, label="v2")
     ax.set_ylabel("KV %")
     ax.set_ylim(0, 100)
     ax.legend(loc="upper right", fontsize=8)
@@ -532,7 +541,8 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
         ax.plot(x, [r["run_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
-        ax.plot(x, [r["run_v2"] for r in drows], color=V2_COLOR, label="v2")
+        if has_v2:
+            ax.plot(x, [r["run_v2"] for r in drows], color=V2_COLOR, label="v2")
     ax.set_ylabel("Running")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.3)
@@ -543,7 +553,8 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
         ax.plot(x, [r["wait_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
-        ax.plot(x, [r["wait_v2"] for r in drows], color=V2_COLOR, label="v2")
+        if has_v2:
+            ax.plot(x, [r["wait_v2"] for r in drows], color=V2_COLOR, label="v2")
     ax.set_ylabel("Waiting")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.3)
@@ -556,9 +567,10 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         ax.plot(x, [r["fc_queue"] for r in erows], color="black", label="flow_control_queue (gateway)")
         ax.plot(x, [r["pool_avg"] for r in erows], color="orange", label="pool_average_queue", alpha=0.8)
         ax.plot(x, [r["per_pod_primary"] for r in erows], color=PRIMARY_COLOR, linestyle="--", label="per pod sum: primary")
-        ax.plot(x, [r["per_pod_v2"] for r in erows], color=V2_COLOR, linestyle="--", label="per pod sum: v2")
+        if has_v2:
+            ax.plot(x, [r["per_pod_v2"] for r in erows], color=V2_COLOR, linestyle="--", label="per pod sum: v2")
         ax.set_ylabel("Requests in queue")
-        ax.legend(loc="upper left", fontsize=7)
+        ax.legend(loc="best", fontsize=7)
         ax.grid(alpha=0.3)
 
     # 6. (Optional) Request rate from EPP counters
@@ -588,9 +600,10 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         ax.set_title(
             "WVA Saturation Utilization  (per variant, analyzer-internal)")
         sat_pri = [s.get("primary", {}).get("wva_saturation_utilization") for s in wva_full]
-        sat_v2  = [s.get("v2", {}).get("wva_saturation_utilization") for s in wva_full]
         ax.plot(x_wva, sat_pri, color=PRIMARY_COLOR, label="primary", linewidth=2)
-        ax.plot(x_wva, sat_v2,  color=V2_COLOR,      label="v2",      linewidth=2)
+        if has_v2:
+            sat_v2 = [s.get("v2", {}).get("wva_saturation_utilization") for s in wva_full]
+            ax.plot(x_wva, sat_v2, color=V2_COLOR, label="v2", linewidth=2)
         # Reference lines from the saturation config: 0.85 scale-up, 0.70 scale-down
         ax.axhline(0.85, color="black", linestyle=":", linewidth=0.8, alpha=0.6)
         ax.axhline(0.70, color="black", linestyle=":", linewidth=0.8, alpha=0.6)
@@ -609,14 +622,15 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         ax.set_title("WVA KV Tokens In Use vs Capacity  (per variant)")
         used_pri = [s.get("primary", {}).get("wva_kv_cache_tokens_used") for s in wva_full]
         cap_pri  = [s.get("primary", {}).get("wva_kv_cache_tokens_capacity") for s in wva_full]
-        used_v2  = [s.get("v2", {}).get("wva_kv_cache_tokens_used") for s in wva_full]
-        cap_v2   = [s.get("v2", {}).get("wva_kv_cache_tokens_capacity") for s in wva_full]
         ax.plot(x_wva, used_pri, color=PRIMARY_COLOR, label="primary used",     linewidth=2)
         ax.plot(x_wva, cap_pri,  color=PRIMARY_COLOR, label="primary capacity",
                 linewidth=1.2, linestyle="--", alpha=0.7)
-        ax.plot(x_wva, used_v2,  color=V2_COLOR,      label="v2 used",          linewidth=2)
-        ax.plot(x_wva, cap_v2,   color=V2_COLOR,      label="v2 capacity",
-                linewidth=1.2, linestyle="--", alpha=0.7)
+        if has_v2:
+            used_v2 = [s.get("v2", {}).get("wva_kv_cache_tokens_used") for s in wva_full]
+            cap_v2  = [s.get("v2", {}).get("wva_kv_cache_tokens_capacity") for s in wva_full]
+            ax.plot(x_wva, used_v2, color=V2_COLOR, label="v2 used", linewidth=2)
+            ax.plot(x_wva, cap_v2,  color=V2_COLOR, label="v2 capacity",
+                    linewidth=1.2, linestyle="--", alpha=0.7)
         ax.set_ylabel("tokens")
         ax.legend(loc="upper left", fontsize=7, ncol=2)
         ax.grid(alpha=0.3)
@@ -673,7 +687,13 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     label_y = None
     if stage_boundaries:
         pos = axes[0].get_position()
-        shrink = 0.05
+        # Proportional, not a fixed figure-fraction: a fixed amount ate a much
+        # bigger share of panel 0 whenever there were more panels overall (the
+        # optional supply/demand/rates/wva-full panels shrink every panel's
+        # average height, but a fixed absolute shrink didn't shrink with it),
+        # making panel 0 visibly shorter than the rest and forcing its legend
+        # to overlap the plotted lines.
+        shrink = pos.height * 0.15
         label_y = pos.y0 + pos.height - 0.008
         axes[0].set_position([pos.x0, pos.y0, pos.width, pos.height - shrink])
 
