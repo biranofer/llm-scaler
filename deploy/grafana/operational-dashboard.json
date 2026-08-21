@@ -2465,7 +2465,7 @@
           "id": 68,
           "title": "TTFT p95 (EPP)",
           "type": "timeseries",
-          "description": "Time to first token, measured at the ROUTER rather than in an engine, so it includes flow-control queueing.\n\nEngine-agnostic: the EPP reports it identically for vLLM and SGLang, which is why this is preferred over the per-engine histograms.\n\nSourced from llm_d_epp_request_ttft_seconds. Upstream gateway-api-inference-extension does not publish a TTFT histogram; on a stock EPP this panel is empty and the request-duration and NTPOT panels are the substitutes.",
+          "description": "Time to first token as the EPP measures it, per model.\n\nmodel_name!=\"\" is not decoration: the EPP records this histogram twice, once per model and once per flow-control flow (fairness_id, priority, streaming) with no model_name at all. Without the matcher the flow series forms its own group, and the panel draws a permanent NaN line legended as a nameless 'p95' and 'p50'.",
           "gridPos": {
             "h": 8,
             "w": 12,
@@ -2474,12 +2474,12 @@
           },
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\", model_name!=\"\"}[5m])))",
               "legendFormat": "{{model_name}} p95",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.50, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "expr": "histogram_quantile(0.50, sum by (le, model_name) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=~\"$namespace\", model_name!=\"\"}[5m])))",
               "legendFormat": "{{model_name}} p50",
               "refId": "B"
             }
