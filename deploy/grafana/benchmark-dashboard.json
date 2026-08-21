@@ -120,12 +120,12 @@
       },
       "targets": [
         {
-          "expr": "max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"})",
+          "expr": "max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}) or max by (pod) (sglang:token_usage{namespace=~\"$namespace\"})",
           "legendFormat": "{{pod}}",
           "refId": "A"
         },
         {
-          "expr": "avg(max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}))",
+          "expr": "avg(max by (pod) (vllm:kv_cache_usage_perc{namespace=~\"$namespace\"}) or max by (pod) (sglang:token_usage{namespace=~\"$namespace\"}))",
           "legendFormat": "avg",
           "refId": "B"
         }
@@ -136,7 +136,7 @@
           "placement": "bottom"
         }
       },
-      "description": "KV-cache occupancy per model server, from the engine.\n\nMatched on `namespace`, not $namespace_label: engine series carry a plain `namespace` only, so the variable would empty this panel for a reader who picks exported_namespace. Only the wva_* panels follow the variable.\n\nAggregated with max by (pod) so a pod scraped by two PodMonitors still draws one line per replica."
+      "description": "KV-cache occupancy per model server, from the engine. vLLM reports it as kv_cache_usage_perc and SGLang as token_usage, so the query takes whichever the namespace runs -- and plots both, per pod, where it runs both.\n\nMatched on `namespace`, not $namespace_label: engine series carry a plain `namespace` only, so the variable would empty this panel for a reader who picks exported_namespace. Only the wva_* panels follow the variable.\n\nAggregated with max by (pod) so a pod scraped by two PodMonitors still draws one line per replica."
     },
     {
       "id": 4,
@@ -169,12 +169,12 @@
       },
       "targets": [
         {
-          "expr": "max by (pod) (vllm:num_requests_waiting{namespace=~\"$namespace\"})",
+          "expr": "max by (pod) (vllm:num_requests_waiting{namespace=~\"$namespace\"}) or max by (pod) (sglang:num_queue_reqs{namespace=~\"$namespace\"})",
           "legendFormat": "{{pod}} waiting",
           "refId": "A"
         },
         {
-          "expr": "max by (pod) (vllm:num_requests_running{namespace=~\"$namespace\"})",
+          "expr": "max by (pod) (vllm:num_requests_running{namespace=~\"$namespace\"}) or max by (pod) (sglang:num_running_reqs{namespace=~\"$namespace\"})",
           "legendFormat": "{{pod}} running",
           "refId": "B"
         }
@@ -185,7 +185,7 @@
           "placement": "bottom"
         }
       },
-      "description": "Per-pod engine state. 'waiting' is vllm:num_requests_waiting -- the queue INSIDE the engine. With EPP flow control enabled this normally reads 0 even under heavy load, because flow control holds the backlog at the router instead; see the EPP Flow-Control Queue panel.\n\nMatched on `namespace`, not $namespace_label, for the reason the KV Cache Usage panel gives.\n\nAggregated with max by (pod) so a pod scraped by two PodMonitors still draws one line per replica."
+      "description": "Per-pod engine state, for either engine: 'waiting' is vllm:num_requests_waiting or sglang:num_queue_reqs, 'running' is vllm:num_requests_running or sglang:num_running_reqs. 'waiting' -- the queue INSIDE the engine. With EPP flow control enabled this normally reads 0 even under heavy load, because flow control holds the backlog at the router instead; see the EPP Flow-Control Queue panel.\n\nMatched on `namespace`, not $namespace_label, for the reason the KV Cache Usage panel gives.\n\nAggregated with max by (pod) so a pod scraped by two PodMonitors still draws one line per replica."
     },
     {
       "id": 5,
