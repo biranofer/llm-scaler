@@ -1515,6 +1515,8 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
 	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
 	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
+	@rm -f /tmp/wva_controller_tail.log /tmp/wva_controller_tail.log.pid /tmp/wva_controller_tail.log.stderr
+	@bash hack/benchmark/tail_wva_logs.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
@@ -1526,11 +1528,16 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# post-processing step still produced measurements worth reading, and every
 	@# FMA run so far has ended that way.
 	@bash hack/benchmark/sample_replicas.sh stop /tmp/wva_replica_samples.json || true
+	@bash hack/benchmark/tail_wva_logs.sh stop $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	@LATEST=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
 	if [ -n "$$LATEST" ] && [ -s /tmp/wva_replica_samples.json ]; then \
 		mkdir -p "$$LATEST/metrics/processed"; \
 		cp /tmp/wva_replica_samples.json "$$LATEST/metrics/processed/wva_replica_samples.json"; \
 		echo "Replica samples filed in $$LATEST/metrics/processed/wva_replica_samples.json"; \
+	fi; \
+	if [ -n "$$LATEST" ] && [ -s /tmp/wva_controller_tail.log ]; then \
+		cp /tmp/wva_controller_tail.log "$$LATEST/wva_controller.log"; \
+		echo "WVA controller log tail filed in $$LATEST/wva_controller.log"; \
 	fi
 	@echo ""
 	@echo "========================================="

@@ -274,11 +274,31 @@ def build_cycle_row(cycle, variant):
     }
 
 
-def fetch_logs(namespace, since_seconds):
-    """Returns the controller's logs, or exits non-zero. A kubectl failure —
-    expired token, wrong namespace, no matching pods — must not reach the
-    report as an empty log window; that reads as "the controller never logged
-    anything" and sends whoever holds the report off to check the image."""
+def fetch_logs(namespace, since_seconds, results_dir=None):
+    """Returns the controller's logs, or exits non-zero.
+
+    Prefers a captured tail file (metrics/../wva_controller.log, written by
+    `make benchmark-run` via tail_wva_logs.sh from the moment the run
+    started) over a live `kubectl logs` call: the controller's own log
+    buffer is bounded by kubelet's fixed per-container rotation size, not by
+    run length, so anything past the first few minutes is commonly gone by
+    the time this runs after the fact. The captured file has no such limit.
+
+    A kubectl failure — expired token, wrong namespace, no matching pods —
+    must not reach the report as an empty log window; that reads as "the
+    controller never logged anything" and sends whoever holds the report off
+    to check the image.
+    """
+    if results_dir is not None:
+        captured = Path(results_dir) / "wva_controller.log"
+        if captured.is_file():
+            text = captured.read_text()
+            if text.strip():
+                print(f"Using captured log tail: {captured}", file=sys.stderr)
+                return text
+            print(f"{captured} exists but is empty — falling back to live kubectl logs.",
+                  file=sys.stderr)
+
     cmd = ["kubectl", "logs", "-n", namespace,
            "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
            f"--since={since_seconds}s", "--tail=200000"]
@@ -324,7 +344,7 @@ def main():
     now = datetime.now(timezone.utc)
     since_seconds = int((now - start).total_seconds()) + 90
 
-    logs = fetch_logs(args.namespace, since_seconds)
+    logs = fetch_logs(args.namespace, since_seconds, results_dir=rd)
 
     events = []
     for line in logs.splitlines():

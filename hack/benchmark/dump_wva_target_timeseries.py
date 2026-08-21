@@ -215,17 +215,27 @@ def main():
     start = parse_iso(meta["harness_start"])
     stop = parse_iso(meta["harness_stop"])
 
-    # Pull WVA logs covering the run window. We query "since" relative to now
-    # plus a small buffer to ensure we capture the harness-start tick.
-    now = datetime.now(timezone.utc)
-    since_seconds = int((now - start).total_seconds()) + 90
-
-    logs = subprocess.run(
-        ["kubectl", "logs", "-n", args.namespace,
-         "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
-         f"--since={since_seconds}s", "--tail=200000"],
-        capture_output=True, text=True,
-    ).stdout
+    # Prefer a captured tail file (written by `make benchmark-run` via
+    # tail_wva_logs.sh from the moment the run started) over a live
+    # `kubectl logs` call: the controller's own log buffer is bounded by
+    # kubelet's fixed per-container rotation size, not by run length, so
+    # anything past the first few minutes is commonly gone by the time this
+    # runs after the fact. The captured file has no such limit.
+    captured = rd / "wva_controller.log"
+    if captured.is_file() and captured.read_text().strip():
+        print(f"Using captured log tail: {captured}", file=sys.stderr)
+        logs = captured.read_text()
+    else:
+        # Pull WVA logs covering the run window. We query "since" relative to
+        # now plus a small buffer to ensure we capture the harness-start tick.
+        now = datetime.now(timezone.utc)
+        since_seconds = int((now - start).total_seconds()) + 90
+        logs = subprocess.run(
+            ["kubectl", "logs", "-n", args.namespace,
+             "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
+             f"--since={since_seconds}s", "--tail=200000"],
+            capture_output=True, text=True,
+        ).stdout
 
     samples_by_ts = {}
 
