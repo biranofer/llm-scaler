@@ -542,11 +542,13 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		hasCacheConfig              bool
 		cacheConfigTimestamp        time.Time
 		// Queueing model fields
-		arrivalRate          float64
-		hasArrivalRate       bool
-		arrivalRateTimestamp time.Time
-		avgITL               float64
-		avgITLTimestamp      time.Time
+		arrivalRate             float64
+		hasArrivalRate          bool
+		arrivalRateTimestamp    time.Time
+		avgITL                  float64
+		avgITLTimestamp         time.Time
+		avgServiceTime          float64
+		avgServiceTimeTimestamp time.Time
 		// Throughput analyzer fields
 		generationTokenRate float64
 		kvUsageInstant      float64
@@ -596,6 +598,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackTimestamp(data.cacheConfigTimestamp)
 		trackTimestamp(data.arrivalRateTimestamp)
 		trackTimestamp(data.avgITLTimestamp)
+		trackTimestamp(data.avgServiceTimeTimestamp)
 	}
 
 	// worstFreshnessStatus returns the least-fresh status across data's *present*
@@ -622,6 +625,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			data.cacheConfigTimestamp,
 			data.arrivalRateTimestamp,
 			data.avgITLTimestamp,
+			data.avgServiceTimeTimestamp,
 		}
 
 		worst := "fresh"
@@ -945,6 +949,34 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
+	// Process average service time results (seconds, queue wait excluded)
+	if result := results[registration.QueryAvgServiceTime]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				instanceKey, podName, vaName := c.buildInstanceKey(ctx, namespace, value.Labels)
+				if instanceKey == "" {
+					continue
+				}
+
+				if podData[instanceKey] == nil {
+					podData[instanceKey] = &podMetricData{
+						podName: podName,
+						vaName:  vaName,
+					}
+				}
+				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value > 0 {
+					podData[instanceKey].avgServiceTime = value.Value
+					podData[instanceKey].avgServiceTimeTimestamp = value.Timestamp
+
+					logger.V(logging.DEBUG).Info("Avg service time metric",
+						"instanceKey", instanceKey,
+						"pod", podName,
+						"avgServiceTimeSeconds", value.Value)
+				}
+			}
+		}
+	}
+
 	// Process generation token rate results (tokens/sec) — throughput analyzer μ_dec^obs
 	if result := results[registration.QueryGenerationTokenRate]; result != nil {
 		if !result.HasError() {
@@ -1151,6 +1183,7 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			PrefixCacheHitRate:    data.prefixCacheHitRate,
 			ArrivalRate:           data.arrivalRate,
 			AvgITL:                data.avgITL,
+			AvgServiceTime:        data.avgServiceTime,
 			GenerationTokenRate:   data.generationTokenRate,
 			KvUsageInstant:        data.kvUsageInstant,
 			RequestRate:           data.requestRate,

@@ -17,6 +17,19 @@ const (
 	// QueryAvgITL is the query name for average inter-token latency per pod (in seconds).
 	// Source: vllm:inter_token_latency_seconds histogram
 	QueryAvgITL = "avg_itl"
+
+	// QueryAvgServiceTime is the query name for how long a request occupies a
+	// replica, EXCLUDING time spent waiting in the queue (seconds).
+	//
+	// The exclusion is the whole point. End-to-end latency rises when a fleet is
+	// behind and falls when it catches up, so anything built on it varies with
+	// capacity -- which is the property that makes occupancy unusable for sizing.
+	// Service time does not: it is what one request costs to serve.
+	//
+	// vLLM publishes it directly as request_inference_time_seconds. SGLang has no
+	// single equivalent but publishes both halves, so it is reconstructed there as
+	// e2e minus queue.
+	QueryAvgServiceTime = "avg_service_time"
 )
 
 // RegisterQueueingModelQueries registers queries used by the queueing model analyzer.
@@ -58,6 +71,18 @@ func RegisterQueueingModelQueries(sourceRegistry *source.SourceRegistry) {
 			"used by queueing model tuner for parameter learning",
 	})
 
+	// Average per-request service time (seconds), queue wait excluded.
+	// vLLM publishes this directly; SGLang has no equivalent and reconstructs it
+	// from two histograms (see the SGLang registration below).
+	registry.MustRegister(source.QueryTemplate{
+		Name:     QueryAvgServiceTime,
+		Type:     source.QueryTypePromQL,
+		Template: `max by (model_name, instance, pod) (rate(vllm:request_inference_time_seconds_sum{namespace="{{.namespace}}"}[1m]) / rate(vllm:request_inference_time_seconds_count{namespace="{{.namespace}}"}[1m]))`,
+		Params:   []string{source.ParamNamespace},
+		Description: "Average per-request service time excluding queue wait (seconds), " +
+			"used to size demand from the offered load",
+	})
+
 	registerSGLangQueueingModelQueries(registry)
 }
 
@@ -73,4 +98,19 @@ func registerSGLangQueueingModelQueries(registry *source.QueryList) {
 		Params:      []string{source.ParamNamespace},
 		Description: "Average inter-token latency per instance (seconds) (SGLang)",
 	})
+
+	// Service time: SGLang has no single metric for it, but publishes both
+	// halves, so subtract the queue wait from end-to-end. clamp_min guards the
+	// window where the two rates disagree -- they cover the same interval but
+	// count different request populations, so their difference can dip below
+	// zero without either being wrong.
+	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
+		Name:     QueryAvgServiceTime,
+		Type:     source.QueryTypePromQL,
+		Template: `clamp_min(max by (model_name, instance, pod) (rate(sglang:e2e_request_latency_seconds_sum{namespace="{{.namespace}}"}[1m]) / rate(sglang:e2e_request_latency_seconds_count{namespace="{{.namespace}}"}[1m])) - max by (model_name, instance, pod) (rate(sglang:queue_time_seconds_sum{namespace="{{.namespace}}"}[1m]) / rate(sglang:queue_time_seconds_count{namespace="{{.namespace}}"}[1m])), 0)`,
+		Params:   []string{source.ParamNamespace},
+		Description: "Average per-request service time excluding queue wait (seconds) " +
+			"(SGLang, reconstructed as e2e minus queue)",
+	})
+
 }
