@@ -106,7 +106,9 @@ func registerSGLangQueueingModelQueries(registry *source.QueryList) {
 	// zero without either being wrong.
 	//
 	// The two histograms are NOT labelled identically upstream: e2e carries an
-	// extra is_streaming label that queue_time does not. `max by (model_name,
+	// extra is_streaming label that queue_time does not (sglang's
+	// python/sglang/srt/observability/metrics_collector.py builds e2e with
+	// labelnames + ["is_streaming"] where queue_time uses labelnames alone). `max by (model_name,
 	// instance, pod)` drops it on both sides so the subtraction still matches
 	// series, but it means the e2e term is the max ACROSS streaming and
 	// non-streaming rather than a pooled average, which biases W upward. That is

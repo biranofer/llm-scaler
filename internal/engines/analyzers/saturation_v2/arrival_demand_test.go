@@ -34,9 +34,13 @@ var _ = Describe("estimateArrivalDemand", func() {
 	It("reproduces the demand the measured workload implies", func() {
 		// 14 req/s x 24.6s x 5000 tokens = 1,722,000. On the run this comes
 		// from, occupancy at the same moment read 152,270 and the target
-		// collapsed to one replica mid-load; this floor implies about 4.5 at a
-		// per-replica capacity of 550,758, and the fleet was observed to settle
-		// near 5.
+		// collapsed to one replica mid-load.
+		//
+		// What that floor implies in replicas: 1,722,000 / 550,758 per-replica
+		// capacity = 3.13, and the optimizer sizes against the scale-down
+		// boundary rather than the raw capacity, so 3.13 / 0.7 = 4.5 -- against a
+		// fleet that was observed to settle near 5. The divisor is easy to drop
+		// and gives 3.1, which is why it is spelled out here.
 		f := estimateArrivalDemand(domain.AnalyzerInput{
 			ArrivalRate:    14,
 			ReplicaMetrics: metricsAt(measuredITL, measuredAvgOut, 3),
@@ -242,7 +246,11 @@ var _ = Describe("the floor, through Analyze", func() {
 
 		res, err := newAnalyzer().Analyze(context.Background(), in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.TotalDemand).To(BeNumerically(">", 100_000),
+		// Pinned, not bounded: occupancy here is exactly the 500,000 resident
+		// tokens, so anything else means the floor leaked into a value it was
+		// only supposed to compare against. A ">" bound would pass on a partial
+		// application landing anywhere above 100k.
+		Expect(res.TotalDemand).To(BeNumerically("~", 500_000, 1),
 			"a tiny arrival rate must not pull demand down to its own floor")
 	})
 
@@ -281,7 +289,9 @@ var _ = Describe("the floor, through Analyze", func() {
 
 		res, err := newAnalyzer().Analyze(context.Background(), in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.TotalDemand).To(BeNumerically("<", 100_000),
+		// Exactly the fixture's resident tokens. A "<" bound would pass even if a
+		// stray lambda produced a floor, so long as it happened to land low.
+		Expect(res.TotalDemand).To(BeNumerically("~", 10_000, 1),
 			"demand should still be the measured occupancy, not a fabricated floor")
 	})
 })

@@ -149,7 +149,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 			"tokensPerRequest", floor.TokensPerRequest)
 		totalDemand = floor.Tokens
 		raiseRoleDemandTo(roleDemand, totalDemand)
-	} else if floor.Reason != "" && len(input.ReplicaMetrics) > 0 {
+	} else if floor.Reason != "" && totalDemand > 0 {
 		// Not an error: a model with no traffic has no arrival rate, and a fleet
 		// nobody is using should not be held up by a fabricated floor. Logged so
 		// that "the floor never binds" can be told apart from "the floor could
@@ -158,10 +158,18 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		// At DEFAULT, because that is the only level that ships: -v defaults to
 		// logging.DEFAULT, so a V(DEBUG) line here would be invisible in every
 		// real deployment and this comment would be describing something that
-		// never happens. Gated on there being replicas at all, which is what
-		// keeps it from repeating every cycle for every parked model -- the
-		// diagnostic case is a fleet that IS serving and still cannot produce a
-		// floor.
+		// never happens.
+		//
+		// Gated on OCCUPANCY, not on having replicas. Gating on replicas looks
+		// equivalent and is not: an idle pod still reports metrics -- the engine
+		// publishes 0 rather than nothing (see replica_metrics) -- so a model
+		// parked at minReplicaCount 1 with no traffic has a non-empty
+		// ReplicaMetrics, no arrival rate, and would log this every optimize
+		// cycle forever. At a 15s interval that is four lines a minute per idle
+		// model, permanently, for a diagnostic that never changes. Occupancy
+		// above zero is the honest test of "this fleet is doing something", and
+		// a fleet doing something that still cannot produce a floor is the case
+		// actually worth reporting.
 		logger.V(logging.DEFAULT).Info("arrival-demand-floor unavailable",
 			"modelID", input.ModelID, "namespace", input.Namespace, "reason", floor.Reason)
 	}

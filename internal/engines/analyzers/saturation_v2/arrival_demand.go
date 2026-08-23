@@ -19,6 +19,59 @@ import (
 // This file adds a second estimate that does not have that property, and uses it
 // only as a FLOOR. It never lowers demand, so it cannot cause a scale-down that
 // occupancy would not already have permitted.
+//
+// WHAT THE FLOOR IS AND IS NOT INVARIANT TO
+//
+// λ and the token counts do not move when replicas are added, which is what
+// makes them usable where occupancy is not. W is different: inter-token latency
+// rises with load — this repo models ITL(k) = A·k + B, where k is KV cache
+// utilization (internal/engines/analyzers/throughput/types.go) — and service
+// time carries the same effect. A starved fleet therefore measures a longer W
+// and asks for more than it will need once it has it: at one replica under 14
+// QPS, W inflates toward 100s against an uncontended 24.6s, and the floor asks
+// for roughly three times what would serve. The fleet arrives, W falls back, and
+// the floor relaxes.
+//
+// That is a real overshoot on the RAMP, in the same shape occupancy overshoots.
+// What it is not is the COLLAPSE this exists to prevent: W is bounded below by
+// the uncontended cost of the work, so the floor cannot decay toward zero the
+// way occupancy does. Damping the collapse without damping the ramp is the
+// trade, and it is deliberate.
+//
+// WHY IT BINDS OFTEN
+//
+// avgIn + avgOut prices a request at its PEAK — a request holds its input for
+// its whole life while its output accumulates, so the KV it occupies averaged
+// over its lifetime is nearer avgIn + avgOut/2. The peak is this analyzer's
+// existing convention (see waitingQueueDemand, which calls I+O "a request's KV
+// footprint at its LAST decode step, not its mean"), so the floor sits about 11%
+// above a mean-measuring occupancy at the shape this was built from, and binds
+// routinely rather than only during a collapse.
+//
+// Two caveats on that comparison, neither yet measured:
+//
+//   - Occupancy is a point-in-time gauge (kvUsage × totalKvCapacityTokens) while
+//     the floor derives from rate(...[1m]) means. Comparing an instantaneous
+//     sample against a windowed average explains some unknown share of the gap
+//     on its own, and if it explains most of it then the right fix is upstream
+//     in the occupancy signal and this floor is masking it.
+//   - The observed gap at the moment this was built from was 11.3x, far larger
+//     than the 11% peak-vs-mean bias, so something other than the convention
+//     dominates. Which, is not established here.
+//
+// ONE INTERACTION TO KNOW ABOUT
+//
+// The conceded-replica clamp (steadystate.clampReplicaCountToScaleTarget) caps
+// supply at the count a scale-down has already committed to. This floor raises
+// demand. RequiredCapacity is demand/scaleUp − anticipatedSupply, so the two
+// push the same way, and their combination is not the sum of their parts: with
+// an in-flight scale-down at curr=3 against 5 still-reporting replicas, each
+// alone leaves RC at zero while both together put it at roughly a third of a
+// replica — enough to ask for one back and reverse the scale-down in progress.
+//
+// That is the intended damping and not a defect, but it is EMERGENT: neither
+// change produces it alone, so neither branch's tests can catch it. If both are
+// present, the combination wants a test of its own.
 
 // arrivalFloor is the demand implied by the offered load, and the terms it was
 // built from. Reason is empty when the floor could be computed.
@@ -47,64 +100,44 @@ type arrivalFloor struct {
 //	L = λ × W          requests concurrently in service
 //	demand = L × (avgIn + avgOut)
 //
-// λ and the token counts are invariant to the replica count, which is what
-// makes this usable where occupancy is not:
+// W is the per-request SERVICE time, with the queue wait removed. End-to-end
+// latency will not do: it climbs when the fleet is behind and falls when it
+// catches up, which is the capacity-dependent term this exists to exclude.
 //
-//   - λ is the arrival rate the scheduler reports. Adding replicas does not
-//     change how many requests are asked for.
-//   - avgIn/avgOut are the request shape.
-//   - W is the SERVICE time — how long a request occupies a replica with the
-//     queue wait removed. End-to-end latency will not do: it climbs when the
-//     fleet is behind and falls when it catches up, which is exactly the
-//     capacity-dependent term this exists to exclude, and the one that collapsed
-//     50× in the run above.
+// W is taken from the engine's own measurement (AvgServiceTime) where there is
+// one, and reconstructed as avgOut × ITL where there is not. Measured wins
+// because it includes prefill, where the reconstruction is decode-only and so
+// understates prefill-heavy work. On a decode-dominated shape the two agree
+// closely — 24.60s reconstructed against 24.66s measured, prefill 0.055s of it —
+// but that is a property of the shape, not a guarantee.
 //
-// W IS NOT FULLY INVARIANT, though, and pretending otherwise would mislead.
-// Inter-token latency rises with batch concurrency — this repo fits exactly
-// that, ITL(k) = A·k + B (internal/engines/analyzers/throughput) — and service
-// time carries the same contention. So a starved fleet measures a longer W and
-// asks for more than it will need once it has it: at one replica under 14 QPS,
-// W inflates toward 100s against an uncontended 24.6s, and the floor asks for
-// ~14 replicas where 5 would serve. The fleet arrives, W falls back, and the
-// floor relaxes.
+// The fallback also catches a case that is not a version difference: SGLang's
+// service time is a SUBTRACTION of two series, and PromQL drops unmatched pairs,
+// so an absent queue_time empties the whole expression rather than yielding e2e.
+// AvgServiceTime is then 0 and this falls back — the right outcome reached by an
+// accident of PromQL, worth knowing before someone "fixes" the query.
 //
-// That is a real overshoot on the RAMP, in the same shape occupancy overshoots.
-// What it is not is the COLLAPSE this exists to prevent: W is bounded below by
-// the uncontended cost of the work, so the floor cannot decay toward zero the
-// way occupancy does. Damping the collapse without damping the ramp is the
-// trade, and it is deliberate.
+// Returns 0 rather than a guess whenever a term is missing. A fabricated floor
+// would raise demand on a fleet nobody is using; the failure mode of this file
+// must be "no opinion", never "invented pressure".
 //
-// W is MEASURED where the engine reports it (AvgServiceTime, from vLLM's
-// request_inference_time_seconds or SGLang's e2e minus queue) and reconstructed
-// as avgOut × ITL only when it is not. The measured value is preferred because
-// it includes prefill; the reconstruction is decode-only and so understates
-// prefill-heavy work, which under-provisions rather than over. On the run this
-// was built from the two agreed to 0.2% — 24.60s reconstructed against 24.66s
-// measured, with prefill just 0.055s of it — but that agreement is a property of
-// a decode-dominated shape, not a general one.
-//
-// Keeping the reconstruction as a fallback is what makes this work on an engine
-// or version that publishes inter-token latency but no service time, without
-// making the common case pay for that. It also covers a case that is not a
-// version difference at all: SGLang's service time is a SUBTRACTION of two
-// series, and PromQL drops unmatched pairs, so if nothing has queued yet and
-// queue_time has no series the whole expression returns empty rather than
-// returning the e2e value. AvgServiceTime is then 0 and this falls back, which
-// is the right outcome reached by an accident of PromQL rather than by
-// design -- worth knowing before someone "fixes" the query.
-//
-// It returns 0 rather than a guess whenever a term is missing. A fabricated
-// floor would raise demand on a fleet nobody is using, and the failure mode of
-// this whole file must be "no opinion", never "invented pressure".
+// See the file header for what this is and is not invariant to, and for why it
+// binds more often than "floor" suggests.
 func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 	lambda := input.ArrivalRate
 	if lambda <= 0 {
 		// The EPP is the only source of a model-level arrival rate. Without it,
 		// fall back to what the engines completed: at steady state a queue that
 		// is neither growing nor shrinking makes completion rate equal arrival
-		// rate. That equality fails exactly when a queue is building -- but a
-		// building queue is the case occupancy already measures well, so the
-		// floor is not what carries the decision there.
+		// rate. That equality fails exactly when a queue is building, and
+		// completions are then capped by capacity — so this understates λ
+		// precisely when demand is highest.
+		//
+		// Tolerable because a building queue is the case OCCUPANCY reads well,
+		// so the floor is not what carries that decision. That reasoning needs
+		// the queue term to exist, though: with flow control disabled AND the
+		// EPP absent, occupancy has no queue component either and both signals
+		// understate together. Nothing here detects that combination.
 		for _, rm := range input.ReplicaMetrics {
 			lambda += rm.RequestRate
 		}
@@ -175,6 +208,14 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 // timing converges on the rest -- and erring low here means the floor holds back
 // rather than over-provisions, so it is not worth a warm-up filter that would
 // need its own state.
+//
+// Note this differs from the collector's own merge helper, which falls back to a
+// mean that INCLUDES zeros when no request rate is available
+// (weightedByRequestRate). The two are reachable together only when a rank
+// reports a service time while its request rate is zero, which is close to
+// self-contradictory; the inconsistency is recorded rather than unified, because
+// aligning them would change DP-collapse behaviour for a case neither helper was
+// written for.
 func meanOf(replicaMetrics []domain.ReplicaMetrics, pick func(domain.ReplicaMetrics) float64) float64 {
 	var sum float64
 	var n int
