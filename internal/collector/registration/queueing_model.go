@@ -104,6 +104,21 @@ func registerSGLangQueueingModelQueries(registry *source.QueryList) {
 	// window where the two rates disagree -- they cover the same interval but
 	// count different request populations, so their difference can dip below
 	// zero without either being wrong.
+	//
+	// The two histograms are NOT labelled identically upstream: e2e carries an
+	// extra is_streaming label that queue_time does not. `max by (model_name,
+	// instance, pod)` drops it on both sides so the subtraction still matches
+	// series, but it means the e2e term is the max ACROSS streaming and
+	// non-streaming rather than a pooled average, which biases W upward. That is
+	// the safe direction for a floor -- it over-provisions rather than under --
+	// and it is why this uses max rather than avg, consistent with the ITL query
+	// above.
+	//
+	// Unverified against a live SGLang: whether queue_time is observed for every
+	// request or only for requests that actually queued. If the latter, its mean
+	// is taken over a biased subset and the subtraction systematically
+	// understates the wait, which would inflate W further -- again the safe
+	// direction, but worth confirming before anyone relies on the magnitude.
 	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
 		Name:     QueryAvgServiceTime,
 		Type:     source.QueryTypePromQL,

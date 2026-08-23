@@ -167,6 +167,14 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 // opposite of what this estimate wants. Skipping zeros matters as much: a
 // replica that has completed nothing yet would otherwise drag the mean toward
 // zero and, through it, the floor.
+//
+// Skipping only protects against an outright zero, though. A replica that has
+// just started serving and reports a small but non-zero timing still pulls the
+// unweighted mean down by roughly 1/N, lowering the floor for that cycle. The
+// effect is bounded and short-lived -- it decays as the replica warms and its
+// timing converges on the rest -- and erring low here means the floor holds back
+// rather than over-provisions, so it is not worth a warm-up filter that would
+// need its own state.
 func meanOf(replicaMetrics []domain.ReplicaMetrics, pick func(domain.ReplicaMetrics) float64) float64 {
 	var sum float64
 	var n int
