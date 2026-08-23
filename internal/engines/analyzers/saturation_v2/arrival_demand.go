@@ -5,73 +5,23 @@ import (
 )
 
 // The analyzer's own demand is occupancy: resident KV plus the waiting-queue
-// footprint. Both are STATES OF THE FLEET rather than properties of the load,
-// and both shrink as capacity grows -- resident KV because residence time falls,
-// the queue because it drains. So the signal that sizes the fleet is a function
-// of the fleet, and on a fleet that is comfortably provisioned it decays toward
-// zero and takes the replica count with it.
+// footprint. Both are states of the FLEET rather than properties of the load, so
+// both shrink as capacity grows -- and a fleet that is keeping up reads as idle,
+// taking the replica count down with it. Measured on an H100 at 14 QPS: demand
+// fell from 7.5M tokens to 152k as ten replicas drained a 910-deep queue, and the
+// target followed from the ceiling to one, mid-load.
 //
-// Measured on an H100 at 14 QPS: demand fell from 7.5M tokens to 152k as ten
-// replicas drained a 910-deep queue, and the target followed it from the ceiling
-// down to one, mid-load. Nothing was wrong with the arithmetic; the input simply
-// stopped describing the workload once the workload was being served.
+// This file adds a second estimate from the offered load, which does not have
+// that property, and uses it only as a FLOOR -- it never lowers demand, so it
+// cannot permit a scale-down occupancy would not already have permitted.
 //
-// This file adds a second estimate that does not have that property, and uses it
-// only as a FLOOR. It never lowers demand, so it cannot cause a scale-down that
-// occupancy would not already have permitted.
-//
-// WHAT THE FLOOR IS AND IS NOT INVARIANT TO
-//
-// λ and the token counts do not move when replicas are added, which is what
-// makes them usable where occupancy is not. W is different: inter-token latency
-// rises with load — this repo models ITL(k) = A·k + B, where k is KV cache
-// utilization (internal/engines/analyzers/throughput/types.go) — and service
-// time carries the same effect. A starved fleet therefore measures a longer W
-// and asks for more than it will need once it has it: at one replica under 14
-// QPS, W inflates toward 100s against an uncontended 24.6s, and the floor asks
-// for roughly three times what would serve. The fleet arrives, W falls back, and
-// the floor relaxes.
-//
-// That is a real overshoot on the RAMP, in the same shape occupancy overshoots.
-// What it is not is the COLLAPSE this exists to prevent: W is bounded below by
-// the uncontended cost of the work, so the floor cannot decay toward zero the
-// way occupancy does. Damping the collapse without damping the ramp is the
-// trade, and it is deliberate.
-//
-// WHY IT BINDS OFTEN
-//
-// avgIn + avgOut prices a request at its PEAK — a request holds its input for
-// its whole life while its output accumulates, so the KV it occupies averaged
-// over its lifetime is nearer avgIn + avgOut/2. The peak is this analyzer's
-// existing convention (see waitingQueueDemand, which calls I+O "a request's KV
-// footprint at its LAST decode step, not its mean"), so the floor sits about 11%
-// above a mean-measuring occupancy at the shape this was built from, and binds
-// routinely rather than only during a collapse.
-//
-// Two caveats on that comparison, neither yet measured:
-//
-//   - Occupancy is a point-in-time gauge (kvUsage × totalKvCapacityTokens) while
-//     the floor derives from rate(...[1m]) means. Comparing an instantaneous
-//     sample against a windowed average explains some unknown share of the gap
-//     on its own, and if it explains most of it then the right fix is upstream
-//     in the occupancy signal and this floor is masking it.
-//   - The observed gap at the moment this was built from was 11.3x, far larger
-//     than the 11% peak-vs-mean bias, so something other than the convention
-//     dominates. Which, is not established here.
-//
-// ONE INTERACTION TO KNOW ABOUT
-//
-// The conceded-replica clamp (steadystate.clampReplicaCountToScaleTarget) caps
-// supply at the count a scale-down has already committed to. This floor raises
-// demand. RequiredCapacity is demand/scaleUp − anticipatedSupply, so the two
-// push the same way, and their combination is not the sum of their parts: with
-// an in-flight scale-down at curr=3 against 5 still-reporting replicas, each
-// alone leaves RC at zero while both together put it at roughly a third of a
-// replica — enough to ask for one back and reverse the scale-down in progress.
-//
-// That is the intended damping and not a defect, but it is EMERGENT: neither
-// change produces it alone, so neither branch's tests can catch it. If both are
-// present, the combination wants a test of its own.
+// The rationale, what the estimate is and is not invariant to, and which of its
+// numbers are measured rather than assumed, are in
+// docs/developer-guide/saturation-demand-floor.md. That is deliberately not
+// repeated here: an earlier draft carried it inline, grew to a design essay, and
+// in that form accumulated a confident cross-reference to a symbol that exists
+// only on an unmerged branch -- the kind of error a document gets reviewed for
+// and a comment does not.
 
 // arrivalFloor is the demand implied by the offered load, and the terms it was
 // built from. Reason is empty when the floor could be computed.
@@ -92,6 +42,13 @@ type arrivalFloor struct {
 	WSource string
 	// Reason names the missing input when Tokens is 0.
 	Reason string
+	// HasArrivalSignal reports that load IS arriving, even when Tokens is 0.
+	//
+	// It separates the two ways this can decline to answer, which need opposite
+	// treatment from the caller: nothing is arriving (expected, and silence is
+	// right) versus something is arriving and it cannot be sized (a real gap,
+	// worth saying out loud however quiet the fleet looks).
+	HasArrivalSignal bool
 }
 
 // estimateArrivalDemand computes the KV a fleet must hold to serve the load
@@ -148,7 +105,7 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 
 	avgIn, avgOut, _ := computeModelWorkloadAverages(input.ReplicaMetrics)
 	if avgOut <= 0 {
-		return arrivalFloor{Reason: "no average output length"}
+		return arrivalFloor{Reason: "no average output length", HasArrivalSignal: true}
 	}
 
 	// Preferred: the engine's own service time, which already covers prefill.
@@ -158,7 +115,7 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 		// Fallback: decode-only reconstruction. Understates prefill-heavy work.
 		itl := meanOf(input.ReplicaMetrics, func(rm domain.ReplicaMetrics) float64 { return rm.AvgITL })
 		if itl <= 0 {
-			return arrivalFloor{Reason: "no service time and no inter-token latency"}
+			return arrivalFloor{Reason: "no service time and no inter-token latency", HasArrivalSignal: true}
 		}
 		w = avgOut * itl
 		source = "itl"
@@ -171,14 +128,10 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 	// waitingQueueDemand, which calls I+O "a request's KV footprint at its LAST
 	// decode step, not its mean" and keeps it deliberately.
 	//
-	// The consequence is worth stating plainly: against an occupancy figure that
-	// measures the mean, the floor sits about 11% high at the measured shape and
-	// therefore binds routinely, not only during a collapse. It is a floor in the
-	// sense that it never LOWERS demand -- but it is not a rare one. That bias is
-	// toward provisioning, and it is small next to what it corrects: at the
-	// moment this was built from, the floor was 11.3x occupancy, so the peak
-	// convention is second-order and occupancy under-reporting is the term that
-	// matters.
+	// So against a mean-measuring occupancy the floor sits about 11% high and
+	// binds routinely rather than only during a collapse -- a floor in the sense
+	// that it never LOWERS demand, but not a rare one. The larger gap actually
+	// observed is not explained by this; see the developer guide.
 	perRequest := avgIn + avgOut
 
 	return arrivalFloor{
@@ -187,6 +140,7 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 		W:                w,
 		TokensPerRequest: perRequest,
 		WSource:          source,
+		HasArrivalSignal: true,
 	}
 }
 

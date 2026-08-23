@@ -51,7 +51,7 @@ var logContract = map[string][]string{
 	"arrival-demand-floor": {
 		"modelID", "namespace",
 		"occupancyDemand", "flooredTo", // what changed
-		"arrivalRate", "serviceTimeSec", "serviceTimeFrom", // and from which terms
+		"arrivalRate", "serviceTimeSec", "serviceTimeFrom", "tokensPerRequest", // and from which terms
 	},
 	"arrival-demand-floor unavailable": {"modelID", "namespace", "reason"},
 	"replica-capacity-skipped":         {"modelID", "namespace", "variant", "reason"},
@@ -442,6 +442,34 @@ func TestLogContract_ArrivalFloorUnavailableIsGatedOnOccupancy(t *testing.T) {
 		require.NoError(t, err)
 		fields := requireLogged(t, logs, "arrival-demand-floor unavailable")
 		assert.Contains(t, fields["reason"], "arrival rate")
+	})
+
+	t.Run("still reports when load is arriving but occupancy reads zero", func(t *testing.T) {
+		// The hole an occupancy-only gate would leave. A sample landing between
+		// completions, or a replica still warming, reads zero occupancy while
+		// requests are demonstrably arriving -- and with no timings published
+		// yet, the floor cannot be computed either. Neither branch would fire and
+		// nothing would be said, in precisely the case this diagnostic exists
+		// for. HasArrivalSignal is what keeps it audible.
+		ctx, logs := observedCtx(t)
+		analyzer := NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+
+		rm := makeReplicaMetrics("pod-1", "variant-a", 0, 600_000, 0, 4000, 1000)
+		rm.AvgServiceTime = 0
+		rm.AvgITL = 0
+		input := makeAnalyzerInput(
+			[]domain.ReplicaMetrics{rm},
+			[]domain.VariantReplicaState{
+				{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+			},
+		)
+		input.ArrivalRate = 14 // load IS arriving
+
+		_, err := analyzer.Analyze(ctx, input)
+		require.NoError(t, err)
+		fields := requireLogged(t, logs, "arrival-demand-floor unavailable")
+		assert.Contains(t, fields["reason"], "inter-token latency",
+			"it should name the timing it could not get, not the arrival rate it had")
 	})
 
 	t.Run("stays silent for an idle fleet that reports zeros", func(t *testing.T) {
