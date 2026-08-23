@@ -1,0 +1,3364 @@
+{
+  "samples": [
+    {
+      "timestamp": 1787354017,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1147991.5,
+      "utilization": 2.356957490273372,
+      "requiredCapacity": 863513.2352941176,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354032,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 858663.75,
+      "utilization": 1.7629346185827353,
+      "requiredCapacity": 36062.64705882361,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354047,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 751758,
+      "utilization": 1.543444920082535,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354062,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 979852.5,
+      "utilization": 2.011748945212651,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354077,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1645748.5,
+      "utilization": 3.3789093858109287,
+      "requiredCapacity": 474979.705882353,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354092,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1327408.75,
+      "utilization": 1.3626607844948826,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354107,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1850436.25,
+      "utilization": 1.8995783416997731,
+      "requiredCapacity": 228723.82352941204,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354122,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1503988,
+      "utilization": 1.029286303333915,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354137,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1503987,
+      "utilization": 1.0292856189625614,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354152,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1543987,
+      "utilization": 1.0566604731059168,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354167,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1053035,
+      "utilization": 0.5405002412409021,
+      "requiredCapacity": 0,
+      "spareCapacity": 443924.2857142857
+    },
+    {
+      "timestamp": 1787354182,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 615616,
+      "utilization": 0.25278597312473694,
+      "requiredCapacity": 0,
+      "spareCapacity": 1555873.5714285714
+    },
+    {
+      "timestamp": 1787354197,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 554554,
+      "utilization": 0.22771252296921354,
+      "requiredCapacity": 0,
+      "spareCapacity": 1643105
+    },
+    {
+      "timestamp": 1787354212,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 362854,
+      "utilization": 0.14899612987999547,
+      "requiredCapacity": 0,
+      "spareCapacity": 1916962.1428571427
+    },
+    {
+      "timestamp": 1787354227,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 352741,
+      "utilization": 0.14484350138071922,
+      "requiredCapacity": 0,
+      "spareCapacity": 1931409.2857142857
+    },
+    {
+      "timestamp": 1787354242,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 287774,
+      "utilization": 0.11816656914374878,
+      "requiredCapacity": 0,
+      "spareCapacity": 2024219.2857142857
+    },
+    {
+      "timestamp": 1787354257,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 297951,
+      "utilization": 0.12234547750300268,
+      "requiredCapacity": 0,
+      "spareCapacity": 2009680.7142857143
+    },
+    {
+      "timestamp": 1787354272,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 294111,
+      "utilization": 0.12076868590434542,
+      "requiredCapacity": 0,
+      "spareCapacity": 2015166.4285714286
+    },
+    {
+      "timestamp": 1787354287,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 297887,
+      "utilization": 0.12231919764302505,
+      "requiredCapacity": 0,
+      "spareCapacity": 2009772.1428571427
+    },
+    {
+      "timestamp": 1787354302,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 283422,
+      "utilization": 0.11637953866527055,
+      "requiredCapacity": 0,
+      "spareCapacity": 2030436.4285714286
+    },
+    {
+      "timestamp": 1787354317,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 289950,
+      "utilization": 0.1190600843829879,
+      "requiredCapacity": 0,
+      "spareCapacity": 2021110.7142857143
+    },
+    {
+      "timestamp": 1787354332,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 258715,
+      "utilization": 0.10623428084547237,
+      "requiredCapacity": 0,
+      "spareCapacity": 2065732.1428571427
+    },
+    {
+      "timestamp": 1787354347,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 277149,
+      "utilization": 0.11380370176465153,
+      "requiredCapacity": 0,
+      "spareCapacity": 2039397.857142857
+    },
+    {
+      "timestamp": 1787354362,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 288030,
+      "utilization": 0.11827168858365926,
+      "requiredCapacity": 0,
+      "spareCapacity": 2023853.5714285714
+    },
+    {
+      "timestamp": 1787354377,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 270684,
+      "utilization": 0.11114902528409966,
+      "requiredCapacity": 0,
+      "spareCapacity": 2048633.5714285714
+    },
+    {
+      "timestamp": 1787354392,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 285406,
+      "utilization": 0.1171942143245768,
+      "requiredCapacity": 0,
+      "spareCapacity": 2027602.1428571427
+    },
+    {
+      "timestamp": 1787354407,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 286622,
+      "utilization": 0.1176935316641516,
+      "requiredCapacity": 0,
+      "spareCapacity": 2025865
+    },
+    {
+      "timestamp": 1787354422,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 291102,
+      "utilization": 0.11953312186258508,
+      "requiredCapacity": 0,
+      "spareCapacity": 2019465
+    },
+    {
+      "timestamp": 1787354437,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 283678,
+      "utilization": 0.11648465810518104,
+      "requiredCapacity": 0,
+      "spareCapacity": 2030070.7142857143
+    },
+    {
+      "timestamp": 1787354452,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 287518,
+      "utilization": 0.11806144970383829,
+      "requiredCapacity": 0,
+      "spareCapacity": 2024585
+    },
+    {
+      "timestamp": 1787354467,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 301599,
+      "utilization": 0.12384342952172708,
+      "requiredCapacity": 0,
+      "spareCapacity": 2004469.2857142857
+    },
+    {
+      "timestamp": 1787354482,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 318765,
+      "utilization": 0.13089218071509962,
+      "requiredCapacity": 0,
+      "spareCapacity": 1979946.4285714286
+    },
+    {
+      "timestamp": 1787354497,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 379430,
+      "utilization": 0.15580261361419934,
+      "requiredCapacity": 0,
+      "spareCapacity": 1893282.1428571427
+    },
+    {
+      "timestamp": 1787354512,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 392411,
+      "utilization": 0.20141613542340345,
+      "requiredCapacity": 0,
+      "spareCapacity": 1387672.8571428573
+    },
+    {
+      "timestamp": 1787354527,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1753432,
+      "totalDemand": 334077,
+      "utilization": 0.19052749122863047,
+      "requiredCapacity": 0,
+      "spareCapacity": 1276179.1428571427
+    },
+    {
+      "timestamp": 1787354542,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 223665,
+      "utilization": 0.2551168223233065,
+      "requiredCapacity": 0,
+      "spareCapacity": 557194.5714285714
+    },
+    {
+      "timestamp": 1787354557,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 303481,
+      "utilization": 0.3461565660943795,
+      "requiredCapacity": 0,
+      "spareCapacity": 443171.71428571426
+    },
+    {
+      "timestamp": 1787354572,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 471735.5,
+      "utilization": 0.5380710515149718,
+      "requiredCapacity": 0,
+      "spareCapacity": 202808.14285714284
+    },
+    {
+      "timestamp": 1787354587,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 844756,
+      "utilization": 0.9635457776520561,
+      "requiredCapacity": 117114.5882352941,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354602,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 602977.5,
+      "utilization": 1.237981583566875,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354617,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 711201.25,
+      "utilization": 1.460177286399146,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354632,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 999016,
+      "utilization": 2.0510937965158655,
+      "requiredCapacity": 201182.9411764706,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354647,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1725218.5,
+      "utilization": 3.542070360218862,
+      "requiredCapacity": 568473.8235294118,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354662,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 841316,
+      "utilization": 1.7273177091353311,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354677,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1447516,
+      "utilization": 1.4859577263814892,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354692,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1258235,
+      "utilization": 1.291649985114923,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354707,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1026156,
+      "utilization": 1.0534076560623324,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787354723,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1181116,
+      "utilization": 0.606241466744685,
+      "requiredCapacity": 0,
+      "spareCapacity": 260951.4285714284
+    },
+    {
+      "timestamp": 1787354738,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 1132983,
+      "utilization": 0.4652286655785162,
+      "requiredCapacity": 0,
+      "spareCapacity": 816777.857142857
+    },
+    {
+      "timestamp": 1787354753,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 1255236,
+      "utilization": 0.5154285362323304,
+      "requiredCapacity": 0,
+      "spareCapacity": 642130.7142857141
+    },
+    {
+      "timestamp": 1787354768,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 742159,
+      "utilization": 0.30474741564267604,
+      "requiredCapacity": 0,
+      "spareCapacity": 1375097.857142857
+    },
+    {
+      "timestamp": 1787354783,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 748880,
+      "utilization": 0.30750721156313837,
+      "requiredCapacity": 0,
+      "spareCapacity": 1365496.4285714284
+    },
+    {
+      "timestamp": 1787354798,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 775122,
+      "utilization": 0.3182827753995873,
+      "requiredCapacity": 0,
+      "spareCapacity": 1328007.857142857
+    },
+    {
+      "timestamp": 1787354813,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 734285,
+      "utilization": 0.3015141716198043,
+      "requiredCapacity": 0,
+      "spareCapacity": 1386346.4285714284
+    },
+    {
+      "timestamp": 1787354828,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 725197,
+      "utilization": 0.29778243150298217,
+      "requiredCapacity": 0,
+      "spareCapacity": 1399329.2857142857
+    },
+    {
+      "timestamp": 1787354843,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 740046,
+      "utilization": 0.30387976964060237,
+      "requiredCapacity": 0,
+      "spareCapacity": 1378116.4285714284
+    },
+    {
+      "timestamp": 1787354858,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 726349,
+      "utilization": 0.2982554689825793,
+      "requiredCapacity": 0,
+      "spareCapacity": 1397683.5714285714
+    },
+    {
+      "timestamp": 1787354873,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 698571,
+      "utilization": 0.28684918850666746,
+      "requiredCapacity": 0,
+      "spareCapacity": 1437366.4285714286
+    },
+    {
+      "timestamp": 1787354888,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 688266,
+      "utilization": 0.28261772042745836,
+      "requiredCapacity": 0,
+      "spareCapacity": 1452087.857142857
+    },
+    {
+      "timestamp": 1787354903,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 739854,
+      "utilization": 0.3038009300606695,
+      "requiredCapacity": 0,
+      "spareCapacity": 1378390.7142857143
+    },
+    {
+      "timestamp": 1787354918,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 736333,
+      "utilization": 0.3023551271390882,
+      "requiredCapacity": 0,
+      "spareCapacity": 1383420.7142857143
+    },
+    {
+      "timestamp": 1787354933,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 711049,
+      "utilization": 0.2919729399566793,
+      "requiredCapacity": 0,
+      "spareCapacity": 1419540.714285714
+    },
+    {
+      "timestamp": 1787354948,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 709001,
+      "utilization": 0.2911319844373954,
+      "requiredCapacity": 0,
+      "spareCapacity": 1422466.4285714286
+    },
+    {
+      "timestamp": 1787354963,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 713738,
+      "utilization": 0.2930771046985515,
+      "requiredCapacity": 0,
+      "spareCapacity": 1415699.2857142857
+    },
+    {
+      "timestamp": 1787354978,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 722124,
+      "utilization": 0.29652058760124417,
+      "requiredCapacity": 0,
+      "spareCapacity": 1403719.2857142857
+    },
+    {
+      "timestamp": 1787354993,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 706697,
+      "utilization": 0.29018590947820105,
+      "requiredCapacity": 0,
+      "spareCapacity": 1425757.857142857
+    },
+    {
+      "timestamp": 1787355008,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 731341,
+      "utilization": 0.3003052980608338,
+      "requiredCapacity": 0,
+      "spareCapacity": 1390552.1428571427
+    },
+    {
+      "timestamp": 1787355023,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 686409,
+      "utilization": 0.2818551938652952,
+      "requiredCapacity": 0,
+      "spareCapacity": 1454740.714285714
+    },
+    {
+      "timestamp": 1787355038,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 666054,
+      "utilization": 0.27349696652397526,
+      "requiredCapacity": 0,
+      "spareCapacity": 1483819.2857142857
+    },
+    {
+      "timestamp": 1787355053,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 719806,
+      "utilization": 0.2955687639226797,
+      "requiredCapacity": 0,
+      "spareCapacity": 1407030.714285714
+    },
+    {
+      "timestamp": 1787355068,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 710027,
+      "utilization": 0.2915532834426617,
+      "requiredCapacity": 0,
+      "spareCapacity": 1421000.714285714
+    },
+    {
+      "timestamp": 1787355083,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 792543,
+      "utilization": 0.3254362354100582,
+      "requiredCapacity": 0,
+      "spareCapacity": 1303120.7142857143
+    },
+    {
+      "timestamp": 1787355098,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 874586,
+      "utilization": 0.44890620348413457,
+      "requiredCapacity": 0,
+      "spareCapacity": 698851.4285714284
+    },
+    {
+      "timestamp": 1787355113,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 712970,
+      "utilization": 0.48793624396470014,
+      "requiredCapacity": 0,
+      "spareCapacity": 442666.4285714285
+    },
+    {
+      "timestamp": 1787355128,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 800788,
+      "utilization": 0.5480363674937294,
+      "requiredCapacity": 0,
+      "spareCapacity": 317212.1428571427
+    },
+    {
+      "timestamp": 1787355143,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 818902,
+      "utilization": 0.5604330701925478,
+      "requiredCapacity": 0,
+      "spareCapacity": 291335
+    },
+    {
+      "timestamp": 1787355158,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 868892,
+      "utilization": 0.5946447941582061,
+      "requiredCapacity": 0,
+      "spareCapacity": 219920.71428571432
+    },
+    {
+      "timestamp": 1787355173,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 949349,
+      "utilization": 0.6497072601535044,
+      "requiredCapacity": 0,
+      "spareCapacity": 104982.14285714272
+    },
+    {
+      "timestamp": 1787355188,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 943971,
+      "utilization": 0.6460267110139304,
+      "requiredCapacity": 0,
+      "spareCapacity": 112665
+    },
+    {
+      "timestamp": 1787355203,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 966502,
+      "utilization": 0.6614462819815288,
+      "requiredCapacity": 0,
+      "spareCapacity": 80477.85714285704
+    },
+    {
+      "timestamp": 1787355218,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 966502,
+      "utilization": 0.6614462819815288,
+      "requiredCapacity": 0,
+      "spareCapacity": 80477.85714285704
+    },
+    {
+      "timestamp": 1787355233,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 937250,
+      "utilization": 0.6414270511464931,
+      "requiredCapacity": 0,
+      "spareCapacity": 122266.4285714284
+    },
+    {
+      "timestamp": 1787355248,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 928610,
+      "utilization": 0.6355140826515284,
+      "requiredCapacity": 0,
+      "spareCapacity": 134609.28571428568
+    },
+    {
+      "timestamp": 1787355263,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1024748,
+      "utilization": 0.7013081758423756,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355278,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 965030,
+      "utilization": 0.6604388873490533,
+      "requiredCapacity": 0,
+      "spareCapacity": 82580.71428571409
+    },
+    {
+      "timestamp": 1787355293,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1024748,
+      "utilization": 0.7013081758423756,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355308,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 978023,
+      "utilization": 0.6693309243461687,
+      "requiredCapacity": 0,
+      "spareCapacity": 64019.28571428568
+    },
+    {
+      "timestamp": 1787355323,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1036653,
+      "utilization": 0.7094556168067917,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355338,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1131831,
+      "utilization": 0.7745927134981984,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355353,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1150649,
+      "utilization": 0.7874712136299399,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355368,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1173627,
+      "utilization": 0.8031966985925904,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355383,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1143096,
+      "utilization": 0.7823021567963209,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355398,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1172667,
+      "utilization": 0.8025397020931497,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355413,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1172667,
+      "utilization": 0.8025397020931497,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355428,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1144824,
+      "utilization": 0.7834847504953137,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355443,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1132471,
+      "utilization": 0.7750307111644921,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355458,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1074993,
+      "utilization": 0.7356944145031977,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355473,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 982183,
+      "utilization": 0.6721779091770776,
+      "requiredCapacity": 0,
+      "spareCapacity": 58076.428571428405
+    },
+    {
+      "timestamp": 1787355488,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 430893,
+      "utilization": 0.29489082565981956,
+      "requiredCapacity": 0,
+      "spareCapacity": 845633.5714285714
+    },
+    {
+      "timestamp": 1787355503,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 312353,
+      "utilization": 0.2137654454059862,
+      "requiredCapacity": 0,
+      "spareCapacity": 1014976.4285714285
+    },
+    {
+      "timestamp": 1787355518,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 394089,
+      "utilization": 0.26970322236251837,
+      "requiredCapacity": 0,
+      "spareCapacity": 898210.7142857142
+    },
+    {
+      "timestamp": 1787355533,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 394089,
+      "utilization": 0.26970322236251837,
+      "requiredCapacity": 0,
+      "spareCapacity": 898210.7142857142
+    },
+    {
+      "timestamp": 1787355548,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 335459,
+      "utilization": 0.22957852990189537,
+      "requiredCapacity": 0,
+      "spareCapacity": 981967.857142857
+    },
+    {
+      "timestamp": 1787355563,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 335651,
+      "utilization": 0.22970992920178346,
+      "requiredCapacity": 0,
+      "spareCapacity": 981693.5714285714
+    },
+    {
+      "timestamp": 1787355578,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 338595,
+      "utilization": 0.23172471846673443,
+      "requiredCapacity": 0,
+      "spareCapacity": 977487.857142857
+    },
+    {
+      "timestamp": 1787355593,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 341091,
+      "utilization": 0.2334329093652798,
+      "requiredCapacity": 0,
+      "spareCapacity": 973922.1428571428
+    },
+    {
+      "timestamp": 1787355608,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 305824,
+      "utilization": 0.20929718483843704,
+      "requiredCapacity": 0,
+      "spareCapacity": 1024303.5714285714
+    },
+    {
+      "timestamp": 1787355624,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 290974,
+      "utilization": 0.19913427023771638,
+      "requiredCapacity": 0,
+      "spareCapacity": 1045517.857142857
+    },
+    {
+      "timestamp": 1787355639,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 306783,
+      "utilization": 0.20995349696652396,
+      "requiredCapacity": 0,
+      "spareCapacity": 1022933.5714285714
+    },
+    {
+      "timestamp": 1787355654,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 310625,
+      "utilization": 0.21258285170699326,
+      "requiredCapacity": 0,
+      "spareCapacity": 1017445
+    },
+    {
+      "timestamp": 1787355669,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 309536,
+      "utilization": 0.2118375713029404,
+      "requiredCapacity": 0,
+      "spareCapacity": 1019000.7142857143
+    },
+    {
+      "timestamp": 1787355684,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 310625,
+      "utilization": 0.21258285170699326,
+      "requiredCapacity": 0,
+      "spareCapacity": 1017445
+    },
+    {
+      "timestamp": 1787355699,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 305249,
+      "utilization": 0.2089036713101263,
+      "requiredCapacity": 0,
+      "spareCapacity": 1025125
+    },
+    {
+      "timestamp": 1787355714,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 289759,
+      "utilization": 0.19830275904311198,
+      "requiredCapacity": 0,
+      "spareCapacity": 1047253.5714285714
+    },
+    {
+      "timestamp": 1787355729,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 296736,
+      "utilization": 0.20307761797706672,
+      "requiredCapacity": 0,
+      "spareCapacity": 1037286.4285714285
+    },
+    {
+      "timestamp": 1787355744,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 291871,
+      "utilization": 0.19974815134188112,
+      "requiredCapacity": 0,
+      "spareCapacity": 1044236.4285714285
+    },
+    {
+      "timestamp": 1787355759,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 295583,
+      "utilization": 0.2022885378063845,
+      "requiredCapacity": 0,
+      "spareCapacity": 1038933.5714285714
+    },
+    {
+      "timestamp": 1787355774,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 294047,
+      "utilization": 0.20123734340727967,
+      "requiredCapacity": 0,
+      "spareCapacity": 1041127.857142857
+    },
+    {
+      "timestamp": 1787355789,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 260636,
+      "utilization": 0.1783718121126886,
+      "requiredCapacity": 0,
+      "spareCapacity": 1088857.857142857
+    },
+    {
+      "timestamp": 1787355804,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 267061,
+      "utilization": 0.18276889805946503,
+      "requiredCapacity": 0,
+      "spareCapacity": 1079679.2857142857
+    },
+    {
+      "timestamp": 1787355819,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 311353,
+      "utilization": 0.21308107405240231,
+      "requiredCapacity": 0,
+      "spareCapacity": 1016405
+    },
+    {
+      "timestamp": 1787355834,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 313120,
+      "utilization": 0.21429035823418505,
+      "requiredCapacity": 0,
+      "spareCapacity": 1013880.7142857143
+    },
+    {
+      "timestamp": 1787355849,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 273629,
+      "utilization": 0.2808957736647059,
+      "requiredCapacity": 0,
+      "spareCapacity": 583231.4285714285
+    },
+    {
+      "timestamp": 1787355864,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 281310,
+      "utilization": 0.28878075821502264,
+      "requiredCapacity": 0,
+      "spareCapacity": 572258.5714285714
+    },
+    {
+      "timestamp": 1787355879,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 281310,
+      "utilization": 0.28878075821502264,
+      "requiredCapacity": 0,
+      "spareCapacity": 572258.5714285714
+    },
+    {
+      "timestamp": 1787355894,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 281310,
+      "utilization": 0.28878075821502264,
+      "requiredCapacity": 0,
+      "spareCapacity": 572258.5714285714
+    },
+    {
+      "timestamp": 1787355909,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 266781,
+      "utilization": 0.2738659111206923,
+      "requiredCapacity": 0,
+      "spareCapacity": 593014.2857142857
+    },
+    {
+      "timestamp": 1787355924,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 214064,
+      "utilization": 0.24416572755601587,
+      "requiredCapacity": 0,
+      "spareCapacity": 570910.2857142857
+    },
+    {
+      "timestamp": 1787355939,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 462384,
+      "utilization": 0.5274045414934825,
+      "requiredCapacity": 0,
+      "spareCapacity": 216167.42857142852
+    },
+    {
+      "timestamp": 1787355954,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 700367,
+      "utilization": 0.79885276417905,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355969,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 682859.25,
+      "utilization": 1.4019879276893228,
+      "requiredCapacity": 316298.8235294118,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355984,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1039940.75,
+      "utilization": 2.1351169761736113,
+      "requiredCapacity": 249329.705882353,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787355999,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 973727.75,
+      "utilization": 1.9991741348690626,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356014,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1250801.5,
+      "utilization": 2.568038146859249,
+      "requiredCapacity": 10336.176470588194,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356029,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1767835,
+      "utilization": 3.6295668955888845,
+      "requiredCapacity": 131545.8823529412,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356044,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1866174.75,
+      "utilization": 1.915734809522343,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356059,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1299204,
+      "utilization": 1.33370700009239,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356074,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1130679,
+      "utilization": 1.1607064765483046,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356089,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1239490,
+      "utilization": 0.8482714490536855,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356104,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1294148,
+      "utilization": 0.664258363873405,
+      "requiredCapacity": 0,
+      "spareCapacity": 99477.14285714272
+    },
+    {
+      "timestamp": 1787356119,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 935390,
+      "utilization": 0.38409247225729626,
+      "requiredCapacity": 0,
+      "spareCapacity": 1099053.5714285714
+    },
+    {
+      "timestamp": 1787356134,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 410795,
+      "utilization": 0.16868179811729442,
+      "requiredCapacity": 0,
+      "spareCapacity": 1848475
+    },
+    {
+      "timestamp": 1787356149,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 304481,
+      "utilization": 0.12502684446634432,
+      "requiredCapacity": 0,
+      "spareCapacity": 2000352.1428571427
+    },
+    {
+      "timestamp": 1787356164,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 302048,
+      "utilization": 0.12402779916438257,
+      "requiredCapacity": 0,
+      "spareCapacity": 2003827.857142857
+    },
+    {
+      "timestamp": 1787356179,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 282269,
+      "utilization": 0.11590609056286122,
+      "requiredCapacity": 0,
+      "spareCapacity": 2032083.5714285714
+    },
+    {
+      "timestamp": 1787356194,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 399401,
+      "utilization": 0.16400316179565355,
+      "requiredCapacity": 0,
+      "spareCapacity": 1864752.1428571427
+    },
+    {
+      "timestamp": 1787356209,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 649156,
+      "utilization": 0.266558262244259,
+      "requiredCapacity": 0,
+      "spareCapacity": 1507959.2857142857
+    },
+    {
+      "timestamp": 1787356224,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 633986,
+      "utilization": 0.2603291141839385,
+      "requiredCapacity": 0,
+      "spareCapacity": 1529630.714285714
+    },
+    {
+      "timestamp": 1787356239,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 649156,
+      "utilization": 0.266558262244259,
+      "requiredCapacity": 0,
+      "spareCapacity": 1507959.2857142857
+    },
+    {
+      "timestamp": 1787356254,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 681608,
+      "utilization": 0.27988379374416145,
+      "requiredCapacity": 0,
+      "spareCapacity": 1461599.2857142857
+    },
+    {
+      "timestamp": 1787356269,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 622529,
+      "utilization": 0.25562460862513214,
+      "requiredCapacity": 0,
+      "spareCapacity": 1545997.857142857
+    },
+    {
+      "timestamp": 1787356284,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 669702,
+      "utilization": 0.27499491854269964,
+      "requiredCapacity": 0,
+      "spareCapacity": 1478607.857142857
+    },
+    {
+      "timestamp": 1787356299,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 689544,
+      "utilization": 0.28314249638138644,
+      "requiredCapacity": 0,
+      "spareCapacity": 1450262.1428571427
+    },
+    {
+      "timestamp": 1787356314,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 659908,
+      "utilization": 0.2709732787204993,
+      "requiredCapacity": 0,
+      "spareCapacity": 1492599.2857142857
+    },
+    {
+      "timestamp": 1787356329,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 630658,
+      "utilization": 0.2589625614651022,
+      "requiredCapacity": 0,
+      "spareCapacity": 1534385
+    },
+    {
+      "timestamp": 1787356344,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 629058,
+      "utilization": 0.25830556496566165,
+      "requiredCapacity": 0,
+      "spareCapacity": 1536670.714285714
+    },
+    {
+      "timestamp": 1787356359,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 625282,
+      "utilization": 0.256755053226982,
+      "requiredCapacity": 0,
+      "spareCapacity": 1542065
+    },
+    {
+      "timestamp": 1787356374,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 617921,
+      "utilization": 0.25373245870674344,
+      "requiredCapacity": 0,
+      "spareCapacity": 1552580.714285714
+    },
+    {
+      "timestamp": 1787356389,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 656005,
+      "utilization": 0.2693706178846766,
+      "requiredCapacity": 0,
+      "spareCapacity": 1498175
+    },
+    {
+      "timestamp": 1787356404,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 744719,
+      "utilization": 0.3057986100417809,
+      "requiredCapacity": 0,
+      "spareCapacity": 1371440.7142857143
+    },
+    {
+      "timestamp": 1787356419,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 755279,
+      "utilization": 0.3101347869380883,
+      "requiredCapacity": 0,
+      "spareCapacity": 1356355
+    },
+    {
+      "timestamp": 1787356434,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 814985,
+      "utilization": 0.3346514325603359,
+      "requiredCapacity": 0,
+      "spareCapacity": 1271060.7142857143
+    },
+    {
+      "timestamp": 1787356449,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 1066389,
+      "utilization": 0.4378836500261772,
+      "requiredCapacity": 0,
+      "spareCapacity": 911912.1428571427
+    },
+    {
+      "timestamp": 1787356464,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 970328,
+      "utilization": 0.49804851508525555,
+      "requiredCapacity": 0,
+      "spareCapacity": 562077.1428571427
+    },
+    {
+      "timestamp": 1787356479,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 892510,
+      "utilization": 0.6108082767871502,
+      "requiredCapacity": 0,
+      "spareCapacity": 186180.71428571432
+    },
+    {
+      "timestamp": 1787356495,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 941155,
+      "utilization": 0.6440995212822381,
+      "requiredCapacity": 0,
+      "spareCapacity": 116687.85714285704
+    },
+    {
+      "timestamp": 1787356510,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 957285,
+      "utilization": 0.6551384312155462,
+      "requiredCapacity": 0,
+      "spareCapacity": 93645
+    },
+    {
+      "timestamp": 1787356525,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 935331,
+      "utilization": 0.6401137425189657,
+      "requiredCapacity": 0,
+      "spareCapacity": 125007.85714285704
+    },
+    {
+      "timestamp": 1787356540,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 927714,
+      "utilization": 0.6349008859187172,
+      "requiredCapacity": 0,
+      "spareCapacity": 135889.28571428568
+    },
+    {
+      "timestamp": 1787356555,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 892766,
+      "utilization": 0.6109834758536677,
+      "requiredCapacity": 0,
+      "spareCapacity": 185815
+    },
+    {
+      "timestamp": 1787356570,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 945764,
+      "utilization": 0.6472537888509062,
+      "requiredCapacity": 0,
+      "spareCapacity": 110103.57142857136
+    },
+    {
+      "timestamp": 1787356585,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 983719,
+      "utilization": 0.6732291035761825,
+      "requiredCapacity": 0,
+      "spareCapacity": 55882.142857142724
+    },
+    {
+      "timestamp": 1787356600,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 989224,
+      "utilization": 0.6769965678776618,
+      "requiredCapacity": 0,
+      "spareCapacity": 48017.85714285704
+    },
+    {
+      "timestamp": 1787356615,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1052527,
+      "utilization": 0.7203193276735822,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356630,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1249027,
+      "utilization": 0.854798298652815,
+      "requiredCapacity": 8248.529411764815,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356645,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1316298,
+      "utilization": 0.9008366439797563,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356660,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1253572,
+      "utilization": 0.8579087664548537,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356675,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1316298,
+      "utilization": 0.9008366439797563,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356690,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1214783,
+      "utilization": 0.8313626860206885,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356705,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1060207,
+      "utilization": 0.7255752996691065,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787356720,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1187197,
+      "utilization": 0.6093627133955427,
+      "requiredCapacity": 0,
+      "spareCapacity": 252264.28571428568
+    },
+    {
+      "timestamp": 1787356735,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1187197,
+      "utilization": 0.6093627133955427,
+      "requiredCapacity": 0,
+      "spareCapacity": 252264.28571428568
+    },
+    {
+      "timestamp": 1787356750,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 993513,
+      "utilization": 0.5099488774598873,
+      "requiredCapacity": 0,
+      "spareCapacity": 528955.7142857141
+    },
+    {
+      "timestamp": 1787356765,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 923554,
+      "utilization": 0.4740404258158562,
+      "requiredCapacity": 0,
+      "spareCapacity": 628897.1428571427
+    },
+    {
+      "timestamp": 1787356780,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 703369,
+      "utilization": 0.361024195949206,
+      "requiredCapacity": 0,
+      "spareCapacity": 943447.1428571428
+    },
+    {
+      "timestamp": 1787356795,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 690120,
+      "utilization": 0.35422376890148133,
+      "requiredCapacity": 0,
+      "spareCapacity": 962374.2857142857
+    },
+    {
+      "timestamp": 1787356810,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 737613,
+      "utilization": 0.37860090542330077,
+      "requiredCapacity": 0,
+      "spareCapacity": 894527.1428571427
+    },
+    {
+      "timestamp": 1787356825,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 742926,
+      "utilization": 0.38132795417449417,
+      "requiredCapacity": 0,
+      "spareCapacity": 886937.1428571427
+    },
+    {
+      "timestamp": 1787356840,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 751247,
+      "utilization": 0.3855989446993728,
+      "requiredCapacity": 0,
+      "spareCapacity": 875050
+    },
+    {
+      "timestamp": 1787356855,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 725709,
+      "utilization": 0.3724908379785039,
+      "requiredCapacity": 0,
+      "spareCapacity": 911532.857142857
+    },
+    {
+      "timestamp": 1787356870,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 661318,
+      "utilization": 0.3394403211070391,
+      "requiredCapacity": 0,
+      "spareCapacity": 1003519.9999999999
+    },
+    {
+      "timestamp": 1787356885,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 683144,
+      "utilization": 0.35064313797953045,
+      "requiredCapacity": 0,
+      "spareCapacity": 972339.9999999999
+    },
+    {
+      "timestamp": 1787356900,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 632707,
+      "utilization": 0.32475490950899777,
+      "requiredCapacity": 0,
+      "spareCapacity": 1044392.857142857
+    },
+    {
+      "timestamp": 1787356915,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 636803,
+      "utilization": 0.32685729830720744,
+      "requiredCapacity": 0,
+      "spareCapacity": 1038541.4285714285
+    },
+    {
+      "timestamp": 1787356930,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 590334,
+      "utilization": 0.3030057589849404,
+      "requiredCapacity": 0,
+      "spareCapacity": 1104925.714285714
+    },
+    {
+      "timestamp": 1787356945,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 596543,
+      "utilization": 0.30619270528574216,
+      "requiredCapacity": 0,
+      "spareCapacity": 1096055.714285714
+    },
+    {
+      "timestamp": 1787356960,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 294495,
+      "utilization": 0.15115795633026394,
+      "requiredCapacity": 0,
+      "spareCapacity": 1527552.857142857
+    },
+    {
+      "timestamp": 1787356975,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 295775,
+      "utilization": 0.15181495282970445,
+      "requiredCapacity": 0,
+      "spareCapacity": 1525724.2857142857
+    },
+    {
+      "timestamp": 1787356990,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 311968,
+      "utilization": 0.1601264718261423,
+      "requiredCapacity": 0,
+      "spareCapacity": 1502591.4285714286
+    },
+    {
+      "timestamp": 1787357005,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 264731,
+      "utilization": 0.13588073460421093,
+      "requiredCapacity": 0,
+      "spareCapacity": 1570072.857142857
+    },
+    {
+      "timestamp": 1787357020,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 275804,
+      "utilization": 0.14156426760288668,
+      "requiredCapacity": 0,
+      "spareCapacity": 1554254.2857142857
+    },
+    {
+      "timestamp": 1787357035,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 274973,
+      "utilization": 0.14113773315676553,
+      "requiredCapacity": 0,
+      "spareCapacity": 1555441.4285714286
+    },
+    {
+      "timestamp": 1787357050,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 259419,
+      "utilization": 0.13315419913153276,
+      "requiredCapacity": 0,
+      "spareCapacity": 1577661.4285714286
+    },
+    {
+      "timestamp": 1787357065,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 319138,
+      "utilization": 0.16380667878003963,
+      "requiredCapacity": 0,
+      "spareCapacity": 1492348.5714285714
+    },
+    {
+      "timestamp": 1787357080,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 355172,
+      "utilization": 0.1823021567963208,
+      "requiredCapacity": 0,
+      "spareCapacity": 1440871.4285714286
+    },
+    {
+      "timestamp": 1787357095,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 343703,
+      "utilization": 0.17641536550563067,
+      "requiredCapacity": 0,
+      "spareCapacity": 1457255.7142857143
+    },
+    {
+      "timestamp": 1787357110,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 297567,
+      "utilization": 0.20364633057189493,
+      "requiredCapacity": 0,
+      "spareCapacity": 1036099.2857142857
+    },
+    {
+      "timestamp": 1787357125,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 313824,
+      "utilization": 0.21477215566710808,
+      "requiredCapacity": 0,
+      "spareCapacity": 1012875
+    },
+    {
+      "timestamp": 1787357140,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 292638,
+      "utilization": 0.20027306417007998,
+      "requiredCapacity": 0,
+      "spareCapacity": 1043140.7142857143
+    },
+    {
+      "timestamp": 1787357155,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 313824,
+      "utilization": 0.21477215566710808,
+      "requiredCapacity": 0,
+      "spareCapacity": 1012875
+    },
+    {
+      "timestamp": 1787357170,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 287773,
+      "utilization": 0.19694359753489438,
+      "requiredCapacity": 0,
+      "spareCapacity": 1050090.7142857143
+    },
+    {
+      "timestamp": 1787357185,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 298591,
+      "utilization": 0.20434712683796483,
+      "requiredCapacity": 0,
+      "spareCapacity": 1034636.4285714285
+    },
+    {
+      "timestamp": 1787357200,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 297439,
+      "utilization": 0.2035587310386362,
+      "requiredCapacity": 0,
+      "spareCapacity": 1036282.1428571428
+    },
+    {
+      "timestamp": 1787357215,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 246617,
+      "utilization": 0.16877761010679615,
+      "requiredCapacity": 0,
+      "spareCapacity": 1108885
+    },
+    {
+      "timestamp": 1787357230,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 249638,
+      "utilization": 0.17084509596597305,
+      "requiredCapacity": 0,
+      "spareCapacity": 1104569.2857142857
+    },
+    {
+      "timestamp": 1787357245,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 285674,
+      "utilization": 0.19550710206372182,
+      "requiredCapacity": 0,
+      "spareCapacity": 1053089.2857142857
+    },
+    {
+      "timestamp": 1787357260,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 226136,
+      "utilization": 0.232141500621067,
+      "requiredCapacity": 0,
+      "spareCapacity": 651078.5714285714
+    },
+    {
+      "timestamp": 1787357275,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 421996,
+      "utilization": 0.4332029605904756,
+      "requiredCapacity": 0,
+      "spareCapacity": 371278.57142857136
+    },
+    {
+      "timestamp": 1787357290,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 589584.25,
+      "utilization": 0.6724917190971763,
+      "requiredCapacity": 0,
+      "spareCapacity": 34452.78571428568
+    },
+    {
+      "timestamp": 1787357305,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 876716,
+      "totalDemand": 984023.5,
+      "utilization": 1.1223971046496244,
+      "requiredCapacity": 280958.705882353,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357320,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 848519.5,
+      "utilization": 1.7421073162719556,
+      "requiredCapacity": 24128.23529411771,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357335,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1493567,
+      "utilization": 3.066463408374652,
+      "requiredCapacity": 295942.6470588236,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357350,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 886744,
+      "utilization": 1.8205865746871568,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357365,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1520823.25,
+      "utilization": 3.122423598493014,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357380,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 1216190,
+      "utilization": 2.4969767895455433,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357395,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 1899441.75,
+      "utilization": 1.9498852822518555,
+      "requiredCapacity": 286377.3529411764,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357411,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1011162,
+      "utilization": 0.692010306632585,
+      "requiredCapacity": 0,
+      "spareCapacity": 16677.857142857043
+    },
+    {
+      "timestamp": 1787357426,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 1548278,
+      "utilization": 1.059597110584145,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357441,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1636479,
+      "utilization": 0.8399695112561978,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357456,
+      "primary": 5,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 1700850,
+      "utilization": 0.8730097625573588,
+      "requiredCapacity": 0,
+      "spareCapacity": 0
+    },
+    {
+      "timestamp": 1787357471,
+      "primary": 4,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 896094,
+      "utilization": 0.45994579778879613,
+      "requiredCapacity": 0,
+      "spareCapacity": 668125.7142857143
+    },
+    {
+      "timestamp": 1787357486,
+      "primary": 3,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 388841,
+      "utilization": 0.1995837311241826,
+      "requiredCapacity": 0,
+      "spareCapacity": 1392772.8571428573
+    },
+    {
+      "timestamp": 1787357501,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 364455,
+      "utilization": 0.14965353700224815,
+      "requiredCapacity": 0,
+      "spareCapacity": 1914675
+    },
+    {
+      "timestamp": 1787357516,
+      "primary": 2,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 375272,
+      "utilization": 0.15409524396127827,
+      "requiredCapacity": 0,
+      "spareCapacity": 1899222.1428571427
+    },
+    {
+      "timestamp": 1787357531,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 329891,
+      "utilization": 0.1354607701230842,
+      "requiredCapacity": 0,
+      "spareCapacity": 1964052.1428571427
+    },
+    {
+      "timestamp": 1787357546,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 334179,
+      "utilization": 0.1372215207415848,
+      "requiredCapacity": 0,
+      "spareCapacity": 1957926.4285714286
+    },
+    {
+      "timestamp": 1787357561,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 318243,
+      "utilization": 0.13067783560715715,
+      "requiredCapacity": 0,
+      "spareCapacity": 1980692.1428571427
+    },
+    {
+      "timestamp": 1787357576,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 324771,
+      "utilization": 0.13335838132487451,
+      "requiredCapacity": 0,
+      "spareCapacity": 1971366.4285714286
+    },
+    {
+      "timestamp": 1787357591,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 331876,
+      "utilization": 0.1362758564052026,
+      "requiredCapacity": 0,
+      "spareCapacity": 1961216.4285714286
+    },
+    {
+      "timestamp": 1787357606,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 312290,
+      "utilization": 0.12823339800642625,
+      "requiredCapacity": 0,
+      "spareCapacity": 1989196.4285714286
+    },
+    {
+      "timestamp": 1787357621,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 271965,
+      "utilization": 0.11167503310646423,
+      "requiredCapacity": 0,
+      "spareCapacity": 2046803.5714285714
+    },
+    {
+      "timestamp": 1787357636,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 312034,
+      "utilization": 0.12812827856651576,
+      "requiredCapacity": 0,
+      "spareCapacity": 1989562.1428571427
+    },
+    {
+      "timestamp": 1787357651,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 296351,
+      "utilization": 0.12168848100356215,
+      "requiredCapacity": 0,
+      "spareCapacity": 2011966.4285714286
+    },
+    {
+      "timestamp": 1787357666,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 305184,
+      "utilization": 0.125315512303286,
+      "requiredCapacity": 0,
+      "spareCapacity": 1999347.857142857
+    },
+    {
+      "timestamp": 1787357681,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 79624,
+      "utilization": 0.032695430794657795,
+      "requiredCapacity": 0,
+      "spareCapacity": 2321576.4285714286
+    },
+    {
+      "timestamp": 1787357696,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357711,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357726,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357741,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357756,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357771,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357786,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357801,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 2435325,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 2435325
+    },
+    {
+      "timestamp": 1787357816,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1948260,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 1948260
+    },
+    {
+      "timestamp": 1787357831,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 1461195
+    },
+    {
+      "timestamp": 1787357846,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 1461195,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 1461195
+    },
+    {
+      "timestamp": 1787357861,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 974130
+    },
+    {
+      "timestamp": 1787357876,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 974130,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 974130
+    },
+    {
+      "timestamp": 1787357891,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357906,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357921,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357936,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357951,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357966,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357981,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787357996,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358011,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358026,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358041,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358056,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358071,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358086,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358101,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358116,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358131,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358146,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358161,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358176,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358191,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358206,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358221,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358236,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358251,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358266,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358281,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358296,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358311,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358326,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358342,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358357,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358372,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358387,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358402,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358417,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358432,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358447,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358462,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358477,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358492,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358507,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358522,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358537,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358552,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358567,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358582,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358597,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358612,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358627,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358642,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358657,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358672,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358687,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358702,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358717,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358732,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358747,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358762,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358777,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358792,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358807,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358822,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358837,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358852,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358867,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358882,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358897,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358912,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358927,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358942,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358957,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358972,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787358987,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787359002,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787359017,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787359032,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    },
+    {
+      "timestamp": 1787359047,
+      "primary": 1,
+      "v2": null,
+      "totalSupply": 487065,
+      "totalDemand": 0,
+      "utilization": 0,
+      "requiredCapacity": 0,
+      "spareCapacity": 487065
+    }
+  ]
+}

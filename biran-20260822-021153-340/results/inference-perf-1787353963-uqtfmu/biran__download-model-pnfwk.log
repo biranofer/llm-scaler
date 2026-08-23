@@ -1,0 +1,27 @@
+Requirement already satisfied: huggingface_hub in /usr/local/lib/python3.13/site-packages (1.27.0)
+Requirement already satisfied: click<9.0.0,>=8.4.2 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (3.32.2)
+Requirement already satisfied: fsspec>=2023.5.0 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.2 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (1.6.0)
+Requirement already satisfied: httpx<1,>=0.23.0 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (0.28.1)
+Requirement already satisfied: packaging>=20.9 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (26.3)
+Requirement already satisfied: pyyaml>=5.1 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (6.0.3)
+Requirement already satisfied: tqdm>=4.42.1 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (4.70.0)
+Requirement already satisfied: typing-extensions>=4.1.0 in /usr/local/lib/python3.13/site-packages (from huggingface_hub) (4.16.0)
+Requirement already satisfied: anyio in /usr/local/lib/python3.13/site-packages (from httpx<1,>=0.23.0->huggingface_hub) (4.14.2)
+Requirement already satisfied: certifi in /usr/local/lib/python3.13/site-packages (from httpx<1,>=0.23.0->huggingface_hub) (2026.7.22)
+Requirement already satisfied: httpcore==1.* in /usr/local/lib/python3.13/site-packages (from httpx<1,>=0.23.0->huggingface_hub) (1.0.9)
+Requirement already satisfied: idna in /usr/local/lib/python3.13/site-packages (from httpx<1,>=0.23.0->huggingface_hub) (3.18)
+Requirement already satisfied: h11>=0.16 in /usr/local/lib/python3.13/site-packages (from httpcore==1.*->httpx<1,>=0.23.0->huggingface_hub) (0.16.0)
+[90mHint: The `hf-cli` skill is not installed. Run `hf skills add -g --claude` to teach your AI agents how to use the `hf` CLI.[0m
+The token has not been saved to the git credentials helper. Pass `add_to_git_credential=True` in this function directly or `--add-to-git-credential` if using via `hf`CLI if you want to set the git credential as well.
+Token is valid (permission: fineGrained).
+The token `Research` has been saved to /tmp/huggingface/stored_tokens
+Your token has been saved to /tmp/huggingface/token
+Login successful.
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+
+Fetching 10 files:   0%|          | 0/10 [00:00<?, ?it/s]
+Fetching 10 files: 100%|██████████| 10/10 [00:00<00:00, 733.45it/s]
+[32m✓ Downloaded[0m
+  path: /cache/models/Qwen/Qwen3-0.6B

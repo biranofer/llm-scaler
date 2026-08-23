@@ -1,0 +1,8 @@
+{
+  "scoring_timeseries": {},
+  "dispatch_latency_timeseries": {
+    "timestamps": [],
+    "latencies_seconds": [],
+    "request_ids": []
+  }
+}

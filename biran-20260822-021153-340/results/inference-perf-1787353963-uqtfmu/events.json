@@ -1,0 +1,1365 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:09Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666857",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:09Z",
+            "message": "Successfully assigned biran/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl to pokprod-b93r38s0",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:09Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0902c651892d",
+                "namespace": "biran",
+                "resourceVersion": "2022666862",
+                "uid": "0499ac1d-c5d1-4f10-bbc4-e0b7956b2edf"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666871",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Add eth0 [10.128.11.201/23] from ovn-kubernetes",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904d11774bd",
+                "namespace": "biran",
+                "resourceVersion": "2022667909",
+                "uid": "da6b749b-607e-4425-a5aa-72d09ae13cd5"
+            },
+            "reason": "AddedInterface",
+            "reportingComponent": "multus",
+            "reportingInstance": "",
+            "source": {
+                "component": "multus"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Pulling image \"ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0\"",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904d32643e6",
+                "namespace": "biran",
+                "resourceVersion": "2022667914",
+                "uid": "52d01c34-3187-4fab-bd6c-7d633fb0a651"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Successfully pulled image \"ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0\" in 281ms (281ms including waiting). Image size: 44914390 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904e3e77772",
+                "namespace": "biran",
+                "resourceVersion": "2022667955",
+                "uid": "dff2fffe-b989-4a5a-aff6-168d57ca226f"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Created container: routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904e8f08449",
+                "namespace": "biran",
+                "resourceVersion": "2022667964",
+                "uid": "e2bc6941-e9ca-4e01-9dca-7e9000a0373c"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Started container routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904e93c3907",
+                "namespace": "biran",
+                "resourceVersion": "2022667965",
+                "uid": "b88bf0a5-2f9b-4dc7-8abb-e9b5fab4f132"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:18Z",
+            "message": "Pulling image \"ghcr.io/llm-d/llm-d-benchmark:v0.7.0\"",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0904f0c58bfb",
+                "namespace": "biran",
+                "resourceVersion": "2022667979",
+                "uid": "3a78d1c2-f147-444c-a7c0-b1e238ac9b6e"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:19Z",
+            "message": "Successfully pulled image \"ghcr.io/llm-d/llm-d-benchmark:v0.7.0\" in 299ms (299ms including waiting). Image size: 7504590361 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce090502a1b433",
+                "namespace": "biran",
+                "resourceVersion": "2022668015",
+                "uid": "94ca884d-ea1b-4fd9-b828-a3538af0c102"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:19Z",
+            "message": "Created container: preprocess",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce09050b1407d4",
+                "namespace": "biran",
+                "resourceVersion": "2022668031",
+                "uid": "29ceb9c1-5124-4a3a-a266-bb0e2c5521af"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:19Z",
+            "message": "Started container preprocess",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce09050b5e1c89",
+                "namespace": "biran",
+                "resourceVersion": "2022668032",
+                "uid": "0be20058-ce24-42ea-9f63-3b88c02ce86f"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:26Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:26Z",
+            "message": "Container image \"docker.io/vllm/vllm-openai:v0.23.0\" already present on machine",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:26Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0906cfdbc91f",
+                "namespace": "biran",
+                "resourceVersion": "2022668915",
+                "uid": "697650c7-37b6-4d56-b948-816e947e5086"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:27Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:27Z",
+            "message": "Created container: vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:27Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0906de022118",
+                "namespace": "biran",
+                "resourceVersion": "2022668943",
+                "uid": "982a48d3-d615-4ea6-aac5-0c19661bab7c"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:27Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:27Z",
+            "message": "Started container vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:27Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0906de516e52",
+                "namespace": "biran",
+                "resourceVersion": "2022668945",
+                "uid": "a44b2065-a72b-4312-ac6c-27d76bb973ca"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:48Z",
+            "message": "Startup probe failed: HTTP probe failed with statuscode: 503",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:48Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce090bb9c7e09f",
+                "namespace": "biran",
+                "resourceVersion": "2022671316",
+                "uid": "fbe18539-03ee-4c80-b5a4-b4c7f476a40e"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:07Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:07Z",
+            "message": "Stopping container routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:07Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0e317fa85bcc",
+                "namespace": "biran",
+                "resourceVersion": "2023343612",
+                "uid": "0a84dc4f-4cc2-4766-b291-ca2be6ac08fd"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:07Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:07Z",
+            "message": "Stopping container vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:07Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0e317fa8cdc5",
+                "namespace": "biran",
+                "resourceVersion": "2023343613",
+                "uid": "03c88583-a9cc-4593-b6e8-7fe80dd97802"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:08Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+                "namespace": "biran",
+                "resourceVersion": "2022666860",
+                "uid": "7897df7e-495a-4a11-8a98-8c8bfb35ac86"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:08Z",
+            "message": "Readiness probe failed: HTTP probe failed with statuscode: 503",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:08Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl.18ce0e318c3e97ba",
+                "namespace": "biran",
+                "resourceVersion": "2023343638",
+                "uid": "3b1fcc00-a3bd-4269-908e-218012d869ee"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:06Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc",
+                "namespace": "biran",
+                "resourceVersion": "2021956200",
+                "uid": "63e9d87a-b290-4dc6-bed4-fd45e9e64e40"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:06Z",
+            "message": "Stopping container routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:06Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc.18ce0902292f4d71",
+                "namespace": "biran",
+                "resourceVersion": "2022666548",
+                "uid": "fd718531-6fc0-48f8-8c5a-9c5369660b8e"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:06Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc",
+                "namespace": "biran",
+                "resourceVersion": "2021956200",
+                "uid": "63e9d87a-b290-4dc6-bed4-fd45e9e64e40"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:06Z",
+            "message": "Stopping container vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:07Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc.18ce0902292ff66a",
+                "namespace": "biran",
+                "resourceVersion": "2022666551",
+                "uid": "9af12eab-edbe-46da-935c-e07d56a54498"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:10Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343913",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:10Z",
+            "message": "Successfully assigned biran/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt to pokprod-b93r38s0",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:10Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e320f6718c5",
+                "namespace": "biran",
+                "resourceVersion": "2023343919",
+                "uid": "6aac8428-f6d9-419b-8ffc-e98c69baea54"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343928",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:18Z",
+            "message": "Add eth0 [10.128.11.205/23] from ovn-kubernetes",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e340d4b0d1e",
+                "namespace": "biran",
+                "resourceVersion": "2023344954",
+                "uid": "212887f0-e0b1-4727-bedc-f6a8816c0ddf"
+            },
+            "reason": "AddedInterface",
+            "reportingComponent": "multus",
+            "reportingInstance": "",
+            "source": {
+                "component": "multus"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:18Z",
+            "message": "Pulling image \"ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0\"",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:18Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3410671322",
+                "namespace": "biran",
+                "resourceVersion": "2023344960",
+                "uid": "fc4e2a5a-05c3-4920-8000-17492bfac951"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:19Z",
+            "message": "Successfully pulled image \"ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0\" in 343ms (343ms including waiting). Image size: 44914390 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3424e22c3b",
+                "namespace": "biran",
+                "resourceVersion": "2023345017",
+                "uid": "5c495151-d466-43d2-be64-33338eb00855"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:19Z",
+            "message": "Created container: routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e342b73af12",
+                "namespace": "biran",
+                "resourceVersion": "2023345034",
+                "uid": "765a58f1-1b6b-4997-9a8f-e2e807b6d21d"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{routing-proxy}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:19Z",
+            "message": "Started container routing-proxy",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e342bc458c3",
+                "namespace": "biran",
+                "resourceVersion": "2023345035",
+                "uid": "b913a62c-36dc-41c8-8530-41a0e5fa18c0"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:19Z",
+            "message": "Pulling image \"ghcr.io/llm-d/llm-d-benchmark:v0.7.0\"",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e343a29fb31",
+                "namespace": "biran",
+                "resourceVersion": "2023345063",
+                "uid": "e182c684-9156-4396-a80f-0d5e03efe53a"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:19Z",
+            "message": "Successfully pulled image \"ghcr.io/llm-d/llm-d-benchmark:v0.7.0\" in 395ms (395ms including waiting). Image size: 7504590361 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:19Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3451c0acd2",
+                "namespace": "biran",
+                "resourceVersion": "2023345114",
+                "uid": "8cbd36a6-b346-4e78-830f-80f384f9b80c"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:20Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:20Z",
+            "message": "Created container: preprocess",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:20Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e345a1caad9",
+                "namespace": "biran",
+                "resourceVersion": "2023345131",
+                "uid": "0dae667b-42c7-4aa5-9d7b-b4b8886812a8"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:20Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{preprocess}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:20Z",
+            "message": "Started container preprocess",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:20Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e345a5a91a1",
+                "namespace": "biran",
+                "resourceVersion": "2023345132",
+                "uid": "3df23ce2-7f87-4622-82cf-ba616a1e0541"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:27Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:27Z",
+            "message": "Container image \"docker.io/vllm/vllm-openai:v0.23.0\" already present on machine",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:27Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3619596cea",
+                "namespace": "biran",
+                "resourceVersion": "2023346042",
+                "uid": "c3e00c2e-3594-4b60-bc71-288a651b8f43"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:27Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:27Z",
+            "message": "Created container: vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:27Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3627b318bf",
+                "namespace": "biran",
+                "resourceVersion": "2023346069",
+                "uid": "8e27805c-5ff5-4a73-a8c9-4e0763a86d9b"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:27Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:27Z",
+            "message": "Started container vllm",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:27Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3628024572",
+                "namespace": "biran",
+                "resourceVersion": "2023346070",
+                "uid": "e3978dae-eec4-417b-8f06-0735a46acff9"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{vllm}",
+                "kind": "Pod",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+                "namespace": "biran",
+                "resourceVersion": "2023343917",
+                "uid": "4280fde3-e34d-467a-8559-61c0f264b34f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:48Z",
+            "message": "Startup probe failed: HTTP probe failed with statuscode: 503",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:48Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt.18ce0e3af1702548",
+                "namespace": "biran",
+                "resourceVersion": "2023348471",
+                "uid": "cdc1a8d4-7c63-41a4-a345-8abd6c504adf"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "pokprod-b93r38s0",
+            "source": {
+                "component": "kubelet",
+                "host": "pokprod-b93r38s0"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:06Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd",
+                "namespace": "biran",
+                "resourceVersion": "2022666539",
+                "uid": "fe152a20-ca44-4705-807c-bee213367240"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:06Z",
+            "message": "Deleted pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:06Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd.18ce0902286996b0",
+                "namespace": "biran",
+                "resourceVersion": "2022666544",
+                "uid": "06c7f054-ce08-4f06-bcb1-efea80681995"
+            },
+            "reason": "SuccessfulDelete",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T05:20:09Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd",
+                "namespace": "biran",
+                "resourceVersion": "2022666849",
+                "uid": "fe152a20-ca44-4705-807c-bee213367240"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T05:20:09Z",
+            "message": "Created pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T05:20:09Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd.18ce0902c5f0ecfa",
+                "namespace": "biran",
+                "resourceVersion": "2022666859",
+                "uid": "0a041ddb-cc9b-43d4-915a-7c12501b2a07"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:07Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd",
+                "namespace": "biran",
+                "resourceVersion": "2023343602",
+                "uid": "fe152a20-ca44-4705-807c-bee213367240"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:07Z",
+            "message": "Deleted pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:07Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd.18ce0e317f1cb1fb",
+                "namespace": "biran",
+                "resourceVersion": "2023343609",
+                "uid": "23368d2b-47f6-4879-9862-19e8b96f1893"
+            },
+            "reason": "SuccessfulDelete",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T06:55:10Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd",
+                "namespace": "biran",
+                "resourceVersion": "2023343903",
+                "uid": "fe152a20-ca44-4705-807c-bee213367240"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:10Z",
+            "message": "Created pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T06:55:10Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd.18ce0e320ea89be4",
+                "namespace": "biran",
+                "resourceVersion": "2023343915",
+                "uid": "1405d651-c3e6-4e99-bd8b-b4be4b830076"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 74,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-16T20:05:07Z",
+            "involvedObject": {
+                "apiVersion": "keda.sh/v1alpha1",
+                "kind": "ScaledObject",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva",
+                "namespace": "biran",
+                "resourceVersion": "2021102881",
+                "uid": "02337c9b-db85-4c83-9f14-3c65b2c8331b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:10Z",
+            "message": "Scaled apps/v1.Deployment biran/qwen-qwe-3db867ce-en3-0-6b-decode from 0 to 1, triggered by s0-wva-desired-replicas",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T01:50:08Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva.18cc61d22be92cb4",
+                "namespace": "biran",
+                "resourceVersion": "2023343901",
+                "uid": "e7c49697-0024-4d2e-ac96-e2d424500355"
+            },
+            "reason": "KEDAScaleTargetActivated",
+            "reportingComponent": "keda-operator",
+            "reportingInstance": "",
+            "source": {
+                "component": "keda-operator"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 31,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T01:50:17Z",
+            "involvedObject": {
+                "apiVersion": "keda.sh/v1alpha1",
+                "kind": "ScaledObject",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva",
+                "namespace": "biran"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:56:09Z",
+            "message": "The workload constrains no accelerator (no GPU product key in its nodeSelector or nodeAffinity), so WVA cannot tell which accelerator it runs on. It is treated as placeable on any of them: on a single-accelerator cluster the type is deduced, but elsewhere its GPUs are charged to no accelerator pool (see wva_unattributed_gpus) and accelerator-specific saturation/capacity metrics are withheld. Replica scaling metrics are still emitted with accelerator_type=\"unresolved\" so HPA/KEDA can scale. Set a GPU product nodeSelector or nodeAffinity on the workload to resolve it.",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T01:50:17Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva.18cdfd8f0d52f5bb",
+                "namespace": "biran",
+                "resourceVersion": "2023350907",
+                "uid": "60ca3b69-b411-4052-bb6a-fb3c2a546e0a"
+            },
+            "reason": "AcceleratorNotResolved",
+            "reportingComponent": "workload-variant-autoscaler-saturation-engine",
+            "reportingInstance": "",
+            "source": {
+                "component": "workload-variant-autoscaler-saturation-engine"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 5,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-22T01:51:03Z",
+            "involvedObject": {
+                "apiVersion": "keda.sh/v1alpha1",
+                "kind": "ScaledObject",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva",
+                "namespace": "biran"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:54Z",
+            "message": "No saturation metrics available for model",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T01:51:03Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode-wva.18cdfd998a0964d8",
+                "namespace": "biran",
+                "resourceVersion": "2023349131",
+                "uid": "0b0c126e-3e1f-4f52-9803-cbf1c016af7b"
+            },
+            "reason": "MetricsUnavailable",
+            "reportingComponent": "workload-variant-autoscaler-saturation-engine",
+            "reportingInstance": "",
+            "source": {
+                "component": "workload-variant-autoscaler-saturation-engine"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 241,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-03T12:16:42Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+                "namespace": "biran",
+                "resourceVersion": "2021103350",
+                "uid": "ef41ffa0-47aa-475f-9568-7ff3453c03db"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:10Z",
+            "message": "Scaled up replica set qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd from 0 to 1",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T01:50:08Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode.18c84ab71f08410b",
+                "namespace": "biran",
+                "resourceVersion": "2023343906",
+                "uid": "552f2505-6bd1-4a14-9ea9-a1427d086e7c"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 241,
+            "eventTime": null,
+            "firstTimestamp": "2026-08-03T14:30:07Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+                "namespace": "biran",
+                "resourceVersion": "2021103241",
+                "uid": "ef41ffa0-47aa-475f-9568-7ff3453c03db"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-08-22T06:55:07Z",
+            "message": "Scaled down replica set qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd from 1 to 0",
+            "metadata": {
+                "creationTimestamp": "2026-08-22T01:50:07Z",
+                "name": "qwen-qwe-3db867ce-en3-0-6b-decode.18c851fef49e892c",
+                "namespace": "biran",
+                "resourceVersion": "2023343603",
+                "uid": "63cf5107-dacf-4974-b2db-f35f64a91ebe"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

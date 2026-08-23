@@ -1,0 +1,1 @@
+---> will execute: "oc --kubeconfig /home/biran/LLMD/as/llm-scaler/biran-20260822-021153-340/environment/context.ctx --context biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com get --raw /api/v1/namespaces/openshift-monitoring/services/thanos-querier:web/proxy/api/v1/query?query=vllm:gpu_cache_usage_perc"

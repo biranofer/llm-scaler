@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-08-22T00:37:32Z",
+  "namespace": "biran",
+  "controllers": [
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+      "kind": "Deployment",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "desired_replicas": 1,
+      "ready_replicas": 1,
+      "available_replicas": 1,
+      "updated_replicas": 1
+    }
+  ],
+  "aggregate_ready_replicas": {
+    "mean": 2.781045751633987,
+    "stddev": 1.562186430552245,
+    "min": 1,
+    "p25": 1.0,
+    "p50": 3.0,
+    "p75": 4.0,
+    "p90": 5.0,
+    "p95": 5.0,
+    "p99": 5.0,
+    "max": 5,
+    "count": 306,
+    "unit": "count"
+  }
+}

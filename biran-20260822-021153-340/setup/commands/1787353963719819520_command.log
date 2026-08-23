@@ -1,0 +1,1 @@
+---> will execute: "oc --kubeconfig /home/biran/LLMD/as/llm-scaler/biran-20260822-021153-340/environment/context.ctx --context biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com apply -f /home/biran/LLMD/as/llm-scaler/biran-20260822-021153-340/run/inference-perf-hj2l652b.yaml --namespace biran"

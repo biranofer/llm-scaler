@@ -1,0 +1,333 @@
+curl: (7) Failed to connect to 10.128.11.187 port 8200 after 3 ms: Couldn't connect to server
+  [23:14:08] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb http://10.128.11.187:8200/metrics
+  [23:14:08] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb on fallback port: http://10.128.11.187:8000/metrics
+curl: (7) Failed to connect to 10.130.2.166 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.11.187 port 8200 after 2 ms: Couldn't connect to server
+  [23:14:24] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst http://10.130.2.166:8200/metrics
+  [23:14:24] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb http://10.128.11.187:8200/metrics
+  [23:14:24] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst on fallback port: http://10.130.2.166:8000/metrics
+  [23:14:24] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb on fallback port: http://10.128.11.187:8000/metrics
+curl: (7) Failed to connect to 10.130.2.166 port 8200 after 5 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.11.187 port 8200 after 7 ms: Couldn't connect to server
+  [23:14:40] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst http://10.130.2.166:8200/metrics
+  [23:14:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst on fallback port: http://10.130.2.166:8000/metrics
+  [23:14:40] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb http://10.128.11.187:8200/metrics
+  [23:14:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb on fallback port: http://10.128.11.187:8000/metrics
+curl: (7) Failed to connect to 10.130.2.166 port 8200 after 2 ms: Couldn't connect to server
+  [23:14:56] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst http://10.130.2.166:8200/metrics
+  [23:14:56] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst on fallback port: http://10.130.2.166:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.131.5.99 port 8200 after 3 ms: Couldn't connect to server
+  [23:15:13] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm http://10.131.5.99:8200/metrics
+  [23:15:13] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm on fallback port: http://10.131.5.99:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.131.5.99 port 8200 after 2 ms: Couldn't connect to server
+  [23:15:29] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm http://10.131.5.99:8200/metrics
+  [23:15:29] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm on fallback port: http://10.131.5.99:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.167 port 8200 after 3 ms: Couldn't connect to server
+  [23:15:51] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh http://10.128.5.167:8200/metrics
+  [23:15:51] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh on fallback port: http://10.128.5.167:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.167 port 8200 after 3 ms: Couldn't connect to server
+  [23:16:07] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh http://10.128.5.167:8200/metrics
+  [23:16:07] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh on fallback port: http://10.128.5.167:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.167 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.131.5.99 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.11.187 port 8200 after 2 ms: Couldn't connect to server
+  [23:21:29] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm http://10.131.5.99:8200/metrics
+  [23:21:29] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh http://10.128.5.167:8200/metrics
+  [23:21:29] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm on fallback port: http://10.131.5.99:8000/metrics
+  [23:21:29] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh on fallback port: http://10.128.5.167:8000/metrics
+  [23:21:29] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb http://10.128.11.187:8200/metrics
+  [23:21:29] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb on fallback port: http://10.128.11.187:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.11.187 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.5.167 port 8200 after 2 ms: Couldn't connect to server
+cu  [23:21:46] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb http://10.128.11.187:8200/metrics
+rl: (7) Failed to connect to 10.131.5.99 port 8200 after 3 ms: Couldn't connect to server
+  [23:21:46] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh http://10.128.5.167:8200/metrics
+  [23:21:46] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb on fallback port: http://10.128.11.187:8000/metrics
+  [23:21:46] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-w4cdh on fallback port: http://10.128.5.167:8000/metrics
+  [23:21:46] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm http://10.131.5.99:8200/metrics
+  [23:21:46] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-xxtxm on fallback port: http://10.131.5.99:8000/metrics
+curl: (7) Failed to connect to 10.130.2.166 port 8200 after 2 ms: Couldn't connect to server
+  [23:22:34] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst http://10.130.2.166:8200/metrics
+  [23:22:34] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst on fallback port: http://10.130.2.166:8000/metrics
+curl: (7) Failed to connect to 10.130.2.168 port 8200 after 8 ms: Couldn't connect to server
+  [23:23:38] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s http://10.130.2.168:8200/metrics
+  [23:23:38] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s on fallback port: http://10.130.2.168:8000/metrics
+curl: (7) Failed to connect to 10.130.2.168 port 8200 after 2 ms: Couldn't connect to server
+  [23:23:54] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s http://10.130.2.168:8200/metrics
+  [23:23:54] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s on fallback port: http://10.130.2.168:8000/metrics
+curl: (7) Failed to connect to 10.130.2.168 port 8200 after 4 ms: Couldn't connect to server
+  [23:24:10] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s http://10.130.2.168:8200/metrics
+  [23:24:10] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s on fallback port: http://10.130.2.168:8000/metrics
+curl: (7) Failed to connect to 10.129.4.215 port 8200 after 2 ms: Couldn't connect to server
+  [23:24:26] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8200/metrics
+  [23:24:26] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn on fallback port: http://10.129.4.215:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.129.4.215 port 8200 after 1 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.11.189 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.5.168 port 8200 after 2 ms: Couldn't connect to server
+  [23:24:43] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8200/metrics
+  [23:24:43] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj http://10.128.11.189:8200/metrics
+  [23:24:43] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn on fallback port: http://10.129.4.215:8000/metrics
+  [23:24:43] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc http://10.128.5.168:8200/metrics
+  [23:24:43] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj on fallback port: http://10.128.11.189:8000/metrics
+  [23:24:43] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc on fallback port: http://10.128.5.168:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.168 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.11.189 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.129.4.215 port 8200 after 4 ms: Couldn't connect to server
+  [23:24:59] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc http://10.128.5.168:8200/metrics
+  [23:24:59] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj http://10.128.11.189:8200/metrics
+  [23:24:59] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8200/metrics
+  [23:24:59] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc on fallback port: http://10.128.5.168:8000/metrics
+  [23:24:59] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj on fallback port: http://10.128.11.189:8000/metrics
+  [23:24:59] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn on fallback port: http://10.129.4.215:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.11.189 port 8200 after 3 ms: Couldn't connect to server
+  [23:30:47] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj http://10.128.11.189:8200/metrics
+  [23:30:47] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj on fallback port: http://10.128.11.189:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.11.189 port 8200 after 2 ms: Couldn't connect to server
+  [23:31:03] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj http://10.128.11.189:8200/metrics
+  [23:31:03] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-zkbfj on fallback port: http://10.128.11.189:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.129.4.215 port 8200 after 2 ms: Couldn't connect to server
+  [23:31:19] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8200/metrics
+  [23:31:19] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn on fallback port: http://10.129.4.215:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (28) Failed to connect to 10.129.4.215 port 8200 after 5000 ms: Timeout was reached
+  [23:31:40] curl failed (rc=28) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8200/metrics
+  [23:31:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn on fallback port: http://10.129.4.215:8000/metrics
+curl: (28) Failed to connect to 10.129.4.215 port 8000 after 5000 ms: Timeout was reached
+  [23:31:45] curl failed (rc=28) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn http://10.129.4.215:8000/metrics
+curl: (7) Failed to connect to 10.128.5.168 port 8200 after 4 ms: Couldn't connect to server
+  [23:43:11] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc http://10.128.5.168:8200/metrics
+  [23:43:11] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc on fallback port: http://10.128.5.168:8000/metrics
+curl: (7) Failed to connect to 10.128.5.168 port 8200 after 4 ms: Couldn't connect to server
+  [23:43:27] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc http://10.128.5.168:8200/metrics
+  [23:43:27] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc on fallback port: http://10.128.5.168:8000/metrics
+curl: (7) Failed to connect to 10.130.2.168 port 8200 after 2 ms: Couldn't connect to server
+  [23:45:20] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s http://10.130.2.168:8200/metrics
+  [23:45:20] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s on fallback port: http://10.130.2.168:8000/metrics
+curl: (7) Failed to connect to 10.131.8.48 port 8200 after 2 ms: Couldn't connect to server
+  [23:46:40] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f http://10.131.8.48:8200/metrics
+  [23:46:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f on fallback port: http://10.131.8.48:8000/metrics
+curl: (7) Failed to connect to 10.130.2.172 port 8200 after 2 ms: Couldn't connect to sercver
+url: (7) Failed to connect to 10.131.8.48 port 8200 after 2 ms: Couldn't connect to server
+  [23:46:59] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 http://10.130.2.172:8200/metrics
+  [23:46:59] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f http://10.131.8.48:8200/metrics
+  [23:46:59] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 on fallback port: http://10.130.2.172:8000/metrics
+  [23:46:59] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f on fallback port: http://10.131.8.48:8000/metrics
+curl: (7) Failed to connect to 10.130.2.172 port 8200 after 2 ms: Couldn't connect to server
+  [23:47:15] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 http://10.130.2.172:8200/metrics
+  [23:47:15] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 on fallback port: http://10.130.2.172:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.9.145 port 8200 after 3 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.130.2.172 port 8200 after 4 ms: Couldn't connect to server
+  [23:47:31] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc http://10.128.9.145:8200/metrics
+  [23:47:31] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc on fallback port: http://10.128.9.145:8000/metrics
+  [23:47:31] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 http://10.130.2.172:8200/metrics
+  [23:47:31] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 on fallback port: http://10.130.2.172:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.169 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.9.145 port 8200 after 3 ms: Couldn't connect to server
+  [23:47:47] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt http://10.128.5.169:8200/metrics
+  [23:47:47] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc http://10.128.9.145:8200/metrics
+  [23:47:47] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt on fallback port: http://10.128.5.169:8000/metrics
+  [23:47:47] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc on fallback port: http://10.128.9.145:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.169 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.9.145 port 8200 after 2 ms: Couldn't connect to server
+  [23:48:03] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt http://10.128.5.169:8200/metrics
+  [23:48:03] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc http://10.128.9.145:8200/metrics
+  [23:48:03] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt on fallback port: http://10.128.5.169:8000/metrics
+  [23:48:03] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc on fallback port: http://10.128.9.145:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.169 port 8200 after 2 ms: Couldn't connect to server
+  [23:48:19] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt http://10.128.5.169:8200/metrics
+  [23:48:19] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt on fallback port: http://10.128.5.169:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.172 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.5.169 port 8200 after 3 ms: Couldn't connect to server
+  [23:53:40] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 http://10.130.2.172:8200/metrics
+  [23:53:40] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt http://10.128.5.169:8200/metrics
+  [23:53:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 on fallback port: http://10.130.2.172:8000/metrics
+  [23:53:40] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt on fallback port: http://10.128.5.169:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.172 port 8200 after 1 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.128.5.169 port 8200 after 3 ms: Couldn't connect to server
+  [23:53:58] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 http://10.130.2.172:8200/metrics
+  [23:53:58] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt http://10.128.5.169:8200/metrics
+  [23:53:58] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4 on fallback port: http://10.130.2.172:8000/metrics
+  [23:53:58] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-27xrt on fallback port: http://10.128.5.169:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.174 port 8200 after 5 ms: Couldn't connect to server
+  [23:57:52] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 http://10.130.2.174:8200/metrics
+  [23:57:52] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 on fallback port: http://10.130.2.174:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.174 port 8200 after 1 ms: Couldn't connect to server
+  [23:58:08] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 http://10.130.2.174:8200/metrics
+  [23:58:08] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 on fallback port: http://10.130.2.174:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.174 port 8200 after 2 ms: Couldn't connect to server
+  [23:58:24] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 http://10.130.2.174:8200/metrics
+  [23:58:24] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 on fallback port: http://10.130.2.174:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.174 port 8200 after 2 ms: Couldn't connect to server
+  [00:04:11] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 http://10.130.2.174:8200/metrics
+  [00:04:11] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 on fallback port: http://10.130.2.174:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.174 port 8200 after 2 ms: Couldn't connect to server
+  [00:04:27] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 http://10.130.2.174:8200/metrics
+  [00:04:27] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2hnk5 on fallback port: http://10.130.2.174:8000/metrics
+curl: (7) Failed to connect to 10.131.8.48 port 8200 after 3 ms: Couldn't connect to server
+  [00:06:37] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f http://10.131.8.48:8200/metrics
+  [00:06:37] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f on fallback port: http://10.131.8.48:8000/metrics
+curl: (7) Failed to connect to 10.131.8.48 port 8200 after 3 ms: Couldn't connect to server
+  [00:06:53] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f http://10.131.8.48:8200/metrics
+  [00:06:53] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f on fallback port: http://10.131.8.48:8000/metrics
+curl: (7) Failed to connect to 10.128.9.145 port 8200 after 4 ms: Couldn't connect to server
+  [00:07:42] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc http://10.128.9.145:8200/metrics
+  [00:07:42] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc on fallback port: http://10.128.9.145:8000/metrics
+curl: (7) Failed to connect to 10.128.9.145 port 8200 after 3 ms: Couldn't connect to server
+  [00:07:58] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc http://10.128.9.145:8200/metrics
+  [00:07:58] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc on fallback port: http://10.128.9.145:8000/metrics
+curl: (7) Failed to connect to 10.131.8.51 port 8200 after 4 ms: Couldn't connect to server
+  [00:09:02] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk http://10.131.8.51:8200/metrics
+  [00:09:02] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk on fallback port: http://10.131.8.51:8000/metrics
+curl: (7) Failed to connect to 10.129.9.182 port 8200 after 3 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.131.8.51 port 8200 after 3 ms: Couldn't connect to server
+  [00:09:18] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz http://10.129.9.182:8200/metrics
+  [00:09:18] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk http://10.131.8.51:8200/metrics
+  [00:09:18] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz on fallback port: http://10.129.9.182:8000/metrics
+  [00:09:18] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk on fallback port: http://10.131.8.51:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.129.9.182 port 8200 after 2 ms: Couldn't connect to server
+curl: (7) Failed to connect to 10.131.8.51 port 8200 after 4 ms: Couldn't connect to server
+  [00:09:34] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz http://10.129.9.182:8200/metrics
+  [00:09:34] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk http://10.131.8.51:8200/metrics
+  [00:09:34] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz on fallback port: http://10.129.9.182:8000/metrics
+curl: (7) Failed to connect to 10.130.2.176 port 8200 after 7 ms: Couldn't connect to server
+  [00:09:34] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk on fallback port: http://10.131.8.51:8000/metrics
+  [00:09:34] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 http://10.130.2.176:8200/metrics
+  [00:09:34] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 on fallback port: http://10.130.2.176:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.176 portcur 8200 al: ft(7) Failed to connect to 10.1er 4 ms: Couldn't connect to serve29.9.r
+182 port 8200 after 5 ms: Couldn't connect to server
+  [00:09:51] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 http://10.130.2.176:8200/metrics
+  [00:09:51] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz http://10.129.9.182:8200/metrics
+  [00:09:51] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 on fallback port: http://10.130.2.176:8000/metrics
+  [00:09:51] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz on fallback port: http://10.129.9.182:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.130.2.176 port 8200 after 2 ms: Couldn't connect to server
+  [00:10:07] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 http://10.130.2.176:8200/metrics
+  [00:10:07] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748 on fallback port: http://10.130.2.176:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.171 port 8200 after 3 ms: Couldn't connect to server
+  [00:10:39] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-jkk2d http://10.128.5.171:8200/metrics
+  [00:10:39] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-jkk2d on fallback port: http://10.128.5.171:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.128.5.171 port 8200 after 2 ms: Couldn't connect to server
+  [00:10:56] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-jkk2d http://10.128.5.171:8200/metrics
+  [00:10:56] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-jkk2d on fallback port: http://10.128.5.171:8000/metrics
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+/usr/local/bin/collect_metrics.sh: line 255: /usr/local/bin/python3: Argument list too long
+curl: (7) Failed to connect to 10.129.9.182 port 8200 after 5 ms: Couldn't connect to server
+  [00:17:07] curl failed (rc=7) for qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz http://10.129.9.182:8200/metrics
+  [00:17:07] Retrying qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz on fallback port: http://10.129.9.182:8000/metrics

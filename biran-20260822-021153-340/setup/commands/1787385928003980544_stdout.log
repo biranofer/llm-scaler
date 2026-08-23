@@ -1,0 +1,6 @@
+pod/access-to-harness-data-workload-pvc
+pod/download-model-pnfwk
+pod/infra-llmdbench-inference-gateway-istio-68f6f955bd-r6h8m
+pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt
+pod/qwen-qwe-3db867ce-en3-0-6b-router-epp-d4c4d7444-h578x
+pod/wva-controller-manager-54c765d799-hwgld

@@ -1,0 +1,37 @@
+Name:                                                keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Namespace:                                           biran
+Labels:                                              app.kubernetes.io/component=default-scaledobject
+                                                     app.kubernetes.io/managed-by=workload-variant-autoscaler
+                                                     app.kubernetes.io/name=keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva
+                                                     app.kubernetes.io/part-of=qwen-qwe-3db867ce-en3-0-6b-decode-wva
+                                                     app.kubernetes.io/version=2.19.0
+                                                     scaledobject.keda.sh/name=qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Annotations:                                         llm-d.ai/created-by: deploy/lib/scaledobject.sh
+                                                     llm-d.ai/managed: true
+                                                     llm-d.ai/model-id: Qwen/Qwen3-0.6B
+                                                     llm-d.ai/variant-cost: 10.0
+CreationTimestamp:                                   Sun, 16 Aug 2026 21:29:31 +0300
+Reference:                                           Deployment/qwen-qwe-3db867ce-en3-0-6b-decode
+Metrics:                                             ( current / target )
+  "s0-wva-desired-replicas" (target average value):  1 / 1
+Min replicas:                                        1
+Max replicas:                                        10
+Behavior:
+  Scale Up:
+    Stabilization Window: 0 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Percent  Value: 100  Period: 5 seconds
+  Scale Down:
+    Stabilization Window: 300 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Percent  Value: 100  Period: 120 seconds
+Deployment pods:       1 current / 1 desired
+Conditions:
+  Type            Status  Reason              Message
+  ----            ------  ------              -------
+  AbleToScale     True    ReadyForNewScale    recommended size matches current size
+  ScalingActive   True    ValidMetricFound    the HPA was able to successfully calculate a replica count from external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},})
+  ScalingLimited  False   DesiredWithinRange  the desired count is within the acceptable range
+Events:           <none>

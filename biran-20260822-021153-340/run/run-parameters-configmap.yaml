@@ -1,0 +1,741 @@
+apiVersion: v1
+data:
+  latest: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787353963-uqtfmu
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787353963-uqtfmu_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260822T080543Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6_14_6.yaml
+
+    '
+  run-20260803T130503Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785761095-gqg3ie
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785761095-gqg3ie_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260803T130503Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260803T175049Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785778282-mz6rr1
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785778282-mz6rr1_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260803T175049Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260804T080233Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785829403-9me38v
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785829403-9me38v_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T080233Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260804T084444Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785831797-d5nicr
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785831797-d5nicr_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T084444Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260804T125112Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785846558-7wyjik
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785846558-7wyjik_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T125112Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260804T132335Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785848460-9cn8su
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785848460-9cn8su_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T132335Z
+
+    user: biran
+
+    workload: symmetrical.yaml
+
+    '
+  run-20260804T154140Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785856861-71ay4b
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785856861-71ay4b_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T154140Z
+
+    user: biran
+
+    workload: decode_heavy.yaml
+
+    '
+  run-20260804T160442Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785858243-828dgl
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785858243-828dgl_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T160442Z
+
+    user: biran
+
+    workload: decode_heavy.yaml
+
+    '
+  run-20260804T162931Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1785859604-upf3j2
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1785859604-upf3j2_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260804T162931Z
+
+    user: biran
+
+    workload: decode_heavy.yaml
+
+    '
+  run-20260814T190715Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1786732463-tl1o2o
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1786732463-tl1o2o_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260814T190715Z
+
+    user: biran
+
+    workload: prefill_heavy.yaml
+
+    '
+  run-20260815T094514Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1786785417-hdilcd
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1786785417-hdilcd_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260815T094514Z
+
+    user: biran
+
+    workload: prefill_heavy.yaml
+
+    '
+  run-20260815T122240Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1786794950-k7nbc1
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1786794950-k7nbc1_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260815T122240Z
+
+    user: biran
+
+    workload: prefill_heavy.yaml
+
+    '
+  run-20260815T133059Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - guidellm-1786798973-0vxnsg
+
+    harness: guidellm
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/guidellm-1786798973-0vxnsg_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260815T133059Z
+
+    user: biran
+
+    workload: prefill_heavy.yaml
+
+    '
+  run-20260818T151556Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787064131-yzvaoo
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787064131-yzvaoo_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260818T151556Z
+
+    user: biran
+
+    workload: burst_4k250.yaml
+
+    '
+  run-20260818T185816Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787071505-6111rl
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787071505-6111rl_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260818T185816Z
+
+    user: biran
+
+    workload: burst_4k1000.yaml
+
+    '
+  run-20260819T170826Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787152016-2j3w66
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787152016-2j3w66_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260819T170826Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6.yaml
+
+    '
+  run-20260819T191416Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787161612-p40at8
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787161612-p40at8_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260819T191416Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6.yaml
+
+    '
+  run-20260820T141450Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787230634-tygp00
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787230634-tygp00_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260820T141450Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6.yaml
+
+    '
+  run-20260821T224355Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787337064-kf55mo
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787337064-kf55mo_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260821T224355Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6_14_6.yaml
+
+    '
+  run-20260822T080543Z: 'analyze: false
+
+    endpoint_url: ''''
+
+    experiment_ids:
+
+    - inference-perf-1787353963-uqtfmu
+
+    harness: inference-perf
+
+    hostname: IBM-PW0KY5ZR
+
+    model: Qwen/Qwen3-0.6B
+
+    namespace: biran
+
+    output: local
+
+    parallelism: 1
+
+    pvc_name: workload-pvc
+
+    pvc_results_paths:
+
+    - /requests/inference-perf-1787353963-uqtfmu_1
+
+    pvc_results_prefix: /requests
+
+    timestamp: 20260822T080543Z
+
+    user: biran
+
+    workload: burst_4k1000_6_14_6_14_6.yaml
+
+    '
+kind: ConfigMap
+metadata:
+  name: llm-d-benchmark-run-parameters
+  namespace: biran

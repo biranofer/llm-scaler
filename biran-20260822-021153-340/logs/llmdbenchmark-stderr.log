@@ -1,0 +1,21 @@
+
+
+
+
+
+
+
+
+2026-08-22 11:05:40,321 - WARNING - ⚠️     | cluster-state: thanos query 'vllm-cache-with-variant' failed: Error from server (BadRequest): the server rejected our request for an unknown reason
+
+2026-08-22 11:05:40,321 - WARNING - ⚠️     | cluster-state: thanos query 'vllm-cache-no-variant' failed: Error from server (BadRequest): the server rejected our request for an unknown reason
+
+2026-08-22 11:05:40,321 - WARNING - ⚠️     | cluster-state: thanos query 'vllm-cache-all' failed: Error from server (BadRequest): the server rejected our request for an unknown reason
+
+2026-08-22 11:05:40,321 - WARNING - ⚠️     | cluster-state: thanos query 'epp-pool-kv-cache' failed: Error from server (BadRequest): the server rejected our request for an unknown reason
+
+2026-08-22 11:05:40,321 - WARNING - ⚠️     | cluster-state: thanos query 'epp-pool-queue-size' failed: Error from server (BadRequest): the server rejected our request for an unknown reason
+
+
+
+

@@ -1,0 +1,7 @@
+NAME                                                       READY   STATUS      RESTARTS   AGE     IP              NODE               NOMINATED NODE   READINESS GATES
+access-to-harness-data-workload-pvc                        1/1     Running     0          4d19h   10.131.7.2      pokprod-b93r43s1   <none>           <none>
+download-model-pnfwk                                       0/1     Completed   0          4d19h   10.128.9.230    pokprod-b93r38s2   <none>           <none>
+infra-llmdbench-inference-gateway-istio-68f6f955bd-r6h8m   1/1     Running     0          18d     10.128.11.214   pokprod-b93r38s0   <none>           <none>
+qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt         2/2     Running     0          70m     10.128.11.205   pokprod-b93r38s0   <none>           <none>
+qwen-qwe-3db867ce-en3-0-6b-router-epp-d4c4d7444-h578x      2/2     Running     0          4d19h   10.129.4.99     pokprod-b93r39s1   <none>           <none>
+wva-controller-manager-54c765d799-hwgld                    1/1     Running     0          8h      10.130.2.156    pokprod-b93r44s0   <none>           <none>

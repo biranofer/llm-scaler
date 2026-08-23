@@ -1,0 +1,127 @@
+{
+  "collected_at": "2026-08-22T00:37:32Z",
+  "pods": [
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-vvdct",
+      "node": "pokprod-b93r43s3",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T22:45:11Z",
+      "ready_timestamp": "2026-08-21T22:46:21Z",
+      "startup_seconds": 70.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-cf7bb",
+      "node": "pokprod-b93r38s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:13:48Z",
+      "ready_timestamp": "2026-08-21T23:14:51Z",
+      "startup_seconds": 63.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2qdst",
+      "node": "pokprod-b93r44s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:14:03Z",
+      "ready_timestamp": "2026-08-21T23:15:09Z",
+      "startup_seconds": 66.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dln8s",
+      "node": "pokprod-b93r44s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:23:19Z",
+      "ready_timestamp": "2026-08-21T23:24:20Z",
+      "startup_seconds": 61.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-dw8gn",
+      "node": "pokprod-b93r39s1",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:24:04Z",
+      "ready_timestamp": "",
+      "startup_seconds": null
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-llbvc",
+      "node": "pokprod-b93r44s2",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:24:19Z",
+      "ready_timestamp": "2026-08-21T23:25:21Z",
+      "startup_seconds": 62.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4m65f",
+      "node": "pokprod-b93r38s3",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:46:20Z",
+      "ready_timestamp": "2026-08-21T23:47:21Z",
+      "startup_seconds": 61.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-rfbx4",
+      "node": "pokprod-b93r44s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:46:35Z",
+      "ready_timestamp": "",
+      "startup_seconds": null
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9hvmc",
+      "node": "pokprod-b93r38s2",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-21T23:47:05Z",
+      "ready_timestamp": "2026-08-21T23:48:12Z",
+      "startup_seconds": 67.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-wh6hk",
+      "node": "pokprod-b93r38s3",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-22T00:08:36Z",
+      "ready_timestamp": "",
+      "startup_seconds": null
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-d4cwz",
+      "node": "pokprod-b93r39s2",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-22T00:08:51Z",
+      "ready_timestamp": "2026-08-22T00:10:00Z",
+      "startup_seconds": 69.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-4q748",
+      "node": "pokprod-b93r44s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-22T00:09:06Z",
+      "ready_timestamp": "2026-08-22T00:10:14Z",
+      "startup_seconds": 68.0
+    }
+  ],
+  "aggregate": {
+    "mean": 65.22222222222223,
+    "stddev": 3.5276684147527875,
+    "min": 61.0,
+    "p25": 62.0,
+    "p50": 66.0,
+    "p75": 68.0,
+    "p90": 69.2,
+    "p95": 69.6,
+    "p99": 69.92,
+    "max": 70.0,
+    "count": 9,
+    "unit": "s"
+  }
+}

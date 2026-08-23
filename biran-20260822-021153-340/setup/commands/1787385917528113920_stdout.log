@@ -1,0 +1,43 @@
+LAST SEEN   TYPE      REASON                     OBJECT                                                    MESSAGE
+165m        Normal    SuccessfulDelete           replicaset/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd   Deleted pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc
+165m        Normal    Killing                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc    Stopping container vllm
+165m        Normal    Killing                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-qpllc    Stopping container routing-proxy
+165m        Normal    SuccessfulCreate           replicaset/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd   Created pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl
+165m        Normal    Scheduled                  pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Successfully assigned biran/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl to pokprod-b93r38s0
+164m        Normal    Pulling                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Pulling image "ghcr.io/llm-d/llm-d-benchmark:v0.7.0"
+164m        Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Successfully pulled image "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0" in 281ms (281ms including waiting). Image size: 44914390 bytes.
+164m        Normal    AddedInterface             pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Add eth0 [10.128.11.201/23] from ovn-kubernetes
+164m        Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Started container routing-proxy
+164m        Normal    Pulling                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Pulling image "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0"
+164m        Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Created container: routing-proxy
+164m        Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Successfully pulled image "ghcr.io/llm-d/llm-d-benchmark:v0.7.0" in 299ms (299ms including waiting). Image size: 7504590361 bytes.
+164m        Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Created container: preprocess
+164m        Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Started container preprocess
+164m        Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Container image "docker.io/vllm/vllm-openai:v0.23.0" already present on machine
+164m        Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Created container: vllm
+164m        Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Started container vllm
+164m        Warning   Unhealthy                  pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Startup probe failed: HTTP probe failed with statuscode: 503
+70m         Normal    ScalingReplicaSet          deployment/qwen-qwe-3db867ce-en3-0-6b-decode              Scaled down replica set qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd from 1 to 0
+70m         Normal    Killing                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Stopping container vllm
+70m         Normal    SuccessfulDelete           replicaset/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd   Deleted pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl
+70m         Normal    Killing                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Stopping container routing-proxy
+70m         Warning   Unhealthy                  pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-5whrl    Readiness probe failed: HTTP probe failed with statuscode: 503
+70m         Normal    Scheduled                  pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Successfully assigned biran/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt to pokprod-b93r38s0
+70m         Normal    ScalingReplicaSet          deployment/qwen-qwe-3db867ce-en3-0-6b-decode              Scaled up replica set qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd from 0 to 1
+70m         Normal    KEDAScaleTargetActivated   scaledobject/qwen-qwe-3db867ce-en3-0-6b-decode-wva        Scaled apps/v1.Deployment biran/qwen-qwe-3db867ce-en3-0-6b-decode from 0 to 1, triggered by s0-wva-desired-replicas
+70m         Normal    SuccessfulCreate           replicaset/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd   Created pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt
+69m         Normal    AddedInterface             pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Add eth0 [10.128.11.205/23] from ovn-kubernetes
+69m         Normal    Pulling                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Pulling image "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0"
+69m         Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Created container: routing-proxy
+69m         Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Successfully pulled image "ghcr.io/llm-d/llm-d-benchmark:v0.7.0" in 395ms (395ms including waiting). Image size: 7504590361 bytes.
+69m         Normal    Pulling                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Pulling image "ghcr.io/llm-d/llm-d-benchmark:v0.7.0"
+69m         Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Started container routing-proxy
+69m         Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Successfully pulled image "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0" in 343ms (343ms including waiting). Image size: 44914390 bytes.
+69m         Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Created container: preprocess
+69m         Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Started container preprocess
+69m         Normal    Created                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Created container: vllm
+69m         Normal    Started                    pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Started container vllm
+69m         Normal    Pulled                     pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Container image "docker.io/vllm/vllm-openai:v0.23.0" already present on machine
+69m         Warning   Unhealthy                  pod/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-tq6jt    Startup probe failed: HTTP probe failed with statuscode: 503
+69m         Warning   MetricsUnavailable         scaledobject/qwen-qwe-3db867ce-en3-0-6b-decode-wva        No saturation metrics available for model
+69m         Warning   AcceleratorNotResolved     scaledobject/qwen-qwe-3db867ce-en3-0-6b-decode-wva        The workload constrains no accelerator (no GPU product key in its nodeSelector or nodeAffinity), so WVA cannot tell which accelerator it runs on. It is treated as placeable on any of them: on a single-accelerator cluster the type is deduced, but elsewhere its GPUs are charged to no accelerator pool (see wva_unattributed_gpus) and accelerator-specific saturation/capacity metrics are withheld. Replica scaling metrics are still emitted with accelerator_type="unresolved" so HPA/KEDA can scale. Set a GPU product nodeSelector or nodeAffinity on the workload to resolve it.

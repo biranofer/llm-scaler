@@ -1,0 +1,41 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: qwen-qwe-3db867ce-en3-0-6b-decode
+  namespace: biran
+  annotations:
+    llm-d.ai/managed: "true"
+    llm-d.ai/model-id: "Qwen/Qwen3-0.6B"
+    llm-d.ai/variant-cost: "10.0"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: qwen-qwe-3db867ce-en3-0-6b-decode
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+  - type: prometheus
+    metadata:
+      serverAddress: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+      query: |
+        wva_desired_replicas{variant_name="qwen-qwe-3db867ce-en3-0-6b-decode",exported_namespace="biran"}
+      threshold: "1"
+      authModes: "bearer"
+    authenticationRef:
+      name: prometheus-auth
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+      scaleDown:
+        policies:
+        - periodSeconds: 120
+          type: Percent
+          value: 100
+        stabilizationWindowSeconds: 300
+      scaleUp:
+        policies:
+        - periodSeconds: 5
+          type: Percent
+          value: 100
+        stabilizationWindowSeconds: 0

@@ -1,0 +1,110 @@
+{
+    "kind": "Config",
+    "apiVersion": "v1",
+    "clusters": [
+        {
+            "name": "api-fmaas-vllm-d-fmaas-res-ibm-com:6443",
+            "cluster": {
+                "server": "https://api.fmaas-vllm-d.fmaas.res.ibm.com:6443"
+            }
+        },
+        {
+            "name": "api-pokprod001-ete14-res-ibm-com:6443",
+            "cluster": {
+                "server": "https://api.pokprod001.ete14.res.ibm.com:6443",
+                "insecure-skip-tls-verify": true
+            }
+        },
+        {
+            "name": "kind-kind-wva-gpu-cluster",
+            "cluster": {
+                "server": "https://127.0.0.1:46477",
+                "certificate-authority-data": "DATA+OMITTED"
+            }
+        },
+        {
+            "name": "kind-llm-d-inference-scheduler-dev",
+            "cluster": {
+                "server": "https://127.0.0.1:44443",
+                "certificate-authority-data": "DATA+OMITTED"
+            }
+        }
+    ],
+    "users": [
+        {
+            "name": "BIRAN@il.ibm.com/api-fmaas-vllm-d-fmaas-res-ibm-com:6443",
+            "user": {
+                "token": "REDACTED"
+            }
+        },
+        {
+            "name": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443",
+            "user": {
+                "token": "REDACTED"
+            }
+        },
+        {
+            "name": "kind-kind-wva-gpu-cluster",
+            "user": {
+                "client-certificate-data": "DATA+OMITTED",
+                "client-key-data": "DATA+OMITTED"
+            }
+        },
+        {
+            "name": "kind-llm-d-inference-scheduler-dev",
+            "user": {
+                "client-certificate-data": "DATA+OMITTED",
+                "client-key-data": "DATA+OMITTED"
+            }
+        }
+    ],
+    "contexts": [
+        {
+            "name": "/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com",
+            "context": {
+                "cluster": "api-pokprod001-ete14-res-ibm-com:6443",
+                "user": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443"
+            }
+        },
+        {
+            "name": "biran/api-fmaas-vllm-d-fmaas-res-ibm-com:6443/BIRAN@il.ibm.com",
+            "context": {
+                "cluster": "api-fmaas-vllm-d-fmaas-res-ibm-com:6443",
+                "user": "BIRAN@il.ibm.com/api-fmaas-vllm-d-fmaas-res-ibm-com:6443",
+                "namespace": "biran"
+            }
+        },
+        {
+            "name": "biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com",
+            "context": {
+                "cluster": "api-pokprod001-ete14-res-ibm-com:6443",
+                "user": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443",
+                "namespace": "biran"
+            }
+        },
+        {
+            "name": "default/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com",
+            "context": {
+                "cluster": "api-pokprod001-ete14-res-ibm-com:6443",
+                "user": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443",
+                "namespace": "default"
+            }
+        },
+        {
+            "name": "kind-kind-wva-gpu-cluster",
+            "context": {
+                "cluster": "kind-kind-wva-gpu-cluster",
+                "user": "kind-kind-wva-gpu-cluster"
+            }
+        },
+        {
+            "name": "kind-llm-d-inference-scheduler-dev",
+            "context": {
+                "cluster": "kind-llm-d-inference-scheduler-dev",
+                "user": "kind-llm-d-inference-scheduler-dev",
+                "namespace": "default"
+            }
+        }
+    ],
+    "current-context": "biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com"
+}

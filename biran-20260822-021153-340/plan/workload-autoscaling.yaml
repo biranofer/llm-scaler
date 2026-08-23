@@ -1,0 +1,18 @@
+# [REQUIRED]
+base_dir: /home/biran/LLMD/as/llm-scaler/llm-d-benchmark
+
+# [REQUIRED]
+values_file:
+  path: /home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/templates/values/defaults.yaml
+
+# [REQUIRED]
+template_dir:
+  path: /home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/templates/jinja
+
+# [OPTIONAL]
+scenario_file:
+  path: /home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/scenarios/guides/workload-autoscaling.yaml
+
+# Experiment definitions are shared with the non-WVA inference-scheduling
+# scenario -- the workload shape is the same; only the infra scaling strategy
+# changes.

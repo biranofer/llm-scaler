@@ -1,0 +1,13 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: prometheus-auth
+  namespace: biran
+spec:
+  secretTargetRef:
+  - parameter: bearerToken
+    name: prometheus-auth
+    key: bearerToken
+  - parameter: ca
+    name: prometheus-auth
+    key: ca.crt
