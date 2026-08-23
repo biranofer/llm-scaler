@@ -1,6 +1,8 @@
 package saturation_v2
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -73,6 +75,8 @@ var _ = Describe("estimateArrivalDemand", func() {
 		f := estimateArrivalDemand(domain.AnalyzerInput{ReplicaMetrics: rm})
 		Expect(f.Reason).To(BeEmpty())
 		Expect(f.Lambda).To(Equal(7.0))
+		Expect(f.Tokens).To(BeNumerically("~", 7*measuredService*5000, 1),
+			"the fallback lambda must feed the same arithmetic, not just be recorded")
 	})
 
 	It("has no opinion rather than a guess when a term is missing", func() {
@@ -173,9 +177,111 @@ var _ = Describe("raiseRoleDemandTo", func() {
 		Expect(rd["decode"]).To(Equal(250.0))
 	})
 
+	It("gives a role measuring zero no share, deliberately", func() {
+		// Scaling is proportional, and a role with no demand has no share to
+		// grow. A P/D fleet whose prefill momentarily reports nothing therefore
+		// gets no floor on that role for that cycle. The alternative is to invent
+		// demand for a role that reports none, which is the fabrication this file
+		// refuses everywhere else; the next cycle that measures prefill at all
+		// gives it a share.
+		rd := map[string]float64{"prefill": 0, "decode": 300}
+		raiseRoleDemandTo(rd, 800)
+		Expect(rd["prefill"]).To(BeZero())
+		Expect(rd["decode"]).To(BeNumerically("~", 800, 1e-9))
+	})
+
 	It("is a no-op for a non-disaggregated model", func() {
 		// aggregateRoleDemand returns nil there, and the model-level TotalDemand
 		// carries the decision on its own.
 		Expect(func() { raiseRoleDemandTo(nil, 500) }).NotTo(Panic())
+	})
+})
+
+// The helpers above test the estimate in isolation. These drive the whole
+// analyzer, because that is where the floor actually has to land: on
+// TotalDemand, and on RoleDemand for any fleet whose variants carry a role --
+// which is the only signal the optimizer reads for such a fleet. Nothing in the
+// suite set ArrivalRate before this, so the branch that applies the floor was
+// never taken by any test, new or old.
+var _ = Describe("the floor, through Analyze", func() {
+	newAnalyzer := func() *SaturationAnalyzer {
+		return NewSaturationAnalyzer(NewCapacityKnowledgeStore())
+	}
+
+	// One replica, lightly loaded: occupancy is small, which is the state that
+	// makes the fleet look idle while the load is anything but.
+	idleish := func() ([]domain.ReplicaMetrics, []domain.VariantReplicaState) {
+		rm := makeReplicaMetrics("pod-0", "v1", 10_000, 600_000, 0, measuredAvgIn, measuredAvgOut)
+		rm.AvgServiceTime = 24.6
+		return []domain.ReplicaMetrics{rm},
+			[]domain.VariantReplicaState{{VariantName: "v1", CurrentReplicas: 1, GPUsPerReplica: 1}}
+	}
+
+	It("raises TotalDemand when the load implies more than occupancy shows", func() {
+		rm, vs := idleish()
+		in := makeAnalyzerInput(rm, vs)
+		in.ArrivalRate = 14
+
+		res, err := newAnalyzer().Analyze(context.Background(), in)
+		Expect(err).NotTo(HaveOccurred())
+
+		// 14 req/s x 24.6s x 5000 tok. Occupancy alone would have reported the
+		// 10,000 resident tokens and sized the fleet from that.
+		Expect(res.TotalDemand).To(BeNumerically("~", 14*24.6*5000, 1))
+	})
+
+	It("leaves demand alone when occupancy already exceeds the floor", func() {
+		// The property that makes this a floor rather than a replacement. A
+		// heavily loaded replica reports far more resident KV than a trickle of
+		// arrivals implies, and that larger number must survive.
+		rm := makeReplicaMetrics("pod-0", "v1", 500_000, 600_000, 0, measuredAvgIn, measuredAvgOut)
+		rm.AvgServiceTime = 24.6
+		in := makeAnalyzerInput([]domain.ReplicaMetrics{rm},
+			[]domain.VariantReplicaState{{VariantName: "v1", CurrentReplicas: 1, GPUsPerReplica: 1}})
+		in.ArrivalRate = 0.01 // floor = 0.01 x 24.6 x 5000 = 1,230 tokens
+
+		res, err := newAnalyzer().Analyze(context.Background(), in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.TotalDemand).To(BeNumerically(">", 100_000),
+			"a tiny arrival rate must not pull demand down to its own floor")
+	})
+
+	It("carries the floor into RoleDemand for a fleet whose variants have roles", func() {
+		// A disaggregated fleet reads per-role spare, not the model-level signal.
+		// A floor that raised only TotalDemand would change nothing for it.
+		p := makeReplicaMetrics("pod-p", "vp", 5_000, 600_000, 0, measuredAvgIn, measuredAvgOut)
+		p.AvgServiceTime = 24.6
+		d := makeReplicaMetrics("pod-d", "vd", 5_000, 600_000, 0, measuredAvgIn, measuredAvgOut)
+		d.AvgServiceTime = 24.6
+		in := makeAnalyzerInput([]domain.ReplicaMetrics{p, d}, []domain.VariantReplicaState{
+			{VariantName: "vp", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill},
+			{VariantName: "vd", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RoleDecode},
+		})
+		in.ArrivalRate = 14
+
+		res, err := newAnalyzer().Analyze(context.Background(), in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RoleDemand).NotTo(BeEmpty(), "a P/D fleet must report per-role demand")
+
+		var sum float64
+		for _, v := range res.RoleDemand {
+			sum += v
+		}
+		Expect(sum).To(BeNumerically("~", res.TotalDemand, 1),
+			"roles must still sum to the floored total, or the two signals disagree")
+	})
+
+	It("does not floor a model with no arrival signal at all", func() {
+		// No EPP and no completions: the estimate has nothing to work from, and
+		// must leave the fleet to occupancy rather than invent pressure on it.
+		rm, vs := idleish()
+		rm[0].RequestRate = 0
+		in := makeAnalyzerInput(rm, vs)
+		in.ArrivalRate = 0
+
+		res, err := newAnalyzer().Analyze(context.Background(), in)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.TotalDemand).To(BeNumerically("<", 100_000),
+			"demand should still be the measured occupancy, not a fabricated floor")
 	})
 })

@@ -740,7 +740,7 @@ func TestCollectReplicaMetrics_Freshness(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	// fixture returns a source that reports all nine tracked metrics at timestamp
+	// fixture returns a source that reports all ten tracked metrics at timestamp
 	// ts. Any query names passed in omit are dropped from the result set, leaving
 	// their per-replica timestamps zero — used to model metrics that are absent by
 	// design (e.g. scheduler_dispatch_rate when no EPP is deployed).
@@ -775,6 +775,7 @@ func TestCollectReplicaMetrics_Freshness(t *testing.T) {
 					"scheduler_dispatch_rate": {Values: []source.MetricValue{{Labels: podLabels, Value: 5.0, Timestamp: ts}}},
 					"avg_ttft":                {Values: []source.MetricValue{{Labels: podLabels, Value: 0.2, Timestamp: ts}}},
 					"avg_itl":                 {Values: []source.MetricValue{{Labels: podLabels, Value: 0.04, Timestamp: ts}}},
+					"avg_service_time":        {Values: []source.MetricValue{{Labels: podLabels, Value: 24.6, Timestamp: ts}}},
 				}
 				for _, k := range omit {
 					delete(results, k)
@@ -2040,4 +2041,66 @@ func TestCollectModelArrivalRate_TargetModelOnly(t *testing.T) {
 
 	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil)
 	assert.Equal(t, 2.5, collector.CollectModelArrivalRate(context.Background(), "model-a", "test-ns"))
+}
+
+// TestCollectReplicaMetrics_ServiceTimePopulated pins that avg_service_time
+// reaches ReplicaMetrics.AvgServiceTime.
+//
+// That field is what the saturation analyzer's demand floor prefers over
+// reconstructing service time from inter-token latency, and the two differ most
+// exactly where it matters: the reconstruction is decode-only and cannot see
+// prefill. If this query silently stopped landing, the floor would keep working
+// on the fallback and nothing would report a problem — the number would just be
+// quietly wrong for prefill-heavy workloads.
+func TestCollectReplicaMetrics_ServiceTimePopulated(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if err := metrics.InitMetrics(registry); err != nil {
+		t.Fatalf("InitMetrics: %v", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := llmdVariantAutoscalingV1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	podLabels := map[string]string{
+		seriesModelLabel: "test-model",
+		"pod":            "pod-known",
+		"instance":       "10.0.0.1:8000",
+	}
+	ts := time.Now()
+
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, _ source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			return map[string]*source.MetricResult{
+				"kv_cache_usage": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 0.5, Timestamp: ts}},
+				},
+				"avg_service_time": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 24.6, Timestamp: ts}},
+				},
+			}, nil
+		},
+	}
+
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"pod-known": "va-1"}))
+	results, err := collector.CollectReplicaMetrics(
+		context.Background(),
+		"test-model",
+		"test-ns",
+		make(map[string]scaletarget.ScaleTargetAccessor),
+		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("CollectReplicaMetrics: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected exactly 1 ReplicaMetrics entry, got %d", len(results))
+	}
+	if results[0].AvgServiceTime != 24.6 {
+		t.Errorf("AvgServiceTime is %v, want 24.6 — the saturation demand floor reads this field, "+
+			"and falls back to a decode-only estimate without it", results[0].AvgServiceTime)
+	}
 }

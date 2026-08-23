@@ -149,12 +149,20 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 			"tokensPerRequest", floor.TokensPerRequest)
 		totalDemand = floor.Tokens
 		raiseRoleDemandTo(roleDemand, totalDemand)
-	} else if floor.Reason != "" {
+	} else if floor.Reason != "" && len(input.ReplicaMetrics) > 0 {
 		// Not an error: a model with no traffic has no arrival rate, and a fleet
 		// nobody is using should not be held up by a fabricated floor. Logged so
 		// that "the floor never binds" can be told apart from "the floor could
 		// never be computed", which look identical from the outside.
-		logger.V(logging.DEBUG).Info("arrival-demand-floor unavailable",
+		//
+		// At DEFAULT, because that is the only level that ships: -v defaults to
+		// logging.DEFAULT, so a V(DEBUG) line here would be invisible in every
+		// real deployment and this comment would be describing something that
+		// never happens. Gated on there being replicas at all, which is what
+		// keeps it from repeating every cycle for every parked model -- the
+		// diagnostic case is a fleet that IS serving and still cannot produce a
+		// floor.
+		logger.V(logging.DEFAULT).Info("arrival-demand-floor unavailable",
 			"modelID", input.ModelID, "namespace", input.Namespace, "reason", floor.Reason)
 	}
 

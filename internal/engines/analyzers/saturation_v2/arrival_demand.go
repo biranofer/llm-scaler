@@ -47,7 +47,8 @@ type arrivalFloor struct {
 //	L = λ × W          requests concurrently in service
 //	demand = L × (avgIn + avgOut)
 //
-// Every term is invariant to the replica count, which is the whole point:
+// λ and the token counts are invariant to the replica count, which is what
+// makes this usable where occupancy is not:
 //
 //   - λ is the arrival rate the scheduler reports. Adding replicas does not
 //     change how many requests are asked for.
@@ -57,6 +58,21 @@ type arrivalFloor struct {
 //     fleet is behind and falls when it catches up, which is exactly the
 //     capacity-dependent term this exists to exclude, and the one that collapsed
 //     50× in the run above.
+//
+// W IS NOT FULLY INVARIANT, though, and pretending otherwise would mislead.
+// Inter-token latency rises with batch concurrency — this repo fits exactly
+// that, ITL(k) = A·k + B (internal/engines/analyzers/throughput) — and service
+// time carries the same contention. So a starved fleet measures a longer W and
+// asks for more than it will need once it has it: at one replica under 14 QPS,
+// W inflates toward 100s against an uncontended 24.6s, and the floor asks for
+// ~14 replicas where 5 would serve. The fleet arrives, W falls back, and the
+// floor relaxes.
+//
+// That is a real overshoot on the RAMP, in the same shape occupancy overshoots.
+// What it is not is the COLLAPSE this exists to prevent: W is bounded below by
+// the uncontended cost of the work, so the floor cannot decay toward zero the
+// way occupancy does. Damping the collapse without damping the ramp is the
+// trade, and it is deliberate.
 //
 // W is MEASURED where the engine reports it (AvgServiceTime, from vLLM's
 // request_inference_time_seconds or SGLang's e2e minus queue) and reconstructed
@@ -69,7 +85,13 @@ type arrivalFloor struct {
 //
 // Keeping the reconstruction as a fallback is what makes this work on an engine
 // or version that publishes inter-token latency but no service time, without
-// making the common case pay for that.
+// making the common case pay for that. It also covers a case that is not a
+// version difference at all: SGLang's service time is a SUBTRACTION of two
+// series, and PromQL drops unmatched pairs, so if nothing has queued yet and
+// queue_time has no series the whole expression returns empty rather than
+// returning the e2e value. AvgServiceTime is then 0 and this falls back, which
+// is the right outcome reached by an accident of PromQL rather than by
+// design -- worth knowing before someone "fixes" the query.
 //
 // It returns 0 rather than a guess whenever a term is missing. A fabricated
 // floor would raise demand on a fleet nobody is using, and the failure mode of
@@ -109,6 +131,21 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 		source = "itl"
 	}
 
+	// avgIn + avgOut prices a request at its PEAK: a request holds its input for
+	// its whole life while its output accumulates, so the KV it occupies AVERAGED
+	// over its lifetime is nearer avgIn + avgOut/2. Using the peak is this
+	// analyzer's existing convention, not a new one -- see the note on
+	// waitingQueueDemand, which calls I+O "a request's KV footprint at its LAST
+	// decode step, not its mean" and keeps it deliberately.
+	//
+	// The consequence is worth stating plainly: against an occupancy figure that
+	// measures the mean, the floor sits about 11% high at the measured shape and
+	// therefore binds routinely, not only during a collapse. It is a floor in the
+	// sense that it never LOWERS demand -- but it is not a rare one. That bias is
+	// toward provisioning, and it is small next to what it corrects: at the
+	// moment this was built from, the floor was 11.3x occupancy, so the peak
+	// convention is second-order and occupancy under-reporting is the term that
+	// matters.
 	perRequest := avgIn + avgOut
 
 	return arrivalFloor{
@@ -158,6 +195,14 @@ func meanOf(replicaMetrics []domain.ReplicaMetrics, pick func(domain.ReplicaMetr
 // A no-op when roleDemand is nil (non-disaggregated) or already sums to at least
 // total. When the measured split is all zeros there is nothing to scale, so the
 // floor is spread evenly rather than dropped.
+//
+// A role measuring zero alongside a role measuring something keeps zero, and
+// that is deliberate: scaling is proportional, and a role with no demand has no
+// share to grow. It means a P/D fleet whose prefill momentarily reports nothing
+// gets no floor protection on that role for that cycle. The alternative is to
+// invent demand for a role that reports none, which is the fabrication this file
+// refuses everywhere else -- and the situation is self-correcting, since the
+// next cycle that measures prefill at all gives it a share.
 func raiseRoleDemandTo(roleDemand map[string]float64, total float64) {
 	if len(roleDemand) == 0 || total <= 0 {
 		return
