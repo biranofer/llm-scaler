@@ -1632,6 +1632,12 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-run-bursty BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
+	@# Same reason benchmark-run does it: the clone is gitignored and
+	@# benchmark-install re-checks it out, so a re-run can otherwise drive an
+	@# unpatched harness. This target skipped it, which is worse here than on
+	@# benchmark-run -- a bursty profile is the long one, so a whole hour is
+	@# spent before the missing fixes show up as a FAILED run with no report.
+	@$(MAKE) --no-print-directory benchmark-patch
 	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" ]; then \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" \
 		   "$(BENCHMARK_REPO_DIR)/workload/profiles/inference-perf/$(BURSTY_WORKLOAD).in"; \
