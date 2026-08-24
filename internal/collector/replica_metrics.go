@@ -874,15 +874,28 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
-	// Process scheduler dispatch rate results (arrival rate per instance)
+	// Process scheduler dispatch rate results (arrival rate per pod).
+	//
+	// Collected by POD, not by instance key, and applied to podData in a second
+	// pass below once every engine query has run.
+	//
+	// The EPP's "port" label cannot take part in the instance key. Every other
+	// series here is keyed by buildInstanceKey, which reads the port out of
+	// Prometheus's `instance` label -- the port the engine is SCRAPED on. The EPP
+	// reports the port it ROUTES to, which is the InferencePool target. Under
+	// llm-d modelservice those differ by construction: a routing sidecar fronts
+	// the pod on 8000 while vLLM serves and exposes /metrics on 8200. So the two
+	// halves keyed the same pod as "<pod>:8200" and "<pod>:8000", the EPP half
+	// carried no KV or queue and was dropped by the has-no-metrics guard in the
+	// emit loop, and every real pod reported no arrival rate at all -- the
+	// "serving but no dispatch rate" line, once per pod per cycle, on a fleet the
+	// EPP was demonstrably dispatching to.
+	arrivalByPod := map[string]float64{}
+	arrivalTimeByPod := map[string]time.Time{}
 	if result := results[registration.QuerySchedulerDispatchRate]; result != nil {
 		if !result.HasError() {
 			for _, value := range result.Values {
-				// The scheduler metric has pod_name and port labels to identify the engine instance.
-				// Build a composite key: pod_name:port to support multiple instances per pod.
 				podName := value.Labels["pod_name"]
-				port := value.Labels["port"]
-
 				if podName == "" {
 					podName = value.Labels["pod"]
 				}
@@ -894,29 +907,22 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 					continue
 				}
 
-				// Create composite key: pod_name:port for unique instance identification
-				instanceKey := podName
-				if port != "" {
-					instanceKey = podName + ":" + port
-				}
-
-				if podData[instanceKey] == nil {
-					podData[instanceKey] = &podMetricData{
-						podName: podName,
-					}
-				}
 				// NaN check: rate can produce NaN if no successful attempts
-				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 {
-					podData[instanceKey].arrivalRate = value.Value
-					podData[instanceKey].hasArrivalRate = true
-					podData[instanceKey].arrivalRateTimestamp = value.Timestamp
-
-					logger.V(logging.DEBUG).Info("Scheduler dispatch rate metric",
-						"instance", instanceKey,
-						"pod", podName,
-						"port", port,
-						"arrivalRate", value.Value)
+				if math.IsNaN(value.Value) || math.IsInf(value.Value, 0) || value.Value < 0 {
+					continue
 				}
+
+				// Summed across ports: a pod fronted on several routed ports is
+				// one pod's worth of arrivals.
+				arrivalByPod[podName] += value.Value
+				if value.Timestamp.After(arrivalTimeByPod[podName]) {
+					arrivalTimeByPod[podName] = value.Timestamp
+				}
+
+				logger.V(logging.DEFAULT).Info("Scheduler dispatch rate metric",
+					"pod", podName,
+					"port", value.Labels["port"],
+					"arrivalRate", value.Value)
 			}
 		}
 	}
@@ -1027,6 +1033,41 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 {
 					podData[instanceKey].requestRate = value.Value
 				}
+			}
+		}
+	}
+
+	// Apply the per-pod EPP arrival rates onto the engine entries, now that every
+	// engine query has populated podData.
+	//
+	// Only entries the emit loop will keep are candidates; an entry with neither
+	// KV nor queue is a stale key it drops. The pod's total is split evenly when
+	// a pod somehow has more than one engine entry, because pod_collapse sums
+	// ArrivalRate over a pod's metrics -- assigning the total to each would
+	// multiply it. Normally there is exactly one and the split is a no-op.
+	if len(arrivalByPod) > 0 {
+		candidates := map[string][]*podMetricData{}
+		for _, data := range podData {
+			if data.podName == "" || (!data.hasKv && !data.hasQueue) {
+				continue
+			}
+			if _, ok := arrivalByPod[data.podName]; ok {
+				candidates[data.podName] = append(candidates[data.podName], data)
+			}
+		}
+		for podName, rate := range arrivalByPod {
+			entries := candidates[podName]
+			if len(entries) == 0 {
+				// The EPP dispatches to a pod this collector has no engine series
+				// for: it went away between scrapes, or it belongs to another
+				// model whose series this model's filter dropped.
+				continue
+			}
+			share := rate / float64(len(entries))
+			for _, data := range entries {
+				data.arrivalRate = share
+				data.hasArrivalRate = true
+				data.arrivalRateTimestamp = arrivalTimeByPod[podName]
 			}
 		}
 	}
