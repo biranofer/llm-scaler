@@ -84,9 +84,11 @@ correcting a discrepancy whose cause is unknown.
 
 ## Interaction with the conceded-replica clamp
 
-A separate, **unmerged** change (branch `investigate/wva-oscillation`) caps supply
-at the replica count an in-flight scale-down has already committed to. That clamp
-is not in this branch and this code does not reference it.
+A separate change caps supply at the replica count an in-flight scale-down has
+already committed to (`steadystate.clampReplicaCountToScaleTarget`). Whether it is
+present depends on the branch: it is NOT on `feat/arrival-rate-demand-floor`, and
+it IS on `feat/clamp-plus-floor`, where the two run together for the first time.
+Check before relying on anything below.
 
 If both land they push the same way — the clamp lowers supply, the floor raises
 demand, and `RequiredCapacity = demand/scaleUp − anticipatedSupply` responds to
