@@ -716,6 +716,36 @@ test-e2e-smoke: ## Run smoke e2e tests
 	@echo "Running smoke e2e tests..."
 	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	@# The suite reaches Prometheus at https://localhost:9090
+	@# (utils.DefaultPrometheusURL) and creates no port-forward of its own, so
+	@# without one every Prometheus-dependent assertion calls Skip. Nothing else
+	@# created it either -- not CI, not this Makefile -- so in CI those assertions
+	@# have never run. The suite still goes green, because a Skip is not a failure:
+	@#
+	@#   [SKIPPED] Prometheus is not reachable from the test host: timed out
+	@#   waiting for the condition (port-forward svc/kube-prometheus-stack-prometheus
+	@#   9090:9090 for the metric assertions)
+	@#
+	@# 17 skip sites across the suite mention Prometheus. Started here rather than in
+	@# the workflow so a local run gets the same coverage as CI, and torn down after.
+	@# Absence is still a warning rather than an error: the assertion that proves
+	@# scale-to-zero -- the deployment reaching zero -- needs no Prometheus at all.
+	PF_PID=""; \
+	if kubectl get svc -n $(E2E_MONITORING_NAMESPACE) kube-prometheus-stack-prometheus >/dev/null 2>&1; then \
+		kubectl port-forward -n $(E2E_MONITORING_NAMESPACE) svc/kube-prometheus-stack-prometheus 9090:9090 >/dev/null 2>&1 & \
+		PF_PID=$$!; \
+		for i in $$(seq 1 20); do \
+			curl -sk --max-time 2 https://localhost:9090/-/ready >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		if curl -sk --max-time 2 https://localhost:9090/-/ready >/dev/null 2>&1; then \
+			echo "Prometheus port-forward ready on https://localhost:9090"; \
+		else \
+			echo "WARNING: Prometheus port-forward did not become ready -- metric assertions will Skip"; \
+		fi; \
+	else \
+		echo "WARNING: svc/kube-prometheus-stack-prometheus not found in $(E2E_MONITORING_NAMESPACE) -- metric assertions will Skip"; \
+	fi; \
 	KUBECONFIG=$(KUBECONFIG) \
 	ENVIRONMENT=$(ENVIRONMENT) \
 	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
@@ -730,6 +760,7 @@ test-e2e-smoke: ## Run smoke e2e tests
 	go test ./test/e2e/ -timeout $(E2E_GO_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="smoke" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
+	[ -n "$$PF_PID" ] && kill $$PF_PID 2>/dev/null || true; \
 	echo ""; \
 	echo "=========================================="; \
 	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
@@ -742,6 +773,36 @@ test-e2e-full: ## Run full e2e test suite
 	@echo "Running full e2e test suite..."
 	$(eval FOCUS_ARGS := $(if $(FOCUS),-ginkgo.focus="$(FOCUS)",))
 	$(eval SKIP_ARGS := $(if $(SKIP),-ginkgo.skip="$(SKIP)",))
+	@# The suite reaches Prometheus at https://localhost:9090
+	@# (utils.DefaultPrometheusURL) and creates no port-forward of its own, so
+	@# without one every Prometheus-dependent assertion calls Skip. Nothing else
+	@# created it either -- not CI, not this Makefile -- so in CI those assertions
+	@# have never run. The suite still goes green, because a Skip is not a failure:
+	@#
+	@#   [SKIPPED] Prometheus is not reachable from the test host: timed out
+	@#   waiting for the condition (port-forward svc/kube-prometheus-stack-prometheus
+	@#   9090:9090 for the metric assertions)
+	@#
+	@# 17 skip sites across the suite mention Prometheus. Started here rather than in
+	@# the workflow so a local run gets the same coverage as CI, and torn down after.
+	@# Absence is still a warning rather than an error: the assertion that proves
+	@# scale-to-zero -- the deployment reaching zero -- needs no Prometheus at all.
+	PF_PID=""; \
+	if kubectl get svc -n $(E2E_MONITORING_NAMESPACE) kube-prometheus-stack-prometheus >/dev/null 2>&1; then \
+		kubectl port-forward -n $(E2E_MONITORING_NAMESPACE) svc/kube-prometheus-stack-prometheus 9090:9090 >/dev/null 2>&1 & \
+		PF_PID=$$!; \
+		for i in $$(seq 1 20); do \
+			curl -sk --max-time 2 https://localhost:9090/-/ready >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		if curl -sk --max-time 2 https://localhost:9090/-/ready >/dev/null 2>&1; then \
+			echo "Prometheus port-forward ready on https://localhost:9090"; \
+		else \
+			echo "WARNING: Prometheus port-forward did not become ready -- metric assertions will Skip"; \
+		fi; \
+	else \
+		echo "WARNING: svc/kube-prometheus-stack-prometheus not found in $(E2E_MONITORING_NAMESPACE) -- metric assertions will Skip"; \
+	fi; \
 	KUBECONFIG=$(KUBECONFIG) \
 	ENVIRONMENT=$(ENVIRONMENT) \
 	WVA_NAMESPACE=$(CONTROLLER_NAMESPACE) \
@@ -755,6 +816,7 @@ test-e2e-full: ## Run full e2e test suite
 	go test ./test/e2e/ -timeout $(E2E_GO_TIMEOUT) -v -ginkgo.v -ginkgo.timeout=$(E2E_TIMEOUT) \
 		-ginkgo.label-filter="full && !smoke && !flaky" $(FOCUS_ARGS) $(SKIP_ARGS); \
 	TEST_EXIT_CODE=$$?; \
+	[ -n "$$PF_PID" ] && kill $$PF_PID 2>/dev/null || true; \
 	echo ""; \
 	echo "=========================================="; \
 	echo "Test execution completed. Exit code: $$TEST_EXIT_CODE"; \
