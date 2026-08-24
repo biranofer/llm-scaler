@@ -1,0 +1,1 @@
+Error from server: Get "https://192.168.98.41:10250/containerLogs/biran/qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9tcwh/vllm": dial tcp 192.168.98.41:10250: connect: no route to host

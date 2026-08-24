@@ -1,0 +1,13 @@
+2026-08-24 15:56:53,865 - DEBUG   - 🔍 Rendered Specification File
+ {
+  "base_dir": "/home/biran/LLMD/as/llm-scaler/llm-d-benchmark",
+  "values_file": {
+    "path": "/home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/templates/values/defaults.yaml"
+  },
+  "template_dir": {
+    "path": "/home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/templates/jinja"
+  },
+  "scenario_file": {
+    "path": "/home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/scenarios/guides/workload-autoscaling.yaml"
+  }
+}

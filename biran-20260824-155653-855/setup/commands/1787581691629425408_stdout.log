@@ -1,0 +1,2 @@
+NAME                                             REFERENCE                                      TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
+keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva   Deployment/qwen-qwe-3db867ce-en3-0-6b-decode   1/1 (avg)   1         10        1          2d1h

@@ -1,0 +1,1 @@
+---> will execute: "oc --kubeconfig /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/environment/context.ctx --context biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com describe hpa --namespace biran"

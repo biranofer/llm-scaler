@@ -1,0 +1,36 @@
+Warning: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG empty.Environment variable empty: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG
+Warning: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG empty.Environment variable empty: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG
+Warning: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG empty.Environment variable empty: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG
+Warning: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG empty.Environment variable empty: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG
+Warning: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG empty.Environment variable empty: LLMDBENCH_VLLM_MODELSERVICE_GAIE_PRESETS_CONFIG
+Metrics integrated into: /requests/inference-perf-1787576267-8c2l21_1/benchmark_report_v0.2,_stage_0_lifecycle_metrics.json.yaml
+Metrics integrated into: /requests/inference-perf-1787576267-8c2l21_1/benchmark_report_v0.2,_stage_4_lifecycle_metrics.json.yaml
+Metrics integrated into: /requests/inference-perf-1787576267-8c2l21_1/benchmark_report_v0.2,_stage_1_lifecycle_metrics.json.yaml
+Metrics integrated into: /requests/inference-perf-1787576267-8c2l21_1/benchmark_report_v0.2,_stage_3_lifecycle_metrics.json.yaml
+Metrics integrated into: /requests/inference-perf-1787576267-8c2l21_1/benchmark_report_v0.2,_stage_2_lifecycle_metrics.json.yaml
+Collecting time series data...
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_kv_cache_usage_perc.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_num_requests_running.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_num_requests_waiting.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_prefix_cache_hits_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_prefix_cache_queries_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_external_prefix_cache_hits_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_external_prefix_cache_queries_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_nixl_xfer_time_seconds_sum.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_nixl_xfer_time_seconds_count.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_nixl_bytes_transferred_sum.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_nixl_bytes_transferred_count.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_num_preemptions_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_prompt_tokens_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/vllm_generation_tokens_total.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/inference_pool_average_kv_cache_utilization.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/inference_pool_average_queue_size.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/inference_pool_average_running_requests.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/inference_pool_ready_pods.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/llm_d_epp_flow_control_pool_saturation.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/llm_d_epp_flow_control_queue_size.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/llm_d_epp_request_running.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/pod_startup_times.png
+Saved plot: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs/replica_status.png
+
+All visualizations saved to: /requests/inference-perf-1787576267-8c2l21_1/metrics/graphs

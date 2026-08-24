@@ -1,0 +1,56 @@
+Name:                                                keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Namespace:                                           biran
+Labels:                                              app.kubernetes.io/component=default-scaledobject
+                                                     app.kubernetes.io/managed-by=workload-variant-autoscaler
+                                                     app.kubernetes.io/name=keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva
+                                                     app.kubernetes.io/part-of=qwen-qwe-3db867ce-en3-0-6b-decode-wva
+                                                     app.kubernetes.io/version=2.19.0
+                                                     scaledobject.keda.sh/name=qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Annotations:                                         llm-d.ai/created-by: deploy/lib/scaledobject.sh
+                                                     llm-d.ai/managed: true
+                                                     llm-d.ai/model-id: Qwen/Qwen3-0.6B
+                                                     llm-d.ai/variant-cost: 10.0
+CreationTimestamp:                                   Sat, 22 Aug 2026 16:06:49 +0300
+Reference:                                           Deployment/qwen-qwe-3db867ce-en3-0-6b-decode
+Metrics:                                             ( current / target )
+  "s0-wva-desired-replicas" (target average value):  1 / 1
+Min replicas:                                        1
+Max replicas:                                        10
+Behavior:
+  Scale Up:
+    Stabilization Window: 0 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Percent  Value: 100  Period: 5 seconds
+  Scale Down:
+    Stabilization Window: 300 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Percent  Value: 100  Period: 120 seconds
+Deployment pods:       1 current / 1 desired
+Conditions:
+  Type            Status  Reason              Message
+  ----            ------  ------              -------
+  AbleToScale     True    ReadyForNewScale    recommended size matches current size
+  ScalingActive   True    ValidMetricFound    the HPA was able to successfully calculate a replica count from external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},})
+  ScalingLimited  False   DesiredWithinRange  the desired count is within the acceptable range
+Events:
+  Type     Reason                        Age                 From                       Message
+  ----     ------                        ----                ----                       -------
+  Warning  FailedComputeMetricsReplicas  93m (x2 over 94m)   horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: missing request for cpu in container routing-proxy of Pod qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9tcwh
+  Warning  FailedGetResourceMetric       93m (x2 over 94m)   horizontal-pod-autoscaler  failed to get cpu utilization: missing request for cpu in container routing-proxy of Pod qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9tcwh
+  Warning  FailedComputeMetricsReplicas  92m (x5 over 94m)   horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: missing request for cpu in container routing-proxy of Pod qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-gsvmg
+  Warning  FailedGetResourceMetric       92m (x5 over 94m)   horizontal-pod-autoscaler  failed to get cpu utilization: missing request for cpu in container routing-proxy of Pod qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-gsvmg
+  Normal   SuccessfulRescale             89m (x16 over 25h)  horizontal-pod-autoscaler  New size: 2; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             77m (x8 over 24h)   horizontal-pod-autoscaler  New size: 3; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             76m (x4 over 25h)   horizontal-pod-autoscaler  New size: 8; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             65m                 horizontal-pod-autoscaler  New size: 7; reason: All metrics below target
+  Normal   SuccessfulRescale             60m (x2 over 20h)   horizontal-pod-autoscaler  New size: 4; reason: All metrics below target
+  Normal   SuccessfulRescale             52m (x6 over 23h)   horizontal-pod-autoscaler  New size: 6; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             51m (x2 over 23h)   horizontal-pod-autoscaler  New size: 9; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             51m (x11 over 25h)  horizontal-pod-autoscaler  New size: 10; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             42m (x2 over 10h)   horizontal-pod-autoscaler  New size: 8; reason: All metrics below target
+  Normal   SuccessfulRescale             41m (x5 over 24h)   horizontal-pod-autoscaler  New size: 3; reason: All metrics below target
+  Normal   SuccessfulRescale             41m (x13 over 25h)  horizontal-pod-autoscaler  New size: 4; reason: external metric s0-wva-desired-replicas(&LabelSelector{MatchLabels:map[string]string{scaledobject.keda.sh/name: qwen-qwe-3db867ce-en3-0-6b-decode-wva,},MatchExpressions:[]LabelSelectorRequirement{},}) above target
+  Normal   SuccessfulRescale             35m (x9 over 25h)   horizontal-pod-autoscaler  New size: 2; reason: All metrics below target
+  Normal   SuccessfulRescale             23m (x12 over 25h)  horizontal-pod-autoscaler  New size: 1; reason: All metrics below target

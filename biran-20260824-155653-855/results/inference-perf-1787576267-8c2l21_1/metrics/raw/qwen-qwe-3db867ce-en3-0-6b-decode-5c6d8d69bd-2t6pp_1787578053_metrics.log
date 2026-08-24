@@ -1,0 +1,6 @@
+# Timestamp: 2026-08-24T13:27:33+0000
+# Pod: qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-2t6pp
+# PodIP: 10.131.6.198
+# Source: prometheus_metrics
+
+{"object":"error","message":"The decode node is not ready. Please check that the vLLM service is running and the port configuration is correct.","type":"ServiceUnavailable","param":"","code":503}

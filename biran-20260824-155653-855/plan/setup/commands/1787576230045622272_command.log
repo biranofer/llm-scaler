@@ -1,0 +1,1 @@
+---> will execute: "helmfile --selector name=qwen-qwe-3db867ce-en3-0-6b-ms template -f /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/plan/inference-scheduling-wva/helm/helmfile.yaml --skip-schema-validation"

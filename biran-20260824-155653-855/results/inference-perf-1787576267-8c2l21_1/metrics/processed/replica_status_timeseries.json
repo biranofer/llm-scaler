@@ -1,0 +1,5076 @@
+{
+  "snapshots": [
+    {
+      "timestamp": "2026-08-24T12:57:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:58:16Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:58:46Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:59:02Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:59:18Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:59:34Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T12:59:50Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:00:06Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:00:23Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:00:39Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:00:55Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:01:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:01:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:01:43Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:02:00Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:02:16Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:02:32Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:02:48Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:03:04Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:03:21Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:03:37Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:03:53Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:04:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:04:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:04:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:04:58Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:05:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:05:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:05:48Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:06:04Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:06:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:06:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:06:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:07:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:07:25Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:07:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:07:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:08:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:08:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:08:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:09:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:09:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:09:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:09:53Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:10:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:10:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:11:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:11:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:11:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 8,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 8
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:12:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 8,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 8
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:12:25Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:12:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:12:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:13:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:13:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:13:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:14:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:14:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:14:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:14:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:15:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:15:25Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:15:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:15:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:16:13Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:16:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:16:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:17:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:17:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:17:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:17:51Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:18:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:18:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:18:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:18:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:19:13Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:19:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:19:45Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:20:02Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:20:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:20:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:20:51Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:21:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:21:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:21:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:21:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:22:12Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:22:28Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:22:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:23:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:23:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:23:46Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:24:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:24:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:24:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:24:51Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:25:07Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:25:23Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:25:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:25:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:26:12Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:26:28Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:26:44Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:27:01Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:27:17Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 7,
+          "ready_replicas": 7,
+          "available_replicas": 7,
+          "updated_replicas": 7
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:27:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:27:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:28:06Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:28:23Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:28:39Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:28:55Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:29:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:29:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:29:44Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:30:00Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:30:16Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:30:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:30:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:31:05Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:31:21Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:31:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:31:54Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:32:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:32:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:32:43Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:32:59Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:33:15Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:33:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:33:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:34:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:34:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:34:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:34:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:35:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:36:06Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 6,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 6
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:36:22Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 9,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 9
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:36:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:36:55Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:37:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 6,
+          "available_replicas": 6,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:37:28Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 9,
+          "available_replicas": 9,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:37:44Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:38:00Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:38:17Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:38:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:38:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:39:05Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:39:21Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:39:37Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:39:54Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:40:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:40:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:40:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:40:59Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:41:15Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:41:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:41:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:42:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:42:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:42:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:42:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:43:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:43:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:43:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:43:58Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:44:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:44:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:44:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:45:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:45:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:45:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:45:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 10,
+          "ready_replicas": 10,
+          "available_replicas": 10,
+          "updated_replicas": 10
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:46:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 8,
+          "ready_replicas": 8,
+          "available_replicas": 8,
+          "updated_replicas": 8
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:46:25Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:46:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:46:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 3,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 3
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:47:18Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:47:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 3,
+          "available_replicas": 3,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:48:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:48:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:48:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:48:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:49:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:49:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:49:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:49:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:50:13Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:50:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:50:45Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:51:02Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:51:18Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:51:34Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:51:50Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:52:06Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:52:22Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:52:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 4,
+          "ready_replicas": 4,
+          "available_replicas": 4,
+          "updated_replicas": 4
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:52:55Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:53:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:53:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:53:43Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:53:59Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:54:15Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:54:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:54:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:55:04Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:55:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:55:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:55:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:56:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:56:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:56:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:56:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:57:13Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:57:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:57:45Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:58:01Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:58:17Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:58:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:58:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:59:06Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:59:22Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:59:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T13:59:54Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:00:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:00:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:00:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:00:59Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:01:15Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:01:31Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:01:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:02:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:02:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:02:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:02:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:03:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:03:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:03:40Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:03:56Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:04:12Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 2,
+          "ready_replicas": 2,
+          "available_replicas": 2,
+          "updated_replicas": 2
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:04:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:04:45Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:05:01Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:05:17Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:05:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:05:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:06:05Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:06:21Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:06:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:06:54Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:07:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:07:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:07:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:07:58Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:08:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:08:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:08:46Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:09:02Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:09:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:09:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:09:51Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:10:07Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:10:23Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:10:39Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:10:55Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:11:11Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:11:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:11:43Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:12:00Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:12:16Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:12:32Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:12:48Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:13:04Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:13:20Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:13:36Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:13:52Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:14:08Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:14:24Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:14:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:14:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:15:13Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:15:29Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:15:45Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:16:01Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:16:17Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:16:33Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:16:49Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:17:05Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:17:22Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:17:38Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:17:54Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:18:10Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:18:27Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:18:44Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:19:00Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:19:16Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:19:32Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:19:48Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:20:05Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:20:21Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:20:37Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:20:53Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:21:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:21:25Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:21:41Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:21:57Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:22:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:22:30Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:22:47Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:23:03Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:23:19Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:23:35Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:23:53Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:24:09Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:24:26Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:24:42Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:24:58Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:25:14Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-08-24T14:25:32Z",
+      "namespace": "biran",
+      "controllers": [
+        {
+          "name": "qwen-qwe-3db867ce-en3-0-6b-decode",
+          "kind": "Deployment",
+          "model": "qwen-qwe-3db867ce-en3-0-6b",
+          "role": "decode",
+          "desired_replicas": 1,
+          "ready_replicas": 1,
+          "available_replicas": 1,
+          "updated_replicas": 1
+        }
+      ]
+    }
+  ]
+}

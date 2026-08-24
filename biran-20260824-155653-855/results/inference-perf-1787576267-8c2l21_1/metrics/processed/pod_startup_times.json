@@ -1,0 +1,55 @@
+{
+  "collected_at": "2026-08-24T14:25:32Z",
+  "pods": [
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-9tcwh",
+      "node": "pokprod-b93r43s2",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-22T10:46:55Z",
+      "ready_timestamp": "",
+      "startup_seconds": null
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-gsvmg",
+      "node": "pokprod-b93r39s2",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-24T12:35:28Z",
+      "ready_timestamp": "2026-08-24T12:37:04Z",
+      "startup_seconds": 96.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-v7djg",
+      "node": "pokprod-b93r44s1",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-24T12:58:56Z",
+      "ready_timestamp": "2026-08-24T12:59:58Z",
+      "startup_seconds": 62.0
+    },
+    {
+      "name": "qwen-qwe-3db867ce-en3-0-6b-decode-5c6d8d69bd-jj8gm",
+      "node": "pokprod-b93r38s0",
+      "model": "qwen-qwe-3db867ce-en3-0-6b",
+      "role": "decode",
+      "creation_timestamp": "2026-08-24T13:11:27Z",
+      "ready_timestamp": "2026-08-24T13:12:33Z",
+      "startup_seconds": 66.0
+    }
+  ],
+  "aggregate": {
+    "mean": 74.66666666666667,
+    "stddev": 18.58314648635514,
+    "min": 62.0,
+    "p25": 64.0,
+    "p50": 66.0,
+    "p75": 81.0,
+    "p90": 90.0,
+    "p95": 93.0,
+    "p99": 95.4,
+    "max": 96.0,
+    "count": 3,
+    "unit": "s"
+  }
+}

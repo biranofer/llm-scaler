@@ -1,0 +1,32 @@
+{
+    "kind": "Config",
+    "apiVersion": "v1",
+    "clusters": [
+        {
+            "name": "api-pokprod001-ete14-res-ibm-com:6443",
+            "cluster": {
+                "server": "https://api.pokprod001.ete14.res.ibm.com:6443",
+                "insecure-skip-tls-verify": true
+            }
+        }
+    ],
+    "users": [
+        {
+            "name": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443",
+            "user": {
+                "token": "REDACTED"
+            }
+        }
+    ],
+    "contexts": [
+        {
+            "name": "biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com",
+            "context": {
+                "cluster": "api-pokprod001-ete14-res-ibm-com:6443",
+                "user": "BIRAN@il.ibm.com/api-pokprod001-ete14-res-ibm-com:6443",
+                "namespace": "biran"
+            }
+        }
+    ],
+    "current-context": "biran/api-pokprod001-ete14-res-ibm-com:6443/BIRAN@il.ibm.com"
+}

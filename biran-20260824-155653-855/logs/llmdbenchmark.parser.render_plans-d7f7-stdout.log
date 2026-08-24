@@ -1,0 +1,59 @@
+2026-08-24 15:56:53,976 - INFO    - Processing scenario with 1 stack(s)...
+
+2026-08-24 15:56:53,982 - INFO    - Loaded 39 template(s) from /home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/templates/jinja
+2026-08-24 15:56:53,984 - INFO    - [1/1] Processing stack: inference-scheduling-wva
+2026-08-24 15:56:56,084 - INFO    - Image override: benchmark pinned to ghcr.io/llm-d/llm-d-benchmark:v0.7.8
+2026-08-24 15:56:56,084 - INFO    - Image override: vllm pinned to docker.io/vllm/vllm-openai:v0.26.0
+2026-08-24 15:56:56,084 - INFO    - Image override: vllmOpenai pinned to docker.io/vllm/vllm-openai:v0.26.0
+2026-08-24 15:56:56,084 - INFO    - Image override: routerEndpointPicker pinned to ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.9.0
+2026-08-24 15:56:56,084 - INFO    - Image override: routingSidecar pinned to ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0
+2026-08-24 15:56:56,084 - INFO    - Image override: udsTokenizer pinned to docker.io/vllm/vllm-openai:v0.26.0
+2026-08-24 15:56:56,084 - INFO    - Image override: python pinned to python:3.10
+2026-08-24 15:56:56,084 - INFO    - Image override: standalone pinned to docker.io/vllm/vllm-openai:v0.26.0
+2026-08-24 15:57:06,292 - INFO    - Namespace from CLI: deploy=biran, harness=biran, wva=biran
+2026-08-24 15:57:06,294 - INFO    - Model from CLI: Qwen/Qwen3-0.6B (shortName=qwen-qwe-3db867ce-en3-0-6b) [stack=inference-scheduling-wva]
+2026-08-24 15:57:06,296 - INFO    - Monitoring enabled from CLI: PodMonitor + metrics scraping
+2026-08-24 15:57:06,297 - INFO    - 🔑 HuggingFace token detected from environment (hf_****...JWjp)
+2026-08-24 15:57:06,380 - INFO    - ✅ Rendered: 01_pvc_workload-pvc.yaml
+2026-08-24 15:57:06,460 - INFO    - ✅ Rendered: 02_pvc_model-pvc.yaml
+2026-08-24 15:57:06,531 - INFO    - ✅ Rendered: 02a_pv_model-hostpath.yaml
+2026-08-24 15:57:06,598 - INFO    - ✅ Rendered: 03_cluster-monitoring-config.yaml
+2026-08-24 15:57:06,688 - INFO    - ✅ Rendered: 03_download_daemonset.yaml
+2026-08-24 15:57:06,771 - INFO    - ✅ Rendered: 04_download_job.yaml
+2026-08-24 15:57:06,907 - INFO    - ✅ Rendered: 05_namespace_sa_rbac_secret.yaml
+2026-08-24 15:57:06,979 - INFO    - ✅ Rendered: 05a_agentgateway_scc.yaml
+2026-08-24 15:57:07,060 - INFO    - ✅ Rendered: 06_pod_access_to_harness_data.yaml
+2026-08-24 15:57:07,142 - INFO    - ✅ Rendered: 07_service_access_to_harness_data.yaml
+2026-08-24 15:57:07,220 - INFO    - ✅ Rendered: 08_httproute.yaml
+2026-08-24 15:57:07,300 - INFO    - ✅ Rendered: 09_helmfile-gateway-provider.yaml
+2026-08-24 15:57:07,378 - INFO    - ✅ Rendered: 10_helmfile-main.yaml
+2026-08-24 15:57:07,464 - INFO    - ✅ Rendered: 11_infra.yaml
+2026-08-24 15:57:07,536 - INFO    - ✅ Rendered: 12_router-values.yaml
+2026-08-24 15:57:07,806 - INFO    - ✅ Rendered: 13_ms-values.yaml
+2026-08-24 15:57:07,883 - INFO    - ✅ Rendered: 13a_modelservice-direct-service.yaml
+2026-08-24 15:57:08,060 - INFO    - ✅ Rendered: 14_standalone-deployment_yaml.yaml
+2026-08-24 15:57:08,139 - INFO    - ✅ Rendered: 15_standalone-service_yaml.yaml
+2026-08-24 15:57:08,214 - INFO    - ✅ Rendered: 16_pvc_extra-pvc.yaml
+2026-08-24 15:57:08,286 - INFO    - ✅ Rendered: 17_standalone-podmonitor.yaml
+2026-08-24 15:57:08,372 - INFO    - ✅ Rendered: 18_podmonitor.yaml
+2026-08-24 15:57:08,449 - INFO    - ✅ Rendered: 19_wva-kustomize.yaml
+2026-08-24 15:57:08,541 - INFO    - ✅ Rendered: 20_harness_pod.yaml
+2026-08-24 15:57:08,620 - INFO    - ✅ Rendered: 21_keda-triggerauthentication.yaml
+2026-08-24 15:57:08,700 - INFO    - ✅ Rendered: 22_prometheus-rbac.yaml
+2026-08-24 15:57:08,778 - INFO    - ✅ Rendered: 23_wva-namespace.yaml
+2026-08-24 15:57:08,887 - INFO    - ✅ Rendered: 24_fma-deployment.yaml
+2026-08-24 15:57:08,962 - INFO    - ✅ Rendered: 25_fma-clusterrole.yaml
+2026-08-24 15:57:09,042 - INFO    - ✅ Rendered: 26_helmfile-fma-controllers.yaml
+2026-08-24 15:57:09,133 - INFO    - ✅ Rendered: 27_keda-scaledobjects.yaml
+2026-08-24 15:57:09,204 - INFO    - ✅ Rendered: 27a_keda-triggerauthentication.yaml
+2026-08-24 15:57:09,283 - INFO    - ✅ Rendered: 28_wva-scaledobject.yaml
+2026-08-24 15:57:09,360 - INFO    - ✅ Rendered: 29_epp-keda-saturation-epp-monitoring.yaml
+2026-08-24 15:57:09,446 - INFO    - ✅ Rendered: 30_keda-scaledobject.yaml
+2026-08-24 15:57:09,516 - INFO    - ✅ Rendered: 31_nok8s-epp-config.yaml
+2026-08-24 15:57:09,596 - INFO    - ✅ Rendered: 32_nok8s-epp-endpoints.yaml
+2026-08-24 15:57:09,668 - INFO    - ✅ Rendered: 33_nok8s-envoy.yaml
+2026-08-24 15:57:09,764 - INFO    - ✅ Rendered: 34_nok8s-containers.yaml
+2026-08-24 15:57:09,964 - INFO    - Output: /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/plan/inference-scheduling-wva
+2026-08-24 15:57:09,964 - INFO    - Success: 39, Errors: 0
+
+2026-08-24 15:57:09,965 - INFO    - Scenario rendering complete! Output in: /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/plan

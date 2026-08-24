@@ -1,0 +1,132 @@
+2026-08-24 15:56:53,857 - INFO    - Specification resolved: guides/workload-autoscaling to /home/biran/LLMD/as/llm-scaler/llm-d-benchmark/config/specification/guides/workload-autoscaling.yaml.j2
+2026-08-24 15:56:53,858 - INFO    - Using Package: "llmdbenchmark:0.7.0" found at https://github.com/llm-d/llm-d-benchmark
+2026-08-24 15:56:53,858 - INFO    - ✅ Created Workspace: "/home/biran/LLMD/as/llm-scaler"
+2026-08-24 15:56:53,858 - INFO    - ✅ Created llmdbenchmark instance in workspace: "/home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855"
+
+2026-08-24 15:56:53,865 - INFO    - ✅ Specification file rendered and validated successfully.
+2026-08-24 15:56:53,865 - DEBUG   - 🔍 Using specification file to fully render templates into complete system stack plans.
+2026-08-24 15:56:53,991 - INFO    - Auto-detection requested for: decode.acceleratorType.labelValue, prefill.acceleratorType.labelValue, standalone.acceleratorType.labelValue
+2026-08-24 15:56:54,004 - INFO    - Connected to cluster for resource auto-detection
+2026-08-24 15:56:56,081 - INFO    - Discovered accelerator resources: nvidia.com/gpu
+2026-08-24 15:56:56,081 - INFO    - Discovered network resources: rdma/roce_gdr
+2026-08-24 15:56:56,081 - INFO    - Discovered GPU labels: nvidia.com/gpu.family = hopper
+2026-08-24 15:56:56,081 - INFO    - Discovered GPU labels: nvidia.com/gpu.product = NVIDIA-H100-80GB-HBM3
+2026-08-24 15:56:56,082 - INFO    - Resolved decode.acceleratorType: labelKey=nvidia.com/gpu.product, labelValue=NVIDIA-H100-80GB-HBM3
+2026-08-24 15:56:56,082 - INFO    - Resolved prefill.acceleratorType: labelKey=nvidia.com/gpu.product, labelValue=NVIDIA-H100-80GB-HBM3
+2026-08-24 15:56:56,082 - INFO    - Resolved standalone.acceleratorType: labelKey=nvidia.com/gpu.product, labelValue=NVIDIA-H100-80GB-HBM3
+2026-08-24 15:56:56,085 - INFO    - 🔍 Resolving chart version for: llmDInfra
+2026-08-24 15:57:01,430 - INFO    - 📦 Resolved chart llmDInfra to v1.4.0
+2026-08-24 15:57:01,430 - INFO    - 🔍 Resolving chart version for: llmDModelservice
+2026-08-24 15:57:06,291 - INFO    - 📦 Resolved chart llmDModelservice to v0.4.15
+2026-08-24 15:57:13,955 - INFO    - 📄 Pre-rendered modelservice Helm manifests (341 lines) → inference-scheduling-wva/helm/modelservice.yaml
+2026-08-24 15:57:14,031 - INFO    - Auto-detected deploy method(s) from plan: modelservice
+2026-08-24 15:57:15,277 - INFO    - Extracted current kubeconfig context context.ctx
+2026-08-24 15:57:15,277 - INFO    - Using kubeconfig: /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/environment/context.ctx
+
+2026-08-24 15:57:15,384 - INFO    - 📋 Executing 3 global step(s)...
+
+2026-08-24 15:57:15,385 - INFO    - >> [00] Validate cluster and run-phase prerequisites
+
+2026-08-24 15:57:15,385 - INFO    -     | Starting benchmark run phase
+2026-08-24 15:57:16,491 - INFO    -     | Harness namespace 'biran' exists
+2026-08-24 15:57:16,491 - INFO    -     | Output destination: local (/home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/results)
+2026-08-24 15:57:16,491 - INFO    - ✅ [00] Completed: run_preflight
+2026-08-24 15:57:16,491 - INFO    - >> [01] Clean up leftover harness pods from previous run
+2026-08-24 15:57:16,561 - INFO    -     | Cleaning up previous harness pods (label=llmdbench-harness-launcher, ns=biran)...
+2026-08-24 15:57:17,674 - INFO    - ✅ [01] Completed: run_cleanup_previous
+2026-08-24 15:57:17,674 - INFO    - >> [02] Prepare harness namespace (PVC, data access pod)
+2026-08-24 15:57:19,747 - INFO    -     | ✅ HF token secret already exists in biran
+2026-08-24 15:57:20,709 - INFO    -     | PVC 'workload-pvc' already exists with correct size (20Gi) ✓
+2026-08-24 15:57:20,710 - INFO    -     | Using existing workload PVC 'workload-pvc'
+2026-08-24 15:57:23,761 - INFO    -     | ✅ workload PVC "workload-pvc": Bound (storageClass=ibm-spectrum-scale-fileset) (00:00)
+2026-08-24 15:57:27,899 - INFO    -     | 🚚 Creating configmap with preprocess scripts...
+2026-08-24 15:57:29,654 - INFO    -     | 📦 ConfigMap "llm-d-benchmark-preprocesses" created in ns/biran with 7 file(s):
+2026-08-24 15:57:29,654 - INFO    -     |     │ benchmark_nixl.py (24.7 KB)
+2026-08-24 15:57:29,654 - INFO    -     |     │ gemini-arp-fix.sh (1.5 KB)
+2026-08-24 15:57:29,654 - INFO    -     |     │ install_nsys.sh (0.3 KB)
+2026-08-24 15:57:29,655 - INFO    -     |     │ set_llmdbench_environment.py (36.4 KB)
+2026-08-24 15:57:29,655 - INFO    -     |     │ show_gids.sh (2.1 KB)
+2026-08-24 15:57:29,655 - INFO    -     |     │ standalone-preprocess.py (7.1 KB)
+2026-08-24 15:57:29,655 - INFO    -     |     │ standalone-preprocess.sh (3.3 KB)
+2026-08-24 15:57:30,738 - INFO    -     | ✅ harness data-access pod: 1/1 Ready (00:00)
+2026-08-24 15:57:30,738 - INFO    - ✅ [02] Completed: harness_namespace
+
+2026-08-24 15:57:30,738 - INFO    - 📋 Executing 10 per-stack step(s) across 1 stack(s) (max parallel: 1)...
+
+2026-08-24 15:57:30,738 - INFO    - Stack 'inference-scheduling-wva': starting 10 step(s)...
+2026-08-24 15:57:30,738 - INFO    - >> [02] Stack 'inference-scheduling-wva': Wait for FMA launcher pool to warm up
+2026-08-24 15:57:30,983 - INFO    - ✅ [02] Stack 'inference-scheduling-wva': Completed: fma_warmup
+2026-08-24 15:57:30,983 - INFO    - >> [03] Stack 'inference-scheduling-wva': Detect model serving endpoint
+2026-08-24 15:57:32,107 - INFO    -     | Detected endpoint: http://172.30.18.103:80 (service=qwen-qwe-3db867ce-en3-0-6b-router-epp, stack_type=llm-d)
+2026-08-24 15:57:32,107 - INFO    - ✅ [03] Stack 'inference-scheduling-wva': Completed: detect_endpoint
+2026-08-24 15:57:32,108 - INFO    - >> [04] Stack 'inference-scheduling-wva': Verify model is served at endpoint
+2026-08-24 15:57:32,187 - INFO    -     | Verifying model 'Qwen/Qwen3-0.6B' at http://172.30.18.103:80...
+2026-08-24 15:57:43,175 - INFO    -     | Model 'Qwen/Qwen3-0.6B' verified at http://172.30.18.103:80
+2026-08-24 15:57:43,176 - INFO    - ✅ [04] Stack 'inference-scheduling-wva': Completed: verify_model
+2026-08-24 15:57:43,176 - INFO    - >> [05] Stack 'inference-scheduling-wva': Render workload profile templates
+2026-08-24 15:57:43,254 - INFO    -     | Rendered profile: burst_4k1000_6_14_6_14_6.yaml
+2026-08-24 15:57:43,254 - INFO    -     | Profiles rendered to /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/workload/profiles/inference-perf
+2026-08-24 15:57:43,254 - INFO    - ✅ [05] Stack 'inference-scheduling-wva': Completed: render_profiles
+2026-08-24 15:57:43,254 - INFO    - >> [06] Stack 'inference-scheduling-wva': Create profile and harness-scripts ConfigMaps
+2026-08-24 15:57:43,327 - INFO    -     | Creating ConfigMap 'inference-perf-profiles' with 3 profile(s) in ns=biran...
+2026-08-24 15:57:44,661 - INFO    -     | ConfigMap 'inference-perf-profiles' created with 3 profile(s)
+2026-08-24 15:57:44,662 - INFO    -     | Creating ConfigMap 'llmdbench-harness-scripts' with 25 harness script(s) in ns=biran...
+2026-08-24 15:57:47,071 - INFO    -     | ConfigMap 'llmdbench-harness-scripts' created with 25 script(s)
+2026-08-24 15:57:47,072 - INFO    - ✅ [06] Stack 'inference-scheduling-wva': Completed: create_profile_configmap
+2026-08-24 15:57:47,072 - INFO    - >> [07] Stack 'inference-scheduling-wva': Deploy harness pod(s) for benchmark execution
+2026-08-24 15:57:47,144 - INFO    -     | Running 1 treatment(s) x 1 parallel pod(s) for 'inference-perf' (sequential per treatment)...
+2026-08-24 15:57:47,145 - INFO    - 🚀     | [1/1] Treatment 'default': deploying 1 pod(s)...
+2026-08-24 15:57:48,793 - INFO    -     | Deployed pod 'inference-perf-8ff3v5yc' (experiment=inference-perf-1787576267-8c2l21, parallel=1/1)
+2026-08-24 15:57:48,793 - INFO    -     | Waiting for pods (label=app=llmdbench-harness-launcher) to start (timeout=7200s)...
+2026-08-24 15:58:02,292 - INFO    -     | All pods are running
+2026-08-24 15:58:02,292 - INFO    -     | Waiting for pods (label=app=llmdbench-harness-launcher) to complete (timeout=7200s)...
+2026-08-24 17:27:29,468 - INFO    -     | All pods completed successfully
+2026-08-24 17:27:32,775 - INFO    -     | Collecting results for 1 dir(s): inference-perf-1787576267-8c2l21_1
+2026-08-24 17:27:48,051 - INFO    -     | Collected 1873 file(s) for inference-perf-1787576267-8c2l21_1
+2026-08-24 17:27:49,391 - INFO    -     | Captured logs for pod 'inference-perf-8ff3v5yc'
+2026-08-24 17:27:49,392 - INFO    -     | Capturing pod status in namespace 'biran'...
+2026-08-24 17:27:50,568 - INFO    -     | Pod status captured to pod_status.txt
+2026-08-24 17:27:54,953 - INFO    -     | No model-serving pods found (label=llm-d.ai/model=qwen-qwe-3db867ce-en3-0-6b)
+2026-08-24 17:28:01,905 - INFO    -     | Captured EPP logs → epp_pods.log
+2026-08-24 17:28:04,503 - INFO    -     | Captured IGW logs → igw_pods.log
+2026-08-24 17:28:04,504 - INFO    -     | Processing EPP logs...
+2026-08-24 17:28:06,860 - INFO    -     | EPP log processing complete
+2026-08-24 17:28:08,015 - INFO    -     | Deleted pod 'inference-perf-8ff3v5yc'
+2026-08-24 17:28:08,015 - INFO    - ✅     | [1/1] Treatment 'default' complete (5420s)
+2026-08-24 17:28:08,018 - INFO    - ✅ [07] Stack 'inference-scheduling-wva': Completed: deploy_harness
+2026-08-24 17:28:08,018 - INFO    - -- [07] Stack 'inference-scheduling-wva': deploy_harness_local
+2026-08-24 17:28:08,018 - INFO    - >> [08] Stack 'inference-scheduling-wva': Wait for harness pod(s) to complete
+2026-08-24 17:28:08,018 - INFO    - ✅ [08] Stack 'inference-scheduling-wva': Completed: wait_completion
+2026-08-24 17:28:08,018 - INFO    - -- [09] Stack 'inference-scheduling-wva': collect_results
+2026-08-24 17:28:08,018 - INFO    - >> [09] Stack 'inference-scheduling-wva': Capture WVA HPA/ScaledObject/Deployment state and controller logs
+2026-08-24 17:28:38,938 - INFO    -     | cluster-state: captured 10 file(s) to /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/results/inference-perf-1787576267-8c2l21
+2026-08-24 17:28:38,938 - INFO    - ✅ [09] Stack 'inference-scheduling-wva': Completed: capture_cluster_state
+
+2026-08-24 17:28:38,939 - INFO    - 📋 Executing 3 global step(s)...
+
+2026-08-24 17:28:38,939 - INFO    - -- [10] Skipping: upload_results (Upload results to cloud storage)
+2026-08-24 17:28:38,939 - INFO    - >> [11] Clean up harness pods and ConfigMaps
+2026-08-24 17:28:38,975 - INFO    -     | Cleaning up harness resources in ns=biran...
+2026-08-24 17:28:39,820 - INFO    -     | Harness pods deleted
+2026-08-24 17:28:40,836 - INFO    -     | ConfigMap 'inference-perf-profiles' deleted
+2026-08-24 17:28:41,866 - INFO    -     | ConfigMap 'llmdbench-harness-scripts' deleted
+2026-08-24 17:28:41,866 - INFO    - ✅ [11] Completed: run_cleanup_post
+2026-08-24 17:28:41,867 - INFO    - -- [12] Skipping: analyze_results (Run local analysis on collected results)
+
+2026-08-24 17:28:41,903 - INFO    - ============================================================
+2026-08-24 17:28:41,903 - INFO    - BENCHMARK RUN SUMMARY
+2026-08-24 17:28:41,903 - INFO    - ============================================================
+2026-08-24 17:28:41,903 - INFO    -   Harness:       inference-perf
+2026-08-24 17:28:41,903 - INFO    -   Workload:      burst_4k1000_6_14_6_14_6.yaml
+2026-08-24 17:28:41,903 - INFO    -   Model:         Qwen/Qwen3-0.6B
+2026-08-24 17:28:41,903 - INFO    -   Namespace:     biran
+2026-08-24 17:28:41,903 - INFO    -   Mode:          full
+2026-08-24 17:28:41,903 - INFO    -   Parallelism:   1
+2026-08-24 17:28:41,903 - INFO    -   Treatments:    1
+2026-08-24 17:28:41,903 - INFO    -     - inference-perf-1787576267-8c2l21
+2026-08-24 17:28:41,915 - INFO    -       [1/1] inference-perf-1787576267-8c2l21_1 (1880 files)
+2026-08-24 17:28:41,915 - INFO    -   Local results: /home/biran/LLMD/as/llm-scaler/biran-20260824-155653-855/results
+2026-08-24 17:28:41,915 - INFO    -   PVC results:   oc exec -n biran $(oc get pod -n biran -l role=llm-d-benchmark-data-access -o jsonpath='{.items[0].metadata.name}') -- ls /requests/
+2026-08-24 17:28:41,915 - INFO    - ============================================================
+2026-08-24 17:28:41,915 - INFO    - ✅ Run complete (mode=full, harness=inference-perf).
+2026-08-24 17:28:44,554 - INFO    - Run parameters stored in configmap/llm-d-benchmark-run-parameters (key=run-20260824T142841Z) in ns/biran

@@ -1,0 +1,314 @@
+fullnameOverride: qwen-qwe-3db867ce-en3-0-6b
+
+
+schedulerName: default-scheduler
+
+modelArtifacts:
+  name: Qwen/Qwen3-0.6B
+  uri: pvc://model-pvc/models/Qwen/Qwen3-0.6B
+  size: 1Ti
+  authSecretName: "llm-d-hf-token"
+  mountPath: /model-cache
+  labels:
+    llm-d.ai/inferenceServing: "true"
+    llm-d.ai/model: qwen-qwe-3db867ce-en3-0-6b
+    llm-d.ai/guide: "optimized-baseline"
+    # WVA needs the variant label on the scrape target so the saturation
+    # engine can join Prometheus series back to the VariantAutoscaling.
+    # FMA path stamps this on launcher pods via 24_fma-deployment.yaml.j2;
+    # for the modelservice (decode) path we stamp it here so baseline
+    # scenarios (WVA without FMA) hit METRICSREADY=True.
+    llm-d.ai/variant: "qwen-qwe-3db867ce-en3-0-6b-decode"
+
+multinode: false
+
+accelerator:
+  type: nvidia
+
+  dra: false
+
+
+routing:
+  servicePort: 8000
+  proxy:
+    enabled: true
+    image: "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0"
+    imagePullPolicy: Always
+    targetPort: 8200
+    connector: nixlv2
+    secure: false
+    zapEncoder: json
+    zapLogLevel: debug
+    debugLevel: 3
+
+
+decode:
+  create: true
+  replicas: 1
+
+  autoscaling:
+    enabled: false
+
+
+
+
+  acceleratorTypes:
+    labelKey: nvidia.com/gpu.product
+    labelValues:
+    - "NVIDIA-H100-80GB-HBM3"
+
+  parallelism:
+    tensor: 1
+    data: 1
+    dataLocal: 1
+    workers: 1
+
+
+
+
+
+
+
+
+
+
+  initContainers:
+    - name: preprocess
+      image: ghcr.io/llm-d/llm-d-benchmark:v0.7.8
+      imagePullPolicy: Always
+      command:
+      - set_llmdbench_environment.py
+      - -e
+      - /shared-config/llmdbench_env.sh
+      - -i
+      env:
+      - name: VLLM_IS_DECODE
+        value: "1"
+      - name: HOME
+        value: "/tmp"
+      - name: USER
+        value: "llm-d"
+      - name: HF_HOME
+        value: "/tmp/huggingface"
+      - name: MODEL_NAME
+        value: "Qwen/Qwen3-0.6B"
+      - name: MODEL_PATH
+        value: "models/Qwen/Qwen3-0.6B"
+      - name: VLLM_CACHE_ROOT
+        value: "/tmp/vllm"
+      - name: VLLM_WORKER_MULTIPROC_METHOD
+        value: "spawn"
+      - name: VLLM_LOGGING_LEVEL
+        value: "INFO"
+      - name: VLLM_HTTP_TIMEOUT_KEEP_ALIVE
+        value: "120"
+      - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+        value: "1"
+      - name: VLLM_SERVER_DEV_MODE
+        value: "1"
+      - name: VLLM_INFERENCE_PORT
+        value: "8000"
+      - name: VLLM_METRICS_PORT
+        value: "8200"
+      - name: VLLM_BLOCK_SIZE
+        value: "64"
+      - name: VLLM_MAX_MODEL_LEN
+        value: "16000"
+      - name: VLLM_LOAD_FORMAT
+        value: "auto"
+      - name: VLLM_ACCELERATOR_MEM_UTIL
+        value: "0.9"
+      - name: VLLM_MAX_NUM_SEQ
+        value: "256"
+      - name: VLLM_TENSOR_PARALLELISM
+        value: "1"
+      - name: VLLM_MAX_NUM_BATCHED_TOKENS
+        value: "256"
+      - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+        valueFrom:
+          fieldRef:
+            fieldPath: status.podIP
+      - name: VLLM_NIXL_SIDE_CHANNEL_PORT
+        value: "5557"
+      - name: UCX_TLS
+        value: "sm,cuda_ipc,cuda_copy,tcp"
+      - name: UCX_SOCKADDR_TLS_PRIORITY
+        value: "tcp"
+      - name: POD_IP
+        valueFrom:
+          fieldRef:
+            apiVersion: v1
+            fieldPath: status.podIP
+      - name: LLMDBENCH_POD_NS
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: PYTORCH_ALLOC_CONF
+        value: "expandable_segments:True"
+
+      volumeMounts:
+      - mountPath: /shared-config
+        name: shared-config
+
+
+  containers:
+  - name: "vllm"
+    image: "docker.io/vllm/vllm-openai:v0.26.0"
+    imagePullPolicy: IfNotPresent
+    mountModelVolume: true
+    modelCommand: custom
+    command:
+      - /bin/bash
+      - '-c'
+    args:
+      - |
+        /bin/true ; vllm serve /model-cache/models/Qwen/Qwen3-0.6B \
+          --host 0.0.0.0 \
+          --served-model-name Qwen/Qwen3-0.6B \
+          --port $VLLM_METRICS_PORT \
+          --block-size $VLLM_BLOCK_SIZE \
+          --max-model-len $VLLM_MAX_MODEL_LEN \
+          --tensor-parallel-size $VLLM_TENSOR_PARALLELISM \
+          --gpu-memory-utilization $VLLM_ACCELERATOR_MEM_UTIL \
+          --enforce-eager \
+          --no-enable-log-requests \
+          --disable-uvicorn-access-log \
+          --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'
+    env:
+      - name: VLLM_IS_DECODE
+        value: "1"
+      - name: HOME
+        value: "/tmp"
+      - name: USER
+        value: "llm-d"
+      - name: HF_HOME
+        value: "/tmp/huggingface"
+      - name: MODEL_NAME
+        value: "Qwen/Qwen3-0.6B"
+      - name: MODEL_PATH
+        value: "models/Qwen/Qwen3-0.6B"
+      - name: VLLM_CACHE_ROOT
+        value: "/tmp/vllm"
+      - name: VLLM_WORKER_MULTIPROC_METHOD
+        value: "spawn"
+      - name: VLLM_LOGGING_LEVEL
+        value: "INFO"
+      - name: VLLM_HTTP_TIMEOUT_KEEP_ALIVE
+        value: "120"
+      - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+        value: "1"
+      - name: VLLM_SERVER_DEV_MODE
+        value: "1"
+      - name: VLLM_INFERENCE_PORT
+        value: "8000"
+      - name: VLLM_METRICS_PORT
+        value: "8200"
+      - name: VLLM_BLOCK_SIZE
+        value: "64"
+      - name: VLLM_MAX_MODEL_LEN
+        value: "16000"
+      - name: VLLM_LOAD_FORMAT
+        value: "auto"
+      - name: VLLM_ACCELERATOR_MEM_UTIL
+        value: "0.9"
+      - name: VLLM_MAX_NUM_SEQ
+        value: "256"
+      - name: VLLM_TENSOR_PARALLELISM
+        value: "1"
+      - name: VLLM_MAX_NUM_BATCHED_TOKENS
+        value: "256"
+      - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+        valueFrom:
+          fieldRef:
+            fieldPath: status.podIP
+      - name: VLLM_NIXL_SIDE_CHANNEL_PORT
+        value: "5557"
+      - name: UCX_TLS
+        value: "sm,cuda_ipc,cuda_copy,tcp"
+      - name: UCX_SOCKADDR_TLS_PRIORITY
+        value: "tcp"
+      - name: POD_IP
+        valueFrom:
+          fieldRef:
+            apiVersion: v1
+            fieldPath: status.podIP
+      - name: LLMDBENCH_POD_NS
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: PYTORCH_ALLOC_CONF
+        value: "expandable_segments:True"
+
+    ports:
+      - containerPort: 5557
+        protocol: TCP
+      - containerPort: 8200
+        name: metrics
+        protocol: TCP
+    resources:
+      limits:
+        memory: 64Gi
+        cpu: "16"
+        nvidia.com/gpu: "1"
+      requests:
+        memory: 64Gi
+        cpu: "16"
+        nvidia.com/gpu: "1"
+    extraConfig:
+      startupProbe:
+        httpGet:
+          path: /v1/models
+          port: 8200
+        failureThreshold: 60
+        initialDelaySeconds: 15
+        periodSeconds: 30
+        timeoutSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8200
+        failureThreshold: 3
+        periodSeconds: 10
+        timeoutSeconds: 5
+      readinessProbe:
+        httpGet:
+          path: /v1/models
+          port: 8200
+        failureThreshold: 3
+        periodSeconds: 5
+        timeoutSeconds: 2
+      imagePullPolicy: Always
+      securityContext:
+        capabilities:
+          add:
+          - IPC_LOCK
+          - SYS_RAWIO
+        runAsGroup: 0
+        runAsUser: 0
+    volumeMounts:
+      - name: dshm
+        mountPath: /dev/shm
+      - name: shared-config
+        mountPath: /shared-config
+
+  volumes:
+    - name: shared-config
+      emptyDir: {}
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 16Gi
+
+  monitoring:
+    podmonitor:
+      enabled: true
+      portName: "metrics"
+      path: "/metrics"
+      interval: "30s"
+      labels:
+        release: llmd
+      metricRelabelings:
+
+
+prefill:
+  create: false

@@ -1,0 +1,2 @@
+NAME                                    SCALETARGETKIND      SCALETARGETNAME                     MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS        AUTHENTICATIONS   AGE
+qwen-qwe-3db867ce-en3-0-6b-decode-wva   apps/v1.Deployment   qwen-qwe-3db867ce-en3-0-6b-decode   1     10    True    True     False      False    external-push                     2d1h

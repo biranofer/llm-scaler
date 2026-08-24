@@ -1,0 +1,122 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: biran
+
+resources:
+- github.com/llm-d/llm-d/guides/workload-autoscaling/wva-config/platform/ocp?ref=main
+
+images:
+- name: ghcr.io/llm-d/llm-d-workload-variant-autoscaler
+  newName: ghcr.io/llm-d/llm-d-workload-variant-autoscaler
+  newTag: v0.8.0
+
+patches:
+- target:
+    kind: Deployment
+    name: wva-controller-manager
+  patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 1
+
+# Retarget the metrics ServiceMonitor's TLS serverName to this install's
+# namespace (upstream hardcodes `wva-system`); otherwise the scrape cert
+# mismatches and `wva_desired_replicas` never reaches KEDA/the HPA.
+- target:
+    kind: ServiceMonitor
+    name: wva-controller-manager-metrics-monitor
+  patch: |-
+    - op: replace
+      path: /spec/endpoints/0/tlsConfig/serverName
+      value: wva-controller-manager-metrics-service.biran.svc
+
+# Suffix each ClusterRoleBinding's metadata.name with the WVA namespace so
+# concurrent WVA installs in different namespaces don't fight over these
+# cluster-scoped binding names
+- target:
+    kind: ClusterRoleBinding
+    name: wva-manager-cluster-monitoring-view
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-manager-cluster-monitoring-view-biran
+- target:
+    kind: ClusterRoleBinding
+    name: wva-prometheus-cluster-monitoring-view
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-prometheus-cluster-monitoring-view-biran
+
+# WVA-owned ClusterRoles + their bindings: suffix BOTH the ClusterRole and the
+# binding (and repoint roleRef.name at the suffixed ClusterRole) so this
+# install never shares cluster-scoped RBAC with any other tenant.
+- target:
+    kind: ClusterRole
+    name: wva-epp-metrics-reader-role
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-epp-metrics-reader-role-biran
+- target:
+    kind: ClusterRoleBinding
+    name: wva-epp-metrics-reader-role-binding
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-epp-metrics-reader-role-binding-biran
+    - op: replace
+      path: /roleRef/name
+      value: wva-epp-metrics-reader-role-biran
+- target:
+    kind: ClusterRole
+    name: wva-manager-role
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-manager-role-biran
+- target:
+    kind: ClusterRoleBinding
+    name: wva-manager-rolebinding
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-manager-rolebinding-biran
+    - op: replace
+      path: /roleRef/name
+      value: wva-manager-role-biran
+- target:
+    kind: ClusterRole
+    name: wva-metrics-auth-role
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-metrics-auth-role-biran
+- target:
+    kind: ClusterRoleBinding
+    name: wva-metrics-auth-rolebinding
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-metrics-auth-rolebinding-biran
+    - op: replace
+      path: /roleRef/name
+      value: wva-metrics-auth-role-biran
+- target:
+    kind: ClusterRole
+    name: wva-metrics-reader
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-metrics-reader-biran
+- target:
+    kind: ClusterRoleBinding
+    name: wva-metrics-reader-rolebinding
+  patch: |-
+    - op: replace
+      path: /metadata/name
+      value: wva-metrics-reader-rolebinding-biran
+    - op: replace
+      path: /roleRef/name
+      value: wva-metrics-reader-biran

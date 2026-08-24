@@ -1,0 +1,261 @@
+metadata:
+  eid: inference-perf-1787576267-8c2l21
+metrics:
+  latency:
+    inter_token_latency:
+      max: 23.438799327705055
+      mean: 0.014826402573762781
+      min: 0.0
+      p0p1: 0.0
+      p1: 0.0
+      p10: 1.804996281862259e-05
+      p25: 0.009788433788344264
+      p5: 6.8410299718379974e-06
+      p50: 0.010855108965188265
+      p75: 0.017005073954351246
+      p90: 0.02474820287898183
+      p95: 0.026160855358466496
+      p99: 0.049252427173778396
+      p99p9: 0.10142739372096939
+      units: s/token
+    normalized_time_per_output_token:
+      max: 72.7964648772031
+      mean: 0.17778423306186628
+      min: 0.0
+      p0p1: 0.0019502272814675235
+      p1: 0.009438832407379524
+      p10: 0.010101416909601538
+      p25: 0.010678697284533537
+      p5: 0.009889613207778893
+      p50: 0.017508538263276793
+      p75: 0.07130606157705188
+      p90: 0.3134443099072087
+      p95: 0.6300873201718765
+      p99: 2.570979941842525
+      p99p9: 17.250502346458063
+      units: s/token
+    request_latency:
+      max: 103.64569942513481
+      mean: 31.485753685959835
+      min: 9.416450744960457
+      p0p1: 9.4374691611561
+      p1: 9.670105454334989
+      p10: 10.071335870726035
+      p25: 10.578262670780532
+      p5: 9.893444952834397
+      p50: 11.276263879844919
+      p75: 55.299702473101206
+      p90: 80.79018566315064
+      p95: 88.80864600283094
+      p99: 97.2502770885313
+      p99p9: 102.0335454344717
+      units: s
+    time_per_output_token:
+      max: 1.53901803879548
+      mean: 0.06799109544938575
+      min: 0.0
+      p0p1: 0.001976590059733007
+      p1: 0.00810790410786673
+      p10: 0.010012565958392885
+      p25: 0.010552497656626237
+      p5: 0.009807712721612278
+      p50: 0.011881421203225918
+      p75: 0.025855058147613935
+      p90: 0.31641351620921165
+      p95: 0.35896612754907936
+      p99: 0.835092311139188
+      p99p9: 1.0807083382558558
+      units: s/token
+    time_to_first_token:
+      max: 89.04167078435421
+      mean: 16.10654519378882
+      min: 0.03952660784125328
+      p0p1: 0.043169251449871805
+      p1: 0.04534785565920174
+      p10: 0.05072544841095805
+      p25: 0.05633194895926863
+      p5: 0.04864253627602011
+      p50: 0.08149363822303712
+      p75: 30.799516005907208
+      p90: 59.45530142937787
+      p95: 67.46944067673758
+      p99: 78.9426746671088
+      p99p9: 88.70526811368535
+      units: s
+  requests:
+    failures: 130
+    input_length:
+      max: 4000.0
+      mean: 4000.0
+      min: 4000.0
+      p0p1: 4000.0
+      p1: 4000.0
+      p10: 4000.0
+      p25: 4000.0
+      p5: 4000.0
+      p50: 4000.0
+      p75: 4000.0
+      p90: 4000.0
+      p95: 4000.0
+      p99: 4000.0
+      p99p9: 4000.0
+      units: count
+    output_length:
+      max: 5248.0
+      mean: 913.786432160804
+      min: 0.0
+      p0p1: 1.0
+      p1: 32.0
+      p10: 34.0
+      p25: 999.0
+      p5: 32.0
+      p50: 1000.0
+      p75: 1000.0
+      p90: 1000.0
+      p95: 1001.0
+      p99: 1332.0200000000004
+      p99p9: 5001.0
+      units: count
+    total: 10080
+  throughput:
+    output_tokens_per_sec: 12439.185262191033
+    requests_per_sec: 13.61279268808627
+    total_tokens_per_sec: 66890.35601453611
+  time:
+    duration: 719.7564896582626
+scenario:
+  host:
+    accelerator: []
+    type: []
+  load:
+    args:
+      api:
+        headers: null
+        response_format: null
+        session_id_header_key: null
+        slo_tpot_header: null
+        slo_ttft_header: null
+        slo_unit: null
+        streaming: true
+        type: completion
+      circuit_breakers: null
+      data:
+        conversation_replay: null
+        corpus_file_path: null
+        input_distribution:
+          max: 4000
+          mean: 4000.0
+          min: 4000
+          skew: 0.0
+          std_dev: 0.0
+          total_count: 33120
+          type: normal
+          variance: null
+        multimodal: null
+        otel_trace_replay: null
+        output_distribution:
+          max: 1000
+          mean: 1000.0
+          min: 1000
+          skew: 0.0
+          std_dev: 0.0
+          total_count: 33120
+          type: normal
+          variance: null
+        path: null
+        shared_prefix: null
+        trace: null
+        type: random
+        visionarena: null
+        weka_trace_replay: null
+      load:
+        base_seed: 1787576276138
+        circuit_breakers: []
+        interval: 1.0
+        lora_traffic_split: null
+        num_workers: 224
+        request_timeout: 300.0
+        stages:
+        - concurrency_level: null
+          duration: 720
+          num_requests: null
+          rate: 6.0
+        - concurrency_level: null
+          duration: 720
+          num_requests: null
+          rate: 14.0
+        - concurrency_level: null
+          duration: 720
+          num_requests: null
+          rate: 6.0
+        - concurrency_level: null
+          duration: 720
+          num_requests: null
+          rate: 14.0
+        - concurrency_level: null
+          duration: 720
+          num_requests: null
+          rate: 6.0
+        sweep: null
+        trace: null
+        type: constant
+        worker_max_concurrency: 100
+        worker_max_tcp_connections: 2500
+      metrics: null
+      report:
+        goodput: null
+        prometheus:
+          per_stage: false
+          summary: true
+        request_lifecycle:
+          max_error_messages: 100
+          per_adapter: true
+          per_adapter_stage: false
+          per_request: false
+          per_stage: true
+          percentiles:
+          - 0.1
+          - 1.0
+          - 5.0
+          - 10.0
+          - 25.0
+          - 50.0
+          - 75.0
+          - 90.0
+          - 95.0
+          - 99.0
+          - 99.9
+          summary: true
+          use_server_output_tokens: false
+        session_lifecycle:
+          per_session: false
+          per_stage: true
+          summary: true
+      server:
+        api_key: null
+        base_url: http://172.30.18.103:80
+        cert_path: null
+        ignore_eos: true
+        key_path: null
+        model_name: Qwen/Qwen3-0.6B
+        type: vllm
+      storage:
+        google_cloud_storage: null
+        local_storage:
+          path: /requests/inference-perf-1787576267-8c2l21_1
+          report_file_prefix: null
+        simple_storage_service: null
+      tokenizer:
+        pretrained_model_name_or_path: Qwen/Qwen3-0.6B
+        token: null
+        trust_remote_code: null
+    metadata:
+      stage: 3
+    name: inference-perf
+  model:
+    name: Qwen/Qwen3-0.6B
+  platform:
+    engine: []
+    metadata:
+      inferenceScheduler: {}
+version: '0.1'

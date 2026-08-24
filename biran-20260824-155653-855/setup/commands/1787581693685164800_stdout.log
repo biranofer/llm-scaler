@@ -1,0 +1,89 @@
+Name:         qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Namespace:    biran
+Labels:       app.kubernetes.io/component=default-scaledobject
+              app.kubernetes.io/managed-by=workload-variant-autoscaler
+              scaledobject.keda.sh/name=qwen-qwe-3db867ce-en3-0-6b-decode-wva
+Annotations:  llm-d.ai/created-by: deploy/lib/scaledobject.sh
+              llm-d.ai/managed: true
+              llm-d.ai/model-id: Qwen/Qwen3-0.6B
+              llm-d.ai/variant-cost: 10.0
+API Version:  keda.sh/v1alpha1
+Kind:         ScaledObject
+Metadata:
+  Creation Timestamp:  2026-08-22T13:06:49Z
+  Finalizers:
+    finalizer.keda.sh
+  Generation:        1
+  Resource Version:  2047855308
+  UID:               5f99c7f0-6209-47d4-9379-f70dab165ced
+Spec:
+  Advanced:
+    Horizontal Pod Autoscaler Config:
+      Behavior:
+        Scale Down:
+          Policies:
+            Period Seconds:              120
+            Type:                        Percent
+            Value:                       100
+          Stabilization Window Seconds:  300
+        Scale Up:
+          Policies:
+            Period Seconds:              5
+            Type:                        Percent
+            Value:                       100
+          Stabilization Window Seconds:  0
+    Restore To Original Replica Count:   true
+    Scaling Modifiers:
+  Cooldown Period:    30
+  Max Replica Count:  10
+  Min Replica Count:  1
+  Polling Interval:   5
+  Scale Target Ref:
+    API Version:  apps/v1
+    Kind:         Deployment
+    Name:         qwen-qwe-3db867ce-en3-0-6b-decode
+  Triggers:
+    Metadata:
+      Model Id:        Qwen/Qwen3-0.6B
+      Scaler Address:  wva-external-scaler.biran.svc.cluster.local:9090
+      Variant Cost:    10.0
+    Name:              wva-external-scaler
+    Type:              external-push
+Status:
+  Authentications Types:  
+  Conditions:
+    Message:  ScaledObject is defined correctly and is ready for scaling
+    Reason:   ScaledObjectReady
+    Status:   True
+    Type:     Ready
+    Message:  Scaling is performed because triggers are active
+    Reason:   ScalerActive
+    Status:   True
+    Type:     Active
+    Message:  No fallbacks are active on this scaled object
+    Reason:   NoFallbackFound
+    Status:   False
+    Type:     Fallback
+    Status:   False
+    Type:     Paused
+  External Metric Names:
+    s0-wva-desired-replicas
+  Hpa Name:                keda-hpa-qwen-qwe-3db867ce-en3-0-6b-decode-wva
+  Last Active Time:        2026-08-24T14:28:14Z
+  Original Replica Count:  1
+  Scale Target Gvkr:
+    Group:            apps
+    Kind:             Deployment
+    Resource:         deployments
+    Version:          v1
+  Scale Target Kind:  apps/v1.Deployment
+  Triggers Activity:
+    s0-wva-desired-replicas:
+      Is Active:   true
+  Triggers Types:  external-push
+Events:
+  Type     Reason                    Age                  From           Message
+  ----     ------                    ----                 ----           -------
+  Normal   KEDAScaleTargetActivated  112m (x29 over 47h)  keda-operator  Scaled apps/v1.Deployment biran/qwen-qwe-3db867ce-en3-0-6b-decode from 0 to 1, triggered by s0-wva-desired-replicas
+  Warning  KEDAScalerFailed          92m (x23 over 94m)   keda-operator  got empty metric spec
+  Normal   KEDAScalersStarted        92m (x24 over 2d1h)  keda-operator  Scaler external-push is built
