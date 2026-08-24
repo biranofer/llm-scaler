@@ -15,6 +15,13 @@ readonly MIN_HELM_VERSION="3.8"
 # accepts the expressions and emits JSON. Both pass a presence check and then
 # behave differently, so the version is gated, not just the name.
 readonly MIN_YQ_VERSION="4.0"
+# jq had no floor at all, which is how an old one reached an operator and made
+# `check-prereqs` report a namespace as holding no model servers: 1.5 parses
+# `a + b as $x | body` as `a + (b as $x | body)` and dies on string + boolean.
+# The predicates are parenthesised now and work on any version, and
+# hack/check-jq-predicates.sh keeps them that way -- this floor is so the next
+# expression does not have to rediscover which jq it may assume.
+readonly MIN_JQ_VERSION="1.6"
 
 # version_at_least compares dotted versions without sort -V, which BSD/macOS
 # lacks in the form this needs. Compares major.minor only: patch levels have
@@ -91,6 +98,7 @@ check_prerequisites() {
             kubectl) want="$MIN_KUBECTL_VERSION" ;;
             helm)    want="$MIN_HELM_VERSION" ;;
             yq)      want="$MIN_YQ_VERSION" ;;
+            jq)      want="$MIN_JQ_VERSION" ;;
         esac
         if [ -n "$want" ] && [ -n "$have" ] && ! version_at_least "$have" "$want"; then
             outdated_tools+=("$tool $have (need >= $want)")

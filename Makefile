@@ -1783,6 +1783,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@echo "Checking the jq marker predicates..."
+	@bash hack/check-jq-predicates.sh
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,
