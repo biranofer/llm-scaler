@@ -238,6 +238,24 @@ kubectl get clusterrole,clusterrolebinding -o name | grep -i "${NAMESPACE}"
 | `GPU_MEM_UTIL` | `0.90` | fraction of **total** GPU memory; one value for every model, deliberately |
 | `WARM_REPLICAS` | `0` | FMA warm pool size, if the scenario uses one |
 
+## Weights, once you scale it
+
+This guide deploys one model on one GPU, so the weights are fetched once and
+the cost is invisible. It stops being invisible when WVA starts adding
+replicas: without a shared cache, each new pod fetches them again.
+
+llm-d's modelservice chart mounts a cache at `/model-cache` by default, so
+there is usually nothing to do. Confirm it before you rely on autoscaling:
+
+```bash
+kubectl get deploy <model>-decode -n ${NAMESPACE} \
+  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}{"\n"}'
+```
+
+[Weights and the model
+cache](../../deployment/operations.md#weights-and-the-model-cache) has the
+detail, including why it makes scale-up cheaper but not faster.
+
 ## Next
 
 In order:

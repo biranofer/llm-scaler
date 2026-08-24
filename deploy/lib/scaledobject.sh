@@ -585,6 +585,241 @@ so_weights_note() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Workload readiness: the pod-spec settings that decide whether autoscaling this
+# workload is safe, reported by the plan and emitted here as a patch.
+#
+# WVA does not write them. The pod spec belongs to the model server's chart --
+# on llm-d, `managed-by: Helm`, release <model>-ms -- so anything this installer
+# applied there is reverted by the next `helm upgrade`, silently, and the
+# workload goes back to truncating streams with nothing to say so. Emitting the
+# patch puts the change where ownership already is.
+#
+# WVA_WORKLOAD_PATCH_APPLY=true applies it anyway, for a cluster where that is
+# the trade someone wants. It says what it is doing and why it may not last.
+# ---------------------------------------------------------------------------
+
+# so_workload_patch_index lists the documents in an emitted patch file as
+# "<namespace>\t<name>\t<kind>", one per line.
+so_workload_patch_index() {
+    yq eval-all '[.metadata.namespace, .metadata.name, .kind] | @tsv' "$1" 2>/dev/null \
+        | grep -v '^$' || true
+}
+
+# so_workload_patch_one applies the one document matching ns/name from an emitted
+# patch file.
+#
+# The document is passed to `kubectl patch --patch-file` unchanged. Its
+# apiVersion, kind and metadata match the object being patched, so a strategic
+# merge treats them as no-ops, and the YAML comments explaining each field go
+# along harmlessly.
+so_workload_patch_one() {
+    local file="$1" ns="$2" name="$3" resource="$4" doc rc=0
+    doc="$(mktemp)" || return 1
+    yq eval-all "select(.metadata.namespace == \"$ns\" and .metadata.name == \"$name\")" \
+        "$file" > "$doc" 2>/dev/null
+    if [ ! -s "$doc" ]; then
+        rm -f "$doc"
+        log_warning "  Could not isolate the patch for $ns/$name; skipped."
+        return 0
+    fi
+    kubectl patch "$resource" "$name" -n "$ns" --type=strategic --patch-file="$doc" || rc=$?
+    rm -f "$doc"
+    [ "$rc" -eq 0 ] || log_warning "  Patching $ns/$name failed (rc=$rc); the emitted file still has it."
+    return 0
+}
+
+# wva_workload_patch walks the same model servers the plan discovers and writes a
+# patch for each one that needs it.
+#
+# Emit is the default and the point. Applying is opt-in via
+# WVA_WORKLOAD_PATCH_APPLY=true, and it is a plain strategic-merge patch rather
+# than a server-side apply: `kubectl apply --server-side` on these fields is
+# REFUSED by the API server, because Helm owns them --
+#
+#   conflict with "helm" using apps/v1: .spec.template.spec.terminationGracePeriodSeconds
+#
+# Getting past that needs --force-conflicts, which takes the field from Helm and
+# leaves the two of them contesting it. A plain patch sets the value and claims
+# nothing, so the next `helm upgrade` simply reverts it -- which is the honest
+# behaviour to have, and what the warning says.
+wva_workload_patch() {
+    local out="${WVA_WORKLOAD_PATCH_FILE:-wva-workload-patch.yaml}"
+    local apply="${WVA_WORKLOAD_PATCH_APPLY:-false}"
+    local ns resource pod kind name container found=0 tmp
+
+    tmp="$(mktemp)" || return 1
+    for ns in $(so_target_namespaces); do
+        for kind in Deployment LWS; do
+            if [ "$kind" = "Deployment" ]; then
+                resource=deployments; pod="$SO_POD_PATH_DEPLOYMENT"
+            else
+                kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io >/dev/null 2>&1 || continue
+                resource=leaderworkersets; pod="$SO_POD_PATH_LWS"
+            fi
+            while IFS=$'\t' read -r name container; do
+                [ -n "$name" ] || continue
+                so_workload_patch_doc "$ns" "$resource" "$name" "$pod" "$container" >> "$tmp"
+            done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+                | jq -r --argjson p "$pod" --argjson markers "$(so_serving_markers_json)" '
+                    def serving_labels: to_entries
+                        | any((.key + "=" + (.value|tostring)) as $kv
+                              | ($markers | index($kv)) != null);
+                    .items[]?
+                    | . as $o
+                    | (getpath($p) // {}) as $t
+                    | select((($t.metadata.labels // {}) + ($o.metadata.labels // {})) | serving_labels)
+                    # The engine container, not container 0: llm-d puts a routing
+                    # sidecar alongside vllm, and patching the proxy drains nothing.
+                    | [ $o.metadata.name,
+                        ( [ $t.spec.containers[]? | select(.name | test("vllm|sglang|engine|decode|prefill")) | .name ][0]
+                          // $t.spec.containers[0].name ) ] | @tsv' 2>/dev/null || true)
+        done
+    done
+
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        log_success "Every model server already drains on scale-down and has its weights on a volume. Nothing to patch."
+        return 0
+    fi
+    found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null || echo 0)
+
+    if [ "$apply" = "true" ]; then
+        log_warning "WVA_WORKLOAD_PATCH_APPLY=true: patching $found workload(s) directly."
+        log_warning "  These fields belong to the model server's chart. The next \`helm upgrade\` reverts them,"
+        log_warning "  silently, and the workload goes back to what it was. Put them in your chart values to keep them."
+        # `kubectl patch --type=strategic`, never `kubectl apply`. These objects were
+        # created by Helm, so they carry no last-applied-configuration annotation, and
+        # apply both warns and writes one -- adopting a resource this installer does not
+        # own into kubectl's apply bookkeeping. A strategic patch sets the fields and
+        # claims nothing. (Server-side apply is worse still: the API server REFUSES it,
+        # "conflict with helm ... .spec.template.spec.terminationGracePeriodSeconds",
+        # and getting past that needs --force-conflicts, which seizes the field.)
+        local doc_ns doc_name doc_kind doc_res
+        while IFS=$'	' read -r doc_ns doc_name doc_kind; do
+            [ -n "$doc_name" ] || continue
+            doc_res=deployments
+            [ "$doc_kind" = "LeaderWorkerSet" ] && doc_res=leaderworkersets
+            so_workload_patch_one "$tmp" "$doc_ns" "$doc_name" "$doc_res"
+        done < <(so_workload_patch_index "$tmp")
+        log_success "Patched $found workload(s)."
+    fi
+
+    mv "$tmp" "$out"
+    log_success "Wrote $out ($found workload(s) need something)."
+    log_info "  Apply it where the pod spec is owned -- your modelservice values, or the chart that made it."
+    log_info "  To patch the live objects anyway: WVA_WORKLOAD_PATCH_APPLY=true make workload-patch"
+    return 0
+}
+
+# so_workload_gaps reports what a scale target is missing, as
+# "<hasPreStop> <grace> <hasPVC> <servedLocal>". Empty when it cannot be read.
+so_workload_gaps() {
+    local ns="$1" resource="$2" name="$3" pod="$4"
+    kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
+        | jq -r --argjson p "$pod" '
+            (getpath($p) // {}) as $t
+            | [ ([ $t.spec.containers[]? | select(.lifecycle.preStop != null) ] | length),
+                ($t.spec.terminationGracePeriodSeconds // 30),
+                ([ $t.spec.volumes[]? | select(.persistentVolumeClaim != null) ] | length),
+                ([ $t.spec.containers[]? | (.command // []) + (.args // []) | .[]
+                   | select(startswith("/")) ] | length)
+              ] | @tsv' 2>/dev/null || true
+}
+
+# so_workload_patch_doc writes one YAML document for a workload that needs
+# something, or nothing at all when it does not.
+#
+# A strategic-merge patch, not a whole spec: it names only what it changes, so it
+# reads as a diff and can be pasted into chart values without carrying the rest
+# of somebody's Deployment along with it.
+so_workload_patch_doc() {
+    local ns="$1" resource="$2" name="$3" pod="$4" container="$5"
+    local gaps prestop grace pvcs localpath want_drain=0 want_cache=0 kind
+    gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")"
+    [ -n "$gaps" ] || return 0
+    read -r prestop grace pvcs localpath <<< "$gaps"
+
+    [ "${prestop:-0}" -eq 0 ] && want_drain=1
+    # Grace period alone is not a gap: the hook is what drains and the period only
+    # bounds it. Raised alongside the hook, never on its own.
+    [ "${pvcs:-0}" -eq 0 ] && [ "${localpath:-0}" -eq 0 ] && want_cache=1
+    [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || return 0
+
+    kind=Deployment
+    [ "$resource" = "leaderworkersets" ] && kind=LeaderWorkerSet
+
+    # Heredocs, not printf. The deploy-script lint rejects a literal \n inside a
+    # command, because that is nearly always a line continuation an edit
+    # collapsed -- it shipped once and broke the limiter install. A format string
+    # full of them is indistinguishable from that, so the YAML is written as YAML.
+    cat <<HDR
+---
+# ${resource}/${name} in ${ns}
+HDR
+    if [ "$want_drain" -eq 1 ]; then
+        cat <<DRAINWHY
+#   drain: no preStop hook; terminationGracePeriodSeconds is ${grace:-30}.
+#          A replica removed mid-stream cuts the responses it is still writing.
+DRAINWHY
+    fi
+    if [ "$want_cache" -eq 1 ]; then
+        cat <<CACHEWHY
+#   cache: no persistent volume and the model is served by repo id, so every
+#          scale-up re-downloads the weights from Hugging Face.
+CACHEWHY
+    fi
+    cat <<HEAD
+#
+# Apply where the pod spec is OWNED -- your modelservice values, or the chart
+# that produced this object. Applying it directly works until the next
+# \`helm upgrade\` reverts it.
+apiVersion: apps/v1
+kind: ${kind}
+metadata:
+  name: ${name}
+  namespace: ${ns}
+spec:
+  template:
+    spec:
+HEAD
+    if [ "$want_drain" -eq 1 ]; then
+        cat <<GRACE
+      # Long enough for the longest generation you will wait for. It is the total
+      # budget: the kubelet sends SIGKILL when it expires, hook or not.
+      terminationGracePeriodSeconds: ${WVA_DRAIN_GRACE_SECONDS:-120}
+GRACE
+    fi
+    cat <<CONTAINERS
+      containers:
+      - name: ${container}
+CONTAINERS
+    if [ "$want_drain" -eq 1 ]; then
+        cat <<PRESTOP
+        lifecycle:
+          preStop:
+            exec:
+              # The endpoint leaves the Service the moment the pod goes
+              # Terminating, so no new work arrives; this only has to outlast the
+              # requests already on it.
+              command: ["/bin/sh", "-c", "sleep ${WVA_DRAIN_SLEEP_SECONDS:-30}"]
+PRESTOP
+    fi
+    if [ "$want_cache" -eq 1 ]; then
+        cat <<CACHE
+        volumeMounts:
+        - name: model-storage
+          mountPath: /model-cache
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: ${WVA_MODEL_PVC_NAME:-model-pvc}
+      # The claim itself is not created here: its size and storage class are a
+      # cluster decision, and one claim is normally shared by every model.
+CACHE
+    fi
+}
+
 so_drain_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
     local out grace prestop

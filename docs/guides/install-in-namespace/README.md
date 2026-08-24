@@ -24,6 +24,14 @@ namespace's owner installs and upgrades the controller themselves.
   cluster installing an operator is somebody else's decision. If the cluster
   has none, re-run with `KEDA_HELM_INSTALL=true make setup-prereqs`.
 - a Prometheus scraping those model servers
+- **a model cache on those model servers.** Autoscaling means new replicas,
+  and a replica that has to fetch its weights first turns every scale-up into
+  a download from Hugging Face. llm-d mounts one by default, so this is
+  normally already true — `make scaledobjects-plan` says so per workload if it
+  is not. See [Weights and the model
+  cache](../../deployment/operations.md#weights-and-the-model-cache), which
+  also covers what it does not buy: the cache removes the download, not the
+  load.
 
 If you want a model to scale **from zero**, its EPP must run with the
 `flowControl` feature gate: that gate is what publishes the queue depth, and at

@@ -505,6 +505,14 @@ check-prereqs: ## Phase 1, read-only: tools, permissions, the namespace and the 
 scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObject plan. WVA_DEFAULT_SO_NS=<ns>|wva|all, WVA_DEFAULT_SO_PLAN=<file>.
 	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) 		WVA_DEFAULT_SO=plan $(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) 		$(if $(WVA_DEFAULT_SO_PLAN),WVA_DEFAULT_SO_PLAN=$(WVA_DEFAULT_SO_PLAN),) 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; install_default_scaledobjects'
 
+## Report the pod-spec settings that decide whether autoscaling a workload is
+## safe, as a patch you can apply where the pod spec is owned.
+.PHONY: workload-patch
+workload-patch: ## Write a patch for model servers missing a drain hook or a weights volume. WVA_WORKLOAD_PATCH_FILE=<file>, WVA_WORKLOAD_PATCH_APPLY=true to patch live.
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
+		$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; wva_workload_patch'
+
 ## Apply a ScaledObject plan. With WVA_DEFAULT_SO_PLAN=<file> it applies exactly
 ## that file, edits included, and needs no terminal. Without one it re-discovers
 ## and applies everything found.
