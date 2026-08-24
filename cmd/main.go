@@ -615,6 +615,11 @@ func main() {
 		engine.SetLimiterBuilder(func() (allocation.Limiter, error) {
 			return allocation.NewLimiterFromConfig(cfg, mgr.GetClient())
 		})
+		// Arrival rate is registered whatever the analyzer set: the saturation
+		// analyzer's demand floor needs it too, and gating it on the throughput
+		// analyzer made that floor structurally inoperable whenever throughput
+		// was disabled -- which is the default.
+		registration.RegisterArrivalRateQueries(sourceRegistry)
 		if taRegistered {
 			registration.RegisterThroughputAnalyzerQueries(sourceRegistry)
 			if err := engine.RegisterAnalyzer(throughput.AnalyzerName, throughput.NewThroughputAnalyzer()); err != nil {

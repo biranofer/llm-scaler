@@ -37,6 +37,11 @@ var _ = Describe("SGLang query registration", func() {
 		Expect(registry.Register("prometheus", metricsSource)).NotTo(HaveOccurred())
 		RegisterSaturationQueries(registry)
 		RegisterQueueingModelQueries(registry)
+		// Both, mirroring cmd/main: the arrival-rate queries are registered
+		// unconditionally and the throughput-analyzer ones only when it is
+		// enabled. EngineSpecificQueries spans both sets, so a fixture calling
+		// only one of them would report the other's queries missing.
+		RegisterArrivalRateQueries(registry)
 		RegisterThroughputAnalyzerQueries(registry)
 		RegisterScaleToZeroQueries(registry)
 	})

@@ -138,10 +138,30 @@ func RegisterThroughputAnalyzerQueries(sourceRegistry *source.SourceRegistry) {
 		Description: "Instantaneous KV cache utilization per pod (0.0–1.0), used as k* in the ITL model",
 	})
 
+	registerSGLangThroughputAnalyzerQueries(registry)
+}
+
+// RegisterArrivalRateQueries registers how fast work is ARRIVING: the
+// model-level rate from the scheduler, and the per-pod completion rate that
+// stands in for it when the scheduler's is unavailable.
+//
+// Registered UNCONDITIONALLY, unlike the rest of this file. These two used to
+// sit inside RegisterThroughputAnalyzerQueries, which cmd/main only calls when
+// the throughput analyzer is enabled — and that analyzer is opt-in. The
+// saturation analyzer's demand floor also needs λ, so with throughput disabled
+// (the default) both of its sources were structurally zero and the floor could
+// never compute anything. It failed silently and correctly: "no arrival rate",
+// every cycle, on a fleet visibly serving 14 QPS.
+//
+// The cost of always collecting them is two Prometheus queries per namespace per
+// cycle. The cost of not doing so was a feature that could not work at all.
+func RegisterArrivalRateQueries(sourceRegistry *source.SourceRegistry) {
+	registry := sourceRegistry.Get("prometheus").QueryList()
+
 	// Per-pod vLLM request completion rate (req/s).
 	// Derived from the generation tokens histogram _count (increments once per
-	// completed request). Used as a fallback for λ_dec when EPP/scheduler metrics
-	// are unavailable; per variant V, the analyzer falls back to:
+	// completed request). Used as a fallback for λ when EPP/scheduler metrics
+	// are unavailable; per variant V, the throughput analyzer falls back to:
 	//   λ_dec_fallback = Σ_{r∈V}(RequestRate_r × AvgOutputTokens_r)
 	// Grouping key and namespace scoping: see the note above RegisterSaturationQueries
 	registry.MustRegister(source.QueryTemplate{
@@ -149,15 +169,14 @@ func RegisterThroughputAnalyzerQueries(sourceRegistry *source.SourceRegistry) {
 		Type:        source.QueryTypePromQL,
 		Template:    `sum by (model_name, instance, pod) (rate(vllm:request_generation_tokens_count{namespace="{{.namespace}}"}[1m]))`,
 		Params:      []string{source.ParamNamespace},
-		Description: "vLLM request completion rate per pod (req/s); fallback for λ_dec when EPP metrics are unavailable",
+		Description: "vLLM request completion rate per pod (req/s); fallback for λ when EPP metrics are unavailable",
 	})
 
 	// Model-level request arrival rate (requests/sec), summed across the whole
 	// model. Same status="success" filter as QuerySchedulerDispatchRate, but
 	// grouped only by namespace and target_model_name — no pod_name/port labels,
 	// so none of that query's per-instance attribution fragility. Engine-agnostic
-	// (sourced from EPP, not vLLM/SGLang), so — like QuerySchedulerDispatchRate —
-	// it is not duplicated in registerSGLangThroughputAnalyzerQueries.
+	// (sourced from EPP, not vLLM/SGLang), so it needs no SGLang variant.
 	//
 	// Namespace-scoped like the engine queries: the collector selects its model by
 	// target_model_name (see the note above RegisterSaturationQueries).
@@ -169,7 +188,20 @@ func RegisterThroughputAnalyzerQueries(sourceRegistry *source.SourceRegistry) {
 		Description: "Model-level request arrival rate (requests/sec) from scheduler, summed across the whole model with no per-pod labels to reconcile",
 	})
 
-	registerSGLangThroughputAnalyzerQueries(registry)
+	registerSGLangArrivalRateQueries(registry)
+}
+
+// registerSGLangArrivalRateQueries registers the SGLang completion-rate variant.
+// The model-level arrival rate comes from the EPP and is engine-agnostic, so it
+// has no counterpart here.
+func registerSGLangArrivalRateQueries(registry *source.QueryList) {
+	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
+		Name:        QueryRequestRate,
+		Type:        source.QueryTypePromQL,
+		Template:    `sum by (model_name, instance, pod) (rate(sglang:generation_tokens_histogram_count{namespace="{{.namespace}}"}[1m]))`,
+		Params:      []string{source.ParamNamespace},
+		Description: "SGLang request completion rate per pod (req/s); fallback for λ when EPP metrics are unavailable",
+	})
 }
 
 // registerSGLangThroughputAnalyzerQueries registers the SGLang variants of the
@@ -194,12 +226,8 @@ func registerSGLangThroughputAnalyzerQueries(registry *source.QueryList) {
 		Description: "Instantaneous KV cache utilization per pod (0.0-1.0), used as k* in the ITL model (SGLang)",
 	})
 
-	// Per-pod request completion rate (req/s) from the generation histogram count.
-	registerForEngine(registry, inferenceengine.EngineSGLang, source.QueryTemplate{
-		Name:        QueryRequestRate,
-		Type:        source.QueryTypePromQL,
-		Template:    `sum by (model_name, instance, pod) (rate(sglang:generation_tokens_histogram_count{namespace="{{.namespace}}"}[1m]))`,
-		Params:      []string{source.ParamNamespace},
-		Description: "Request completion rate per pod (req/s); fallback for λ_dec when EPP metrics are unavailable (SGLang)",
-	})
+	// The SGLang completion rate moved to registerSGLangArrivalRateQueries, which
+	// runs whether or not this analyzer is enabled. Registering it here as well
+	// would panic on the duplicate the moment the throughput analyzer is turned
+	// on, so this is deliberately empty of it.
 }
