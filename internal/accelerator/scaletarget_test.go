@@ -71,6 +71,146 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 			expected: "nvidia-tesla-v100",
 		},
 		{
+			// The rest of the documented model-name keys, one case each. Each was
+			// "unknown" before, so a fleet pinned this way had its GPUs unattributed
+			// and could not use the gpu-inventory limiter.
+			name: "eks_auto_mode_instance_gpu_name",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"eks.amazonaws.com/instance-gpu-name": "h100",
+							},
+						},
+					},
+				},
+			},
+			expected: "h100",
+		},
+		{
+			name: "karpenter_aws_instance_gpu_name",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"karpenter.k8s.aws/instance-gpu-name": "a10g",
+							},
+						},
+					},
+				},
+			},
+			expected: "a10g",
+		},
+		{
+			name: "karpenter_azure_sku_gpu_name",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"karpenter.azure.com/sku-gpu-name": "A100",
+							},
+						},
+					},
+				},
+			},
+			expected: "A100",
+		},
+		{
+			name: "coreweave_nvidia_class_from_nodeSelector",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"gpu.nvidia.com/class": "A100_NVLINK_80GB",
+							},
+						},
+					},
+				},
+			},
+			expected: "A100_NVLINK_80GB",
+		},
+		{
+			name: "amd_standalone_labeller_beta_prefix",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"beta.amd.com/gpu.product-name": "AMD_Instinct_MI300X_OAM",
+							},
+						},
+					},
+				},
+			},
+			expected: "AMD_Instinct_MI300X_OAM",
+		},
+		{
+			// Sharing modes mutate the value and we pass it through unchanged. A MIG
+			// slice is not a whole A100 and must not share its quota, so keeping them
+			// distinct is the point, not an oversight.
+			name: "mig_profile_is_its_own_accelerator",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"nvidia.com/gpu.product": "A100-SXM4-40GB-MIG-1g.5gb",
+							},
+						},
+					},
+				},
+			},
+			expected: "A100-SXM4-40GB-MIG-1g.5gb",
+		},
+		{
+			// Time-slicing, same reasoning.
+			name: "time_sliced_gpu_is_its_own_accelerator",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"nvidia.com/gpu.product": "Tesla-T4-SHARED",
+							},
+						},
+					},
+				},
+			},
+			expected: "Tesla-T4-SHARED",
+		},
+		{
+			// A vendor label is NOT a model label. accelerator=nvidia (AKS) would
+			// merge an A100 fleet with an H100 one into a single accelerator, which is
+			// worse than unknown -- unknown at least reads as "any GPU can serve this".
+			name: "vendor_only_label_must_not_resolve",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"accelerator":                      "nvidia",
+								"k8s.amazonaws.com/accelerator":    "nvidia-tesla-v100",
+								"kubernetes.azure.com/accelerator": "nvidia",
+							},
+						},
+					},
+				},
+			},
+			expected: constants.DefaultAcceleratorName,
+		},
+		{
 			// CoreWeave. Reported against ff81a308: every pod ran on an H200 and the
 			// controller still called four GPUs unattributed, because this key was
 			// not among the ones it looks at.

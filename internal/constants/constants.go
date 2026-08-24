@@ -68,9 +68,15 @@ var (
 			// an H200. Replica scaling still works, but accelerator-keyed metrics
 			// are wrong and enabling the gpu-inventory limiter would block scale-up
 			// on capacity it cannot see.
+			// Only keys a provider DOCUMENTS as naming the GPU model. Several
+			// plausible ones are deliberately absent -- see the note below.
 			ProductLabelAliases: []string{
-				"cloud.google.com/gke-accelerator",
-				"gpu.nvidia.com/model",
+				"cloud.google.com/gke-accelerator",    // GKE: nvidia-h100-80gb
+				"eks.amazonaws.com/instance-gpu-name", // EKS Auto Mode: h100
+				"karpenter.k8s.aws/instance-gpu-name", // Karpenter on AWS: h100
+				"karpenter.azure.com/sku-gpu-name",    // AKS node auto-provisioning: A100
+				"gpu.nvidia.com/model",                // CoreWeave CKS
+				"gpu.nvidia.com/class",                // CoreWeave CKS: A100_NVLINK_80GB
 			},
 			MemoryLabel: "nvidia.com/gpu.memory",
 		},
@@ -78,8 +84,46 @@ var (
 			Vendor:       "AMD",
 			ResourceName: "amd.com/gpu",
 			ProductLabel: "amd.com/gpu.product-name",
-			MemoryLabel:  "amd.com/gpu.memory",
+			// The standalone ROCm device-plugin labeller writes the beta. prefix;
+			// the AMD GPU Operator writes the unprefixed one.
+			ProductLabelAliases: []string{"beta.amd.com/gpu.product-name"},
+			MemoryLabel:         "amd.com/gpu.memory",
 		},
+		// habana.ai/product.name is UNVERIFIED. Intel documents a Gaudi Feature
+		// Discovery component and requires habana.ai in NFD's extraLabelNs, but no
+		// reachable page enumerates the label keys it produces. Kept because it
+		// ships and removing it could break a working deployment; treat a Gaudi
+		// fleet resolving to "unknown" as this line being wrong, not the cluster.
+		//
+		// NOT aliases, deliberately, and each for its own reason:
+		//
+		//   accelerator=nvidia (AKS)          names the VENDOR. It would resolve
+		//                                     every NVIDIA GPU to one accelerator
+		//                                     and merge an A100 fleet with an H100
+		//                                     one -- worse than "unknown", which at
+		//                                     least reads as "any GPU can serve this".
+		//   k8s.amazonaws.com/accelerator     a convention from eksctl and blog
+		//                                     posts, not a label AWS applies.
+		//   kubernetes.azure.com/accelerator  appears only in the cluster-autoscaler
+		//                                     Azure provider README, not in AKS docs.
+		//   feature.node.kubernetes.io/pci-*  NFD stops at vendor and class; it has
+		//                                     no product label at all, which is why
+		//                                     GPU Feature Discovery exists.
+		//
+		// Two hazards in the VALUES, which this package deliberately does not
+		// normalise. Sharing modes mutate them: time-slicing appends -SHARED
+		// (Tesla-T4-SHARED) and MIG appends the profile
+		// (A100-SXM4-40GB-MIG-1g.5gb). Keeping those distinct is correct -- a MIG
+		// slice is not a whole A100 and must not share its quota. The driver also
+		// varies the prefix (Tesla-T4 vs NVIDIA-Tesla-T4), so an operator's quota
+		// keys must match whatever their own nodes report.
+		//
+		// Precedence when a pod pins two of these keys is alphabetical, which is an
+		// accident of GetProductKeys sorting for determinism rather than a decision.
+		// Left alone here on purpose: changing it would silently move existing
+		// deployments from one accelerator name to another, and the names are what
+		// quotas key on.
+		//
 		// NOTE: Node labeling rules installed for Node Feature Discovery (NFD) by Intel GPU operator,
 		// provide product labels only for Data Center products. Current Intel Gaudi / GPU operators
 		// do not label nodes with device memory information, that info needs to be labeled separately.
