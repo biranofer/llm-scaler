@@ -26,7 +26,6 @@ check_specific_prerequisites() {
 }
 
 # Deploy WVA prerequisites for Kubernetes
-KUBE_LIKE_VALUES_DEV_IF_PRESENT=false
 
 _wva_deploy_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib"
 # shellcheck source=deploy_prometheus_kube_stack.sh

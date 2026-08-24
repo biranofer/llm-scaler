@@ -242,7 +242,6 @@ load_sim_image() {
     _load_into_kind "$SIM_IMAGE" || log_warning "Failed to load simulator image into KIND cluster — tests may be slow on first run"
 }
 
-KUBE_LIKE_VALUES_DEV_IF_PRESENT=true
 
 _wva_deploy_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib"
 # shellcheck source=deploy_prometheus_kube_stack.sh

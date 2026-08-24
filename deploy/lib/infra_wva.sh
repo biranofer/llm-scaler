@@ -699,7 +699,6 @@ delete_namespaces_kube_like() {
 
 # Shared WVA prerequisites for Kubernetes-like environments.
 # Optional:
-#   - KUBE_LIKE_VALUES_DEV_IF_PRESENT=true|false (defaults false)
 deploy_wva_prerequisites_kube_like() {
     log_info "Deploying Workload-Variant-Autoscaler prerequisites for Kubernetes..."
 

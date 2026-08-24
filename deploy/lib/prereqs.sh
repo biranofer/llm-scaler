@@ -114,7 +114,10 @@ check_prerequisites() {
     # served to any authenticated caller and needs no RBAC, which is exactly the
     # question being asked here: can this kubeconfig reach a cluster at all.
     if ! kubectl get --raw /version > /dev/null 2>&1; then
-        log_error "Cannot reach a Kubernetes cluster with the current context ($(kubectl config current-context 2>/dev/null || echo 'none set')). Check your kubeconfig, or set SKIP_CHECKS=true to bypass this check."
+        # ${WVA_KUBE_CONTEXT:-...} for the same reason as in wva_report_cluster:
+        # current-context ignores --context, so naming it here told the operator to
+        # check a context the run was not using.
+        log_error "Cannot reach a Kubernetes cluster with context '${WVA_KUBE_CONTEXT:-$(kubectl config current-context 2>/dev/null || echo 'none set')}'. Check your kubeconfig, or set SKIP_CHECKS=true to bypass this check."
     fi
 
     log_success "All prerequisites met (tools: ${tools[*]})"
@@ -207,14 +210,23 @@ wva_cluster_policy_ns() {
 # finding to report, and this running first must not pre-empt the better error.
 wva_report_cluster() {
     local ctx server
-    ctx=$(kubectl config current-context 2>/dev/null) || ctx=""
+    # WVA_KUBE_CONTEXT wins, because it is what every other command will use.
+    # `kubectl config current-context` reports the kubeconfig's current context and
+    # ignores --context, so with a context pinned this line named the cluster the
+    # run was NOT talking to -- the exact contradiction this function exists to
+    # remove. Caught by pinning a context that does not exist: the banner still
+    # named the real one.
+    if [ -n "${WVA_KUBE_CONTEXT:-}" ]; then
+        ctx="$WVA_KUBE_CONTEXT"
+    else
+        ctx=$(kubectl config current-context 2>/dev/null) || ctx=""
+    fi
     server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null) || server=""
     if [ -z "$ctx" ] && [ -z "$server" ]; then
         log_warning "Cluster: no current kubeconfig context. Everything below will fail until one is set."
         return 0
     fi
-    log_info "Cluster:    ${ctx:-<no context name>}"
-    [ -n "${WVA_KUBE_CONTEXT:-}" ] && log_info "  pinned:   WVA_KUBE_CONTEXT=$WVA_KUBE_CONTEXT"
+    log_info "Cluster:    ${ctx:-<no context name>}${WVA_KUBE_CONTEXT:+  (pinned by WVA_KUBE_CONTEXT)}"
     [ -n "$server" ] && log_info "  server:   $server"
     # Only when it is set: naming the file is useful precisely when it is not the
     # default one, and noise when it is.
