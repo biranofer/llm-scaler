@@ -27,11 +27,18 @@ deploy_prometheus_kube_stack() {
         &> /dev/null
 
     log_info "Creating Kubernetes secret for Prometheus TLS"
-    kubectl create secret tls "$PROMETHEUS_SECRET_NAME" \
+    # Not `&> /dev/null`. This apply failing is how the install learns the
+    # monitoring namespace is missing, and suppressing its output turned that into
+    # a bare exit under `set -e`: the last thing printed was "Creating Kubernetes
+    # secret for Prometheus TLS" and there was no error anywhere.
+    if ! kubectl create secret tls "$PROMETHEUS_SECRET_NAME" \
         --cert=/tmp/prometheus-tls.crt \
         --key=/tmp/prometheus-tls.key \
         -n "$MONITORING_NAMESPACE" \
-        --dry-run=client -o yaml | kubectl apply -f - &> /dev/null
+        --dry-run=client -o yaml | kubectl apply -f -; then
+        rm -f /tmp/prometheus-tls.key /tmp/prometheus-tls.crt
+        log_error "Could not create the Prometheus TLS secret in $MONITORING_NAMESPACE (see the error above)."
+    fi
 
     rm -f /tmp/prometheus-tls.key /tmp/prometheus-tls.crt
 

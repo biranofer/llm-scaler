@@ -682,6 +682,33 @@ deploy_monitoring_stack() {
         return 0
     fi
 
+    # A namespace-scoped install does not create the monitoring namespace -- see
+    # create_namespaces in infra_wva.sh, which skips it deliberately because a
+    # namespace admin is not allowed to create one -- so it cannot deploy a
+    # Prometheus into it either. Those two steps disagreed: the namespace was
+    # skipped and the deployment went ahead anyway, applying the TLS secret into a
+    # namespace that did not exist. `&> /dev/null` on that apply swallowed the
+    # NotFound, `set -e` ended the install there, and the operator got
+    # "Creating Kubernetes secret for Prometheus TLS" followed by nothing.
+    #
+    # Reproduced on kind: namespace scope, no Prometheus on the cluster, exit 2
+    # with no error text.
+    # Tenant phase only. `make setup-prereqs` is the cluster-admin phase and may
+    # create the namespace -- create_namespaces does, just above -- so refusing
+    # there would block the very command that fixes this.
+    if [ "${INSTALL_PHASE:-all}" = "wva" ] \
+        && ! kubectl get namespace "$MONITORING_NAMESPACE" >/dev/null 2>&1; then
+        log_error "  This install has no Prometheus to use, and cannot deploy one.
+
+WVA reads its metrics from Prometheus and exits without one. This is the tenant
+half of the install, which only creates objects inside $WVA_NS, and deploying a
+Prometheus means creating the namespace $MONITORING_NAMESPACE -- a cluster-admin
+act.
+
+  point at a Prometheus that already exists:  PROMETHEUS_URL=<url> make <target>
+  or have a cluster admin run the first step: make setup-prereqs"
+    fi
+
     # DEPLOY_PROMETHEUS defaults to true because the new-cluster path needs a
     # Prometheus and most people running this have none. That default is wrong for
     # the OTHER common case — an existing llm-d cluster, which always has one — so

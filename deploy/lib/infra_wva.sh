@@ -593,14 +593,22 @@ create_namespaces_shared_loop() {
     # namespace on every existing-llm-d install — the exact litter the comment
     # above is about — and made DEPLOY_PROMETHEUS=false something users had to
     # pass by hand to avoid it.
-    # A namespace-scoped install creates nothing outside its own namespace, so it
-    # must not try. The monitoring namespace is cluster-scoped to create, and the
-    # detection below cannot help: a namespace admin is Forbidden from reading the
-    # Prometheus CRD, foreign_prometheus() reports "none found", and the install
-    # then died trying to create a namespace it was never allowed to create — after
-    # `--check` had said permissions were sufficient.
-    if [ "$(wva_install_scope)" != "namespace" ] \
-        && [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] \
+    # The monitoring namespace is cluster-scoped to create, so gate it on WHO is
+    # running, not on what WVA will manage. Those are different questions: scope
+    # says which workloads the controller watches, phase says whether this command
+    # is the cluster-admin half or the tenant half.
+    #
+    # The tenant half (INSTALL_PHASE=wva) must not try. A namespace admin is
+    # Forbidden from reading the Prometheus CRD, so foreign_prometheus() reports
+    # "none found", and the install died creating a namespace it was never allowed
+    # to create — after `--check` had said permissions were sufficient.
+    #
+    # But gating on scope alone was too strict the other way: `make setup-prereqs`
+    # IS the cluster-admin phase, and in namespace scope it skipped the namespace
+    # and then deployed Prometheus into it anyway. Reproduced on kind: exit 2 after
+    # "Creating Kubernetes secret for Prometheus TLS", with no error printed.
+    if [ "${DEPLOY_PROMETHEUS:-true}" = "true" ] \
+        && [ "${INSTALL_PHASE:-all}" != "wva" ] \
         && [ -z "$(foreign_prometheus)" ]; then
         wanted="$wanted $MONITORING_NAMESPACE"
     fi
