@@ -113,6 +113,30 @@ check_prerequisites() {
         log_error "Tools too old: ${outdated_tools[*]}. Upgrade them, or set SKIP_CHECKS=true to bypass this check (not recommended)."
     fi
 
+    # kind-emulator is exempt, because on that path the cluster is an OUTPUT of
+    # this run rather than an input to it. check_prerequisites runs at
+    # install_core.sh:277; the environment script that honours CREATE_CLUSTER=true
+    # and creates the cluster is not sourced until line 323. So on a machine that
+    # does not already have the cluster -- a fresh CI runner, which is the whole
+    # point of CREATE_CLUSTER -- this check failed before anything could create
+    # what it was checking for.
+    #
+    # That is why e2e-tests-full has never completed on this repository: it dies
+    # in deploy-e2e-infra with "Cannot reach a Kubernetes cluster", a couple of
+    # minutes in, right after building the image. It passes locally because a
+    # developer already ran `make create-kind-cluster`.
+    #
+    # Nothing is lost by skipping it: deploy/kind-emulator/install.sh checks for
+    # the cluster itself and says something better when it is absent and
+    # CREATE_CLUSTER=false. The preflight path already skips this environment for
+    # the same reason (install_core.sh: "they provision the cluster rather than
+    # inspect it").
+    if [ "${ENVIRONMENT:-}" = "kind-emulator" ]; then
+        log_success "All prerequisites met (tools: ${tools[*]})"
+        log_info "  Cluster reachability is not checked on kind-emulator: this run creates the cluster."
+        return 0
+    fi
+
     # A reachable cluster is as much a prerequisite as a binary, and finding out
     # here beats finding out after the first namespace has been created.
     # `kubectl get --raw /version`, not `kubectl cluster-info`: cluster-info LISTS
