@@ -302,13 +302,12 @@ func (a *ThroughputAnalyzer) Analyze(
 			continue
 		}
 
-		// isEPP is no longer used here — anyEPP is now derived model-level from
-		// input.ArrivalRate above — but computeDemand's own per-variant demand
-		// value is kept for VariantCapacity.TotalDemand/Utilization display and
-		// as the computeLocalDemand fallback trigger below (deferred, see plan).
-		demand, _ := computeDemand(variantMetrics)
-		// k*-based local demand: when EPP and the engine completion rate are both absent, or when
-		// EPP is present but yields zero usable demand (warm-up, no completions yet),
+		// anyEPP is derived model-level from input.ArrivalRate above; computeDemand's
+		// per-variant value is kept for VariantCapacity.TotalDemand/Utilization
+		// display and as the computeLocalDemand fallback trigger below.
+		demand := computeDemand(variantMetrics)
+		// k*-based local demand: when the engine completion rate is absent, or has
+		// yet to record anything (warm-up, no completions yet),
 		// derive demand from observed KV utilization so a busy replica is not
 		// mis-classified as idle and spuriously scaled down.
 		if demand == 0 {
@@ -572,48 +571,33 @@ func (a *ThroughputAnalyzer) resolveITLModel(ctx context.Context, state *variant
 	return ITLModel{}, itlReasonT2Failed, false
 }
 
-// computeDemand aggregates λ_dec (decode token demand in tokens/sec) across replicas.
+// computeDemand aggregates λ_dec (decode token demand in tokens/sec) across
+// replicas as Σ RequestRate_r × AvgOutputTokens_r.
 //
-// Primary path (EPP deployed): Σ ArrivalRate_r × AvgOutputTokens_r.
-// Fallback path (EPP absent): Σ RequestRate_r × AvgOutputTokens_r.
+// The per-replica product rather than sumRate × avgOL avoids averaging-the-averages:
+// replicas with higher throughput contribute proportionally more to λ_dec without
+// requiring raw histogram sums.
 //
-// Both paths use the per-replica product rather than sumRate × avgOL to avoid
-// averaging-the-averages: replicas with higher throughput contribute proportionally
-// more to λ_dec without requiring raw histogram sums.
-//
-// Returns (λ_dec, isEPP). isEPP is true when at least one replica reports ArrivalRate > 0.
-// When EPP is present but yields zero usable demand (warm-up: ArrivalRate > 0 but
-// AvgOutputTokens == 0), the function falls through to the engine request-rate proxy
-// so the caller can use computeLocalDemand when both paths yield zero. The returned
+// It used to prefer a per-replica EPP arrival rate and treat this as the fallback.
+// That arrival rate is gone — it could never be attributed to a pod, see the note
+// above QueryModelArrivalRate — so the fallback is now the only path. The returned
 // λ_dec only feeds this variant's own VariantCapacity.TotalDemand/Utilization
-// (introspection) — Analyze's model-level TotalDemand uses input.ArrivalRate ×
-// avgOL instead (the all-or-nothing model-level design), and derives anyEPP from that model-level rate
-// rather than from this function's isEPP return.
-func computeDemand(metrics []domain.ReplicaMetrics) (float64, bool) {
+// (introspection); Analyze's model-level TotalDemand uses input.ArrivalRate ×
+// avgOL and derives anyEPP from that model-level rate.
+//
+// The one real loss is that completions undercount arrivals while a queue is
+// building. Returns 0 when nothing has completed, which is the caller's signal to
+// fall through to computeLocalDemand.
+func computeDemand(metrics []domain.ReplicaMetrics) float64 {
+	// Σ RequestRate_r × AvgOutputTokens_r — each replica's own output length
+	// weighted by its own completion rate.
 	var lambdaDec float64
-	var isEPP bool
-	for _, m := range metrics {
-		if m.ArrivalRate > 0 {
-			isEPP = true // EPP present, even if AvgOutputTokens is not yet observed (warm-up)
-			if m.AvgOutputTokens > 0 {
-				lambdaDec += m.ArrivalRate * m.AvgOutputTokens
-			}
-		}
-	}
-	if lambdaDec > 0 {
-		return lambdaDec, isEPP // EPP present and gave usable demand
-	}
-	// EPP absent, OR EPP present but zero usable demand (warm-up, no completions yet):
-	// fall through to the engine request-rate proxy.
-	// Σ RequestRate_r × AvgOutputTokens_r mirrors the EPP formula structure and
-	// correctly weights each replica's OL by its own throughput.
-	var lambdaDecFallback float64
 	for _, m := range metrics {
 		if m.RequestRate > 0 && m.AvgOutputTokens > 0 {
-			lambdaDecFallback += m.RequestRate * m.AvgOutputTokens
+			lambdaDec += m.RequestRate * m.AvgOutputTokens
 		}
 	}
-	return lambdaDecFallback, isEPP // isEPP still reflects "EPP present"
+	return lambdaDec
 }
 
 // computeLocalDemand estimates decode token demand from per-replica k* observations

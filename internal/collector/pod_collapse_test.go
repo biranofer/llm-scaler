@@ -27,7 +27,7 @@ func TestCollapseToPods_MergesDPRanksIntoOneReplica(t *testing.T) {
 			PodName: "pod-dp", VariantName: "va-1", ModelID: "m", Namespace: "ns",
 			NumGpuBlocks: 1000, BlockSize: 16, TotalKvCapacityTokens: 16000, TokensInUse: 4000,
 			KvCacheUsage: 0.25, KvUsageInstant: 0.25, QueueLength: 2,
-			ArrivalRate: 1, RequestRate: 1, GenerationTokenRate: 100,
+			RequestRate: 1, GenerationTokenRate: 100,
 			AvgInputTokens: 100, AvgOutputTokens: 20, AvgITL: 0.02, AvgServiceTime: 10, PrefixCacheHitRate: 0.4,
 			Metadata: &domain.ReplicaMetricsMetadata{CollectedAt: ts, Age: 5 * time.Second, FreshnessStatus: "fresh"},
 		},
@@ -35,7 +35,7 @@ func TestCollapseToPods_MergesDPRanksIntoOneReplica(t *testing.T) {
 			PodName: "pod-dp", VariantName: "va-1", ModelID: "m", Namespace: "ns",
 			NumGpuBlocks: 2000, BlockSize: 16, TotalKvCapacityTokens: 32000, TokensInUse: 32000,
 			KvCacheUsage: 1.0, KvUsageInstant: 1.0, QueueLength: 5,
-			ArrivalRate: 3, RequestRate: 3, GenerationTokenRate: 300,
+			RequestRate: 3, GenerationTokenRate: 300,
 			AvgInputTokens: 200, AvgOutputTokens: 40, AvgITL: 0.06, AvgServiceTime: 30, PrefixCacheHitRate: 0.8,
 			Metadata: &domain.ReplicaMetricsMetadata{CollectedAt: ts, Age: 30 * time.Second, FreshnessStatus: "stale"},
 		},
@@ -54,7 +54,6 @@ func TestCollapseToPods_MergesDPRanksIntoOneReplica(t *testing.T) {
 	assert.Equal(t, int64(48000), pod.TotalKvCapacityTokens)
 	assert.Equal(t, int64(36000), pod.TokensInUse)
 	assert.Equal(t, 7, pod.QueueLength)
-	assert.Equal(t, 4.0, pod.ArrivalRate)
 	assert.Equal(t, 4.0, pod.RequestRate)
 	assert.Equal(t, 400.0, pod.GenerationTokenRate)
 	assert.Equal(t, pod.NumGpuBlocks*pod.BlockSize, pod.TotalKvCapacityTokens,

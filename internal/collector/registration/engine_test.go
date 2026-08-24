@@ -22,8 +22,8 @@ var _ = Describe("EngineQuery", func() {
 
 	It("returns the bare name for engine-agnostic queries regardless of engine", func() {
 		// Scheduler queries are not engine-specific (sourced from EPP).
-		Expect(IsEngineSpecific(QuerySchedulerDispatchRate)).To(BeFalse())
-		Expect(EngineQuery(inferenceengine.EngineSGLang, QuerySchedulerDispatchRate)).To(Equal(QuerySchedulerDispatchRate))
+		Expect(IsEngineSpecific(QueryModelArrivalRate)).To(BeFalse())
+		Expect(EngineQuery(inferenceengine.EngineSGLang, QueryModelArrivalRate)).To(Equal(QueryModelArrivalRate))
 	})
 })
 

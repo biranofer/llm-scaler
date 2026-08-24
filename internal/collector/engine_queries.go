@@ -35,9 +35,14 @@ var engineSpecificReplicaQueries = []string{
 // agnosticReplicaQueries are the logical query names collected per replica whose
 // metric source is engine-independent (the EPP inference scheduler). They are
 // refreshed once and shared across engines.
-var agnosticReplicaQueries = []string{
-	registration.QuerySchedulerDispatchRate,
-}
+//
+// Empty today. Its only member was the EPP's per-pod dispatch rate, removed
+// because nothing consumed it: the demand floor and the throughput analyzer both
+// size from the MODEL-level arrival rate (QueryModelArrivalRate), and the
+// per-variant figure the throughput analyzer displays falls back to the engine's
+// own completion rate. The extension point stays because the next engine-agnostic
+// per-replica metric belongs here.
+var agnosticReplicaQueries = []string{}
 
 // unpartitionedReplicaQueries lists the logical replica queries whose series
 // cannot be partitioned by model_name, because they do not carry that label.

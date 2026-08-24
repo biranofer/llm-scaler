@@ -107,13 +107,6 @@ type ReplicaMetrics struct {
 	// Zero when prefix caching is disabled or metrics are unavailable.
 	PrefixCacheHitRate float64
 
-	// ArrivalRate is the request arrival rate to this replica in requests per second.
-	// Sourced from rate(inference_extension_scheduler_attempts_total{status="success"}[5m]) per pod.
-	// This represents requests being dispatched to this replica by the scheduler.
-	// Used by queueing model analyzer as Lambda (arrival rate) for queue dynamics estimation.
-	// Zero when scheduler metrics are unavailable.
-	ArrivalRate float64
-
 	// AvgServiceTime is how long a request occupies this replica, in seconds,
 	// EXCLUDING time spent waiting in the queue.
 	//

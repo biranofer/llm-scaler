@@ -24,7 +24,7 @@ import (
 //	OL      (avg output tokens)       → AvgOutputTokens        (QueryAvgOutputTokens       / RegisterSaturationQueries)
 //	IL      (avg input tokens)        → AvgInputTokens         (QueryAvgInputTokens        / RegisterSaturationQueries)
 //	H%      (prefix cache hit rate)   → PrefixCacheHitRate     (QueryPrefixCacheHitRate    / RegisterSaturationQueries)
-//	λ_req   (per-pod arrival rate)    → ArrivalRate            (QuerySchedulerDispatchRate / RegisterQueueingModelQueries)
+//	λ_dec   (per-pod completion rate) → RequestRate            (QueryRequestRate           / RegisterArrivalRateQueries)
 //	Λ_req   (model-level arrival)     → AnalyzerInput.ArrivalRate (QueryModelArrivalRate   / RegisterThroughputAnalyzerQueries, this file)
 //	         λ_dec = Λ_req × avgOL, combined with the queue-drain term (model level, see Commit 2)
 const (
@@ -61,20 +61,21 @@ const (
 	// sglang:generation_tokens_histogram_count.
 	//
 	// Used as a fallback for λ_dec estimation when EPP/scheduler metrics are
-	// unavailable (ArrivalRate == 0 for all pods). Per variant V, the analyzer computes:
-	//   λ_dec_fallback = Σ_{r∈V}(RequestRate_r × AvgOutputTokens_r)
+	// unavailable. Per variant V, the analyzer computes:
+	//   λ_dec = Σ_{r∈V}(RequestRate_r × AvgOutputTokens_r)
 	//
 	// Note: measures completed requests (served demand), not arriving requests.
-	// It undercounts when requests are queued in the scheduler. Use
-	// ArrivalRate (via QuerySchedulerDispatchRate) as the primary demand source.
+	// It undercounts when requests are queued in the scheduler. The MODEL-level
+	// arrival rate (QueryModelArrivalRate) is what sizes the fleet; this is only
+	// the per-variant figure the throughput analyzer displays.
 	QueryRequestRate = "request_rate"
 
 	// QueryModelArrivalRate is the query name for the model-level request arrival
 	// rate (requests/sec), summed across the whole model with no per-pod labels to
-	// reconcile — unlike QuerySchedulerDispatchRate (RegisterQueueingModelQueries),
-	// which groups by pod_name/port and belongs to QM. This is a TA-exclusive query
-	// on the same underlying source metric; it is registered here, not in
-	// queueing_model.go, because no other analyzer consumes it.
+	// reconcile. A per-pod form of this metric used to exist and was removed: its
+	// pod_name/port grouping could not be joined against vLLM's per-instance
+	// series, because the EPP reports the port it ROUTES to while every engine
+	// series is keyed on the port it is SCRAPED on.
 	//
 	// No model_name fallback: inference_extension_scheduler_attempts_total has
 	// never carried a model_name label on any EPP version examined (only
@@ -173,9 +174,8 @@ func RegisterArrivalRateQueries(sourceRegistry *source.SourceRegistry) {
 	})
 
 	// Model-level request arrival rate (requests/sec), summed across the whole
-	// model. Same status="success" filter as QuerySchedulerDispatchRate, but
-	// grouped only by namespace and target_model_name — no pod_name/port labels,
-	// so none of that query's per-instance attribution fragility. Engine-agnostic
+	// model. Grouped only by namespace and target_model_name — no pod_name/port
+	// labels, so none of the per-instance attribution fragility. Engine-agnostic
 	// (sourced from EPP, not vLLM/SGLang), so it needs no SGLang variant.
 	//
 	// Namespace-scoped like the engine queries: the collector selects its model by
