@@ -25,11 +25,18 @@ wva_missing_prereqs() {
         # tenant's, so it sent them to ask an admin to redo work already done.
         # That is the exact failure the Forbidden handling below was added to
         # prevent, arriving by a different route.
+        # `out=$(...) || rc=$?`, never `out=$(...); rc=$?`. Under `set -e` the
+        # plain form takes the shell down AT THE ASSIGNMENT when kubectl fails,
+        # so rc is never read and the Forbidden handling below never runs. Here
+        # that happens inside a command substitution, so the damage is quieter:
+        # the subshell dies, the caller reads empty output, and empty means "no
+        # prereqs are missing" -- the reassuring answer, not the true one.
+        rc=0
         case "$kind" in
             Namespace|ClusterRole|ClusterRoleBinding|CustomResourceDefinition)
-                out=$(kubectl get "$kind" "$name" 2>&1); rc=$? ;;
+                out=$(kubectl get "$kind" "$name" 2>&1) || rc=$? ;;
             *)
-                out=$(kubectl get "$kind" "$name" -n "$WVA_NS" 2>&1); rc=$? ;;
+                out=$(kubectl get "$kind" "$name" -n "$WVA_NS" 2>&1) || rc=$? ;;
         esac
         [ $rc -eq 0 ] && continue
         # A denied read is not an absent object, and cluster-scoped RBAC is

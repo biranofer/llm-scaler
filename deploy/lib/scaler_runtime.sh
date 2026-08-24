@@ -29,8 +29,13 @@ deploy_keda() {
         # read cluster-scoped CRDs, and treating that Forbidden as NotFound aborted
         # their install — for a KEDA that was present all along, and only AFTER the
         # controller had been applied, leaving it half-installed.
-        local keda_probe keda_rc
-        keda_probe=$(kubectl get crd scaledobjects.keda.sh 2>&1); keda_rc=$?
+        # || keda_rc=$?, not ; keda_rc=$?. The plain form aborts the whole
+        # install at this assignment the moment the CRD is absent, which is the
+        # ONE case the message below exists to explain -- so the operator got
+        # a bare exit 2 and a half-applied prerequisite set instead of being
+        # told to set KEDA_HELM_INSTALL=true.
+        local keda_probe keda_rc=0
+        keda_probe=$(kubectl get crd scaledobjects.keda.sh 2>&1) || keda_rc=$?
         if [ $keda_rc -eq 0 ]; then
             log_success "KEDA ScaledObject CRD is available on the cluster"
         elif printf '%s' "$keda_probe" | grep -qi 'forbidden'; then

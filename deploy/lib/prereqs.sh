@@ -202,9 +202,12 @@ wva_cluster_policy_ns() {
 # tenant "scaling is UNBOUNDED" while a gpu-inventory limiter was in force — the
 # opposite of the truth, and in the direction that sounds harmless.
 wva_cluster_policy_limiter() {
-    local policy_ns="$1" cm="" listing rc
+    local policy_ns="$1" cm="" listing rc=0
     [ -n "$policy_ns" ] || return 0
-    listing=$(kubectl get configmap -n "$policy_ns" -o name 2>&1); rc=$?
+    # || rc=$?, not ; rc=$? -- see the note in install_core.sh. Without it a
+    # Forbidden listing kills this under `set -e` before the Forbidden branch
+    # below can return "unknown", and the caller's own assignment fails too.
+    listing=$(kubectl get configmap -n "$policy_ns" -o name 2>&1) || rc=$?
     if [ $rc -ne 0 ]; then
         printf '%s' "$listing" | grep -qi 'forbidden' && echo "unknown"
         return 0

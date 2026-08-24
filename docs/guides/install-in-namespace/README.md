@@ -19,7 +19,10 @@ namespace's owner installs and upgrades the controller themselves.
   with none rather than leave a healthy controller with nothing to scale. No
   model yet? [Install a small llm-d model](../install-small-model/) puts one on a
   single GPU.
-- KEDA, installed for you if the cluster has none
+- KEDA. On OpenShift it is installed for you. On Kubernetes it is **not**:
+  `setup-prereqs` assumes the cluster already has one, because on a shared
+  cluster installing an operator is somebody else's decision. If the cluster
+  has none, re-run with `KEDA_HELM_INSTALL=true make setup-prereqs`.
 - a Prometheus scraping those model servers
 
 If you want a model to scale **from zero**, its EPP must run with the
@@ -81,6 +84,16 @@ Once per namespace, not once per upgrade. It creates the namespace, the
 cluster-scoped RBAC and the ServiceMonitor: the objects a namespace admin is not
 allowed to create. See [Cluster-admin setup](../admin-cluster-setup/)
 for what each one is and why it needs an admin.
+
+On Kubernetes this expects the cluster to already have KEDA. If it does not,
+the step stops and tells you to re-run as:
+
+```bash
+KEDA_HELM_INSTALL=true make setup-prereqs
+```
+
+It is a separate opt-in because installing a cluster operator on a shared
+cluster is a decision for whoever runs it. OpenShift installs KEDA for you.
 
 Already done for your namespace? `make check-prereqs` above names anything still
 missing; if it names nothing, go to step 2.
@@ -298,6 +311,7 @@ preflight reported.
 | `NAMESPACE` | the namespace running llm-d, discovered | `llm-d-optimized-baseline` |
 | `IMG` | the image CI builds from main | `ghcr.io/you/wva:dev` |
 | `PROMETHEUS_URL` | detected; Thanos on OpenShift | `http://prom.monitoring.svc:9090` |
+| `KEDA_HELM_INSTALL` | `false` on Kubernetes — assumes cluster KEDA | `true`, to install one with Helm |
 
 Full list: [Configuration reference](../../deployment/configuration.md).
 

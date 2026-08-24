@@ -77,7 +77,12 @@ wva_installations_raw() {
     # installed: evgensh-wva-test/wva-warm-pool", naming a Deployment that
     # manages nothing, and there was no way to proceed except to disable a check
     # that was right in principle.
-    out=$(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler,control-plane=controller-manager -o go-template="$WVA_INSTALLS_TEMPLATE" 2>&1); rc=$?
+    # || rc=$?, not ; rc=$? -- see the note in install_core.sh. This one runs in
+    # a process substitution, so the plain form fails silently: the subshell dies
+    # on a Forbidden list, the caller reads no rows, and "no other WVA installed"
+    # is exactly the answer that lets a second controller be installed.
+    rc=0
+    out=$(kubectl get deployments -A -l app.kubernetes.io/name=workload-variant-autoscaler,control-plane=controller-manager -o go-template="$WVA_INSTALLS_TEMPLATE" 2>&1) || rc=$?
     if [ $rc -ne 0 ]; then
         if printf '%s' "$out" | grep -qi 'forbidden'; then
             log_warning "Cannot check whether another WVA is already installed (listing Deployments cluster-wide is not permitted for you)."
