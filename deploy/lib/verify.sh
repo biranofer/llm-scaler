@@ -219,16 +219,24 @@ verify_deployment() {
     # installed into, while the controller was happily reading a working
     # Prometheus somewhere else.
     log_info "Checking Prometheus..."
-    if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
+    # The ENDPOINT first, always. "A Prometheus is running in
+    # MONITORING_NAMESPACE" is not the same claim as "WVA reads from there", and
+    # on OpenShift they are different places: the platform runs a Prometheus in
+    # openshift-user-workload-monitoring while WVA reads the Thanos Querier in
+    # openshift-monitoring. Leading with the pod check therefore reported a
+    # namespace the controller never talks to, and called a platform Prometheus
+    # something this install deployed. Observed on pokprod.
+    #
+    # The endpoint is also the more useful fact: it is the one an operator can
+    # curl when the controller says it cannot reach Prometheus.
+    local prom_endpoint
+    prom_endpoint="$(wva_prometheus_endpoint)" || prom_endpoint=""
+    if [ -n "$prom_endpoint" ]; then
+        log_success "Prometheus: $prom_endpoint"
+    elif wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
         log_success "Prometheus is running in $MONITORING_NAMESPACE"
-    else
-        local prom_endpoint
-        prom_endpoint="$(wva_prometheus_endpoint)" || prom_endpoint=""
-        if [ -n "$prom_endpoint" ]; then
-            log_success "Prometheus: $prom_endpoint (this install did not deploy one)"
-        elif [ "$DEPLOY_PROMETHEUS" = "true" ]; then
-            log_warning "Prometheus is not ready yet"
-        fi
+    elif [ "$DEPLOY_PROMETHEUS" = "true" ]; then
+        log_warning "Prometheus is not ready yet"
     fi
 
     if [ "$DEPLOY_OPERATIONAL_DASHBOARD" = "true" ]; then
@@ -308,14 +316,14 @@ print_summary() {
         *@sha256:*) echo "  Digest:       ${wva_digest#*@}" ;;
     esac
 
-    # Same rule as the check above: report the Prometheus that exists, not the one
-    # DEPLOY_PROMETHEUS says was wanted.
+    # Same rule as the check above: name the endpoint WVA reads, not a namespace
+    # that happens to contain a Prometheus.
     local summary_endpoint
     summary_endpoint="$(wva_prometheus_endpoint)" || summary_endpoint=""
-    if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
-        echo "  Prometheus:   deployed in $MONITORING_NAMESPACE"
-    elif [ -n "$summary_endpoint" ]; then
-        echo "  Prometheus:   $summary_endpoint (not deployed by this install)"
+    if [ -n "$summary_endpoint" ]; then
+        echo "  Prometheus:   $summary_endpoint"
+    elif wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
+        echo "  Prometheus:   deployed in $MONITORING_NAMESPACE by this install"
     else
         echo "  Prometheus:   ${PROMETHEUS_URL:-<the shipped default>} (not deployed by this install)"
     fi
