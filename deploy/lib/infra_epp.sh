@@ -101,10 +101,14 @@ deploy_epp() {
 
     # When scale-to-zero is enabled, add flowControl feature gate to EPP config so the
     # scale-from-zero engine can read inference_extension_flow_control_queue_size metrics.
-    local extra_helm_args=()
+    local extra_helm_args=() epp_preexisting=false
     if [ "${ENABLE_SCALE_TO_ZERO:-false}" = "true" ]; then
         log_info "ENABLE_SCALE_TO_ZERO=true: enabling EPP flowControl feature gate..."
         extra_helm_args=(-f "$_lib_dir/epp-flow-control.values.yaml")
+        # Asked BEFORE the upgrade, because afterwards the answer is always yes.
+        if kubectl get deployment optimized-baseline-epp -n "$NAMESPACE" >/dev/null 2>&1; then
+            epp_preexisting=true
+        fi
     fi
 
     helm upgrade --install optimized-baseline \
@@ -121,6 +125,24 @@ deploy_epp() {
         --set router.proxy.resources.limits.cpu=500m \
         --set router.proxy.resources.limits.memory=256Mi \
         -n "$NAMESPACE" --version "$LLM_D_ROUTER_VERSION" --create-namespace
+
+    # The flowControl gate lives in a ConfigMap, and the chart's pod template has no
+    # checksum annotation over it -- so `helm upgrade` rewrites the ConfigMap, the
+    # Deployment spec is unchanged, and an EPP that was already running keeps its
+    # old config. It stays up, reports healthy, and exports no flow-control metrics.
+    #
+    # That is not cosmetic here: the queue depth those metrics carry is the ONLY
+    # evidence of demand for a model parked at zero replicas, so scale-from-zero
+    # silently never fires. Reported by an external evaluation, which had to run
+    # `kubectl rollout restart` by hand to get the metrics at all.
+    #
+    # Only when the EPP predates this run: a freshly created one already has the
+    # gate, and restarting it would just add a minute to every clean install.
+    if [ "$epp_preexisting" = "true" ]; then
+        log_info "Restarting the pre-existing EPP so it picks up the flowControl config (Helm does not)."
+        kubectl rollout restart deployment/optimized-baseline-epp -n "$NAMESPACE" || \
+            log_warning "Could not restart the EPP; if flow-control metrics are missing, restart it by hand."
+    fi
 
     # Grant EPP SA permission to create tokenreviews/subjectaccessreviews so its
     # metrics endpoint authentication works (otherwise /metrics returns 500).

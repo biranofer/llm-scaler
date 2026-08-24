@@ -311,7 +311,7 @@ preflight reported.
 | --- | --- | --- |
 | `NAMESPACE` | the namespace running llm-d, discovered | `llm-d-optimized-baseline` |
 | `IMG` | the image CI builds from main | `ghcr.io/you/wva:dev` |
-| `PROMETHEUS_URL` | detected; Thanos on OpenShift | `http://prom.monitoring.svc:9090` |
+| `PROMETHEUS_URL` | detected; Thanos on OpenShift | `https://prom.monitoring.svc:9090` |
 | `KEDA_HELM_INSTALL` | `false` on Kubernetes — assumes cluster KEDA | `true`, to install one with Helm |
 
 Full list: [Configuration reference](../../deployment/configuration.md).
