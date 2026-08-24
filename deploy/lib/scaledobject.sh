@@ -397,7 +397,7 @@ so_serving_workload_for_model() {
               | (getpath($p) // {}) as $t
               | (($t.metadata.labels // {}) + ($o.metadata.labels // {})) as $l
               | select($l | to_entries
-                       | any(.key + "=" + (.value|tostring) as $kv
+                       | any((.key + "=" + (.value|tostring)) as $kv
                              | ($markers | index($kv)) != null))
               | select(($l["llm-d.ai/model"] // "") == $m)
               | $o.metadata.name'
@@ -577,7 +577,7 @@ so_namespaces_of() {
             | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
               as $labels
             | select($labels | to_entries
-                     | any(.key + "=" + (.value|tostring) as $kv
+                     | any((.key + "=" + (.value|tostring)) as $kv
                            | ($markers | index($kv)) != null))
             | .metadata.namespace' 2>/dev/null || true
 }

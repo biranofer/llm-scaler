@@ -434,8 +434,10 @@ wva_report_namespace() {
         #
         # kind-emulator is exempt: the e2e path provisions llm-d and WVA in one
         # sequence and owns its own ordering. SKIP_CHECKS=true is the bypass for
-        # anyone who means it.
-        if [ "${ENVIRONMENT:-}" != "kind-emulator" ]; then
+        # anyone who means it -- and it has to be TESTED here, not just named in
+        # the message below. It was not, so the escape hatch this text advertises
+        # did nothing and the install died anyway (issue #27).
+        if [ "${ENVIRONMENT:-}" != "kind-emulator" ] && [ "${SKIP_CHECKS:-false}" != "true" ]; then
             log_error "  Refusing to continue: namespace $managed does not exist.
 
 You named it, and in this scenario llm-d is already running in it — so the name is
@@ -443,6 +445,11 @@ almost certainly wrong: a typo, a stale NAMESPACE export, or the wrong cluster.
 
   name the namespace llm-d serves from:  NAMESPACE=<namespace> make <target>
   or install without the checks:         SKIP_CHECKS=true"
+        fi
+        # Skipping the gate must not skip the finding, or SKIP_CHECKS becomes a
+        # way to be uninformed rather than a way to proceed knowingly.
+        if [ "${SKIP_CHECKS:-false}" = "true" ]; then
+            log_warning "  SKIP_CHECKS=true: continuing although namespace $managed does not exist."
         fi
         log_info "  $managed does not exist yet; the install creates it."
         return 0
@@ -503,11 +510,12 @@ almost certainly wrong: a typo, a stale NAMESPACE export, or the wrong cluster.
         # sequence and owns the ordering itself. SKIP_CHECKS=true is the bypass, and
         # the only one -- a per-check WVA_ALLOW_* flag was tried and removed, because
         # the scenario is already selected by WVA_SCOPE and a second knob for the
-        # same decision is a second thing to get wrong.
+        # same decision is a second thing to get wrong. It is tested here as well as
+        # named in the message: it used not to be (issue #27).
         #
         # Cluster scope never reaches here: it returns above, because a
         # cluster-scoped controller manages namespaces that need not exist yet.
-        if [ "${ENVIRONMENT:-}" != "kind-emulator" ]; then
+        if [ "${ENVIRONMENT:-}" != "kind-emulator" ] && [ "${SKIP_CHECKS:-false}" != "true" ]; then
             log_error "  Refusing to continue: $managed holds no llm-d model servers.
 
 WVA scales llm-d; it does not install it. Finish the llm-d install in this namespace,
@@ -515,6 +523,10 @@ or name the namespace it is already serving from:
 
   name the right namespace:        NAMESPACE=<namespace> make <target>
   or install without the checks:   SKIP_CHECKS=true"
+        fi
+        # As above: say it even when the gate is skipped.
+        if [ "${SKIP_CHECKS:-false}" = "true" ]; then
+            log_warning "  SKIP_CHECKS=true: continuing although $managed holds no llm-d model servers; WVA will have nothing to scale."
         fi
     fi
 }
@@ -535,7 +547,7 @@ wva_model_server_count() {
                 [ .items[]
                   | ((getpath($p + ["metadata","labels"]) // {}) + (.metadata.labels // {}))
                   | select(to_entries
-                           | any(.key + "=" + (.value|tostring) as $kv
+                           | any((.key + "=" + (.value|tostring)) as $kv
                                  | ($markers | index($kv)) != null))
                 ] | length' 2>/dev/null | tail -1 | tr -cd '0-9' || true)"
         total=$((total + ${n:-0}))

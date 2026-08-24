@@ -381,7 +381,7 @@ wva_dashboard_serving_namespaces() {
     kubectl get deployments -A -o json 2>/dev/null         | jq -r --argjson markers "$(so_serving_markers_json)" '
             [ .items[]?
               | select((.spec.template.metadata.labels // {}) | to_entries
-                       | any(.key + "=" + (.value|tostring) as $kv
+                       | any((.key + "=" + (.value|tostring)) as $kv
                              | ($markers | index($kv)) != null))
               | .metadata.namespace ] | unique | .[]' 2>/dev/null || true
 }

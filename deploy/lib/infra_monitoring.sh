@@ -146,13 +146,13 @@ wva_modelserver_scrape_conflict() {
             --arg kind "$kind" --argjson markers "$markers" --argjson services "$services" '
             # A label map is a model server when any of its k=v pairs is a marker.
             def serving_map($m): ($m | to_entries
-                | any(.key + "=" + (.value|tostring) as $kv
+                | any((.key + "=" + (.value|tostring)) as $kv
                       | ($markers | index($kv)) != null));
             # matchExpressions form: key In [values], any pair of which is a marker.
             def serving_exprs($e): (($e // [])
                 | any(. as $x
                       | (($x.values // [])
-                         | any($x.key + "=" + (.|tostring) as $kv
+                         | any(($x.key + "=" + (.|tostring)) as $kv
                                | ($markers | index($kv)) != null))));
             .items[]?
             | select((.metadata.labels["app.kubernetes.io/component"] // "")
@@ -208,7 +208,7 @@ wva_serving_workload_count() {
                 [ .items[]?
                   | (getpath($p + ["metadata","labels"]) // {})
                   | select(to_entries
-                           | any(.key + "=" + (.value|tostring) as $kv
+                           | any((.key + "=" + (.value|tostring)) as $kv
                                  | ($markers | index($kv)) != null))
                 ] | length' 2>/dev/null || true)
         total=$((total + ${n:-0}))
