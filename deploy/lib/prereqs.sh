@@ -201,6 +201,26 @@ wva_cluster_policy_ns() {
 # the same as no limiter being declared. Reporting Forbidden as "none" told a
 # tenant "scaling is UNBOUNDED" while a gpu-inventory limiter was in force — the
 # opposite of the truth, and in the direction that sounds harmless.
+# wva_report_cluster names the cluster every later command will act on.
+#
+# Read-only and never fatal: an unreachable cluster is check_prerequisites'
+# finding to report, and this running first must not pre-empt the better error.
+wva_report_cluster() {
+    local ctx server
+    ctx=$(kubectl config current-context 2>/dev/null) || ctx=""
+    server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null) || server=""
+    if [ -z "$ctx" ] && [ -z "$server" ]; then
+        log_warning "Cluster: no current kubeconfig context. Everything below will fail until one is set."
+        return 0
+    fi
+    log_info "Cluster:    ${ctx:-<no context name>}"
+    [ -n "$server" ] && log_info "  server:   $server"
+    # Only when it is set: naming the file is useful precisely when it is not the
+    # default one, and noise when it is.
+    [ -n "${KUBECONFIG:-}" ] && log_info "  kubeconfig: $KUBECONFIG"
+    return 0
+}
+
 wva_cluster_policy_limiter() {
     local policy_ns="$1" cm="" listing rc=0
     [ -n "$policy_ns" ] || return 0

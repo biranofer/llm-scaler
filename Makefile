@@ -108,8 +108,16 @@ E2E_EMULATED_LLMD_NAMESPACE ?= llm-d-sim
 E2E_KEDA_NAMESPACE          ?= keda-system
 E2E_WVA_SECONDARY_OVERLAY_PATH ?= $(CURDIR)/test/e2e/testdata/secondary-controller
 # llm-d-benchmark CLI configuration
-# Ensure brew-installed tools (helm >=3.19) take precedence over Rancher Desktop
-export PATH := /opt/homebrew/bin:$(PATH)
+# Ensure brew-installed tools (helm >=3.19) take precedence over Rancher Desktop.
+#
+# Scoped to the benchmark targets, which is what it was written for. It used to
+# be a plain `export PATH :=`, which applies to EVERY target -- so it also
+# outranked whatever the caller had put first. An operator working across two
+# clusters put a kubectl wrapper pinned to one of them at the front of PATH; this
+# line silently won, and `make check-prereqs` ran against the other cluster and
+# reapplied prerequisites there. A successful-looking preflight for the wrong
+# cluster is the worst possible failure mode for a command that mutates one.
+benchmark-%: export PATH := /opt/homebrew/bin:$(PATH)
 BENCHMARK_REPO_URL   ?= https://github.com/llm-d/llm-d-benchmark.git
 BENCHMARK_REPO_DIR   ?= $(CURDIR)/llm-d-benchmark
 BENCHMARK_DIRECT_KEDA ?= false

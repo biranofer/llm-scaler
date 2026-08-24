@@ -170,6 +170,12 @@ main() {
         ENVIRONMENT="kind-emulator"
     fi
 
+    # Which cluster, before anything acts on one. Every command below resolves it
+    # from the ambient kubeconfig, so the operator's only evidence that it picked
+    # the intended cluster is that they remembered to check -- and an install that
+    # lands on the wrong one still reports success.
+    wva_report_cluster
+
     # Before anything reads WVA_NS — the check, the undeploy and the install all
     # need the same answer, or `export NAMESPACE=…` works for one and silently
     # not the others.
