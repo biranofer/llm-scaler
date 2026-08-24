@@ -70,18 +70,42 @@ spec:
           capabilities:
             drop:
             - "ALL"
+        # A startup probe, so a slow start is not read as a failed one.
+        # While it is pending, liveness and readiness do not run at all; once it
+        # succeeds they take over and the container is never restarted for
+        # taking too long to come up.
+        #
+        # Without it, an install on a real cluster restarted a controller that
+        # was starting perfectly well: it had initialized Prometheus and its
+        # managers, but the probes' timeout is 1s by default and that expired
+        # while it did so. The installer's 60s rollout wait then reported the
+        # controller not ready, and the next check found it Ready -- an install
+        # that looks broken, is not, and costs a restart to find out.
+        #
+        # 30 x 2s allows a minute to start; the failure it still catches is a
+        # process that never becomes healthy at all.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          periodSeconds: 2
+          failureThreshold: 30
+          timeoutSeconds: 3
         livenessProbe:
           httpGet:
             path: /healthz
             port: 8081
-          initialDelaySeconds: 15
+          # initialDelaySeconds is not set: the startup probe already gates this
+          # one, and a delay on top of it only slows down detecting a real hang.
           periodSeconds: 20
+          # Explicit, because the default is 1s and that is what fired above.
+          timeoutSeconds: 3
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8081
-          initialDelaySeconds: 5
           periodSeconds: 10
+          timeoutSeconds: 3
         resources:
           limits:
             cpu: 500m

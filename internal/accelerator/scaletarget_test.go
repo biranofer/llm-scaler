@@ -71,6 +71,25 @@ func TestGetAcceleratorNameFromScaleTarget(t *testing.T) {
 			expected: "nvidia-tesla-v100",
 		},
 		{
+			// CoreWeave. Reported against ff81a308: every pod ran on an H200 and the
+			// controller still called four GPUs unattributed, because this key was
+			// not among the ones it looks at.
+			name: "coreweave_nvidia_model_from_nodeSelector",
+			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
+			deployment: &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							NodeSelector: map[string]string{
+								"gpu.nvidia.com/model": "H200",
+							},
+						},
+					},
+				},
+			},
+			expected: "H200",
+		},
+		{
 			name: "intel_gaudi_from_nodeSelector",
 			va:   &llmdVariantAutoscalingV1alpha1.VariantAutoscaling{},
 			deployment: &appsv1.Deployment{

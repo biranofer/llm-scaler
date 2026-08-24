@@ -53,11 +53,26 @@ var (
 	// vendorResources lists each supported GPU resource and its discovery labels.
 	VendorResources = []GpuInfo{
 		{
-			Vendor:              "NVIDIA",
-			ResourceName:        "nvidia.com/gpu",
-			ProductLabel:        "nvidia.com/gpu.product",
-			ProductLabelAliases: []string{"cloud.google.com/gke-accelerator"},
-			MemoryLabel:         "nvidia.com/gpu.memory",
+			Vendor:       "NVIDIA",
+			ResourceName: "nvidia.com/gpu",
+			ProductLabel: "nvidia.com/gpu.product",
+			// Aliases are provider label keys carrying the same fact. The VALUE
+			// shape differs between them and that is fine: the accelerator name is
+			// whatever the node label says, and an operator keys quotas by the same
+			// string. GKE says "nvidia-tesla-v100"; CoreWeave says "H200" where
+			// NVIDIA GPU Feature Discovery would say "NVIDIA-H200".
+			//
+			// Without the CoreWeave key a fleet pinned with gpu.nvidia.com/model
+			// resolves to "unknown": the controller reports its GPUs unattributed
+			// and emits AcceleratorNotResolved while every pod is demonstrably on
+			// an H200. Replica scaling still works, but accelerator-keyed metrics
+			// are wrong and enabling the gpu-inventory limiter would block scale-up
+			// on capacity it cannot see.
+			ProductLabelAliases: []string{
+				"cloud.google.com/gke-accelerator",
+				"gpu.nvidia.com/model",
+			},
+			MemoryLabel: "nvidia.com/gpu.memory",
 		},
 		{
 			Vendor:       "AMD",
