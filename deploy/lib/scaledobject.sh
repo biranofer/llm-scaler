@@ -525,6 +525,42 @@ so_pool() {
 # It used to default to NAMESPACE, which was wrong in both directions: it scanned one
 # namespace on a cluster-scoped install that could have managed them all, and it
 # scanned a namespace a namespace-scoped install cannot see.
+# so_drain_note reports whether a scale target can lose a replica without cutting
+# live requests, and returns a note when it cannot.
+#
+# Reported against a real run: four scale-downs produced four bursts of
+# ClientPayloadError, each ending 25-30s after its reduction -- 39 truncated
+# streams in one benchmark. The serving Deployment had the default 30s grace
+# period and no preStop hook, so a removed replica took its open responses with
+# it. Long generations are the normal case here, which is what makes this worth
+# saying out loud rather than leaving to be discovered.
+#
+# A note, not a refusal, and not a patch. The pod spec belongs to the model
+# server's chart -- on llm-d it is `managed-by: Helm`, release <model>-ms -- so
+# anything this installer wrote there would be reverted by the next
+# `helm upgrade`, and WVA does not own the workloads it scales. The plan file is
+# the right place to say it: registering a ScaledObject is the moment scale-down
+# becomes possible, and it is where the operator is already deciding apply:
+# yes|no|adopt.
+so_drain_note() {
+    local ns="$1" resource="$2" name="$3" pod="$4"
+    local out grace prestop
+    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
+        | jq -r --argjson p "$pod" '
+            (getpath($p) // {}) as $t
+            | [ ($t.spec.terminationGracePeriodSeconds // 30),
+                ([ $t.spec.containers[]? | select(.lifecycle.preStop != null) ] | length)
+              ] | @tsv' 2>/dev/null) || out=""
+    [ -n "$out" ] || return 0
+    read -r grace prestop <<< "$out"
+    # A hook of any shape counts. Whether it drains for long enough is the
+    # operator's judgement, and guessing at a threshold would produce a warning
+    # nobody can act on.
+    [ "${prestop:-0}" -gt 0 ] && return 0
+    printf '%s' "Scale-down will cut in-flight requests: no container declares a preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing. The pod spec belongs to the model server's chart rather than to WVA -- see docs/deployment/operations.md#draining-before-scale-down."
+    return 0
+}
+
 so_target_namespaces() {
     local scope="${WVA_DEFAULT_SO_NS:-}"
     if [ -z "$scope" ]; then
@@ -624,7 +660,7 @@ so_existing_name() {
 # then the whole truth about what was found, and turning a "no" into a "yes" is a
 # deliberate act rather than an undiscoverable one.
 so_discover() {
-    local ns name args labels objlabels model pool kind apply note
+    local ns name args labels objlabels model pool kind apply note drain
     local existing existing_name existing_min existing_max existing_cost existing_policy
     local min max cost policy
     so_plan_preamble
@@ -713,6 +749,10 @@ so_discover() {
                     note="${note:+$note }Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
                 fi
                 pool=$(so_pool "$ns" "$labels")
+                # Appended last: it is true of the workload regardless of what
+                # else the entry says, including an adopt.
+                drain=$(so_drain_note "$ns" "$resource" "$name" "$pod")
+                [ -n "$drain" ] && note="${note:+$note }$drain"
                 so_plan_entry "$apply" "$ns" "$kind" "$name" "$model" \
                     "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
             done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \

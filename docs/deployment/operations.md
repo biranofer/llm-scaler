@@ -294,6 +294,61 @@ For runs whose numbers you intend to compare, use
 [Benchmark WVA](../guides/benchmarking/). Full procedures, including the
 simulator and the e2e suites, are in [Testing](../developer-guide/testing.md).
 
+## Draining before scale-down
+
+A replica removed while it is streaming takes its open responses with it. The
+client sees a truncated body — `ClientPayloadError` from aiohttp, an incomplete
+stream elsewhere — and the request is lost after it was already paid for in GPU
+time.
+
+This is not something WVA can fix from its side. It decides the count; the pod
+spec decides what happens to a pod that is going away, and on llm-d that spec
+belongs to the modelservice chart (`managed-by: Helm`, release `<model>-ms`).
+Anything the installer wrote there would be reverted by the next `helm upgrade`.
+
+It is worth knowing how much this costs before you turn autoscaling on. In one
+benchmark, four scale-downs produced four bursts of failures, each ending 25–30
+seconds after its reduction: 39 truncated streams over a single run. Long
+generations make it worse, because the window in which a pod is mid-response is
+most of its life.
+
+Two fields on the **model server's** pod template fix it:
+
+```yaml
+spec:
+  template:
+    spec:
+      # Long enough for the longest generation you are willing to wait for.
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: vllm
+        lifecycle:
+          preStop:
+            exec:
+              # Stop taking new work, then let what is in flight finish.
+              # The endpoint is removed from the Service as soon as the pod goes
+              # Terminating, so this only has to outlast the requests already on it.
+              command: ["/bin/sh", "-c", "sleep 30"]
+```
+
+`sleep` is the crude version and it is usually enough: the pod is removed from
+the Service endpoints the moment it starts terminating, so no new requests
+arrive, and the sleep just holds the process open while the ones it already has
+finish. An engine that exposes a drain endpoint should be asked to drain
+instead.
+
+Set `terminationGracePeriodSeconds` above the preStop duration plus the time the
+longest generation needs — the grace period is the total budget, and the kubelet
+sends SIGKILL when it expires regardless of what the hook is doing.
+
+`make scaledobjects-plan` reports this per workload, because registering a
+ScaledObject is the moment scale-down becomes possible:
+
+```
+note: Scale-down will cut in-flight requests: no container declares a preStop
+      hook, and terminationGracePeriodSeconds is 30. ...
+```
+
 ## First-line troubleshooting
 
 | symptom | most likely cause | check |
