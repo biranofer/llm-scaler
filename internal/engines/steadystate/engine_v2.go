@@ -841,15 +841,21 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 		return
 	}
 	result := nr.Result
-	// (1) Align the analyzer's role attribution with discovery's. Only Role is
-	// joined now: cost and accelerator left VariantCapacity entirely, and the
-	// optimizer reads them from VariantMetadata. Role stays because the per-role
-	// supply grouped below must be keyed the same way discovery keys the fleet,
-	// or RoleDemand and that supply would pair up wrongly.
+	// (1) Reconcile the analyzer's per-variant view with discovery's.
+	//
+	// Role is joined because the per-role supply grouped below must be keyed the
+	// same way discovery keys the fleet, or RoleDemand and that supply would pair
+	// up wrongly. Cost and accelerator left VariantCapacity entirely; the
+	// optimizer reads those from VariantMetadata.
+	//
+	// ReplicaCount is clamped to the scale target's own count, so that the supply
+	// assembled below cannot describe a fleet larger than the one the target is
+	// already committed to. See clampReplicaCountToScaleTarget.
 	if len(metaByVariant) > 0 {
 		for i := range result.VariantCapacities {
 			if m, ok := metaByVariant[result.VariantCapacities[i].VariantName]; ok {
 				result.VariantCapacities[i].Role = m.Role
+				clampReplicaCountToScaleTarget(&result.VariantCapacities[i], m)
 			}
 		}
 	}
@@ -869,6 +875,62 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 	applyUniversalThreshold(nr, scaleUp, scaleDown)
 	// (5) Flag a shortfall the optimizer cannot act on.
 	warnUnsizableShortfall(ctx, nr)
+}
+
+// clampReplicaCountToScaleTarget caps a variant's measured replica count at the
+// scale target's own count. It never raises it.
+//
+// ReplicaCount is what actually reported capacity this cycle, which is the right
+// basis for supply while the fleet is steady. During a scale-down that is
+// already in flight it is not: the scale target has been reduced while the
+// condemned replicas keep reporting, so the measured count runs AHEAD of the
+// target. Supply built from the larger count then credits the optimizer with
+// spare capacity that the in-flight scale-down has already claimed, and
+// safeRemovalReplicasForRole subtracts it a second time from the smaller count —
+// removing those replicas twice for one decision.
+//
+// Measured on a 14 QPS benchmark: with the target already down to 3 and five
+// replicas still reporting, SC came to two replicas of slack and the decision
+// was 3 − 2 = 1, mid-load. Clamped, the same inputs hold at 3.
+//
+// This is the departure half of what TotalAnticipatedSupply does for arrivals:
+// there, a launching replica counts toward supply so a scale-up is not ordered
+// twice while it boots. PendingReplicas only ever describes replicas arriving,
+// so nothing covered the same double-count on the way down.
+//
+// The clamp is ONE-SIDED on purpose. When the measured count is LOWER than the
+// target — replicas still launching, or a pod that missed a scrape — the
+// measured value still wins, because it is what demonstrably served this cycle.
+// Counting capacity that has not arrived yet is how a fleet gets scaled down
+// onto replicas that cannot take the load.
+//
+// The two signals it feeds are NOT conservative in the same direction, and the
+// scale-up side is the one to watch. SC shrinks, which can only hold replicas.
+// RC is sized against TotalAnticipatedSupply, which shrinks too, while demand is
+// still summed over the larger pod set — including resident KV on the condemned
+// replicas that is about to drain. Since a scale-up rounds up
+// (analyzer_helpers.go), a fractional shortfall orders a whole replica. Replaying
+// the benchmark: of the 45 passes where the clamp fires, 5 turn RC positive, each
+// anticipating by 15-30s a scale-up that pass made anyway. Excluding condemned
+// demand symmetrically would settle it, and needs a signal Kubernetes does not
+// publish (see below).
+//
+// A CurrentReplicas of zero is skipped rather than clamped to zero. Zero reaches
+// here only for a variant whose scale target IS readable and reports no replicas
+// — a parked one — because discovery drops a variant whose scale target it could
+// not resolve before any metadata exists (variantmeta.discovery, `continue` on an
+// unresolved target), so that case never arrives at all. Clamping a parked
+// variant to zero would erase supply for replicas still draining, and nothing is
+// gained: a decision based at zero replicas cannot remove any.
+//
+// Kubernetes publishes no terminating-replica count on a scale target's status,
+// so the symmetric fix — a departing counterpart to PendingReplicas — would mean
+// listing pods, which is the cluster-wide watch this design removed. Clamping to
+// a count the scale target already publishes is what makes this cheap.
+func clampReplicaCountToScaleTarget(vc *domain.VariantCapacity, m domain.VariantMetadata) {
+	if m.CurrentReplicas > 0 {
+		vc.ReplicaCount = min(vc.ReplicaCount, m.CurrentReplicas)
+	}
 }
 
 // warnUnsizableShortfall logs when an analyzer reports that more capacity is

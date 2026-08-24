@@ -78,7 +78,6 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.TotalKvCapacityTokens = 0
 	pod.TokensInUse = 0
 	pod.QueueLength = 0
-	pod.ArrivalRate = 0
 	pod.RequestRate = 0
 	pod.GenerationTokenRate = 0
 
@@ -88,7 +87,6 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 		pod.TotalKvCapacityTokens += m.TotalKvCapacityTokens
 		pod.TokensInUse += m.TokensInUse
 		pod.QueueLength += m.QueueLength
-		pod.ArrivalRate += m.ArrivalRate
 		pod.RequestRate += m.RequestRate
 		pod.GenerationTokenRate += m.GenerationTokenRate
 
@@ -110,6 +108,10 @@ func mergePodInstances(group []domain.ReplicaMetrics) domain.ReplicaMetrics {
 	pod.AvgInputTokens = weightedByRequestRate(group, func(m domain.ReplicaMetrics) float64 { return m.AvgInputTokens })
 	pod.AvgOutputTokens = weightedByRequestRate(group, func(m domain.ReplicaMetrics) float64 { return m.AvgOutputTokens })
 	pod.AvgITL = weightedByRequestRate(group, func(m domain.ReplicaMetrics) float64 { return m.AvgITL })
+	// Weighted like AvgITL: both are per-request costs, so the engine instance
+	// that served more requests should count for more when merging a pod's
+	// instances into one replica.
+	pod.AvgServiceTime = weightedByRequestRate(group, func(m domain.ReplicaMetrics) float64 { return m.AvgServiceTime })
 	pod.PrefixCacheHitRate = weightedByRequestRate(group, func(m domain.ReplicaMetrics) float64 { return m.PrefixCacheHitRate })
 
 	pod.Metadata = mergeMetadata(group)

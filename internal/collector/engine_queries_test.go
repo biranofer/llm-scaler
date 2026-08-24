@@ -18,12 +18,18 @@ func contains(s []string, v string) bool {
 	return false
 }
 
+// agnosticProbe stands in for agnosticReplicaQueries, which is empty since the
+// EPP's per-pod dispatch rate was removed. The behaviour under test is
+// buildEngineQueryList's handling of engine-agnostic names, not the current
+// contents of that list -- pinning it to the list is what broke these tests.
+var agnosticProbe = []string{registration.QueryModelArrivalRate}
+
 func TestBuildEngineQueryList_VLLMOnly(t *testing.T) {
-	q := buildEngineQueryList([]inferenceengine.Engine{inferenceengine.EngineVLLM}, engineSpecificReplicaQueries, agnosticReplicaQueries)
+	q := buildEngineQueryList([]inferenceengine.Engine{inferenceengine.EngineVLLM}, engineSpecificReplicaQueries, agnosticProbe)
 
 	// Agnostic queries appear once, engine-specific queries use their bare names.
-	if !contains(q, registration.QuerySchedulerDispatchRate) {
-		t.Errorf("expected agnostic scheduler dispatch query in %v", q)
+	if !contains(q, registration.QueryModelArrivalRate) {
+		t.Errorf("expected agnostic query in %v", q)
 	}
 	if !contains(q, registration.QueryKvCacheUsage) {
 		t.Errorf("expected bare vLLM kv_cache_usage in %v", q)
@@ -34,7 +40,7 @@ func TestBuildEngineQueryList_VLLMOnly(t *testing.T) {
 }
 
 func TestBuildEngineQueryList_SGLangOnly(t *testing.T) {
-	q := buildEngineQueryList([]inferenceengine.Engine{inferenceengine.EngineSGLang}, engineSpecificReplicaQueries, agnosticReplicaQueries)
+	q := buildEngineQueryList([]inferenceengine.Engine{inferenceengine.EngineSGLang}, engineSpecificReplicaQueries, agnosticProbe)
 
 	if !contains(q, "sglang/"+registration.QueryKvCacheUsage) {
 		t.Errorf("expected SGLang kv_cache_usage in %v", q)
@@ -43,15 +49,15 @@ func TestBuildEngineQueryList_SGLangOnly(t *testing.T) {
 		t.Errorf("did not expect bare vLLM kv_cache_usage for SGLang-only model in %v", q)
 	}
 	// Agnostic query is still shared (bare).
-	if !contains(q, registration.QuerySchedulerDispatchRate) {
-		t.Errorf("expected agnostic scheduler dispatch query in %v", q)
+	if !contains(q, registration.QueryModelArrivalRate) {
+		t.Errorf("expected agnostic query in %v", q)
 	}
 }
 
 func TestBuildEngineQueryList_Mixed(t *testing.T) {
 	q := buildEngineQueryList(
 		[]inferenceengine.Engine{inferenceengine.EngineVLLM, inferenceengine.EngineSGLang},
-		engineSpecificReplicaQueries, agnosticReplicaQueries)
+		engineSpecificReplicaQueries, agnosticProbe)
 
 	if !contains(q, registration.QueryKvCacheUsage) || !contains(q, "sglang/"+registration.QueryKvCacheUsage) {
 		t.Errorf("expected both vLLM and SGLang kv_cache_usage in %v", q)
@@ -59,7 +65,7 @@ func TestBuildEngineQueryList_Mixed(t *testing.T) {
 	// Agnostic query appears exactly once even with multiple engines.
 	count := 0
 	for _, name := range q {
-		if name == registration.QuerySchedulerDispatchRate {
+		if name == registration.QueryModelArrivalRate {
 			count++
 		}
 	}

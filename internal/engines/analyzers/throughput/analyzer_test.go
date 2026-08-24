@@ -291,7 +291,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       ol,
 				PrefixCacheHitRate:    prefix,
 				TotalKvCapacityTokens: kvMax,
-				ArrivalRate:           arrivalRate,
+				RequestRate:           arrivalRate,
 			}
 		}
 
@@ -458,7 +458,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       200,
 				PrefixCacheHitRate:    0.1,
 				TotalKvCapacityTokens: 1024000,
-				ArrivalRate:           arrivalRate,
+				RequestRate:           arrivalRate,
 			}
 		}
 
@@ -505,7 +505,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			onLine := domain.ReplicaMetrics{
 				VariantName: "v1", KvUsageInstant: 0.75, KvCacheUsage: 0.75,
 				AvgITL: trueA*0.75 + trueB, AvgInputTokens: 5000, AvgOutputTokens: 200,
-				PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, ArrivalRate: 5,
+				PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, RequestRate: 5,
 			}
 			_, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID:        modelID,
@@ -597,7 +597,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       200,
 				PrefixCacheHitRate:    0.1,
 				TotalKvCapacityTokens: 1024000,
-				ArrivalRate:           15, // demand present, but no supply estimate possible
+				RequestRate:           15, // demand present, but no supply estimate possible
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID:        modelID,
@@ -646,7 +646,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 					AvgOutputTokens:       200,
 					PrefixCacheHitRate:    0.1,
 					TotalKvCapacityTokens: 1024000,
-					ArrivalRate:           15,
+					RequestRate:           15,
 				}},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -730,7 +730,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       ol,
 				PrefixCacheHitRate:    prefix,
 				TotalKvCapacityTokens: kvMax,
-				ArrivalRate:           15, // λ_dec = 3000 tok/s > 1 × μ_sat
+				RequestRate:           15, // λ_dec = 3000 tok/s > 1 × μ_sat
 			}
 			input := domain.AnalyzerInput{
 				ModelID:        modelID,
@@ -758,13 +758,13 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			replicas := []domain.ReplicaMetrics{
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50, AvgITL: A*0.50 + B,
 					AvgInputTokens: il, AvgOutputTokens: ol, PrefixCacheHitRate: prefix,
-					TotalKvCapacityTokens: kvMax, ArrivalRate: 15},
+					TotalKvCapacityTokens: kvMax, RequestRate: 15},
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50, AvgITL: A*0.50 + B,
 					AvgInputTokens: il, AvgOutputTokens: ol, PrefixCacheHitRate: prefix,
-					TotalKvCapacityTokens: kvMax, ArrivalRate: 15},
+					TotalKvCapacityTokens: kvMax, RequestRate: 15},
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50, AvgITL: A*0.50 + B,
 					AvgInputTokens: il, AvgOutputTokens: ol, PrefixCacheHitRate: prefix,
-					TotalKvCapacityTokens: kvMax, ArrivalRate: 15},
+					TotalKvCapacityTokens: kvMax, RequestRate: 15},
 			}
 			input := domain.AnalyzerInput{
 				ModelID:        modelID,
@@ -814,7 +814,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       ol,
 				PrefixCacheHitRate:    prefix,
 				TotalKvCapacityTokens: kvMax,
-				ArrivalRate:           arrivalRate,
+				RequestRate:           arrivalRate,
 			}
 		}
 
@@ -1035,7 +1035,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       0, // warm-up: no completions yet
 				PrefixCacheHitRate:    prefixW,
 				TotalKvCapacityTokens: kvMaxW,
-				ArrivalRate:           5.0, // EPP present
+				RequestRate:           5.0, // EPP present
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID: modelID, Namespace: namespace,
@@ -1064,7 +1064,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       olW,
 				PrefixCacheHitRate:    prefixW,
 				TotalKvCapacityTokens: kvMaxW,
-				ArrivalRate:           10.0, // 10 req/s × 200 ol = 2000 tok/s
+				RequestRate:           10.0, // 10 req/s × 200 ol = 2000 tok/s
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID: modelID, Namespace: namespace,
@@ -1162,11 +1162,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: il, AvgOutputTokens: ol,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 15}, // λ = 3000 > μ_sat per-variant
+					RequestRate: 15}, // λ = 3000 > μ_sat per-variant
 				{VariantName: "v2", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: il, AvgOutputTokens: ol,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 1}, // λ = 200 << μ_sat per-variant
+					RequestRate: 1}, // λ = 200 << μ_sat per-variant
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID: modelID, Namespace: namespace, ReplicaMetrics: replicas,
@@ -1189,11 +1189,11 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: il, AvgOutputTokens: ol,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 15},
+					RequestRate: 15},
 				{VariantName: "v2", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: il, AvgOutputTokens: ol,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 15},
+					RequestRate: 15},
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID: modelID, Namespace: namespace, ReplicaMetrics: replicas,
@@ -1237,7 +1237,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			replicas := []domain.ReplicaMetrics{
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 5},
+					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, RequestRate: 5},
 			}
 			const queueSize = int64(10)
 			const modelArrivalRate = 7.0 // model-level; independent of the replica's per-pod ArrivalRate
@@ -1268,10 +1268,10 @@ var _ = Describe("ThroughputAnalyzer", func() {
 			replicas := []domain.ReplicaMetrics{
 				{VariantName: "v-decode", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 5},
+					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, RequestRate: 5},
 				{VariantName: "v-prefill", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: aA*0.50 + bA, AvgInputTokens: ilA, AvgOutputTokens: olA,
-					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, ArrivalRate: 1},
+					PrefixCacheHitRate: prefixA, TotalKvCapacityTokens: kvMaxA, RequestRate: 1},
 			}
 			// With queue: decode role should receive the queue-demand share.
 			// Without queue: decode TotalDemand == variant-level demand only.
@@ -1324,7 +1324,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 				AvgITL: A*0.50 + B, AvgInputTokens: ilM, AvgOutputTokens: olM,
 				PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-				ArrivalRate: 999, // deliberately unrelated to R — must not affect TotalDemand
+				RequestRate: 999, // deliberately unrelated to R — must not affect TotalDemand
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
 				ModelID: modelID, Namespace: namespace,
@@ -1347,12 +1347,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: ilM, AvgOutputTokens: olM,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 0, // orphaned: per-pod merge failed for every replica
+					RequestRate: 0, // orphaned: per-pod merge failed for every replica
 				},
 				{VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 					AvgITL: A*0.50 + B, AvgInputTokens: ilM, AvgOutputTokens: olM,
 					PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-					ArrivalRate: 0,
+					RequestRate: 0,
 				},
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
@@ -1405,17 +1405,21 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				"sum of per-role TotalDemand must equal model-level TotalDemand exactly once")
 		})
 
-		It("arrival→0 reduces demand to zero even when the engine is still completing requests (no served-rate floor)", func() {
+		It("model-level arrival→0 reduces demand to zero even when the engine is still completing requests (no served-rate floor)", func() {
 			// No served-rate floor: a draining engine keeps RequestRate > 0 for a while after
 			// arrivals stop; that must not be used as a demand floor, or scale-down
 			// would be wrongly blocked.
+			//
+			// Model level is the level that matters here. The per-variant figure DOES
+			// now linger through a drain, because computeDemand reads RequestRate since
+			// the per-pod EPP arrival rate was removed -- but that figure only feeds
+			// VariantCapacity display, never the decision asserted below.
 			injectWindowObs(analyzer, ctx, modelID, namespace, "v1", ilM, olM, prefix, kvMax, B, kValues)
 
 			replica := domain.ReplicaMetrics{
 				VariantName: "v1", KvCacheUsage: 0.50, KvUsageInstant: 0.50,
 				AvgITL: A*0.50 + B, AvgInputTokens: ilM, AvgOutputTokens: olM,
 				PrefixCacheHitRate: prefix, TotalKvCapacityTokens: kvMax,
-				ArrivalRate: 0,  // no new arrivals this window
 				RequestRate: 20, // still draining in-flight/queued work from before
 			}
 			result, err := analyzer.Analyze(ctx, domain.AnalyzerInput{
@@ -1512,12 +1516,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{
 					VariantName: "v1", KvUsageInstant: 0.20, KvCacheUsage: 0.20,
 					AvgITL: wantA*0.20 + wantB, AvgInputTokens: 5000, AvgOutputTokens: 200,
-					PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, RequestRate: 5,
 				},
 				{
 					VariantName: "v1", KvUsageInstant: 0.80, KvCacheUsage: 0.80,
 					AvgITL: wantA*0.80 + wantB, AvgInputTokens: 5000, AvgOutputTokens: 200,
-					PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.1, TotalKvCapacityTokens: 1024000, RequestRate: 5,
 				},
 			}
 			// Seed the shape tracker with one prior Observe so shape is known.
@@ -1553,12 +1557,12 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{
 					VariantName: "v1", KvUsageInstant: 0.30, KvCacheUsage: 0.30,
 					AvgITL: trueA*0.30 + trueB, AvgInputTokens: 1024, AvgOutputTokens: 256,
-					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, RequestRate: 5,
 				},
 				{
 					VariantName: "v1", KvUsageInstant: 0.70, KvCacheUsage: 0.70,
 					AvgITL: trueA*0.70 + trueB, AvgInputTokens: 1024, AvgOutputTokens: 256,
-					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, RequestRate: 5,
 				},
 			}
 		}
@@ -1619,7 +1623,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{
 					VariantName: "v1", KvUsageInstant: 0.40, KvCacheUsage: 0.40,
 					AvgITL: trueA*0.40 + trueB, AvgInputTokens: 1024, AvgOutputTokens: 800,
-					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, RequestRate: 5,
 				},
 			}
 			analyzer.Observe(ctx, time.Now(), modelID, namespace, shapeShiftMetrics)
@@ -1643,7 +1647,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				{
 					VariantName: "v1", KvUsageInstant: 0.40, KvCacheUsage: 0.40,
 					AvgITL: trueA*0.40 + DefaultBaselineITLSec, AvgInputTokens: 1024, AvgOutputTokens: 256,
-					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, ArrivalRate: 5,
+					PrefixCacheHitRate: 0.0, TotalKvCapacityTokens: 65536, RequestRate: 5,
 				},
 			}
 			analyzer.Observe(ctx, time.Now(), modelID, namespace, metrics)
@@ -1700,7 +1704,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 				AvgOutputTokens:       olG,
 				PrefixCacheHitRate:    pfxG,
 				TotalKvCapacityTokens: kvMaxG,
-				ArrivalRate:           arrivalRate,
+				RequestRate:           arrivalRate,
 				GenerationTokenRate:   gps,
 			}
 		}
@@ -1831,7 +1835,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 					AvgOutputTokens:       olW,
 					PrefixCacheHitRate:    pfxW,
 					TotalKvCapacityTokens: kvMaxW,
-					ArrivalRate:           2,
+					RequestRate:           2,
 					GenerationTokenRate:   muDecW(kStarW) * 0.1, // >> 15% error
 				}},
 			}
@@ -1850,7 +1854,7 @@ var _ = Describe("ThroughputAnalyzer", func() {
 					AvgOutputTokens:       olW,
 					PrefixCacheHitRate:    pfxW,
 					TotalKvCapacityTokens: kvMaxW,
-					ArrivalRate:           2,
+					RequestRate:           2,
 					GenerationTokenRate:   muDecW(kStarW), // exact match → no mismatch
 				}},
 			}

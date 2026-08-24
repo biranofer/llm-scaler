@@ -22,8 +22,8 @@ var _ = Describe("EngineQuery", func() {
 
 	It("returns the bare name for engine-agnostic queries regardless of engine", func() {
 		// Scheduler queries are not engine-specific (sourced from EPP).
-		Expect(IsEngineSpecific(QuerySchedulerDispatchRate)).To(BeFalse())
-		Expect(EngineQuery(inferenceengine.EngineSGLang, QuerySchedulerDispatchRate)).To(Equal(QuerySchedulerDispatchRate))
+		Expect(IsEngineSpecific(QueryModelArrivalRate)).To(BeFalse())
+		Expect(EngineQuery(inferenceengine.EngineSGLang, QueryModelArrivalRate)).To(Equal(QueryModelArrivalRate))
 	})
 })
 
@@ -37,6 +37,11 @@ var _ = Describe("SGLang query registration", func() {
 		Expect(registry.Register("prometheus", metricsSource)).NotTo(HaveOccurred())
 		RegisterSaturationQueries(registry)
 		RegisterQueueingModelQueries(registry)
+		// Both, mirroring cmd/main: the arrival-rate queries are registered
+		// unconditionally and the throughput-analyzer ones only when it is
+		// enabled. EngineSpecificQueries spans both sets, so a fixture calling
+		// only one of them would report the other's queries missing.
+		RegisterArrivalRateQueries(registry)
 		RegisterThroughputAnalyzerQueries(registry)
 		RegisterScaleToZeroQueries(registry)
 	})

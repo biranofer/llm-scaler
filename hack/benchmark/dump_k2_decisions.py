@@ -74,11 +74,21 @@ DECISION_MSG = "Applied saturation decision via shared cache"
 K2_MSG = "k2-decision"
 RC_MSG = "replica-capacity-decision"
 SQ_MSG = "scheduler-queue-demand"
+# The arrival-rate demand floor. FLOOR_MSG fires only when the floor actually
+# raises demand, so its presence in a dump marks the cycles where the scaling
+# decision came from the offered load rather than from measured occupancy --
+# which is the first thing to check when a target looks higher than the fleet
+# appears to warrant. FLOOR_NA_MSG is its counterpart: the floor could not be
+# computed at all, and names the input that was missing.
+FLOOR_MSG = "arrival-demand-floor"
+FLOOR_NA_MSG = "arrival-demand-floor unavailable"
 
 MESSAGES = {
     K2_MSG,
     RC_MSG,
     SQ_MSG,
+    FLOOR_MSG,
+    FLOOR_NA_MSG,
     "replica-capacity-skipped",
     "replica-capacity-store-fallback",
     "variant-capacity-source",

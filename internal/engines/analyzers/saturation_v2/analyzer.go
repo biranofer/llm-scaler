@@ -129,6 +129,61 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 
 	// Per-role demand attribution (P/D disaggregation); nil when non-disaggregated.
 	// The builder pairs this with the per-role supply it recomputes.
+	roleDemand := a.aggregateRoleDemand(variantCapacities, queueDemand.byRole)
+
+	// Floor the demand at what the offered load requires (arrival_demand.go).
+	//
+	// Everything above measures occupancy, which falls as capacity rises: a fleet
+	// that is keeping up looks idle, and the target follows the signal down. The
+	// floor is computed from arrival rate, request shape and per-token cost --
+	// none of which move when replicas are added -- so it holds the fleet at the
+	// size the LOAD implies once occupancy stops implying anything.
+	//
+	// Strictly a floor. It never lowers demand, so it cannot authorise a
+	// scale-down that occupancy would not already have authorised on its own.
+	if floor := estimateArrivalDemand(input); floor.Tokens > totalDemand {
+		logger.Info("arrival-demand-floor",
+			"modelID", input.ModelID, "namespace", input.Namespace,
+			"occupancyDemand", totalDemand, "flooredTo", floor.Tokens,
+			"arrivalRate", floor.Lambda, "serviceTimeSec", floor.W, "serviceTimeFrom", floor.WSource,
+			"tokensPerRequest", floor.TokensPerRequest)
+		totalDemand = floor.Tokens
+		raiseRoleDemandTo(roleDemand, totalDemand)
+	} else if floor.Reason != "" && (floor.HasArrivalSignal || totalDemand > 0) {
+		// Not an error: a model with no traffic has no arrival rate, and a fleet
+		// nobody is using should not be held up by a fabricated floor. Logged so
+		// that "the floor never binds" can be told apart from "the floor could
+		// never be computed", which look identical from the outside.
+		//
+		// At DEFAULT, because that is the only level that ships: -v defaults to
+		// logging.DEFAULT, so a V(DEBUG) line here would be invisible in every
+		// real deployment and this comment would be describing something that
+		// never happens.
+		//
+		// The gate is two-sided, because the two ways this declines to answer
+		// need opposite treatment.
+		//
+		// HasArrivalSignal means load IS arriving and could not be sized -- a
+		// real gap, worth saying however quiet the fleet looks. Gating that on
+		// occupancy would lose it exactly when it matters: a sample landing
+		// between completions, or a replica still warming, reads zero occupancy
+		// while requests are demonstrably arriving.
+		//
+		// Occupancy covers the other side, where nothing is arriving at all.
+		// Note that gating on len(ReplicaMetrics) instead would NOT work: an idle
+		// pod still reports metrics -- the engine publishes 0 rather than nothing
+		// -- so a model parked at minReplicaCount 1 would log every cycle
+		// forever. Occupancy drains to zero within the metric's own 1m window, so
+		// this self-extinguishes a few lines after traffic stops.
+		//
+		// It does not bound every case: a fleet that is genuinely serving on an
+		// engine publishing neither timing keeps Reason set indefinitely. That is
+		// a misconfiguration worth shouting about rather than one worth
+		// suppressing, so it is left loud.
+		logger.V(logging.DEFAULT).Info("arrival-demand-floor unavailable",
+			"modelID", input.ModelID, "namespace", input.Namespace, "reason", floor.Reason)
+	}
+
 	result := &domain.AnalyzerResult{
 		AnalyzerName:      a.Name(),
 		ModelID:           input.ModelID,
@@ -136,7 +191,7 @@ func (a *SaturationAnalyzer) Analyze(ctx context.Context, input domain.AnalyzerI
 		AnalyzedAt:        time.Now(),
 		VariantCapacities: variantCapacities,
 		TotalDemand:       totalDemand,
-		RoleDemand:        a.aggregateRoleDemand(variantCapacities, queueDemand.byRole),
+		RoleDemand:        roleDemand,
 	}
 
 	return result, nil

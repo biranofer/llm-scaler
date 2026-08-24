@@ -511,14 +511,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 
 	// Take this model's slice of the namespace-wide series. Everything below
 	// operates on model-scoped results, as it did when the model was a PromQL
-	// matcher. The EPP dispatch rate is partitioned separately: its model
-	// identity is target_model_name with a model_name fallback, not model_name.
+	// matcher.
 	filterResultsToModel(results, engineSpecificReplicaQueries, modelID)
-	if r := results[registration.QuerySchedulerDispatchRate]; r != nil {
-		results[registration.QuerySchedulerDispatchRate] = filterSeries(r, func(labels map[string]string) bool {
-			return eppSeriesModel(labels) == modelID
-		})
-	}
 
 	// podMetricData holds per-pod metric values and timestamps
 	type podMetricData struct {
@@ -542,11 +536,10 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		hasCacheConfig              bool
 		cacheConfigTimestamp        time.Time
 		// Queueing model fields
-		arrivalRate          float64
-		hasArrivalRate       bool
-		arrivalRateTimestamp time.Time
-		avgITL               float64
-		avgITLTimestamp      time.Time
+		avgITL                  float64
+		avgITLTimestamp         time.Time
+		avgServiceTime          float64
+		avgServiceTimeTimestamp time.Time
 		// Throughput analyzer fields
 		generationTokenRate float64
 		kvUsageInstant      float64
@@ -594,8 +587,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackTimestamp(data.avgInputTokensTimestamp)
 		trackTimestamp(data.prefixCacheHitRateTimestamp)
 		trackTimestamp(data.cacheConfigTimestamp)
-		trackTimestamp(data.arrivalRateTimestamp)
 		trackTimestamp(data.avgITLTimestamp)
+		trackTimestamp(data.avgServiceTimeTimestamp)
 	}
 
 	// worstFreshnessStatus returns the least-fresh status across data's *present*
@@ -604,8 +597,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 	//
 	// Absent ("missing") timestamps are skipped rather than allowed to dominate the
 	// rollup: several tracked metrics are legitimately unscraped in common
-	// deployments — arrivalRateTimestamp when no EPP is present, and the
-	// prefix-cache / cache-config timestamps when prefix caching is off. Counting
+	// deployments — the prefix-cache / cache-config timestamps when prefix
+	// caching is off. Counting
 	// those as "missing" (the worst severity) would report a healthy replica as
 	// "missing" with a near-zero Age, and — because "missing" outranks "stale" —
 	// would mask a genuinely stale driving metric from the CheckModelMetrics
@@ -620,8 +613,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			data.avgInputTokensTimestamp,
 			data.prefixCacheHitRateTimestamp,
 			data.cacheConfigTimestamp,
-			data.arrivalRateTimestamp,
 			data.avgITLTimestamp,
+			data.avgServiceTimeTimestamp,
 		}
 
 		worst := "fresh"
@@ -870,53 +863,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		}
 	}
 
-	// Process scheduler dispatch rate results (arrival rate per instance)
-	if result := results[registration.QuerySchedulerDispatchRate]; result != nil {
-		if !result.HasError() {
-			for _, value := range result.Values {
-				// The scheduler metric has pod_name and port labels to identify the engine instance.
-				// Build a composite key: pod_name:port to support multiple instances per pod.
-				podName := value.Labels["pod_name"]
-				port := value.Labels["port"]
-
-				if podName == "" {
-					podName = value.Labels["pod"]
-				}
-				if podName == "" {
-					logger.Info("Scheduler dispatch rate metric missing both 'pod' and 'pod_name' labels, skipping",
-						"labels", value.Labels,
-						"model", modelID,
-						"namespace", namespace)
-					continue
-				}
-
-				// Create composite key: pod_name:port for unique instance identification
-				instanceKey := podName
-				if port != "" {
-					instanceKey = podName + ":" + port
-				}
-
-				if podData[instanceKey] == nil {
-					podData[instanceKey] = &podMetricData{
-						podName: podName,
-					}
-				}
-				// NaN check: rate can produce NaN if no successful attempts
-				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value >= 0 {
-					podData[instanceKey].arrivalRate = value.Value
-					podData[instanceKey].hasArrivalRate = true
-					podData[instanceKey].arrivalRateTimestamp = value.Timestamp
-
-					logger.V(logging.DEBUG).Info("Scheduler dispatch rate metric",
-						"instance", instanceKey,
-						"pod", podName,
-						"port", port,
-						"arrivalRate", value.Value)
-				}
-			}
-		}
-	}
-
 	// Process average ITL results (seconds)
 	if result := results[registration.QueryAvgITL]; result != nil {
 		if !result.HasError() {
@@ -940,6 +886,34 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 						"instanceKey", instanceKey,
 						"pod", podName,
 						"avgITLSeconds", value.Value)
+				}
+			}
+		}
+	}
+
+	// Process average service time results (seconds, queue wait excluded)
+	if result := results[registration.QueryAvgServiceTime]; result != nil {
+		if !result.HasError() {
+			for _, value := range result.Values {
+				instanceKey, podName, vaName := c.buildInstanceKey(ctx, namespace, value.Labels)
+				if instanceKey == "" {
+					continue
+				}
+
+				if podData[instanceKey] == nil {
+					podData[instanceKey] = &podMetricData{
+						podName: podName,
+						vaName:  vaName,
+					}
+				}
+				if !math.IsNaN(value.Value) && !math.IsInf(value.Value, 0) && value.Value > 0 {
+					podData[instanceKey].avgServiceTime = value.Value
+					podData[instanceKey].avgServiceTimeTimestamp = value.Timestamp
+
+					logger.V(logging.DEBUG).Info("Avg service time metric",
+						"instanceKey", instanceKey,
+						"pod", podName,
+						"avgServiceTimeSeconds", value.Value)
 				}
 			}
 		}
@@ -1109,29 +1083,6 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			tokensInUse = int64(rounded)
 		}
 
-		// A pod that is demonstrably serving but has no dispatch rate is worth a
-		// line, because EPP is where per-replica arrival rate comes from and its
-		// absence silently degrades every analyzer that reads ArrivalRate.
-		//
-		// Gate on observed work, not on `hasKv || hasQueue`. Those are true for an
-		// idle pod too -- the engine reports 0 rather than nothing -- while the EPP
-		// counter behind the dispatch rate goes stale a few minutes after the last
-		// request, so rate() returns no series at all. The old condition therefore
-		// fired every reconcile on a healthy idle namespace and blamed a label
-		// mismatch for what was simply no traffic.
-		//
-		// The cause is also no longer asserted: a missing dispatch rate means EPP is
-		// absent, or EPP is present but names this pod differently in pod_name.
-		// Both are real, and the collector cannot tell them apart from here.
-		if (kvUsage > 0 || queueLen > 0) && !data.hasArrivalRate {
-			logger.Info("Pod is serving but no dispatch rate was collected for it; EPP may be absent, or its pod_name may not match this pod",
-				"pod", podName,
-				"model", modelID,
-				"namespace", namespace,
-				"kvCacheUsage", kvUsage,
-				"queueLength", queueLen)
-		}
-
 		// Track freshness for metrics in this pod
 		trackMetricFreshness(vaName, data, collectedAt, vaMetricsFreshnessStatus)
 		freshnessStatus, freshnessAge := worstFreshnessStatus(data, collectedAt)
@@ -1149,8 +1100,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			AvgOutputTokens:       data.avgOutputTokens,
 			AvgInputTokens:        data.avgInputTokens,
 			PrefixCacheHitRate:    data.prefixCacheHitRate,
-			ArrivalRate:           data.arrivalRate,
 			AvgITL:                data.avgITL,
+			AvgServiceTime:        data.avgServiceTime,
 			GenerationTokenRate:   data.generationTokenRate,
 			KvUsageInstant:        data.kvUsageInstant,
 			RequestRate:           data.requestRate,
@@ -1271,11 +1222,10 @@ func (c *ReplicaMetricsCollector) CollectSchedulerQueueMetrics(
 }
 
 // CollectModelArrivalRate collects the model-level request arrival rate (req/s)
-// from the llm-d inference scheduler. Unlike the per-instance scheduler dispatch
-// rate (QuerySchedulerDispatchRate), this query sums the same source metric
-// across the whole model with no pod_name/port labels to reconcile against
-// vLLM's per-instance metrics. Returns 0 (not an error) when the metric is
-// unavailable.
+// from the llm-d inference scheduler. It sums the source metric across the whole
+// model with no pod_name/port labels to reconcile against vLLM's per-instance
+// metrics — which is exactly why the per-instance form of this query no longer
+// exists. Returns 0 (not an error) when the metric is unavailable.
 func (c *ReplicaMetricsCollector) CollectModelArrivalRate(
 	ctx context.Context,
 	modelID, namespace string,
