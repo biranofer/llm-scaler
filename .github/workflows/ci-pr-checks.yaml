@@ -16,12 +16,13 @@ on:
   # Nothing else covers it: the other push-triggered workflows build the
   # container image, update docs and run prow automerge.
   #
-  # Only lint-and-test, docs-check and kustomize-build actually run here. Both
-  # e2e jobs sit this out by construction -- e2e-tests-smoke tests
-  # github.event_name == 'pull_request', and e2e-tests-full needs
-  # check-code-changes.outputs.has_code_changes, which the paths-filter only
-  # produces on a pull_request. That is the intended split: a post-merge check
-  # should not spend 60-90 minutes of runner time on every push.
+  # Only lint-and-test, docs-check and kustomize-build run here. The e2e jobs are
+  # excluded explicitly, at their own `if`, because a post-merge check should not
+  # spend 60-90 minutes of runner time on every push.
+  #
+  # It has to be explicit. has_code_changes does NOT gate them out: the Set output
+  # step forces it to 'true' for every non-pull_request event, so adding this
+  # trigger put e2e-tests-full on every push until the condition below was fixed.
   push:
     branches:
       - main
@@ -208,7 +209,16 @@ jobs:
   e2e-tests-full:
     runs-on: ubuntu-latest
     needs: [lint-and-test, check-code-changes]
-    if: needs.check-code-changes.outputs.has_code_changes == 'true'
+    # Runs on a PR, or on a manual dispatch that asked for it. Never on push:
+    # see the note on the push trigger above.
+    #
+    # The inputs.run_full_tests half is what makes that input real. It has
+    # always described itself as 'Run full e2e test suite on Kind' while being
+    # referenced by nothing, so ticking the box did nothing whatsoever.
+    if: >-
+      needs.check-code-changes.outputs.has_code_changes == 'true'
+      && (github.event_name == 'pull_request'
+          || (github.event_name == 'workflow_dispatch' && inputs.run_full_tests))
     timeout-minutes: 90
     permissions:
       contents: read
