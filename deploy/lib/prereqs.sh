@@ -113,27 +113,18 @@ check_prerequisites() {
         log_error "Tools too old: ${outdated_tools[*]}. Upgrade them, or set SKIP_CHECKS=true to bypass this check (not recommended)."
     fi
 
-    # kind-emulator is exempt, because on that path the cluster is an OUTPUT of
-    # this run rather than an input to it. check_prerequisites runs at
-    # install_core.sh:277; the environment script that honours CREATE_CLUSTER=true
-    # and creates the cluster is not sourced until line 323. So on a machine that
-    # does not already have the cluster -- a fresh CI runner, which is the whole
-    # point of CREATE_CLUSTER -- this check failed before anything could create
-    # what it was checking for.
+    # kind-emulator is exempt because its cluster is never an input. The INSTALL
+    # path provisions it before reaching here (see install_core.sh), and the
+    # PREFLIGHT path deliberately creates nothing at all -- "they provision the
+    # cluster rather than inspect it". Demanding one in either case reports a
+    # fault that is not one.
     #
-    # That is why e2e-tests-full has never completed on this repository: it dies
-    # in deploy-e2e-infra with "Cannot reach a Kubernetes cluster", a couple of
-    # minutes in, right after building the image. It passes locally because a
-    # developer already ran `make create-kind-cluster`.
-    #
-    # Nothing is lost by skipping it: deploy/kind-emulator/install.sh checks for
-    # the cluster itself and says something better when it is absent and
-    # CREATE_CLUSTER=false. The preflight path already skips this environment for
-    # the same reason (install_core.sh: "they provision the cluster rather than
-    # inspect it").
+    # deploy/kind-emulator/install.sh checks for the cluster itself and says
+    # something better when it is absent and CREATE_CLUSTER=false, so nothing is
+    # lost here.
     if [ "${ENVIRONMENT:-}" = "kind-emulator" ]; then
         log_success "All prerequisites met (tools: ${tools[*]})"
-        log_info "  Cluster reachability is not checked on kind-emulator: this run creates the cluster."
+        log_info "  Cluster reachability is not checked on kind-emulator: the cluster is this run's own."
         return 0
     fi
 

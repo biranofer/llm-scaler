@@ -273,6 +273,34 @@ main() {
     log_info "==========================================================="
     echo ""
 
+    # kind-emulator builds the cluster it installs into, and does it inside the
+    # environment script's check_specific_prerequisites -- which is sourced fifty
+    # lines below. Everything between here and there needs a cluster:
+    # check_prerequisites, check_permissions, check_single_installation. On a
+    # machine that does not already have one -- a fresh CI runner, which is the
+    # entire point of CREATE_CLUSTER=true -- each of them failed in turn on a
+    # cluster nothing had yet been given the chance to create.
+    #
+    # So provision first, and let the ordinary preflight run against a real
+    # cluster exactly as it does everywhere else. Fixing the order once beats
+    # exempting each check from needing a cluster, which is how this was found:
+    # one exemption, then the next check failed the same way.
+    #
+    # WVA_ENV_SOURCED stops the second call. Re-running
+    # check_specific_prerequisites is not idempotent on this environment: with
+    # CREATE_CLUSTER=true it DELETES an existing cluster and builds a new one, so
+    # a second call would destroy the cluster this one just made, mid-install.
+    WVA_ENV_SOURCED=false
+    if [ "$ENVIRONMENT" = "kind-emulator" ] && [ -f "$SCRIPT_DIR/$ENVIRONMENT/install.sh" ]; then
+        log_info "Provisioning the $ENVIRONMENT cluster before the preflight, because this run creates it."
+        # shellcheck source=/dev/null
+        source "$SCRIPT_DIR/$ENVIRONMENT/install.sh"
+        WVA_ENV_SOURCED=true
+        if [ "$SKIP_CHECKS" != "true" ] && declare -f check_specific_prerequisites > /dev/null; then
+            check_specific_prerequisites
+        fi
+    fi
+
     if [ "$SKIP_CHECKS" != "true" ]; then
         check_prerequisites
     fi
@@ -317,8 +345,13 @@ main() {
     set_tls_verification
     set_wva_logging_level
 
-    log_info "Loading environment-specific functions for $ENVIRONMENT..."
-    if [ -f "$SCRIPT_DIR/$ENVIRONMENT/install.sh" ]; then
+    if [ "${WVA_ENV_SOURCED:-false}" = "true" ]; then
+        # Already sourced and already run, above. Calling
+        # check_specific_prerequisites again would delete and rebuild the cluster
+        # this install is halfway into.
+        log_info "Environment-specific functions for $ENVIRONMENT are already loaded."
+    elif [ -f "$SCRIPT_DIR/$ENVIRONMENT/install.sh" ]; then
+        log_info "Loading environment-specific functions for $ENVIRONMENT..."
         # shellcheck source=/dev/null
         source "$SCRIPT_DIR/$ENVIRONMENT/install.sh"
 
