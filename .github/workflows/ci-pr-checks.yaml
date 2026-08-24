@@ -10,6 +10,21 @@ on:
     branches:
       - main
       - dev
+  # Also on push to main. This workflow holds the ONLY build, test and lint
+  # steps in the repo, and it used to fire on pull_request alone -- so a commit
+  # pushed straight to main was never compiled, tested or linted by CI at all.
+  # Nothing else covers it: the other push-triggered workflows build the
+  # container image, update docs and run prow automerge.
+  #
+  # Only lint-and-test, docs-check and kustomize-build actually run here. Both
+  # e2e jobs sit this out by construction -- e2e-tests-smoke tests
+  # github.event_name == 'pull_request', and e2e-tests-full needs
+  # check-code-changes.outputs.has_code_changes, which the paths-filter only
+  # produces on a pull_request. That is the intended split: a post-merge check
+  # should not spend 60-90 minutes of runner time on every push.
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       run_full_tests:
