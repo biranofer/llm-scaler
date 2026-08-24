@@ -294,6 +294,38 @@ For runs whose numbers you intend to compare, use
 [Benchmark WVA](../guides/benchmarking/). Full procedures, including the
 simulator and the e2e suites, are in [Testing](../developer-guide/testing.md).
 
+## Weights and the model cache
+
+A replica that has to fetch its weights before it can serve turns every scale-up
+into a download. It is slow, it can be rate-limited, and it makes scaling depend
+on Hugging Face being reachable from a cluster that may deliberately not have
+egress.
+
+llm-d already solves this: the modelservice chart defaults to `uriProtocol: pvc`
+and mounts a shared cache at `/model-cache`, so the weights are fetched once and
+every later pod reads them locally. On a stock llm-d install there is nothing to
+turn on — check it is there with:
+
+```bash
+kubectl get deploy <model>-decode -n <ns> \
+  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}{"\n"}'
+```
+
+`make scaledobjects-plan` reports a workload that has neither a persistent volume
+nor a local model path, because registering a ScaledObject is the point at which
+new replicas start appearing without anyone asking.
+
+### What it does not buy
+
+**It does not make scale-up fast.** Measured on a shared PVC here: ~430 MB/s, so
+an 8B model spends about 37 seconds reading weights it already has locally, and a
+70B model minutes. That is the same order as a cold start.
+
+The cache removes the *download*, not the *load*. Anything aimed at the load
+itself is a different mechanism — keeping a process warm, or snapshotting a
+loaded engine — and the numbers above are why: at 430 MB/s, re-reading from
+storage is not a shortcut.
+
 ## Draining before scale-down
 
 A replica removed while it is streaming takes its open responses with it. The

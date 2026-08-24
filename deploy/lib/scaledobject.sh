@@ -542,6 +542,49 @@ so_pool() {
 # the right place to say it: registering a ScaledObject is the moment scale-down
 # becomes possible, and it is where the operator is already deciding apply:
 # yes|no|adopt.
+# so_weights_note reports when a scale target will re-download its weights on
+# every scale-up, and returns a note when it will.
+#
+# Registering a ScaledObject is the moment new replicas start appearing on their
+# own, so it is the moment this stops being a one-off install cost. A model
+# served by repo id with no persistent volume fetches its weights from Hugging
+# Face for every pod, every restart and every scale-up -- slow, rate-limitable,
+# and a hard dependency on an external service being reachable from a cluster
+# that may not want one.
+#
+# The signal is the served model path, not the presence of a volume. Weights can
+# legitimately be baked into the image, in which case there is no PVC and no
+# download either, so "no PVC" alone would cry wolf. A LOCAL PATH means the
+# weights are already on the node; a repo id (org/name) means vLLM resolves it
+# through the Hub. Only the second case with no persistent volume anywhere is
+# worth a note.
+#
+# llm-d's modelservice chart already does the right thing by default --
+# uriProtocol: pvc, mounted at /model-cache -- so on a stock llm-d install this
+# stays silent. It fires for a workload that was pointed at the Hub directly.
+so_weights_note() {
+    local ns="$1" resource="$2" name="$3" pod="$4"
+    local out served pvcs
+    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
+        | jq -r --argjson p "$pod" '
+            (getpath($p) // {}) as $t
+            | [ ([ $t.spec.volumes[]? | select(.persistentVolumeClaim != null) ] | length),
+                ([ $t.spec.containers[]? | (.command // []) + (.args // []) | .[] ]
+                 | join(" ")) ] | @tsv' 2>/dev/null) || out=""
+    [ -n "$out" ] || return 0
+    pvcs="${out%%	*}"
+    served="${out#*	}"
+    # Any persistent volume at all means weights can be kept off the Hub, and
+    # whether the operator wired it to the right path is theirs to know.
+    [ "${pvcs:-0}" -gt 0 ] && return 0
+    # A local path anywhere in the command means the weights are already resident.
+    case "$served" in
+        *" /"*|"/"*) return 0 ;;
+    esac
+    printf '%s' "No persistent volume for weights, and the model is served by repo id -- so every scale-up re-downloads it from Hugging Face. That is a per-replica cost on the path this ScaledObject is about to start exercising, and a dependency on the Hub being reachable. llm-d's modelservice chart mounts a model cache by default (uriProtocol: pvc at /model-cache); see docs/deployment/operations.md#weights-and-the-model-cache."
+    return 0
+}
+
 so_drain_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
     local out grace prestop
@@ -660,7 +703,7 @@ so_existing_name() {
 # then the whole truth about what was found, and turning a "no" into a "yes" is a
 # deliberate act rather than an undiscoverable one.
 so_discover() {
-    local ns name args labels objlabels model pool kind apply note drain
+    local ns name args labels objlabels model pool kind apply note drain weights
     local existing existing_name existing_min existing_max existing_cost existing_policy
     local min max cost policy
     so_plan_preamble
@@ -753,6 +796,8 @@ so_discover() {
                 # else the entry says, including an adopt.
                 drain=$(so_drain_note "$ns" "$resource" "$name" "$pod")
                 [ -n "$drain" ] && note="${note:+$note }$drain"
+                weights=$(so_weights_note "$ns" "$resource" "$name" "$pod")
+                [ -n "$weights" ] && note="${note:+$note }$weights"
                 so_plan_entry "$apply" "$ns" "$kind" "$name" "$model" \
                     "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
             done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
