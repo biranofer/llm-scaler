@@ -83,9 +83,9 @@ var _ = Describe("Scale-To-Zero Feature - parking an SGLang model", Serial, Labe
 
 		By("Enabling scale-to-zero for this model with a short retention")
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey,
-			buildSaturationConfigYAML("saturation"))).To(Succeed())
+			buildSaturationConfigYAML())).To(Succeed())
 		modelEntry := buildSaturationConfigYAMLWithModel(
-			"saturation", 0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
+			0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
 		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n", retentionDuration)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, "stz-sglang-model", modelEntry)).To(Succeed())
 

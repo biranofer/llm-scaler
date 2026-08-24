@@ -71,9 +71,9 @@ var _ = Describe("Scale-To-Zero Feature - a blocked reason is reported", Serial,
 		By("Enabling scale-to-zero in the policy for this model")
 		// Half one of the contradiction. The other half is minReplicaCount below.
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey,
-			buildSaturationConfigYAML("saturation"))).To(Succeed())
+			buildSaturationConfigYAML())).To(Succeed())
 		modelEntry := buildSaturationConfigYAMLWithModel(
-			"saturation", 0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
+			0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
 		) + "scaleToZero:\n  enabled: true\n  retentionPeriod: 10m\n"
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, "stz-floor-model", modelEntry)).To(Succeed())
 

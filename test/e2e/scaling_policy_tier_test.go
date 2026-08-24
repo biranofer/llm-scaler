@@ -234,7 +234,7 @@ var _ = Describe("Named scaling policy tier", Label("full"), Ordered, func() {
 		// model ID here contains a slash.
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, tierOverrideKey,
 			buildSaturationConfigYAMLWithModel(
-				"saturation", tierKvCacheThreshold, tierQueueLengthThreshold,
+				tierKvCacheThreshold, tierQueueLengthThreshold,
 				tierDefaultScaleUpThreshold, tierDefaultScaleDownBoundary,
 				modelID, cfg.LLMDNamespace,
 			))).To(Succeed())

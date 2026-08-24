@@ -90,13 +90,13 @@ var _ = Describe("Scale-To-Zero Feature (parking a serving model)", Serial, Labe
 
 		By("Installing a default entry, and a per-model override enabling scale-to-zero with 1m retention")
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, defaultConfigKey,
-			buildSaturationConfigYAML("saturation"))).To(Succeed())
+			buildSaturationConfigYAML())).To(Succeed())
 
 		// The override is what makes this model parkable on a test's timescale. It
 		// also makes the suite independent of how the deployment flag happens to be
 		// set, which matters because the entry always wins over the flag.
 		modelEntry := buildSaturationConfigYAMLWithModel(
-			"saturation", 0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
+			0.80, 1, 0.85, 0.70, modelID, cfg.LLMDNamespace,
 		) + fmt.Sprintf("scaleToZero:\n  enabled: true\n  retentionPeriod: %s\n", retention)
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, "scale-to-zero-model", modelEntry)).To(Succeed())
 

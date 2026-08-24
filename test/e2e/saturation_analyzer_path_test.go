@@ -84,9 +84,13 @@ analyzerName: %q
 	saturationNoScaleQueueLengthThreshold = 100
 )
 
-// buildSaturationConfigYAML builds a valid saturation config entry for the requested analyzer mode.
-func buildSaturationConfigYAML(analyzerName string) string {
-	return fmt.Sprintf(saturationConfigTemplate, 0.80, 1, 0.85, 0.70, analyzerName)
+// buildSaturationConfigYAML builds a valid saturation config entry at the default
+// thresholds. The analyzer name is fixed: every caller wants "saturation", and the
+// alternative analyzer paths this used to be parameterised for are gone. Callers
+// that still need to vary it (including the empty name, which exercises the
+// default) go through buildSaturationConfigYAMLWithThresholds.
+func buildSaturationConfigYAML() string {
+	return fmt.Sprintf(saturationConfigTemplate, 0.80, 1, 0.85, 0.70, "saturation")
 }
 
 // buildSaturationConfigYAMLWithThresholds builds a valid saturation config entry with explicit thresholds.
@@ -119,14 +123,20 @@ func buildSaturationConfigYAMLWithThresholds(analyzerName string, kvCacheThresho
 // plus the identity that makes the entry a PER-MODEL OVERRIDE. Identity lives in
 // the body, not the key: a ConfigMap data key admits only [-._a-zA-Z0-9], so a
 // namespaced model ID cannot appear in one.
+// kvCacheThreshold is kept even though every caller passes 0.80 today. That is a
+// coincidence, not a constant: the tier suite passes tierKvCacheThreshold, which
+// merely happens to equal the default. Collapsing the parameter would silently pin
+// that suite to 0.80 the moment the constant changed, and the suite exists to prove
+// a tier's own thresholds are applied.
+//
+//nolint:unparam // deliberate; see above
 func buildSaturationConfigYAMLWithModel(
-	analyzerName string,
 	kvCacheThreshold float64, queueLengthThreshold int,
 	scaleUpThreshold, scaleDownBoundary float64,
 	modelID, namespace string,
 ) string {
 	entry := buildSaturationConfigYAMLWithThresholds(
-		analyzerName, kvCacheThreshold, queueLengthThreshold, scaleUpThreshold, scaleDownBoundary,
+		"saturation", kvCacheThreshold, queueLengthThreshold, scaleUpThreshold, scaleDownBoundary,
 	)
 	entry = strings.Replace(entry, `model_id: ""`, fmt.Sprintf("model_id: %q", modelID), 1)
 	return strings.Replace(entry, `namespace: ""`, fmt.Sprintf("namespace: %q", namespace), 1)
@@ -322,7 +332,7 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 		// service and got the saturation analyzer's decision back.
 		By("Writing the model's saturation config")
 		Expect(upsertSaturationConfigEntry(ctx, cmNamespace, cmName, cmKey,
-			buildSaturationConfigYAML("saturation"))).To(Succeed())
+			buildSaturationConfigYAML())).To(Succeed())
 
 		By("Verifying the KEDA-managed HPA has CurrentMetrics populated from the external scaler")
 		Eventually(func(g Gomega) {
