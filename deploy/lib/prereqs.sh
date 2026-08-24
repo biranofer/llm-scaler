@@ -214,6 +214,7 @@ wva_report_cluster() {
         return 0
     fi
     log_info "Cluster:    ${ctx:-<no context name>}"
+    [ -n "${WVA_KUBE_CONTEXT:-}" ] && log_info "  pinned:   WVA_KUBE_CONTEXT=$WVA_KUBE_CONTEXT"
     [ -n "$server" ] && log_info "  server:   $server"
     # Only when it is set: naming the file is useful precisely when it is not the
     # default one, and noise when it is.

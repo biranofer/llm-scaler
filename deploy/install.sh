@@ -83,6 +83,27 @@ DEPLOY_ALERTING_RULES=${DEPLOY_ALERTING_RULES:-false}
 DEPLOY_WVA=${DEPLOY_WVA:-true}
 SKIP_CHECKS=${SKIP_CHECKS:-false}
 
+# WVA_KUBE_CONTEXT pins this run to one cluster.
+#
+# Everything here otherwise resolves the cluster from the ambient kubeconfig, so
+# an operator working across two of them has no way to say which one they mean
+# except by changing their global current-context -- and a preflight that picks
+# the wrong cluster still reports success while mutating it. That happened.
+#
+# Implemented as shims rather than by threading a flag through every call site:
+# the libraries invoke kubectl and helm by name in a few hundred places, and a
+# flag reaches only the ones somebody remembered to change. `command` prevents
+# the shim recursing into itself. Shell functions are inherited by subshells, so
+# $(...) and process substitutions get them too.
+#
+# KUBECONFIG needs no shim: kubectl and helm both read it already. Point it at a
+# throwaway file whose current-context is the cluster you mean and this variable
+# is unnecessary.
+if [ -n "${WVA_KUBE_CONTEXT:-}" ]; then
+    kubectl() { command kubectl --context "$WVA_KUBE_CONTEXT" "$@"; }
+    helm()    { command helm --kube-context "$WVA_KUBE_CONTEXT" "$@"; }
+fi
+
 # Scaler backend: keda | none.
 # - keda on kubernetes: expects cluster CRD unless KEDA_HELM_INSTALL=true (then this script installs Helm KEDA).
 # - keda on openshift: platform-managed KEDA only (no Helm install from this script).

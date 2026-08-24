@@ -295,6 +295,19 @@ print_summary() {
     else
         echo "  Manages:      $WVA_NS only (its cache is restricted to it)"
     fi
+    # The tag is usually floating -- the shipped default is :main -- so the tag
+    # alone does not identify what is running. Checking out the same source commit
+    # later reproduces the source and not the controller unless the digest was
+    # written down, and nothing wrote it down. Print it: it costs one field and it
+    # is the only thing here that answers "what exactly did I deploy?".
+    local wva_image wva_digest
+    wva_image="$(kubectl get deploy -n "$WVA_NS" -l app.kubernetes.io/name=workload-variant-autoscaler,control-plane=controller-manager -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null)" || wva_image=""
+    wva_digest="$(kubectl get pods -n "$WVA_NS" -l app.kubernetes.io/name=workload-variant-autoscaler,control-plane=controller-manager -o jsonpath='{.items[0].status.containerStatuses[0].imageID}' 2>/dev/null)" || wva_digest=""
+    [ -n "$wva_image" ] && echo "  Image:        $wva_image"
+    case "$wva_digest" in
+        *@sha256:*) echo "  Digest:       ${wva_digest#*@}" ;;
+    esac
+
     # Same rule as the check above: report the Prometheus that exists, not the one
     # DEPLOY_PROMETHEUS says was wanted.
     local summary_endpoint

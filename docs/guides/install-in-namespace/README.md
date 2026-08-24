@@ -250,7 +250,8 @@ make benchmark-smoke NAMESPACE=${NAMESPACE}
 ```
 <!-- guide:visualize.smoke end -->
 
-Decode-heavy at 10 req/s for five minutes, then a snapshot of the dashboard over
+Symmetric 1024-in/1024-out at 15 req/s for five minutes, then a snapshot of the
+dashboard over
 exactly that window, and a line telling you where it is. It answers one question
 — is WVA actually scaling this? — and it needs a GPU cluster, because
 that is what serving a model needs.

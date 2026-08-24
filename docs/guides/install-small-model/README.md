@@ -196,7 +196,8 @@ make benchmark-smoke NAMESPACE=${NAMESPACE}
 ```
 <!-- guide:verify.smoke end -->
 
-Decode-heavy at 10 req/s for five minutes, then a snapshot of the dashboard over
+Symmetric 1024-in/1024-out at 15 req/s for five minutes, then a snapshot of the
+dashboard over
 exactly that window. It checks the whole chain first — KEDA, a WVA controller
 managing this namespace, model servers, an EPP, a ScaledObject — and names every
 gap at once rather than failing five minutes in.

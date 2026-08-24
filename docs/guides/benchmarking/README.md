@@ -51,7 +51,8 @@ Both are explained in [Autoscale a Fast Model Actuation stack](../fma/).
 ## Installation Instructions
 
 Already have WVA installed and just want to see it scale? `make benchmark-smoke
-NAMESPACE=<ns>` drives decode-heavy load for five minutes and snapshots the
+NAMESPACE=<ns>` drives symmetric 1024/1024 load at 15 req/s for five minutes
+and snapshots the
 dashboard, with no standup and no scenario. Everything below is for runs whose
 numbers you intend to compare.
 

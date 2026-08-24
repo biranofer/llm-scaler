@@ -4,9 +4,14 @@
 #   hack/benchmark/smoke.sh <namespace>
 #   make benchmark-smoke NAMESPACE=<namespace>
 #
-# Decode-heavy load at 10 req/s against WHAT IS ALREADY DEPLOYED, then a
-# dashboard snapshot if there is a dashboard to snapshot. It answers one
-# question -- is WVA actually scaling this? -- and answers it in five minutes.
+# Symmetric 1024-in/1024-out load at 15 req/s for five minutes against WHAT IS
+# ALREADY DEPLOYED, then a dashboard snapshot if there is a dashboard to
+# snapshot. It answers one question -- is WVA actually scaling this? -- and
+# answers it in five minutes.
+#
+# Override with SMOKE_PROFILE=decode-heavy, REQUEST_RATE=<n>, SMOKE_MINUTES=<n>.
+# This header used to say decode-heavy at 10 req/s, which is what the script did
+# before the rate and profile were changed for the reasons given at RATE below.
 #
 # Deliberately NOT llm-d-benchmark. That suite stands up its own stack and needs
 # a CLI, uv, helm and helmfile; its numbers are for comparing runs. This needs a
@@ -239,14 +244,21 @@ while [ \$(date +%s) -lt \$end ]; do
     # and forces the whole prompt to be computed and held per request.
     printf '{\"model\":\"%s\",\"prompt\":\"%s %s\",\"max_tokens\":${MAX_TOKENS},\"temperature\":0.7}' \
            '${MODEL}' \"req\$sent-\$(date +%s%N)\" '${FILLER}' \
-      | curl -s -o /dev/null --max-time 120 -H 'Content-Type: application/json' \\
-             --data-binary @- '${BASE}/v1/completions' &
+      | curl -s -o /dev/null -w '%{http_code}\\n' --max-time 120 -H 'Content-Type: application/json' \\
+             --data-binary @- '${BASE}/v1/completions' >> /tmp/codes 2>/dev/null &
     sent=\$((sent+1))
   fi
   sleep ${GAP}
 done
 wait
-echo \"dispatched \$sent requests\""
+# Requests SENT is not requests SERVED, and only the second answers whether the
+# run is worth reading. This reported dispatch alone while telling the operator
+# to confirm the error count was zero -- a number it did not produce. curl writes
+# each status to /tmp/codes; 000 means the request never completed at all, and
+# counts as failed here because it is one.
+ok=\$(grep -c '^2' /tmp/codes 2>/dev/null) || ok=0
+bad=\$(grep -cv '^2' /tmp/codes 2>/dev/null) || bad=0
+echo \"dispatched \$sent requests; \$ok ok, \$bad failed\""
 
 python3 - "$NS" "$JOB" "$LOADER_IMAGE" "$LOAD_SCRIPT" <<'PYEOF' | kubectl apply -n "$NS" -f - >/dev/null
 import json, sys
@@ -395,7 +407,8 @@ cat <<REPORT
   What to look for, in this order:
     1. replicas MOVED. Flat at one through a deep queue means WVA never saw the
        load -- a metrics problem wearing a scaling decision's clothes.
-    2. error count 0. Anything else and the latency panels measure retries.
+    2. \"0 failed\" on the dispatch line above. Anything else and the latency
+       panels are measuring retries, not service.
     3. queue depth and KV cache non-empty. Empty means the EPP or the model
        servers are not scraped: make check-prereqs NAMESPACE=$NS
 

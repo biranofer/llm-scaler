@@ -49,6 +49,8 @@ Environment Variables:
   WVA_REPLICAS                 Controller replicas. >1 is leader-election failover, NOT more throughput (default: 1)
   DEPLOY_WVA                   Deploy WVA controller (default: true)
   SKIP_CHECKS                  Skip the prerequisite and permission checks (default: false)
+  WVA_KUBE_CONTEXT             Pin every kubectl/helm call to this context, without
+                               changing your global current-context (default: unset)
 
  Scaling behaviour
   WVA_LIMITER                  none (default) | gpu-inventory | quota. none means scaling is UNBOUNDED.
