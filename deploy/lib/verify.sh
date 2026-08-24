@@ -212,11 +212,21 @@ verify_deployment() {
     wva_report_epp_flowcontrol || true
 
     # --- Monitoring
-    if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
-        log_info "Checking Prometheus..."
-        if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
-            log_success "Prometheus is running"
-        else
+    # Keyed on what is actually there, not on DEPLOY_PROMETHEUS. That flag is the
+    # INTENT to deploy, and deploy_monitoring_stack deliberately does not deploy
+    # when the cluster already has its own Prometheus -- so on exactly that
+    # cluster this warned "Prometheus is not ready" about a namespace nothing was
+    # installed into, while the controller was happily reading a working
+    # Prometheus somewhere else.
+    log_info "Checking Prometheus..."
+    if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
+        log_success "Prometheus is running in $MONITORING_NAMESPACE"
+    else
+        local prom_endpoint
+        prom_endpoint="$(wva_prometheus_endpoint)" || prom_endpoint=""
+        if [ -n "$prom_endpoint" ]; then
+            log_success "Prometheus: $prom_endpoint (this install did not deploy one)"
+        elif [ "$DEPLOY_PROMETHEUS" = "true" ]; then
             log_warning "Prometheus is not ready yet"
         fi
     fi
@@ -285,8 +295,14 @@ print_summary() {
     else
         echo "  Manages:      $WVA_NS only (its cache is restricted to it)"
     fi
-    if [ "$DEPLOY_PROMETHEUS" = "true" ]; then
+    # Same rule as the check above: report the Prometheus that exists, not the one
+    # DEPLOY_PROMETHEUS says was wanted.
+    local summary_endpoint
+    summary_endpoint="$(wva_prometheus_endpoint)" || summary_endpoint=""
+    if wva_any_pod_ready "$MONITORING_NAMESPACE" app.kubernetes.io/name=prometheus; then
         echo "  Prometheus:   deployed in $MONITORING_NAMESPACE"
+    elif [ -n "$summary_endpoint" ]; then
+        echo "  Prometheus:   $summary_endpoint (not deployed by this install)"
     else
         echo "  Prometheus:   ${PROMETHEUS_URL:-<the shipped default>} (not deployed by this install)"
     fi

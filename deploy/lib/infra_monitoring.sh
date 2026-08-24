@@ -625,6 +625,27 @@ wva_is_openshift() {
         && [ -n "$(kubectl api-resources --api-group=route.openshift.io -o name 2>/dev/null)" ]
 }
 
+# wva_prometheus_endpoint returns the endpoint WVA will actually read, by the
+# same precedence infra_wva.sh applies when it patches the controller config:
+# an explicit PROMETHEUS_URL, else whatever is already on the cluster. Empty
+# when neither -- meaning this install intends to deploy one.
+#
+# It exists because three places claimed to answer this question and gave three
+# different answers on one run: the preflight named the cluster's own Prometheus,
+# setup-prereqs named the shipped default, and the final summary said Prometheus
+# was deployed in a namespace that does not exist. Only the first was true.
+wva_prometheus_endpoint() {
+    if [ -n "${PROMETHEUS_URL_EXPLICIT:-}" ]; then
+        printf '%s' "$PROMETHEUS_URL_EXPLICIT"
+        return 0
+    fi
+    # || true: a detector that finds nothing must not abort the caller under
+    # `set -e` -- see the note in install_core.sh about assignments and $?.
+    local detected
+    detected="$(wva_detect_prometheus_url 2>/dev/null)" || detected=""
+    printf '%s' "$detected"
+}
+
 # wva_report_prometheus tells the reader which Prometheus this install will use,
 # and how that was decided. Called by the preflight, where "what do I pass for
 # PROMETHEUS_URL?" is the question actually being asked.
@@ -670,7 +691,18 @@ deploy_monitoring_stack() {
     existing="$(foreign_prometheus)"
     if [ -n "$existing" ] && [ "${PROMETHEUS_FORCE_INSTALL:-false}" != "true" ]; then
         log_info "Prometheus is already on this cluster (${existing% }) — not installing a second one."
-        log_info "  WVA will scrape ${PROMETHEUS_URL:-the shipped default}. If that is not the right endpoint, re-run with PROMETHEUS_URL=<url>."
+        # The endpoint the install will USE, not the shipped default. The default
+        # names the Prometheus this installer would have deployed, and on a
+        # cluster that already has its own that namespace does not exist -- so
+        # this line used to contradict both the preflight before it and
+        # infra_wva.sh after it, which detects the real one and overrides.
+        local will_scrape
+        will_scrape="$(wva_prometheus_endpoint)" || will_scrape=""
+        if [ -n "$will_scrape" ]; then
+            log_info "  WVA will scrape $will_scrape. Re-run with PROMETHEUS_URL=<url> to override."
+        else
+            log_info "  WVA will scrape ${PROMETHEUS_URL:-the shipped default}. If that is not the right endpoint, re-run with PROMETHEUS_URL=<url>."
+        fi
         log_info "  Pass PROMETHEUS_FORCE_INSTALL=true to install anyway (two Prometheus Operators reconcile the same CRs and will fight)."
         # The dashboard is still ours to ship, and this is precisely the cluster
         # whose operator has a Grafana to put it in.
