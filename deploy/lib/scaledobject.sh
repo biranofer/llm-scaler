@@ -1100,10 +1100,43 @@ so_workload_gaps() {
           ] | join("\u001f")' 2>/dev/null || return 1
 }
 
+# so_model_claim echoes a PersistentVolumeClaim in $1 that weights can share,
+# or nothing when there is no obvious one.
+#
+# The point is not to save typing. A namespace that already has a shared cache
+# under some other name -- `llm-d-model-cache`, `models`, whatever the chart
+# called it -- would otherwise be told to use `model-pvc`, and the obvious
+# response is to provision a SECOND terabyte for weights that are already on the
+# cluster. Naming what is there is the difference between one claim and two.
+#
+# Only RWX/ROX claims qualify. A ReadWriteOnce claim binds to one node, so
+# proposing it as a shared model cache would produce replicas that cannot
+# schedule -- the failure this whole area exists to avoid.
+#
+# Silent on ambiguity, and silent on Forbidden: with two candidates, guessing
+# picks someone else's data, and a 403 says nothing about what exists. The
+# caller falls back to the documented default name, which is a claim the
+# operator then creates deliberately.
+so_model_claim() {
+    local ns="$1" out
+    out="$(kubectl get pvc -n "$ns" -o json 2>/dev/null)" || return 0
+    printf '%s' "$out" | jq -r '
+        [ .items[]?
+          | select(.status.phase == "Bound")
+          | select((.spec.accessModes // []) | any(. == "ReadWriteMany" or . == "ReadOnlyMany"))
+          | .metadata.name ] as $rwx
+        # A single shared claim is unambiguous. With several, prefer exactly one
+        # whose name says what it holds; otherwise say nothing.
+        | if ($rwx | length) == 1 then $rwx[0]
+          else ([ $rwx[] | select(test("model|weight|cache"; "i")) ]) as $named
+               | if ($named | length) == 1 then $named[0] else "" end
+          end' 2>/dev/null || true
+}
+
 so_workload_patch_doc() {
     local ns="$1" resource="$2" name="$3" pod="$4"
     local gaps engine prestop grace pvcs onvol argv model
-    local want_drain=0 want_cache=0 grace_want mountpath
+    local want_drain=0 want_cache=0 grace_want mountpath claim claim_found=0
 
     # LWS is skipped, deliberately and loudly. Three things would each have to be
     # solved and none is: the pod template is spec.leaderWorkerTemplate, not
@@ -1218,6 +1251,15 @@ PRESTOP
     fi
     if [ "$want_cache" -eq 1 ]; then
         mountpath="${WVA_MODEL_CACHE_PATH:-/model-cache}"
+        # An existing shared claim beats the default name. WVA_MODEL_PVC_NAME
+        # still wins over both when it is set explicitly: an operator naming a
+        # claim is making a decision, not asking for a suggestion.
+        if [ -n "${WVA_MODEL_PVC_NAME:-}" ]; then
+            claim="$WVA_MODEL_PVC_NAME"
+        else
+            claim="$(so_model_claim "$ns")"
+            if [ -n "$claim" ]; then claim_found=1; else claim="model-pvc"; fi
+        fi
         cat <<CACHE
         # The mount alone changes nothing: vLLM downloads to HF_HOME, so without
         # this the weights land inside the container and the volume sits unused
@@ -1231,7 +1273,11 @@ PRESTOP
       volumes:
       - name: ${WVA_MODEL_VOLUME_NAME:-model-storage}
         persistentVolumeClaim:
-          claimName: ${WVA_MODEL_PVC_NAME:-model-pvc}
+          claimName: ${claim}
+#
+#   ^ ${claim}: $([ "$claim_found" -eq 1 ] \
+        && printf '%s' "an EXISTING shared claim in this namespace, reused rather than duplicated." \
+        || printf '%s' "does not exist yet -- create it before applying this.")
 #
 #   The claim is NOT created for you, and the two fields below are why: both
 #   decide whether the cache helps or breaks scale-up, and neither can be

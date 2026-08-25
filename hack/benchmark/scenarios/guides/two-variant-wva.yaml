@@ -251,6 +251,11 @@ shared:
   storage:
     modelPvc:
       size: 32Gi
+      # ReadWriteMany, explicitly: a default RWO class binds the cache to one
+      # node, and the second decode replica then never schedules. See the same
+      # note in workload-autoscaling.yaml.
+      accessModes:
+        - ReadWriteMany
 
 
 # ============================================================================

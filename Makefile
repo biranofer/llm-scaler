@@ -1407,13 +1407,36 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		kubectl rollout status $$d -n $(BENCHMARK_NAMESPACE) --timeout=$(BENCHMARK_DRAIN_ROLLOUT_TIMEOUT)s || \
 			echo "  WARNING: $$d did not settle; the run may start against restarting pods."; \
 	done
-	@# The weights volume is NOT checked here any more. This used to test
-	@# `.spec.template.spec.volumes[?(@.persistentVolumeClaim)]` -- the same
-	@# any-PVC-anywhere test this branch removed from so_weights_note, because a
-	@# cache mounted at one path while the engine downloads to another passes it
-	@# while re-downloading on every scale-up. workload-patch above answers the
-	@# question properly, against the path the engine actually writes to, and
-	@# reports it -- two checks that disagree are worse than one that works.
+	@# The model cache, reported from what the cluster ACTUALLY bound rather than
+	@# from what the scenario asked for. Whether the engine downloads outside it is
+	@# workload-patch's question, answered above; this is the other one, which only
+	@# the claim can answer: can more than one node mount it?
+	@#
+	@# It is checked here because it fails LATE and quietly. An RWO cache stands up
+	@# perfectly -- one replica, one node, everything green -- and then the first
+	@# scale-up leaves the new pod Pending on a volume it cannot attach. The run
+	@# then measures an autoscaler that appears not to work.
+	@echo "Model cache:"
+	@found=0; for pvc in $$(kubectl get pvc -n $(BENCHMARK_NAMESPACE) \
+		-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -iE 'model'); do \
+		found=1; \
+		modes=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.accessModes[*]}' 2>/dev/null); \
+		size=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.status.capacity.storage}' 2>/dev/null); \
+		sc=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.storageClassName}' 2>/dev/null); \
+		echo "  $$pvc  $${size:-?}  [$$modes]  class=$${sc:-<cluster default>}"; \
+		case "$$modes" in \
+			*ReadWriteMany*|*ReadOnlyMany*) ;; \
+			*) echo "  WARNING: $$pvc is $$modes, so it can be mounted on ONE NODE only."; \
+			   echo "           The stack will stand up and the first scale-up will not: a decode"; \
+			   echo "           replica scheduled on another node stays Pending on the volume, so this"; \
+			   echo "           run cannot measure scaling. Give the model cache an RWX StorageClass."; ;; \
+		esac; \
+	done; \
+	if [ "$$found" = 0 ]; then \
+		echo "  WARNING: no model cache PVC found in $(BENCHMARK_NAMESPACE)."; \
+		echo "           Every replica this run adds fetches its weights from Hugging Face, which"; \
+		echo "           is charged to scale-up latency and fails outright without egress."; \
+	fi
 
 ## Install WVA from THIS repo into the benchmark namespace and register the model
 ## servers with it. Split out of benchmark-standup so a run whose stack is already

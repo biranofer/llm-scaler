@@ -67,8 +67,27 @@ make benchmark-standup BENCHMARK_NAMESPACE=${BENCHMARK_NAMESPACE} IMG=${IMG}
 Stands up the model servers via llm-d-benchmark, then installs WVA from this
 repo and registers the workloads.
 
-**It also patches those model servers to drain on scale-down, which restarts
-them, and waits for the rollout.** A replica removed mid-stream takes its open
+**The model cache has to be ReadWriteMany.** The scenario asks for it
+explicitly. It matters more here than anywhere else: an RWO cache stands the
+stack up perfectly — one replica, one node, everything green — and then the
+first scale-up leaves the new pod Pending on a volume it cannot attach, so the
+run measures an autoscaler that appears not to work. A cluster's *default*
+StorageClass is often RWO block storage (kind's `standard` is), so this is the
+common case, not the exotic one. The standup prints what the cluster actually
+bound and warns if it is not shareable:
+
+```text
+Model cache:
+  model-pvc  1Ti  [ReadWriteMany]  class=ibm-spectrum-scale-fileset
+```
+
+Re-running in the **same namespace** reuses that claim and its contents, which
+is the fast path: the weights are fetched once and every later run and replica
+reads them locally. A fresh namespace means a fresh claim and a full download —
+tens of GB for a 32B — so keep the namespace when you intend to compare runs.
+
+**The standup also patches those model servers to drain on scale-down, which
+restarts them, and waits for the rollout.** A replica removed mid-stream takes its open
 responses with it — 39 truncated streams in one measured run, in four bursts each
 ending 25-30s after a scale-down. Those failures land in the same TTFT
 percentiles and error counts the run exists to measure, so a comparison between

@@ -449,7 +449,7 @@ at the time, and both are worth reading before you type it:
 | `WVA_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
 | `WVA_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
 | `WVA_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
-| `WVA_MODEL_PVC_NAME` | `model-pvc` | the claim the emitted weights volume names |
+| `WVA_MODEL_PVC_NAME` | discovered, else `model-pvc` | the claim the emitted weights volume names. Setting it wins over discovery |
 | `WVA_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the emitted patch |
 | `WVA_MODEL_CACHE_PATH` | `/model-cache` | where that volume is mounted, and the parent of the emitted `HF_HOME` |
 
@@ -457,6 +457,14 @@ The last three affect the emitted file only — nothing applies a volume.
 
 Three things it will not do:
 
+- **It reuses a claim you already have, where there is an unambiguous one.**
+  A namespace whose cache is called `llm-d-model-cache` should not be told to
+  use `model-pvc`, because the obvious response is to provision a second
+  terabyte for weights that are already on the cluster. Only a **Bound**
+  `ReadWriteMany`/`ReadOnlyMany` claim qualifies; with several candidates it
+  takes the one whose name says what it holds, and with two equally plausible
+  ones it names none and falls back to the default rather than guessing at
+  someone else's data.
 - **It does not create the PersistentVolumeClaim** — it emits one to fill in.
   Two fields decide whether the cache helps or breaks scale-up, and neither can
   be guessed from inside a namespace:

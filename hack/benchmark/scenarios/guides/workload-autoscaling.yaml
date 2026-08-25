@@ -83,6 +83,20 @@ scenario:
       storage:
         modelPvc:
           size: 1Ti
+          # ReadWriteMany, explicitly. Without it the claim takes whatever the
+          # cluster default StorageClass gives, and a default of RWO block
+          # storage binds the cache to ONE NODE -- so the second decode replica
+          # cannot mount it and never schedules. That does not fail the standup;
+          # it fails the scale-up, which is the thing the run exists to measure,
+          # and it looks like the autoscaler not working.
+          #
+          # llm-d-benchmark's own cluster-config for this cluster says the same
+          # (config/cluster-configs/examples/openshift-pokprod.yaml). Requesting
+          # it here means a cluster that cannot provide it fails at PVC creation
+          # -- immediately, with a clear reason -- rather than at the first
+          # scale-up, an hour into a run.
+          accessModes:
+            - ReadWriteMany
         hostPath:
           # TODO: should we default to enabled: true for WVA scenarios?
           enabled: false

@@ -62,6 +62,8 @@ CRD_RC=1          # no LeaderWorkerSet CRD unless a case says otherwise
 PATCH_CALLS=0
 PATCH_RC=0
 PATCH_BODY=""     # the last --patch-file content kubectl was handed
+PVC_FIXTURE='{"items":[]}'   # JSON for `kubectl get pvc -n <ns>`
+PVC_RC=0
 
 kubectl() {
     local a f
@@ -69,6 +71,10 @@ kubectl() {
         get)
             case "${2:-}" in
                 crd) return "$CRD_RC" ;;
+                pvc|persistentvolumeclaims)
+                    [ "$PVC_RC" -eq 0 ] || return "$PVC_RC"
+                    printf '%s' "$PVC_FIXTURE"
+                    ;;
                 deployments|leaderworkersets)
                     # `get <kind> -n <ns>` is a listing; `get <kind> <name> …` is
                     # one object. The stub has to tell them apart or a case can
@@ -280,6 +286,7 @@ f_unreadable() { FIXTURE=""; FIXTURE_RC=1; }
 reset() {
     FIXTURE=""; FIXTURE_RC=0; LIST_FIXTURE=''; LIST_RC=0; CRD_RC=1
     PATCH_CALLS=0; PATCH_RC=0; PATCH_BODY=""
+    PVC_FIXTURE='{"items":[]}'; PVC_RC=0
 }
 
 # --- canary -----------------------------------------------------------------
@@ -649,6 +656,85 @@ YAML
 so_workload_patch_drop_cache "$d" && fail "expected non-zero: nothing actionable is left"
 assert_contains "$(cat "$d")" "HF_HOME"   # anchor: the file was left intact
 rm -f "$d"
+[ "$FAILED" -eq "$before" ] && ok
+
+# --- which claim the patch names --------------------------------------------
+#
+# A namespace that already has a shared cache under another name would otherwise
+# be told to use `model-pvc`, and the obvious response is to provision a SECOND
+# terabyte for weights that are already on the cluster.
+
+pvc_list() {
+    # $1..$n: "<name>:<accessMode>[:<phase>]"
+    local items="" spec name mode phase
+    for spec in "$@"; do
+        name="${spec%%:*}"; mode="${spec#*:}"; phase="Bound"
+        case "$mode" in *:*) phase="${mode#*:}"; mode="${mode%%:*}" ;; esac
+        items="${items:+$items,}{\"metadata\":{\"name\":\"$name\"},\"spec\":{\"accessModes\":[\"$mode\"]},\"status\":{\"phase\":\"$phase\"}}"
+    done
+    printf '{"items":[%s]}' "$items"
+}
+
+CASE="an existing shared claim is reused instead of proposing a second one"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list llm-d-model-cache:ReadWriteMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: llm-d-model-cache"
+assert_contains "$doc" "an EXISTING shared claim"
+assert_not_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a ReadWriteOnce claim is not proposed as a shared cache"
+reset; f_llmd_real_downloads
+before=$FAILED
+# RWO binds to one node, so reusing it would produce replicas that cannot
+# schedule -- the failure this whole area exists to avoid.
+PVC_FIXTURE="$(pvc_list scratch:ReadWriteOnce)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: model-pvc"
+assert_contains "$doc" "does not exist yet"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="two candidate claims are ambiguous, so neither is guessed"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list alpha:ReadWriteMany beta:ReadWriteMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="among several, exactly one named for the job is taken"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list results:ReadWriteMany model-cache:ReadWriteMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: model-cache"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="an unbound claim is not reused"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list somewhere:ReadWriteMany:Pending)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="an explicit WVA_MODEL_PVC_NAME beats anything discovered"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list llm-d-model-cache:ReadWriteMany)"
+doc="$(WVA_MODEL_PVC_NAME=mine so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: mine"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a forbidden PVC listing falls back rather than claiming none exist"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_RC=1
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: model-pvc"
+assert_contains "$doc" "preStop"    # anchor: a document was still produced
 [ "$FAILED" -eq "$before" ] && ok
 
 # --- plan notes -------------------------------------------------------------
