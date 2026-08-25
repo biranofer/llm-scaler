@@ -983,12 +983,38 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@# it says 0.7.0 on every ref anyway. The one thing that version used to
 	@# decide, the harness image tag, is now pinned explicitly in
 	@# benchmark-standup and benchmark-run instead of being inferred from it.
+	@# Build the venv HERE rather than delegating to install.sh, which runs
+	@# `sudo apt-get update` unconditionally -- even when every tool it needs is
+	@# already present. On a box without passwordless sudo that means a FRESH
+	@# CLONE can never bootstrap: the guard above reports prerequisites fine,
+	@# install.sh then dies on "sudo: a password is required", and the standup
+	@# fails several minutes in having said nothing useful. Observed on WSL
+	@# against pokprod.
+	@#
+	@# The CLI is just an editable install of the checkout, so a plain venv plus
+	@# `pip install -e .` produces the same thing install.sh would, in $HOME, with
+	@# no admin rights. install.sh stays as the fallback for whatever else it does
+	@# on a machine that has not got this far.
 	@if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
 		echo "llmdbenchmark present at $(LLMDBENCHMARK) — skipping install.sh."; \
 		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
 	else \
-		cd $(BENCHMARK_REPO_DIR) && \
-		setsid ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv) </dev/null; \
+		echo "Building the llmdbenchmark venv without sudo..."; \
+		if command -v uv >/dev/null 2>&1; then \
+			(cd $(BENCHMARK_REPO_DIR) && uv venv "$(BENCHMARK_VENV)" >/dev/null 2>&1 \
+			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q -e . >/tmp/llmdbench-venv.log 2>&1) || true; \
+		else \
+			(cd $(BENCHMARK_REPO_DIR) && python3 -m venv "$(BENCHMARK_VENV)" >/dev/null 2>&1 \
+			 && "$(BENCHMARK_VENV)/bin/pip" install -q -e . >/tmp/llmdbench-venv.log 2>&1) || true; \
+		fi; \
+		if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
+			echo "  built $$("$(LLMDBENCHMARK)" --version)"; \
+		else \
+			echo "  could not build it here; falling back to llm-d-benchmark install.sh."; \
+			echo "  (that script uses sudo, so it fails fast on a box without it -- see /tmp/llmdbench-venv.log)"; \
+			cd $(BENCHMARK_REPO_DIR) && \
+			setsid ./install.sh $(if $(filter true,$(BENCHMARK_UV)),--uv,--no-uv) </dev/null; \
+		fi; \
 	fi
 	@# helm-diff has to match helm's MAJOR version, and this step assumed Helm 4:
 	@#   - v3.15.10's plugin.yaml uses `platformHooks`, a Helm 4 schema field.
