@@ -606,7 +606,13 @@ so_weights_note() {
 # ---------------------------------------------------------------------------
 
 # so_workload_patch_index lists the documents in an emitted patch file as
-# "<namespace>\037<name>", one per line.
+# "<namespace> <name>", one per line.
+#
+# A SPACE, not the \037 used elsewhere in this file. Both fields are RFC 1123
+# labels -- lowercase alphanumerics and hyphens -- so a space cannot appear in
+# either, and yq does not read the  escape the way jq does: it produced one
+# unsplittable field per line, the consumer's `read` left the name empty, and the
+# apply loop ran zero times while still reporting the file it had written.
 #
 # `yq eval`, NOT `eval-all`. eval-all evaluates the expression ONCE across the
 # whole stream, so `[...] | @tsv` returns a single line with every document's
@@ -615,7 +621,7 @@ so_weights_note() {
 # reviewers found it independently and it was invisible in testing because the
 # default benchmark scenario runs one decode Deployment.
 so_workload_patch_index() {
-    yq eval '[.metadata.namespace, .metadata.name] | join("\u001f")' "$1" 2>/dev/null \
+    yq eval '[.metadata.namespace, .metadata.name] | join(" ")' "$1" 2>/dev/null \
         | grep -v '^$' || true
 }
 
@@ -635,9 +641,19 @@ so_workload_patch_one() {
     # Checked against THIS document, not the file. The claim check used to read
     # the whole stream, so one workload needing a cache blocked the drain patch
     # for every other workload in the run.
+    #
+    # A missing claim drops the WEIGHTS half and applies the drain half anyway.
+    # Refusing the whole document was worse than the problem: most clusters have
+    # no `model-pvc`, so every apply -- including the one benchmark-standup makes,
+    # where draining is the entire reason it runs -- would have done nothing at
+    # all, while reporting a claim nobody had asked for.
     if ! so_workload_patch_claim_ok "$ns" "$doc"; then
-        rm -f "$doc"
-        return 1
+        if ! so_workload_patch_drop_cache "$doc"; then
+            rm -f "$doc"
+            log_warning "  $ns/$name needed only the weights volume, so nothing was applied."
+            return 1
+        fi
+        log_warning "  $ns/$name: applying the drain half only."
     fi
     # `kubectl patch --type=strategic`, never `kubectl apply`. These objects were
     # created by Helm and carry no last-applied-configuration annotation, so apply
@@ -664,6 +680,29 @@ so_workload_patch_claim_ok() {
     log_warning "  $ns: PersistentVolumeClaim '$claim' does not exist, so the weights half is NOT applied."
     log_warning "    Create it first (size and storage class are a cluster decision), or apply the emitted file yourself."
     return 1
+}
+
+# so_workload_patch_drop_cache rewrites a patch document in place, removing the
+# weights half. It returns non-zero when nothing actionable is left, so the
+# caller can skip a document that was only ever about the cache.
+so_workload_patch_drop_cache() {
+    local doc="$1" stripped keep
+    stripped="$(mktemp)" || return 1
+    yq eval 'del(.spec.template.spec.volumes)
+             | del(.spec.template.spec.containers[].volumeMounts)
+             | del(.spec.template.spec.containers[].env)' "$doc" > "$stripped" 2>/dev/null
+    # What remains is worth applying only if it still carries a drain change. A
+    # container entry reduced to its own name patches nothing, and sending it
+    # would report a success that changed no field.
+    keep="$(yq eval '[.spec.template.spec.terminationGracePeriodSeconds,
+                      .spec.template.spec.containers[].lifecycle]
+                     | map(select(. != null)) | length' "$stripped" 2>/dev/null)"
+    if [ ! -s "$stripped" ] || [ "${keep:-0}" -eq 0 ]; then
+        rm -f "$stripped"
+        return 1
+    fi
+    mv "$stripped" "$doc" || { rm -f "$stripped"; return 1; }
+    return 0
 }
 
 # wva_workload_patch walks the model servers the plan discovers and writes a patch
@@ -744,7 +783,7 @@ wva_workload_patch() {
         log_warning "WVA_WORKLOAD_PATCH_APPLY=true: patching $found workload(s) directly."
         log_warning "  These fields belong to the model server's chart. The next \`helm upgrade\` reverts them,"
         log_warning "  silently, and the workload goes back to what it was. Put them in your chart values to keep them."
-        while IFS=$'\037' read -r doc_ns doc_name; do
+        while read -r doc_ns doc_name; do
             [ -n "$doc_name" ] || continue
             if so_workload_patch_one "$tmp" "$doc_ns" "$doc_name"; then
                 patched=$((patched + 1))
@@ -1214,8 +1253,26 @@ so_discover() {
                         # to answer `python` for an SGLang server. With command
                         # folded in the anchor is always present, and anything
                         # that is not a `serve` command correctly yields nothing.
-                        ((($t.spec.containers[0].command // [])
-                          + ($t.spec.containers[0].args // []))
+                        #
+                        # The ENGINE container, not containers[0]. Same rule as
+                        # so_workload_gaps, and the same reason: an llm-d
+                        # deployment with a routing proxy lists the proxy first,
+                        # so reading container 0 found no model on exactly the
+                        # layout the chart produces -- the plan then marked the
+                        # workload `apply: no` and asked the operator to type in
+                        # a modelID that was written on the next container down.
+                        # Falls back to containers[0] when nothing identifies as
+                        # an engine, which preserves the answer for a
+                        # single-container workload the image name does not
+                        # match.
+                        ((([ $t.spec.containers[]?
+                             | ((.command // []) + (.args // []) | map(tostring)
+                                | join(" ") | ascii_downcase) as $cmd
+                             | select(((.image // "") | ascii_downcase
+                                       | test("vllm|sglang"))
+                                      or ($cmd | test("vllm serve|sglang\\.launch_server|sglang serve")))
+                           ] | first) // $t.spec.containers[0]) as $c
+                         | (($c.command // []) + ($c.args // []))
                          | map(tostring | gsub("[\n\r]"; " ")) | join(" "))
                       ] | join("|")')
         done

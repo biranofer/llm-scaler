@@ -320,6 +320,82 @@ else
     printf 'skip  %s (yq not installed)\n' "$CASE"
 fi
 
+# --- dropping the weights half ----------------------------------------------
+#
+# A cluster with no `model-pvc` is the common case, and refusing the whole
+# document there would skip the drain fix too -- including in benchmark-standup,
+# where draining is the entire reason the patch runs.
+
+CASE="a missing claim drops the weights half and keeps the drain half"
+before=$FAILED
+if command -v yq >/dev/null 2>&1; then
+    d="$(mktemp)"
+    cat > "$d" <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: w
+  namespace: ns1
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 120
+      containers:
+      - name: vllm
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 45"]
+        env:
+        - name: HF_HOME
+          value: /model-cache/huggingface
+        volumeMounts:
+        - name: model-storage
+          mountPath: /model-cache
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-pvc
+YAML
+    so_workload_patch_drop_cache "$d" || fail "expected the drain half to survive"
+    left="$(cat "$d")"
+    assert_contains "$left" "terminationGracePeriodSeconds: 120"
+    assert_contains "$left" "preStop"
+    assert_not_contains "$left" "claimName"
+    assert_not_contains "$left" "HF_HOME"
+    assert_not_contains "$left" "volumeMounts"
+    rm -f "$d"
+    [ "$FAILED" -eq "$before" ] && ok
+
+    CASE="a cache-only document is skipped, not applied as an empty patch"
+    before=$FAILED
+    d="$(mktemp)"
+    cat > "$d" <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: w
+  namespace: ns1
+spec:
+  template:
+    spec:
+      containers:
+      - name: vllm
+        env:
+        - name: HF_HOME
+          value: /model-cache/huggingface
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-pvc
+YAML
+    so_workload_patch_drop_cache "$d" && fail "expected non-zero: nothing actionable is left"
+    rm -f "$d"
+    [ "$FAILED" -eq "$before" ] && ok
+else
+    printf 'skip  %s (yq not installed)\n' "$CASE"
+fi
+
 # --- the driver -------------------------------------------------------------
 #
 # wva_workload_patch's return code is load-bearing: benchmark-standup runs it as
