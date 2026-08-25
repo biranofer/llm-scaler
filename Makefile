@@ -1369,6 +1369,42 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		$(MAKE) --no-print-directory benchmark-fma-fixups BENCHMARK_NAMESPACE=$(BENCHMARK_NAMESPACE); \
 	fi
 
+	@# The model servers a standup deploys carry no preStop hook and the default
+	@# 30s grace period, so every scale-down during the run cuts the requests in
+	@# flight. Measured on a real run: 39 ClientPayloadError failures in four
+	@# bursts, each ending 25-30s after one of the four pod removals.
+	@#
+	@# Those failures are an artefact of how the harness deploys, not a property
+	@# of the autoscaler under test -- and they land in the same TTFT percentiles
+	@# and error counts the run exists to measure. A comparison between two
+	@# scaling policies is not measuring scaling if one of them happened to remove
+	@# more pods.
+	@#
+	@# Patched rather than reported, because unlike an operator's workloads these
+	@# are OURS: this target deployed them. It costs one rollout, taken here and
+	@# waited for, so the run starts against pods that are already settled rather
+	@# than mid-restart.
+	@echo "Making the model servers drain on scale-down..."
+	@$(MAKE) --no-print-directory workload-patch NAMESPACE=$(BENCHMARK_NAMESPACE) \
+		WVA_WORKLOAD_PATCH_APPLY=true \
+		WVA_WORKLOAD_PATCH_FILE=$(BENCHMARK_WORKSPACE)/wva-workload-patch.yaml || \
+		echo "  WARNING: could not patch the model servers; scale-downs in this run will truncate in-flight requests."
+	@for d in $$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) -o name 2>/dev/null | grep -E 'decode|prefill'); do \
+		kubectl rollout status $$d -n $(BENCHMARK_NAMESPACE) --timeout=$(BENCHMARK_DRAIN_ROLLOUT_TIMEOUT)s || \
+			echo "  WARNING: $$d did not settle; the run may start against restarting pods."; \
+	done
+	@# The weights volume. Our scenarios set storage.modelPvc and the harness
+	@# defaults to uriProtocol: pvc, so this is normally already true -- but a
+	@# scenario that overrode it would make every replica the run adds re-download
+	@# its weights from Hugging Face, which shows up as scale-up latency and reads
+	@# like the autoscaler being slow.
+	@for d in $$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) -o name 2>/dev/null | grep -E 'decode|prefill'); do \
+		if [ -z "$$(kubectl get $$d -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}' 2>/dev/null)" ]; then \
+			echo "  WARNING: $$d mounts no persistent volume — every replica this run adds will re-download its weights."; \
+			echo "           Check storage.modelPvc in the scenario, and uriProtocol: pvc in the harness defaults."; \
+		fi; \
+	done
+
 ## Install WVA from THIS repo into the benchmark namespace and register the model
 ## servers with it. Split out of benchmark-standup so a run whose stack is already
 ## up can (re)install the autoscaler without redeploying the model servers.
@@ -1702,6 +1738,11 @@ BURSTY_WORKLOAD    ?= bursty.yaml
 # writes no results, having consumed its full hour: measured 4599s against a
 # 3600s wait. Raise this, not the profile, when adding longer workloads.
 BENCHMARK_WAIT_TIMEOUT ?= 7200
+# Bound for the one rollout benchmark-standup causes when it adds the drain hook.
+# Deliberately NOT BENCHMARK_WAIT_TIMEOUT: that is the budget for standing a whole
+# stack up, and spending two hours on a single stuck rollout would look exactly
+# like a slow model load. A replica reloading its weights takes minutes.
+BENCHMARK_DRAIN_ROLLOUT_TIMEOUT ?= 900
 BENCHMARK_HARNESS_MEMORY ?= 40Gi
 
 .PHONY: benchmark-run-bursty
