@@ -651,6 +651,37 @@ assert_contains "$(cat "$d")" "HF_HOME"   # anchor: the file was left intact
 rm -f "$d"
 [ "$FAILED" -eq "$before" ] && ok
 
+# --- plan notes -------------------------------------------------------------
+#
+# A workload usually has more than one thing wrong with it, and the notes used to
+# be joined into a single run-on sentence -- so the second problem, often the
+# expensive one, sat mid-paragraph where nobody reads.
+
+CASE="one plan note renders as one line"
+before=$FAILED
+# The case that caught the real bug: `printf '%s' | while read` never runs its
+# body for a final line with no terminator, so a SINGLE note produced no output
+# at all. Both counts have to be asserted; only the pair is meaningful.
+n="$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "only note" | grep -c '# note:')"
+assert_eq "$n" "1" "note lines"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="two plan notes render as two lines, not one paragraph"
+before=$FAILED
+two="first note"$'\036'"second note"
+out="$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "$two")"
+assert_eq "$(printf '%s' "$out" | grep -c '# note:')" "2" "note lines"
+assert_contains "$out" "# note: first note"
+assert_contains "$out" "# note: second note"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="an entry with no note renders none"
+before=$FAILED
+assert_eq "$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "" | grep -c '# note:')" "0" "note lines"
+# Anchor: the entry itself must still be produced.
+assert_contains "$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "")" "namespace: ns"
+[ "$FAILED" -eq "$before" ] && ok
+
 # --- the driver -------------------------------------------------------------
 #
 # wva_workload_patch's return code is load-bearing: benchmark-standup runs it as

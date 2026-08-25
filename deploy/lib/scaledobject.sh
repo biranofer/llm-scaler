@@ -122,7 +122,24 @@ so_plan_entry() {
     local choices="yes | no"
     [ -z "$existing" ] || choices="yes | no | adopt"
     echo ""
-    [ -z "$note" ] || printf '  # note: %s\n' "$note"
+    # One line per note. Notes accumulate as RS-separated RECORDS -- not US,
+    # which this file already uses as the FIELD separator for plan rows, so a
+    # note containing one splits the row it travels in and loses everything
+    # after it. Two
+    # unrelated problems joined by a space read as one long sentence, and the
+    # second half -- often the expensive one -- is where a reader gives up.
+    # The plan is read back through `yq -o=json`, which drops comments, so the
+    # number of comment lines above an entry is free.
+    if [ -n "$note" ]; then
+        # printf '%s\n', not '%s': `while read` returns non-zero on a final line
+        # with no terminator and so never runs its body for it. Without the \n a
+        # single note produced NO output at all, and two produced only the first
+        # -- the last note was always the one silently dropped.
+        printf '%s\n' "$note" | tr '\036' '\n' | while IFS= read -r so_note_line; do
+            [ -n "$so_note_line" ] || continue
+            printf '  # note: %s\n' "$so_note_line"
+        done
+    fi
     # apply and modelID are quoted: YAML reads a bare yes/no/on/off as a boolean
     # under some parsers, and a model called `3.5` or `1e6` as a number. Both would
     # arrive here as something that is not the text anybody typed.
@@ -1434,7 +1451,7 @@ so_discover() {
                         log_info "FMA detected in $ns for model '$model_label' (requester: $fma_requester). Targeting $name by default; the requester is written below as a second variant with apply: no — set it to yes to autoscale both halves of this model."
                         log_warning "FMA launcher pods (${fma_launchers:-?} in $ns) run vLLM and serve traffic. WVA follows the dual-pods pairing to attribute a BOUND launcher's metrics, but only if something scrapes them — launchers declare no container ports, so a port-name PodMonitor generates no target. Check with: kubectl get podmonitor -n $ns. See docs/deployment/operations.md, 'FMA launcher pods'."
                         log_warning "GPU accounting in $ns is a LOWER BOUND: a launcher keeps its vLLM instance resident after unbinding, holding a real GPU while requesting none, and the annotations naming that GPU are stripped at unbind — so neither ResourceQuota nor the WVA limiter can see it. Subtract the warm pool by hand when planning capacity. See docs/deployment/gpu-limiter.md, 'FMA namespaces'."
-                        note="${note:+$note }FMA topology: requester $fma_requester and ${fma_launchers:-?} launcher pod(s) also serve this model. This entry is the modelservice half and is the default target. The FMA half is written below as a second variant with apply: no — turn it on to have WVA size both."
+                        note="${note:+$note}FMA topology: requester $fma_requester and ${fma_launchers:-?} launcher pod(s) also serve this model. This entry is the modelservice half and is the default target. The FMA half is written below as a second variant with apply: no — turn it on to have WVA size both."
                     fi
                 fi
                 existing=$(so_existing_info "$ns" "$name")
@@ -1453,15 +1470,15 @@ so_discover() {
                     # Appended, not assigned: a workload can both be scaled by
                     # something else and have no readable model, and adopting it
                     # would then point a ScaledObject at an empty modelID.
-                    note="${note:+$note }Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
+                    note="${note:+$note}Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
                 fi
                 pool=$(so_pool "$ns" "$labels")
                 # Appended last: it is true of the workload regardless of what
                 # else the entry says, including an adopt.
                 drain=$(so_drain_note "$ns" "$resource" "$name" "$pod")
-                [ -n "$drain" ] && note="${note:+$note }$drain"
+                [ -n "$drain" ] && note="${note:+$note}$drain"
                 weights=$(so_weights_note "$ns" "$resource" "$name" "$pod")
-                [ -n "$weights" ] && note="${note:+$note }$weights"
+                [ -n "$weights" ] && note="${note:+$note}$weights"
                 so_plan_entry "$apply" "$ns" "$kind" "$name" "$model" \
                     "$min" "$max" "$cost" "$policy" "$pool" "$existing_name" "$note"
             done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
@@ -1603,9 +1620,9 @@ so_discover_fma_requesters() {
         scrapers=$(wva_launcher_scrapers "$ns" | paste -sd, -)
         if [ -z "$scrapers" ]; then
             apply=no
-            note="${note:+$note }No PodMonitor generates a scrape target for the ${launchers:-0} launcher pod(s) in $ns, so this variant would have no metrics at all -- launchers declare no container ports, and a port-name endpoint resolves nothing. Fix with: kubectl apply -k config/fma-launcher-metrics -n $ns (or WVA_FMA_LAUNCHER_METRICS=true at install), then set apply: yes."
+            note="${note:+$note}No PodMonitor generates a scrape target for the ${launchers:-0} launcher pod(s) in $ns, so this variant would have no metrics at all -- launchers declare no container ports, and a port-name endpoint resolves nothing. Fix with: kubectl apply -k config/fma-launcher-metrics -n $ns (or WVA_FMA_LAUNCHER_METRICS=true at install), then set apply: yes."
         else
-            note="${note:+$note }FMA variant: the requester is the scale target, and its engine metrics come from launcher pods scraped by $scrapers. WVA follows the dual-pods pairing to attribute them."
+            note="${note:+$note}FMA variant: the requester is the scale target, and its engine metrics come from launcher pods scraped by $scrapers. WVA follows the dual-pods pairing to attribute them."
         fi
 
         # Defaulted off when the modelservice half already covers this model, so
@@ -1613,7 +1630,7 @@ so_discover_fma_requesters() {
         # turning the second variant on stays a deliberate act.
         if [ -n "$sibling" ]; then
             apply=no
-            note="${note:+$note }SECOND VARIANT: $sibling already serves this model and is the entry above. Set apply: yes to autoscale this FMA half alongside it — same modelID, so WVA treats the two as variants of one model and allocates replicas between them by variantCost. Left as no, only $sibling is scaled and the traffic EPP sends to launchers is unmeasured. maxReplicas is capped at the ${launchers:-0} launcher pod(s) present, which bounds warm slots but NOT free GPUs — check both before raising it, since past either ceiling requester pods stay Pending and suppress further scale-up."
+            note="${note:+$note}SECOND VARIANT: $sibling already serves this model and is the entry above. Set apply: yes to autoscale this FMA half alongside it — same modelID, so WVA treats the two as variants of one model and allocates replicas between them by variantCost. Left as no, only $sibling is scaled and the traffic EPP sends to launchers is unmeasured. maxReplicas is capped at the ${launchers:-0} launcher pod(s) present, which bounds warm slots but NOT free GPUs — check both before raising it, since past either ceiling requester pods stay Pending and suppress further scale-up."
         fi
 
         existing=$(so_existing_info "$ns" "$name")
@@ -1622,7 +1639,7 @@ so_discover_fma_requesters() {
             min="$existing_min"; max="$existing_max"; cost="$existing_cost"
             policy="$existing_policy"
             apply=no
-            note="${note:+$note }Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
+            note="${note:+$note}Already scaled by ScaledObject $existing_name (min $existing_min, max $existing_max). Set apply: adopt to point that one at WVA instead of adding a second."
         fi
 
         # Empty for a requester, and correctly so: an InferencePool selects the
