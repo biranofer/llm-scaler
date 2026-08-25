@@ -1000,12 +1000,26 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
 	else \
 		echo "Building the llmdbenchmark venv without sudo..."; \
+		# The CLI imports `planner`, which is a SEPARATE package install.sh pulls
+		# from a git URL -- `pip install -e .` alone produces a venv whose
+		# llmdbenchmark dies on `ModuleNotFoundError: No module named planner`.
+		# The pin is read out of their install.sh, the same way this file already
+		# reads the helm-diff and helmfile versions, so it cannot drift from the
+		# version the standup was tested against.
+		planner=$$(sed -n "s|^PLANNER_GIT=\"\(git+[^\"]*\)\"|\1|p" \
+			"$(BENCHMARK_REPO_DIR)/install.sh" 2>/dev/null | head -1); \
+		planner=$${planner:-git+https://github.com/llm-d-incubation/llm-d-planner.git@v0.1.0}; \
+		# uv FIRST: this box has no python3-venv (no ensurepip), so `python3 -m venv`
+		# fails with "You may need to use sudo with that command" -- the very thing
+		# being avoided. uv brings its own Python and needs no admin rights.
 		if command -v uv >/dev/null 2>&1; then \
-			(cd $(BENCHMARK_REPO_DIR) && uv venv "$(BENCHMARK_VENV)" >/dev/null 2>&1 \
-			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q -e . >/tmp/llmdbench-venv.log 2>&1) || true; \
+			(cd $(BENCHMARK_REPO_DIR) && uv venv "$(BENCHMARK_VENV)" >/tmp/llmdbench-venv.log 2>&1 \
+			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q -e . >>/tmp/llmdbench-venv.log 2>&1 \
+			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q "$$planner" >>/tmp/llmdbench-venv.log 2>&1) || true; \
 		else \
-			(cd $(BENCHMARK_REPO_DIR) && python3 -m venv "$(BENCHMARK_VENV)" >/dev/null 2>&1 \
-			 && "$(BENCHMARK_VENV)/bin/pip" install -q -e . >/tmp/llmdbench-venv.log 2>&1) || true; \
+			(cd $(BENCHMARK_REPO_DIR) && python3 -m venv "$(BENCHMARK_VENV)" >/tmp/llmdbench-venv.log 2>&1 \
+			 && "$(BENCHMARK_VENV)/bin/pip" install -q -e . >>/tmp/llmdbench-venv.log 2>&1 \
+			 && "$(BENCHMARK_VENV)/bin/pip" install -q "$$planner" >>/tmp/llmdbench-venv.log 2>&1) || true; \
 		fi; \
 		if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
 			echo "  built $$("$(LLMDBENCHMARK)" --version)"; \
