@@ -830,7 +830,7 @@ wva_workload_patch() {
     local out="${WVA_WORKLOAD_PATCH_FILE:-wva-workload-patch.yaml}"
     local apply="${WVA_WORKLOAD_PATCH_APPLY:-false}"
     local ns resource pod kind name found=0 tmp rc=0
-    local unreadable=0 skipped=0 scanned=0 patched=0 failed=0 deferred=0
+    local unreadable=0 skipped=0 scanned=0 patched=0 failed=0 deferred=0 needs_cache=0
     local listing names doc_rc index_lines tool doc_ns doc_name write_rc
 
     # The tool check this path never had. `make workload-patch` sources the
@@ -920,6 +920,19 @@ wva_workload_patch() {
         [ "$skipped" -gt 0 ] && log_warning "  $skipped other workload(s) were skipped and were not checked."
         so_workload_patch_clear_stale "$out"
         return 0
+    fi
+
+    # Counted from the documents, so it survives whatever apply mode does or
+    # does not do. It is stated separately from the patch count because it is a
+    # different kind of problem: the drain hook is something this tool can fix,
+    # and the cache is something only the cluster's owner can.
+    needs_cache=$(grep -c '^#   cache:' "$tmp" 2>/dev/null) || needs_cache=0
+    if [ "$needs_cache" -gt 0 ]; then
+        log_warning "$needs_cache of $found model server(s) will RE-DOWNLOAD their weights every time a replica is added."
+        log_warning "  Each scale-up then waits on Hugging Face instead of on the GPU, and fails outright"
+        log_warning "  where the cluster has no egress. It is the largest avoidable cost in a scale-up and"
+        log_warning "  the easiest to mistake for the autoscaler being slow."
+        log_warning "  $out has the pod-spec half, and the PersistentVolumeClaim to fill in and create."
     fi
 
     if [ "$apply" = "true" ]; then
@@ -1115,7 +1128,13 @@ so_workload_patch_doc() {
     model="$(so_model_source "$argv")" || model=""
     case "$model" in
         ""|/*) : ;;
-        *) [ "${onvol:-0}" -eq 0 ] && want_cache=1 ;;
+        *) if [ "${onvol:-0}" -eq 0 ]; then
+               want_cache=1
+               # NOT just a line in the emitted file. This is the single largest
+               # avoidable cost in a scale-up, it is invisible until the moment a
+               # replica is added, and it looks like the autoscaler being slow.
+               log_warning "  $ns/$name RE-DOWNLOADS ITS WEIGHTS on every scale-up: $engine fetches $model from Hugging Face, outside every volume it mounts."
+           fi ;;
     esac
 
     [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || return 0
@@ -1196,9 +1215,33 @@ PRESTOP
       - name: ${WVA_MODEL_VOLUME_NAME:-model-storage}
         persistentVolumeClaim:
           claimName: ${WVA_MODEL_PVC_NAME:-model-pvc}
-      # The claim is NOT created here: its size and storage class are cluster
-      # decisions and one claim is normally shared by every model. It must exist
-      # before this is applied, or the pods it creates stay Pending.
+#
+#   The claim is NOT created for you, and the two fields below are why: both
+#   decide whether the cache helps or breaks scale-up, and neither can be
+#   guessed from here.
+#
+#     accessModes: ReadWriteMany is the point -- many replicas reading one copy.
+#       A default StorageClass is often RWO block storage, and a ReadWriteOnce
+#       claim binds to ONE node: the second replica then cannot schedule at all,
+#       which turns a slow scale-up into a failed one. Check the class supports
+#       RWX before using it.
+#     storage: a function of how many models share it and how large they are.
+#       0.6B is ~1.2GiB of weights; a 70B is ~140GB. Real llm-d installs run
+#       these in the hundreds of GiB to 1Ti.
+#
+#   Fill both in and apply:
+#
+#     apiVersion: v1
+#     kind: PersistentVolumeClaim
+#     metadata:
+#       name: ${WVA_MODEL_PVC_NAME:-model-pvc}
+#       namespace: ${ns}
+#     spec:
+#       accessModes: [ReadWriteMany]
+#       storageClassName: <an RWX-capable class on this cluster>
+#       resources:
+#         requests:
+#           storage: <size>
 CACHE
     fi
 }

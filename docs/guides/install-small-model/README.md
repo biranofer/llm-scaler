@@ -248,9 +248,17 @@ llm-d's modelservice chart mounts a cache at `/model-cache` by default, so
 there is usually nothing to do. Confirm it before you rely on autoscaling:
 
 ```bash
-kubectl get deploy <model>-decode -n ${NAMESPACE} \
-  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}{"\n"}'
+make workload-patch NAMESPACE=${NAMESPACE}
 ```
+
+It reports both settings that make autoscaling safe — the cache, and a preStop
+hook so a removed replica finishes what it is writing — and writes a patch for
+whichever is missing.
+
+Listing the pod's PVCs is the obvious check and it is the wrong one: a claim
+mounted at one path while the engine downloads to another passes it and
+re-downloads on every scale-up anyway. What decides it is where the weights
+*land*, which is what the command above actually looks at.
 
 [Weights and the model
 cache](../../deployment/operations.md#weights-and-the-model-cache) has the

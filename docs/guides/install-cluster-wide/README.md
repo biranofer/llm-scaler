@@ -70,6 +70,14 @@ Where those are separate people, the namespace guide splits them into two steps.
 Nothing scales until a ScaledObject exists. At this scope the plan covers every
 namespace holding model servers, so read it before applying it.
 
+The same is true of `make workload-patch`, which reports the pod-spec settings
+autoscaling needs — a drain hook, and weights on a volume. At cluster scope it
+walks every namespace holding model servers; `NAMESPACE=<ns>` pins it to one.
+That matters most with `WVA_WORKLOAD_PATCH_APPLY=true`, which replaces the pods
+it patches: unpinned, at this scope, that is a rolling restart of every model
+server on the cluster. See [Writing the
+patch](../../deployment/operations.md#writing-the-patch-make-workload-patch).
+
 <!-- guide:deploy.register start -->
 ```bash
 make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml

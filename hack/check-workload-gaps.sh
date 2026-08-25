@@ -464,6 +464,41 @@ assert_not_contains "$doc" "claimName"    # ...but not a second cache
 assert_not_contains "$doc" "HF_HOME"
 [ "$FAILED" -eq "$before" ] && ok
 
+CASE="a re-downloading workload is warned about ON THE CONSOLE, not just in the file"
+reset; f_llmd_real_downloads
+before=$FAILED
+# The emitted file always carried this; the console said only "1 workload(s)
+# need something". A cost that only shows up the moment a replica is added, and
+# reads as the autoscaler being slow, has to be said where someone will see it.
+warn="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)"
+assert_contains "$warn" "RE-DOWNLOADS ITS WEIGHTS"
+assert_contains "$warn" "Qwen/Qwen3-0.6B"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a workload whose weights DO persist is not warned about"
+reset; f_cached_properly
+before=$FAILED
+warn="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)"
+assert_not_contains "$warn" "RE-DOWNLOADS"
+# Anchor, so a silenced warning cannot pass this pair by never firing at all.
+reset; f_llmd_real_downloads
+assert_contains "$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>&1 >/dev/null)" "RE-DOWNLOADS"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the emitted file carries a PVC to fill in, and still parses"
+reset; f_llmd_real_downloads
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "kind: PersistentVolumeClaim"
+assert_contains "$doc" "ReadWriteMany"
+# Commented, not a live document: a claim with a placeholder size would be
+# rejected, and a claim we guessed could break scale-up outright.
+d2="$(mktemp)"; printf '%s\n' "$doc" > "$d2"
+yq eval '.' "$d2" >/dev/null 2>&1 || fail "the emitted file no longer parses as YAML"
+assert_eq "$(yq eval-all '[.] | length' "$d2" 2>/dev/null | tail -1)" "1" "documents in the file"
+rm -f "$d2"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="the same shape genuinely downloading from the Hub does get a cache"
 reset; f_llmd_real_downloads
 before=$FAILED

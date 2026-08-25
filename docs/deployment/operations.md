@@ -409,6 +409,21 @@ impolite here, it is refused — `conflict with helm ...
 is reverted by the next `helm upgrade`, silently. Put the contents into your
 modelservice values, where they will survive.
 
+**A missing cache is not a hard failure, and it is reported loudly anyway.**
+Nothing here blocks on it: a model server with no persistent weights autoscales
+correctly, it is just expensive to scale. But the cost only appears at the moment
+a replica is added, and it looks exactly like the autoscaler being slow, so it is
+named per workload on the console rather than left in the file:
+
+```text
+[WARNING]   ns/qwen-decode RE-DOWNLOADS ITS WEIGHTS on every scale-up: vllm
+            fetches Qwen/Qwen3-0.6B from Hugging Face, outside every volume it mounts.
+[WARNING] 1 of 1 model server(s) will RE-DOWNLOAD their weights every time a replica is added.
+```
+
+On a cluster with no egress it is not a cost but a failure, and the first time
+anyone sees it is the first scale-up.
+
 `WVA_WORKLOAD_PATCH_APPLY=true` additionally applies the **drain half** to the
 live objects, for a cluster where that is the trade you want. Two things it says
 at the time, and both are worth reading before you type it:
@@ -442,10 +457,22 @@ The last three affect the emitted file only — nothing applies a volume.
 
 Three things it will not do:
 
-- **It does not create the PersistentVolumeClaim.** Size and storage class are
-  cluster decisions, and one claim is normally shared by every model. The emitted
-  patch names a claim that must exist before you apply it, or the pods the
-  rollout creates stay `Pending`.
+- **It does not create the PersistentVolumeClaim** — it emits one to fill in.
+  Two fields decide whether the cache helps or breaks scale-up, and neither can
+  be guessed from inside a namespace:
+
+  - **`accessModes` must be `ReadWriteMany`.** Many replicas reading one copy is
+    the entire point. A cluster's *default* StorageClass is often RWO block
+    storage, and a ReadWriteOnce claim binds to one node — the second replica
+    then cannot schedule at all. An auto-created claim on the wrong class turns a
+    slow scale-up into a failed one, which is worse than no cache.
+  - **`storage` is a function of how many models share it and how large they
+    are.** 0.6B is ~1.2 GiB of weights; a 70B is ~140 GB. Real llm-d installs run
+    these from hundreds of GiB up to 1Ti.
+
+  A claim also holds data, so creating it at install time would mean an uninstall
+  that either deletes someone's weights or leaves a terabyte behind. The emitted
+  file carries the claim as a commented manifest with those two fields blank.
 - **It skips LeaderWorkerSets, loudly.** Draining a multi-node group means the
   worker template too — killing a worker aborts the leader's in-flight
   generations whatever hook the leader carries — and the API server will not

@@ -65,8 +65,20 @@ make benchmark-standup BENCHMARK_NAMESPACE=${BENCHMARK_NAMESPACE} IMG=${IMG}
 <!-- guide:deploy.standup end -->
 
 Stands up the model servers via llm-d-benchmark, then installs WVA from this
-repo and registers the workloads. prometheus-adapter is deliberately not
-installed: it and KEDA both claim the `external.metrics.k8s.io` APIService, of
+repo and registers the workloads.
+
+**It also patches those model servers to drain on scale-down, which restarts
+them, and waits for the rollout.** A replica removed mid-stream takes its open
+responses with it — 39 truncated streams in one measured run, in four bursts each
+ending 25-30s after a scale-down. Those failures land in the same TTFT
+percentiles and error counts the run exists to measure, so a comparison between
+two scaling policies would partly be measuring which one removed more pods.
+Patching is safe here because the standup deployed these workloads itself; it is
+pinned to `BENCHMARK_NAMESPACE` and reaches nothing else on the cluster.
+`BENCHMARK_DRAIN_ROLLOUT_TIMEOUT` (default 900s) bounds the wait.
+`make benchmark-add-variant` does the same for the variant it adds.
+
+prometheus-adapter is deliberately not installed: it and KEDA both claim the `external.metrics.k8s.io` APIService, of
 which a cluster has one.
 
 To keep llm-d-benchmark from installing it anyway, the standup creates the
