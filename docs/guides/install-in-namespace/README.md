@@ -32,6 +32,15 @@ namespace's owner installs and upgrades the controller themselves.
   cache](../../deployment/operations.md#weights-and-the-model-cache), which
   also covers what it does not buy: the cache removes the download, not the
   load.
+- **a drain hook on those model servers.** Autoscaling also means replicas being
+  *removed*, and a replica removed mid-stream takes its open responses with it —
+  measured at 39 truncated streams over a single benchmark run. This one is
+  normally **not** already true: llm-d does not set a preStop hook.
+
+`make workload-patch` reports both and writes the fix for whichever is missing.
+It writes a file rather than changing your workloads, because the pod spec
+belongs to your modelservice chart; see [Writing the
+patch](../../deployment/operations.md#writing-the-patch-make-workload-patch).
 
 If you want a model to scale **from zero**, its EPP must run with the
 `flowControl` feature gate: that gate is what publishes the queue depth, and at

@@ -304,12 +304,12 @@ egress.
 llm-d already solves this: the modelservice chart defaults to `uriProtocol: pvc`
 and mounts a shared cache at `/model-cache`, so the weights are fetched once and
 every later pod reads them locally. On a stock llm-d install there is nothing to
-turn on — check it is there with:
+turn on.
 
-```bash
-kubectl get deploy <model>-decode -n <ns> \
-  -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}{"\n"}'
-```
+To check, ask `make workload-patch` rather than looking for a volume. Listing the
+PVCs on the pod is the obvious test and it is the wrong one: a claim mounted at
+one path while the engine downloads to another passes it, and re-downloads on
+every scale-up anyway. What matters is where the weights *land*.
 
 `make scaledobjects-plan` reports a workload whose engine downloads outside any
 volume it has mounted, because registering a ScaledObject is the point at which
@@ -366,11 +366,14 @@ spec:
               command: ["/bin/sh", "-c", "sleep 30"]
 ```
 
-`sleep` is the crude version and it is usually enough: the pod is removed from
-the Service endpoints the moment it starts terminating, so no new requests
-arrive, and the sleep just holds the process open while the ones it already has
-finish. An engine that exposes a drain endpoint should be asked to drain
-instead.
+`sleep` is the crude version and it is usually enough, though not for the reason
+it looks like. Endpoint removal is **not** instantaneous from the pod's point of
+view: the pod is marked Terminating at once, but the withdrawal propagates
+asynchronously to every kube-proxy and to the EPP, which keep routing to it in
+the meantime. The window therefore covers two things — arrivals still being sent
+here, and the generations already running — which is why the emitted patch uses a
+longer sleep (45s) than the 30s in the example above. An engine that exposes a
+drain endpoint should be asked to drain instead.
 
 Set `terminationGracePeriodSeconds` above the preStop duration plus the time the
 longest generation needs — the grace period is the total budget, and the kubelet
@@ -406,34 +409,63 @@ impolite here, it is refused — `conflict with helm ...
 is reverted by the next `helm upgrade`, silently. Put the contents into your
 modelservice values, where they will survive.
 
-`WVA_WORKLOAD_PATCH_APPLY=true` patches the live objects anyway, for a cluster
-where that is the trade you want. It restarts the pods it patches and says so.
+`WVA_WORKLOAD_PATCH_APPLY=true` additionally applies the **drain half** to the
+live objects, for a cluster where that is the trade you want. Two things it says
+at the time, and both are worth reading before you type it:
+
+- **It replaces pods.** A patch is a new pod template, so every model server it
+  touches rolls. It rolls *before* the hook exists, so requests in flight during
+  that first rollout are still cut — the fix costs one truncation to install.
+  With the default strategy at `replicas: 1` the new pod must schedule before the
+  old one goes, so on a cluster with no spare GPU the rollout stalls with the old
+  pod still serving.
+- **The weights half is never applied, only emitted.** A strategic merge cannot
+  *replace* a volume that already exists under the same name — `volumes` merges
+  with `retainKeys`, and only `kubectl apply` generates that directive — so a pod
+  that already has a `model-storage` volume rejects the whole object
+  (`may not specify more than 1 volume type`), and the drain half goes down with
+  it. It also needs a claim that may not exist, and it changes where an engine
+  reads its weights from: a storage decision, not a side effect of fixing
+  draining.
 
 | variable | default | what it sets |
 | --- | --- | --- |
 | `WVA_WORKLOAD_PATCH_FILE` | `wva-workload-patch.yaml` | where the patch is written |
-| `WVA_WORKLOAD_PATCH_APPLY` | `false` | `true` patches the live workloads too |
+| `WVA_WORKLOAD_PATCH_APPLY` | `false` | `true` also applies the drain half to the live workloads |
 | `WVA_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
 | `WVA_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
-| `WVA_MODEL_PVC_NAME` | `model-pvc` | the claim the weights volume names |
-| `WVA_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the pod spec |
-| `WVA_MODEL_CACHE_PATH` | `/model-cache` | where the volume is mounted, and the parent of the emitted `HF_HOME` |
+| `WVA_MODEL_PVC_NAME` | `model-pvc` | the claim the emitted weights volume names |
+| `WVA_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the emitted patch |
+| `WVA_MODEL_CACHE_PATH` | `/model-cache` | where that volume is mounted, and the parent of the emitted `HF_HOME` |
 
-Two things it will not do:
+The last three affect the emitted file only — nothing applies a volume.
+
+Three things it will not do:
 
 - **It does not create the PersistentVolumeClaim.** Size and storage class are
-  cluster decisions, and one claim is normally shared by every model. When
-  applying, a claim that does not exist stops the weights half rather than
-  leaving pods stuck at `persistentvolumeclaim not found`.
+  cluster decisions, and one claim is normally shared by every model. The emitted
+  patch names a claim that must exist before you apply it, or the pods the
+  rollout creates stay `Pending`.
 - **It skips LeaderWorkerSets, loudly.** Draining a multi-node group means the
   worker template too — killing a worker aborts the leader's in-flight
   generations whatever hook the leader carries — and the API server will not
   accept a strategic merge for a custom resource. Emitting a confident, wrong
   document is worse than emitting nothing.
+- **It never reports a workload it could not read as healthy.** A listing or a
+  `get` that fails is said out loud and makes the run exit non-zero, and so does
+  a missing `jq` or `yq`. "Nothing to patch" is a claim about pods, and it is not
+  made about pods nobody could read.
 
-`make benchmark-standup` runs this with `APPLY=true`, pinned to the benchmark
-namespace: those model servers are ours, and a run whose scale-downs truncate
-requests is measuring the harness rather than the autoscaler.
+The emitted file opens with a header saying most of this, because it otherwise
+looks exactly like something to `kubectl apply -f` — which is the one thing not
+to do with it. The header also carries a marker line, and only a file carrying
+that marker is ever deleted once the workloads stop needing a patch: a file you
+wrote yourself at your own `WVA_WORKLOAD_PATCH_FILE` path is left alone.
+
+`make benchmark-standup` and `make benchmark-add-variant` run this with
+`APPLY=true`, pinned to the benchmark namespace, and wait for the rollout: those
+model servers are ours, and a run whose scale-downs truncate requests is
+measuring the harness rather than the autoscaler.
 
 ## First-line troubleshooting
 

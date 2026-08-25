@@ -178,6 +178,30 @@ do is also reachable through plan-then-apply, which does not.
 `WVA_DEFAULT_SO_MIN` and `_MAX` are only the values the plan is *written* with.
 What gets applied is what the file says when you apply it, per entry.
 
+### Workload readiness (`make workload-patch`)
+
+Two pod-spec settings decide whether autoscaling a model server is safe to turn
+on: a preStop hook, so a removed replica finishes what it is writing, and weights
+that land on a mounted volume, so a new replica does not re-download them.
+Neither belongs to WVA — they belong to the chart that owns the pod spec — so
+`make workload-patch` writes a patch and, on request, applies the half that is
+safe to apply. Full description in
+[After the install](operations.md#writing-the-patch-make-workload-patch).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WVA_WORKLOAD_PATCH_FILE` | Where the patch is written | `wva-workload-patch.yaml` |
+| `WVA_WORKLOAD_PATCH_APPLY` | `true` also applies the **drain half** to the live workloads, which replaces their pods. The weights half is never applied — a strategic merge cannot replace a volume of the same name, and it needs a claim that may not exist | `false` |
+| `WVA_DRAIN_GRACE_SECONDS` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered | `120` |
+| `WVA_DRAIN_SLEEP_SECONDS` | The preStop sleep — the drain window itself | `45` |
+| `WVA_MODEL_PVC_NAME` | The claim the emitted weights volume names. Nothing creates it | `model-pvc` |
+| `WVA_MODEL_VOLUME_NAME` | The volume name in the emitted patch | `model-storage` |
+| `WVA_MODEL_CACHE_PATH` | Where that volume is mounted, and the parent of the emitted `HF_HOME` | `/model-cache` |
+
+Scope follows the same rules as the ScaledObject plan above: `NAMESPACE=<ns>`
+pins the scan to one namespace, and without it a cluster-scoped install walks
+every namespace holding model servers.
+
 The scaling behaviour is written into every generated ScaledObject rather than
 inherited. Kubernetes' own defaults happen to match the windows above, so on a
 stock cluster only the policy periods differ — but those defaults belong to the

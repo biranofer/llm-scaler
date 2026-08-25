@@ -508,9 +508,15 @@ scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObje
 ## Report the pod-spec settings that decide whether autoscaling a workload is
 ## safe, as a patch you can apply where the pod spec is owned.
 .PHONY: workload-patch
-workload-patch: ## Write a patch for model servers missing a drain hook or a weights volume. WVA_WORKLOAD_PATCH_FILE=<file>, WVA_WORKLOAD_PATCH_APPLY=true to patch live.
+workload-patch: ## Write a patch for model servers that do not drain on scale-down, or download weights outside every volume they mount. NAMESPACE=<ns> scopes it; WVA_WORKLOAD_PATCH_APPLY=true also applies the drain half live.
+	@# NAMESPACE pins the SCAN, not just the connection. Without the
+	@# WVA_DEFAULT_SO_NS fallback below, `make workload-patch NAMESPACE=x` under a
+	@# cluster-scoped install still walked every namespace on the cluster:
+	@# so_target_namespaces reads WVA_DEFAULT_SO_NS, else the install scope, and
+	@# never NAMESPACE. With APPLY=true that is a rolling restart of every model
+	@# server on the cluster, from a command that reads as scoped to one.
 	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
-		$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),) \
+			$(if $(WVA_DEFAULT_SO_NS),WVA_DEFAULT_SO_NS=$(WVA_DEFAULT_SO_NS),$(if $(filter command line environment,$(origin NAMESPACE)),WVA_DEFAULT_SO_NS=$(NAMESPACE),)) \
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; wva_workload_patch'
 
 ## Apply a ScaledObject plan. With WVA_DEFAULT_SO_PLAN=<file> it applies exactly
@@ -1401,17 +1407,13 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 		kubectl rollout status $$d -n $(BENCHMARK_NAMESPACE) --timeout=$(BENCHMARK_DRAIN_ROLLOUT_TIMEOUT)s || \
 			echo "  WARNING: $$d did not settle; the run may start against restarting pods."; \
 	done
-	@# The weights volume. Our scenarios set storage.modelPvc and the harness
-	@# defaults to uriProtocol: pvc, so this is normally already true -- but a
-	@# scenario that overrode it would make every replica the run adds re-download
-	@# its weights from Hugging Face, which shows up as scale-up latency and reads
-	@# like the autoscaler being slow.
-	@for d in $$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) -o name 2>/dev/null | grep -E 'decode|prefill'); do \
-		if [ -z "$$(kubectl get $$d -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}' 2>/dev/null)" ]; then \
-			echo "  WARNING: $$d mounts no persistent volume — every replica this run adds will re-download its weights."; \
-			echo "           Check storage.modelPvc in the scenario, and uriProtocol: pvc in the harness defaults."; \
-		fi; \
-	done
+	@# The weights volume is NOT checked here any more. This used to test
+	@# `.spec.template.spec.volumes[?(@.persistentVolumeClaim)]` -- the same
+	@# any-PVC-anywhere test this branch removed from so_weights_note, because a
+	@# cache mounted at one path while the engine downloads to another passes it
+	@# while re-downloading on every scale-up. workload-patch above answers the
+	@# question properly, against the path the engine actually writes to, and
+	@# reports it -- two checks that disagree are worse than one that works.
 
 ## Install WVA from THIS repo into the benchmark namespace and register the model
 ## servers with it. Split out of benchmark-standup so a run whose stack is already
@@ -1726,8 +1728,17 @@ benchmark-add-variant: ## Add a secondary WVA variant to the running benchmark (
 	@$(MAKE) --no-print-directory workload-patch \
 		NAMESPACE=$(BENCHMARK_NAMESPACE) WVA_NS=$(BENCHMARK_NAMESPACE) \
 		SCOPE=namespace WVA_SCOPE=namespace WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE) \
-		WVA_WORKLOAD_PATCH_APPLY=true || \
+		WVA_WORKLOAD_PATCH_APPLY=true \
+		WVA_WORKLOAD_PATCH_FILE=$(BENCHMARK_WORKSPACE)/wva-workload-patch.yaml || \
 		echo "  WARNING: the variant was added but not patched; its scale-downs will truncate in-flight requests."
+	@# Waited for, for the same reason the standup waits: a patch replaces the pod
+	@# template, so everything it touched is rolling when it returns. Adding a
+	@# variant to a RUNNING benchmark and returning mid-restart puts the restart
+	@# inside the measurement window.
+	@for d in $$(kubectl get deploy -n $(BENCHMARK_NAMESPACE) -o name 2>/dev/null | grep -E 'decode|prefill'); do \
+		kubectl rollout status $$d -n $(BENCHMARK_NAMESPACE) --timeout=$(BENCHMARK_DRAIN_ROLLOUT_TIMEOUT)s || \
+			echo "  WARNING: $$d did not settle."; \
+	done
 
 .PHONY: benchmark-enable-v2-saturation
 benchmark-enable-v2-saturation: ## Enable WVA saturation V2 analyzer (apply configmap + restart controller)
