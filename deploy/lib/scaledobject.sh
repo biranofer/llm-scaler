@@ -122,12 +122,13 @@ so_plan_entry() {
     local choices="yes | no"
     [ -z "$existing" ] || choices="yes | no | adopt"
     echo ""
-    # One line per note. Notes accumulate as RS-separated RECORDS -- not US,
-    # which this file already uses as the FIELD separator for plan rows, so a
-    # note containing one splits the row it travels in and loses everything
-    # after it. Two
-    # unrelated problems joined by a space read as one long sentence, and the
-    # second half -- often the expensive one -- is where a reader gives up.
+    # One line per note. Two unrelated problems joined by a space read as one
+    # long sentence, and the second half -- often the expensive one -- is where a
+    # reader gives up.
+    #
+    # RS-separated RECORDS, not US: this file already uses US as the FIELD
+    # separator for plan rows, so a note containing one splits the row it travels
+    # in and loses everything after it.
     # The plan is read back through `yq -o=json`, which drops comments, so the
     # number of comment lines above an entry is free.
     if [ -n "$note" ]; then
@@ -653,7 +654,7 @@ so_weights_note() {
         printf '%s' "Could not read the pod spec, so whether weights persist across scale-ups is unknown -- this is not a report that they do."
         return 0
     fi
-    IFS=$'' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
     [ -n "$engine" ] || return 0
     [ "${onvol:-0}" -eq 1 ] && return 0
 
@@ -728,6 +729,60 @@ so_workload_patch_index() {
 #
 # The drain half has none of these properties: `containers` merges on `name`, and
 # adding a lifecycle hook and a grace period cannot conflict with anything.
+# so_workload_weights_safe reports whether the weights half of a document can be
+# applied to the live object without destroying it.
+#
+# The blanket refusal this replaces was right about the danger and wrong to be
+# unconditional. `volumes` merges with `retainKeys`, and only `kubectl apply`
+# generates that directive -- so `kubectl patch --type=strategic` MERGES into a
+# volume of the same name rather than replacing it, and the API server rejects
+# the whole object:
+#     spec.template.spec.volumes[0].persistentVolumeClaim: Forbidden:
+#     may not specify more than 1 volume type
+# taking the drain half down with it.
+#
+# But that only happens when the name is ALREADY TAKEN. A workload with no such
+# volume takes the patch cleanly, and that is the workload the weights half is
+# for. So the test is the collision, not the operation.
+#
+# $1 the live object JSON, $2 the volume name, $3 the mount path, $4 the claim.
+so_workload_weights_safe() {
+    local live="$1" volname="$2" mountpath="$3" claim="$4" ns="$5" reason
+    reason="$(printf '%s' "$live" | jq -r --arg v "$volname" --arg m "$mountpath" '
+        (.spec.template.spec // {}) as $t
+        | [ ($t.volumes[]? | select(.name == $v) | "a volume named \($v) already exists"),
+            ($t.containers[]?.volumeMounts[]? | select(.mountPath == $m) | "something is already mounted at \($m)")
+          ] | first // ""' 2>/dev/null)" || return 1
+    if [ -n "$reason" ]; then
+        printf '%s' "$reason"
+        return 1
+    fi
+    # The claim has to exist, or every pod the rollout creates stays Pending on a
+    # volume that cannot be attached -- an outage in place of a warning.
+    if ! kubectl get pvc "$claim" -n "$ns" >/dev/null 2>&1; then
+        printf '%s' "PersistentVolumeClaim $claim does not exist (or cannot be read)"
+        return 1
+    fi
+    return 0
+}
+
+# so_workload_weights_can_apply answers so_workload_weights_safe for a live
+# workload, and says out loud why the answer is no.
+so_workload_weights_can_apply() {
+    local ns="$1" name="$2" doc="$3" live volname mountpath claim why
+    volname="$(yq eval '.spec.template.spec.volumes[0].name // ""' "$doc" 2>/dev/null)"
+    [ -n "$volname" ] || return 1          # no weights half in this document
+    mountpath="$(yq eval '.spec.template.spec.containers[0].volumeMounts[0].mountPath // ""' "$doc" 2>/dev/null)"
+    claim="$(yq eval '.spec.template.spec.volumes[0].persistentVolumeClaim.claimName // ""' "$doc" 2>/dev/null)"
+    live="$(kubectl get deployments "$name" -n "$ns" -o json 2>/dev/null)" || return 1
+    if why="$(so_workload_weights_safe "$live" "$volname" "$mountpath" "$claim" "$ns")"; then
+        log_info "  $ns/$name: applying the weights volume too (WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true)."
+        return 0
+    fi
+    log_warning "  $ns/$name: the weights volume is emitted, NOT applied -- $why."
+    return 1
+}
+
 so_workload_patch_one() {
     local file="$1" ns="$2" name="$3" doc rc=0
     doc="$(mktemp)" || return 1
@@ -739,7 +794,14 @@ so_workload_patch_one() {
         log_warning "  Could not isolate the patch for $ns/$name."
         return 1
     fi
-    if ! so_workload_patch_drop_cache "$doc"; then
+    # WVA_WORKLOAD_PATCH_APPLY_WEIGHTS is its own opt-in, separate from
+    # APPLY. Adding a hook cannot conflict with anything; mounting storage
+    # changes where an engine reads its weights from, and can be refused by the
+    # API server outright. They are different decisions and get different flags.
+    if [ "${WVA_WORKLOAD_PATCH_APPLY_WEIGHTS:-false}" = "true" ] \
+       && so_workload_weights_can_apply "$ns" "$name" "$doc"; then
+        : # keep the weights half in the document
+    elif ! so_workload_patch_drop_cache "$doc"; then
         rm -f "$doc"
         # 2, not 1: a DELIBERATE skip. Counting it as a failure made every re-run
         # of the standup announce "scale-downs in this run will truncate
@@ -945,11 +1007,11 @@ wva_workload_patch() {
     # and the cache is something only the cluster's owner can.
     needs_cache=$(grep -c '^#   cache:' "$tmp" 2>/dev/null) || needs_cache=0
     if [ "$needs_cache" -gt 0 ]; then
-        log_warning "$needs_cache of $found model server(s) will RE-DOWNLOAD their weights every time a replica is added."
+        log_warning "$needs_cache model server(s) will RE-DOWNLOAD their weights every time a replica is added."
         log_warning "  Each scale-up then waits on Hugging Face instead of on the GPU, and fails outright"
         log_warning "  where the cluster has no egress. It is the largest avoidable cost in a scale-up and"
         log_warning "  the easiest to mistake for the autoscaler being slow."
-        log_warning "  $out has the pod-spec half, and the PersistentVolumeClaim to fill in and create."
+        log_warning "  $out has the pod-spec half, and says which claim to use or create."
     fi
 
     if [ "$apply" = "true" ]; then
@@ -961,7 +1023,11 @@ wva_workload_patch() {
         log_warning "  GPU cluster the rollout can stall with the old pod still serving."
         log_warning "  These fields belong to the model server's chart. The next \`helm upgrade\` reverts them,"
         log_warning "  silently, and the workload goes back to what it was. Put them in your chart values to keep them."
-        log_info "  The weights half is emitted only, never applied -- see $out."
+        if [ "${WVA_WORKLOAD_PATCH_APPLY_WEIGHTS:-false}" = "true" ]; then
+            log_info "  The weights half is applied too, where it cannot break the workload -- see $out."
+        else
+            log_info "  The weights half is emitted only -- see $out. Add WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true to apply it."
+        fi
         index_lines=0
         while read -r doc_ns doc_name; do
             [ -n "$doc_name" ] || continue
@@ -1117,20 +1183,180 @@ so_workload_gaps() {
 # picks someone else's data, and a 403 says nothing about what exists. The
 # caller falls back to the documented default name, which is a claim the
 # operator then creates deliberately.
+# so_model_cache_classes lists StorageClasses this cluster is OBSERVED to serve
+# ReadWriteMany from, as "<class> (<n> bound RWX claim(s))".
+#
+# Evidence, not capability. A StorageClass object does not declare whether its
+# provisioner can do RWX -- there is no field for it -- so the only honest answer
+# is which classes are already backing RWX claims somewhere on this cluster.
+# That is exactly the question an operator is trying to answer ("what do I put
+# here?"), and it is answered from what already works rather than from a table of
+# provisioner names that would go stale.
+#
+# Empty output is a normal answer: a cluster with no RWX claims yet, or a token
+# that cannot list claims cluster-wide. The caller says so rather than inventing
+# a suggestion.
+so_model_cache_classes() {
+    kubectl get pvc -A -o json 2>/dev/null \
+        | jq -r '[ .items[]?
+                   | select(.status.phase == "Bound")
+                   | select((.spec.accessModes // []) | any(. == "ReadWriteMany" or . == "ReadOnlyMany"))
+                   | .spec.storageClassName // "" ]
+                 | map(select(. != ""))
+                 | group_by(.) | map({class: .[0], n: length})
+                 | sort_by(-.n)[]
+                 | "\(.class) (\(.n) bound RWX claim(s))"' 2>/dev/null || true
+}
+
+# wva_model_cache creates the weights claim, or reports why it will not.
+#
+# It asks for the two fields it refuses to guess and then does the rest: creates
+# the claim, waits for it to bind, and -- the part that matters -- checks what
+# the cluster ACTUALLY GRANTED. A provisioner may accept a ReadWriteMany request
+# and bind a volume that is not shareable, and the difference does not surface
+# until a second replica fails to schedule, long after this command returned.
+wva_model_cache() {
+    local ns="${1:-$WVA_NS}"
+    local claim="${WVA_MODEL_PVC_NAME:-model-pvc}"
+    local size="${WVA_MODEL_PVC_SIZE:-}"
+    local class="${WVA_MODEL_PVC_CLASS:-}"
+    local timeout="${WVA_MODEL_PVC_TIMEOUT:-120}"
+    local existing modes phase suggestions waited
+
+    if [ -z "$ns" ]; then
+        log_warning "No namespace given. Use: make model-cache NAMESPACE=<ns> WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<class>"
+        return 1
+    fi
+
+    # Already there? Then this is a report, not a creation. Re-running must be
+    # safe: an operator who is unsure whether they created it should be able to
+    # type this again without risking their weights.
+    if existing="$(kubectl get pvc "$claim" -n "$ns" -o json 2>/dev/null)" && [ -n "$existing" ]; then
+        modes="$(printf '%s' "$existing" | jq -r '.spec.accessModes | join(",")' 2>/dev/null)"
+        phase="$(printf '%s' "$existing" | jq -r '.status.phase' 2>/dev/null)"
+        log_success "$ns/$claim already exists ($phase, $modes). Nothing to do."
+        so_model_cache_warn_modes "$ns" "$claim" "$modes"
+        return 0
+    fi
+
+    if [ -z "$size" ] || [ -z "$class" ]; then
+        log_warning "Both a size and a StorageClass are required, and neither is guessed:"
+        log_warning "  WVA_MODEL_PVC_SIZE   how much: every model that will share this claim, plus room."
+        log_warning "                       0.6B is ~1.2GiB of weights; a 70B is ~140GB."
+        log_warning "  WVA_MODEL_PVC_CLASS  which class: it MUST support ReadWriteMany, or replicas on a"
+        log_warning "                       second node cannot mount it and never schedule."
+        suggestions="$(so_model_cache_classes)"
+        if [ -n "$suggestions" ]; then
+            log_info "  Classes already serving RWX on this cluster:"
+            printf '%s\n' "$suggestions" | while IFS= read -r line; do
+                [ -n "$line" ] && log_info "    $line"
+            done
+        else
+            log_info "  No RWX claims exist on this cluster yet, so there is no evidence to go on."
+            log_info "  Ask whoever runs the cluster which class is a shared filesystem (NFS, CephFS,"
+            log_info "  EFS, Filestore, Spectrum Scale). A default block-storage class is NOT one."
+        fi
+        log_info "  Then: make model-cache NAMESPACE=$ns WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<class>"
+        return 1
+    fi
+
+    log_info "Creating $ns/$claim: $size, ReadWriteMany, class $class"
+    if ! kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${claim}
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/managed-by: workload-variant-autoscaler
+    app.kubernetes.io/component: model-cache
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ${class}
+  resources:
+    requests:
+      storage: ${size}
+EOF
+    then
+        log_warning "Could not create $ns/$claim (see above)."
+        return 1
+    fi
+
+    # WaitForFirstConsumer is checked BEFORE waiting, not after. Such a class
+    # cannot bind until a pod mounts the claim, so the wait below can only ever
+    # time out -- two minutes of nothing, ending in a warning about a claim that
+    # is behaving exactly as designed. (Found by running this on kind, whose
+    # default class is WaitForFirstConsumer.)
+    if kubectl get storageclass "$class" -o jsonpath='{.volumeBindingMode}' 2>/dev/null | grep -q WaitForFirstConsumer; then
+        log_success "Created $ns/$claim."
+        log_info "  Class $class binds on first use, so it stays Pending until a pod mounts it."
+        log_info "  It will bind when the model servers roll with the volume attached."
+        log_info "  Next: make workload-patch NAMESPACE=$ns"
+        return 0
+    fi
+
+    # Bound, not created. A claim that never binds is the failure this command
+    # exists to surface early.
+    waited=0
+    while [ "$waited" -lt "$timeout" ]; do
+        phase="$(kubectl get pvc "$claim" -n "$ns" -o jsonpath='{.status.phase}' 2>/dev/null)"
+        [ "$phase" = "Bound" ] && break
+        sleep 5
+        waited=$((waited + 5))
+    done
+
+    if [ "$phase" != "Bound" ]; then
+        if kubectl get storageclass "$class" -o jsonpath='{.volumeBindingMode}' 2>/dev/null | grep -q WaitForFirstConsumer; then
+            log_info "$ns/$claim is $phase: class $class binds on first use, so it will bind when a pod mounts it."
+            return 0
+        fi
+        log_warning "$ns/$claim is still $phase after ${timeout}s. Check: kubectl describe pvc $claim -n $ns"
+        return 1
+    fi
+
+    modes="$(kubectl get pvc "$claim" -n "$ns" -o jsonpath='{.spec.accessModes[*]}' 2>/dev/null)"
+    log_success "$ns/$claim is Bound ($modes)."
+    so_model_cache_warn_modes "$ns" "$claim" "$modes"
+    log_info "  Now point the model servers at it:  make workload-patch NAMESPACE=$ns"
+    return 0
+}
+
+# so_model_cache_warn_modes says so when a claim cannot be shared across nodes.
+so_model_cache_warn_modes() {
+    local ns="$1" claim="$2" modes="$3"
+    case "$modes" in
+        *ReadWriteMany*|*ReadOnlyMany*) return 0 ;;
+    esac
+    log_warning "  $ns/$claim is $modes, so only pods on ONE NODE can mount it."
+    log_warning "  Scale-up will leave replicas Pending on other nodes. That is not a slow cache;"
+    log_warning "  it is autoscaling that cannot work. Use a class that supports ReadWriteMany."
+    return 0
+}
+
 so_model_claim() {
     local ns="$1" out
     out="$(kubectl get pvc -n "$ns" -o json 2>/dev/null)" || return 0
     printf '%s' "$out" | jq -r '
         [ .items[]?
           | select(.status.phase == "Bound")
-          | select((.spec.accessModes // []) | any(. == "ReadWriteMany" or . == "ReadOnlyMany"))
-          | .metadata.name ] as $rwx
-        # A single shared claim is unambiguous. With several, prefer exactly one
-        # whose name says what it holds; otherwise say nothing.
-        | if ($rwx | length) == 1 then $rwx[0]
-          else ([ $rwx[] | select(test("model|weight|cache"; "i")) ]) as $named
-               | if ($named | length) == 1 then $named[0] else "" end
-          end' 2>/dev/null || true
+          # ReadWriteMany only. ReadOnlyMany is shareable but the emitted patch
+          # points HF_HOME INTO the mount, which is a write destination -- a
+          # ROX volume mounts read-only, so every replica would crash on the
+          # download rather than merely re-doing it.
+          | select((.spec.accessModes // []) | any(. == "ReadWriteMany"))
+          # The name test applies here, not only when there are several. A
+          # namespace with exactly ONE RWX claim does not thereby have a model
+          # cache: in a benchmark namespace that one claim is the RESULTS
+          # volume, and mounting it at /model-cache with HF_HOME inside it is
+          # both wrong and, with the weights opt-in, applied to a live workload.
+          # Reusing the wrong claim is worse than proposing a new one.
+          | select(.metadata.name | test("model|weight|cache"; "i"))
+          | .metadata.name ] as $named
+        # Exactly one candidate, or nothing. With two, guessing means picking
+        # data that belongs to something else. NOTE: no apostrophes in this
+        # comment -- see the note in so_workload_gaps.
+        | if ($named | length) == 1 then $named[0] else "" end' 2>/dev/null || true
 }
 
 so_workload_patch_doc() {
@@ -1256,6 +1482,10 @@ PRESTOP
         # claim is making a decision, not asking for a suggestion.
         if [ -n "${WVA_MODEL_PVC_NAME:-}" ]; then
             claim="$WVA_MODEL_PVC_NAME"
+            # Asked, not assumed. An operator naming a claim may be naming one
+            # they have or one they intend to create, and the emitted file used
+            # to tell them their existing claim "does not exist yet".
+            kubectl get pvc "$claim" -n "$ns" >/dev/null 2>&1 && claim_found=1
         else
             claim="$(so_model_claim "$ns")"
             if [ -n "$claim" ]; then claim_found=1; else claim="model-pvc"; fi
@@ -1274,30 +1504,43 @@ PRESTOP
       - name: ${WVA_MODEL_VOLUME_NAME:-model-storage}
         persistentVolumeClaim:
           claimName: ${claim}
+CACHE
+        # Two different situations, and the file used to print the second one in
+        # both: with a claim discovered, it still said "create model-pvc" -- the
+        # second claim this feature exists to prevent, and not even the one the
+        # patch above mounts.
+        if [ "$claim_found" -eq 1 ]; then
+            cat <<CACHEHAVE
 #
-#   ^ ${claim}: $([ "$claim_found" -eq 1 ] \
-        && printf '%s' "an EXISTING shared claim in this namespace, reused rather than duplicated." \
-        || printf '%s' "does not exist yet -- create it before applying this.")
+#   ${claim} already exists in ${ns} and is shareable, so it is reused rather
+#   than duplicated. Nothing to create.
+CACHEHAVE
+        else
+            cat <<CACHENEED
 #
-#   The claim is NOT created for you, and the two fields below are why: both
-#   decide whether the cache helps or breaks scale-up, and neither can be
-#   guessed from here.
+#   ${claim} does NOT exist yet. Create it before applying this, or every pod
+#   the rollout makes stays Pending. Easiest:
+#
+#     make model-cache NAMESPACE=${ns}    # lists classes serving RWX here
+#     make model-cache NAMESPACE=${ns} WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<class>
+#
+#   The two fields are asked for because neither can be guessed, and both decide
+#   whether the cache helps or breaks scale-up:
 #
 #     accessModes: ReadWriteMany is the point -- many replicas reading one copy.
 #       A default StorageClass is often RWO block storage, and a ReadWriteOnce
 #       claim binds to ONE node: the second replica then cannot schedule at all,
-#       which turns a slow scale-up into a failed one. Check the class supports
-#       RWX before using it.
+#       which turns a slow scale-up into a failed one.
 #     storage: a function of how many models share it and how large they are.
 #       0.6B is ~1.2GiB of weights; a 70B is ~140GB. Real llm-d installs run
 #       these in the hundreds of GiB to 1Ti.
 #
-#   Fill both in and apply:
+#   Or by hand:
 #
 #     apiVersion: v1
 #     kind: PersistentVolumeClaim
 #     metadata:
-#       name: ${WVA_MODEL_PVC_NAME:-model-pvc}
+#       name: ${claim}
 #       namespace: ${ns}
 #     spec:
 #       accessModes: [ReadWriteMany]
@@ -1305,7 +1548,10 @@ PRESTOP
 #       resources:
 #         requests:
 #           storage: <size>
-CACHE
+CACHENEED
+        fi
+        cat <<CACHEEND
+CACHEEND
     fi
 }
 
@@ -1321,7 +1567,7 @@ so_drain_note() {
         printf '%s' "Could not read the pod spec, so whether scale-down drains cleanly is unknown -- this is not a report that it does."
         return 0
     fi
-    IFS=$'' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
     [ -n "$engine" ] || return 0
     # A hook of any shape counts. Whether it drains for long enough is the
     # operator's judgement, and guessing at a threshold would produce a warning

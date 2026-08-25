@@ -127,7 +127,29 @@ It installs the controller only, and says so: creating cluster-scoped objects is
 not something a namespace owner can do, so that half is the one step 1 covers. If
 step 1 has not happened, this stops and names what is missing.
 
-### 3. Register the workloads
+### 3. Make the workloads safe to scale
+
+The two prerequisites above are stated at the top of this guide and are easy to
+skip, so this is the step that checks them. It reports and changes nothing.
+
+<!-- guide:deploy.readiness start -->
+```bash
+# What the model servers need before anything scales them. Reports first;
+# changes nothing until you ask.
+make workload-patch NAMESPACE=${NAMESPACE}
+```
+<!-- guide:deploy.readiness end -->
+
+A model server with no preStop hook loses in-flight responses on every
+scale-down, and one that downloads its weights outside every volume it mounts
+re-fetches them on every scale-up. Both are pod-spec settings owned by the chart
+that deployed the model server, so this writes a patch rather than applying one.
+See [Writing the
+patch](../../deployment/operations.md#writing-the-patch-make-workload-patch) for
+what to do with it, including `make model-cache` when the weights half is what is
+missing.
+
+### 4. Register the workloads
 
 Nothing scales until a ScaledObject exists: WVA is only ever asked about
 workloads KEDA calls it about.
@@ -296,7 +318,15 @@ and a workload parked at zero can never be woken.
 ### The model servers are still running
 
 `make undeploy-wva` removes the **autoscaler only**. Every model server, EPP and
-InferencePool in the namespace keeps serving — which is usually what you want,
+InferencePool in the namespace keeps serving
+
+-- which is usually what you want,
+since WVA did not create them and something else may depend on them.
+
+A drain hook applied with `WVA_WORKLOAD_PATCH_APPLY=true` stays with them for the
+same reason: those fields belong to the model server, not to WVA, so they outlive
+the uninstall. The next `helm upgrade` of that chart reverts them. A model cache
+created by `make model-cache` is likewise left alone -- it holds data. — which is usually what you want,
 since WVA did not create them and something else may depend on them.
 
 If you stood the model up with

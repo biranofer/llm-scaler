@@ -507,8 +507,29 @@ scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObje
 
 ## Report the pod-spec settings that decide whether autoscaling a workload is
 ## safe, as a patch you can apply where the pod spec is owned.
+## Create the shared weights cache the model servers read from.
+##
+## Deliberately asks for the two fields it will not guess. Size depends on how
+## many models share the claim and how large they are; the StorageClass must
+## support ReadWriteMany, because a claim that binds to one node leaves every
+## replica on any other node Pending -- autoscaling that cannot work, rather
+## than a cache that is merely slow. Run with neither and it lists the classes
+## this cluster is already serving RWX from.
+.PHONY: model-cache
+model-cache: ## Create the weights PVC. NAMESPACE=<ns> WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<rwx-class>. With no size/class, lists candidate classes.
+	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
+		$(if $(WVA_MODEL_PVC_NAME),WVA_MODEL_PVC_NAME=$(WVA_MODEL_PVC_NAME),) \
+		$(if $(WVA_MODEL_PVC_SIZE),WVA_MODEL_PVC_SIZE=$(WVA_MODEL_PVC_SIZE),) \
+		$(if $(WVA_MODEL_PVC_CLASS),WVA_MODEL_PVC_CLASS=$(WVA_MODEL_PVC_CLASS),) \
+	@# An explicit NAMESPACE wins, and is passed as the ARGUMENT rather than left
+	@# to wva_resolve_namespace. That helper only copies NAMESPACE into WVA_NS
+	@# when the scope is namespace, so under SCOPE=cluster this created the claim
+	@# in the CONTROLLERS OWN namespace while the operator watched it name theirs.
+	@# Creating storage in the wrong namespace is not a cosmetic slip.
+		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; wva_model_cache "$(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$${WVA_NS})"'
+
 .PHONY: workload-patch
-workload-patch: ## Write a patch for model servers that do not drain on scale-down, or download weights outside every volume they mount. NAMESPACE=<ns> scopes it; WVA_WORKLOAD_PATCH_APPLY=true also applies the drain half live.
+workload-patch: ## Write a patch for model servers that do not drain on scale-down, or download weights outside every volume they mount. NAMESPACE=<ns> scopes it; WVA_WORKLOAD_PATCH_APPLY=true applies the drain half live (add WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true for the volume, after `make model-cache`).
 	@# NAMESPACE pins the SCAN, not just the connection. Without the
 	@# WVA_DEFAULT_SO_NS fallback below, `make workload-patch NAMESPACE=x` under a
 	@# cluster-scoped install still walked every namespace on the cluster:
@@ -1416,26 +1437,52 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@# perfectly -- one replica, one node, everything green -- and then the first
 	@# scale-up leaves the new pod Pending on a volume it cannot attach. The run
 	@# then measures an autoscaler that appears not to work.
+	@# `.SHELLFLAGS = -ec`, so a bare `x=$$(kubectl ...)` assignment carries the
+	@# command status and `set -e` kills the whole recipe -- silently, because
+	@# 2>/dev/null ate the reason. That aborted benchmark-standup at the very end
+	@# of a long run if a token could list PVCs but not get one by name (separate
+	@# RBAC verbs). Every substitution below therefore ends in `|| true`.
+	@#
+	@# It also reports what BOUND, not what was requested: a claim can ask for RWX
+	@# and sit Pending forever on a cluster with no RWX class, and the accessModes
+	@# field still reads ReadWriteMany because it is the request.
 	@echo "Model cache:"
-	@found=0; for pvc in $$(kubectl get pvc -n $(BENCHMARK_NAMESPACE) \
-		-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -iE 'model'); do \
-		found=1; \
-		modes=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.accessModes[*]}' 2>/dev/null); \
-		size=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.status.capacity.storage}' 2>/dev/null); \
-		sc=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.storageClassName}' 2>/dev/null); \
-		echo "  $$pvc  $${size:-?}  [$$modes]  class=$${sc:-<cluster default>}"; \
-		case "$$modes" in \
-			*ReadWriteMany*|*ReadOnlyMany*) ;; \
-			*) echo "  WARNING: $$pvc is $$modes, so it can be mounted on ONE NODE only."; \
-			   echo "           The stack will stand up and the first scale-up will not: a decode"; \
-			   echo "           replica scheduled on another node stays Pending on the volume, so this"; \
-			   echo "           run cannot measure scaling. Give the model cache an RWX StorageClass."; ;; \
-		esac; \
-	done; \
+	@found=0; listed=$$(kubectl get pvc -n $(BENCHMARK_NAMESPACE) \
+		-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1) || listed="__ERR__$$listed"; \
+	case "$$listed" in \
+		__ERR__*) \
+			echo "  WARNING: could not list PersistentVolumeClaims in $(BENCHMARK_NAMESPACE)."; \
+			echo "           This is NOT a report that there is no cache -- it is a report that"; \
+			echo "           nobody could look: $$(printf '%s' "$${listed#__ERR__}" | tail -1)"; \
+			found=-1 ;; \
+	esac; \
+	if [ "$$found" = 0 ]; then \
+		for pvc in $$(printf '%s\n' "$$listed" | grep -iE 'model|weight|cache' || true); do \
+			found=1; \
+			modes=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.accessModes[*]}' 2>/dev/null || true); \
+			phase=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.status.phase}' 2>/dev/null || true); \
+			size=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.status.capacity.storage}' 2>/dev/null || true); \
+			sc=$$(kubectl get pvc $$pvc -n $(BENCHMARK_NAMESPACE) -o jsonpath='{.spec.storageClassName}' 2>/dev/null || true); \
+			echo "  $$pvc  $${size:-<unbound>}  [$${modes:-?}]  $${phase:-?}  class=$${sc:-<cluster default>}"; \
+			if [ "$$phase" != Bound ]; then \
+				echo "  WARNING: $$pvc is $${phase:-unreadable}, not Bound. Nothing can mount it, so the"; \
+				echo "           model servers will not start. A ReadWriteMany request on a cluster"; \
+				echo "           with no RWX StorageClass is accepted and then never binds."; \
+			fi; \
+			case "$$modes" in \
+				*ReadWriteMany*|*ReadOnlyMany*) ;; \
+				*) echo "  WARNING: $$pvc is $$modes, so it can be mounted on ONE NODE only."; \
+				   echo "           The stack will stand up and the first scale-up will not: a decode"; \
+				   echo "           replica scheduled on another node stays Pending on the volume, so this"; \
+				   echo "           run cannot measure scaling. Give the model cache an RWX StorageClass."; ;; \
+			esac; \
+		done; \
+	fi; \
 	if [ "$$found" = 0 ]; then \
 		echo "  WARNING: no model cache PVC found in $(BENCHMARK_NAMESPACE)."; \
 		echo "           Every replica this run adds fetches its weights from Hugging Face, which"; \
 		echo "           is charged to scale-up latency and fails outright without egress."; \
+		echo "           Create one:  make model-cache NAMESPACE=$(BENCHMARK_NAMESPACE)"; \
 	fi
 
 ## Install WVA from THIS repo into the benchmark namespace and register the model
@@ -1945,6 +1992,11 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@for script in deploy/lib/*.sh; do bash -n "$$script"; done
 	@for script in deploy/*/install.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
+	@echo "Checking for apostrophes inside quoted jq/yq programs..."
+	@# `bash -n` catches an ODD number and misses an EVEN one, which
+	@# rebalances the quoting and hands jq a truncated program. Both have
+	@# happened here; the even one shipped.
+	@bash hack/check-quoted-programs.sh
 	@echo "Checking the jq marker predicates..."
 	@bash hack/check-jq-predicates.sh
 	@echo "Checking workload readiness detection..."

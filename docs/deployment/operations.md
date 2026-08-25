@@ -398,6 +398,45 @@ make workload-patch                       # everything in scope
 make workload-patch NAMESPACE=my-models   # one namespace
 ```
 
+### The whole flow, when it reports both problems
+
+```bash
+# 1. What is missing, and why it costs something. Changes nothing.
+make workload-patch NAMESPACE=my-models
+
+# 2. Only if it reported re-downloaded weights: create the shared cache.
+#    Run it with no size or class first — it lists the StorageClasses this
+#    cluster is already serving ReadWriteMany from, which is the question
+#    "which class do I use?" answered from what already works here.
+make model-cache NAMESPACE=my-models
+make model-cache NAMESPACE=my-models \
+    WVA_MODEL_PVC_SIZE=500Gi WVA_MODEL_PVC_CLASS=<an-rwx-class>
+
+# 3. Apply. The drain half needs nothing; the weights half needs the claim from
+#    step 2 and its own opt-in, because mounting storage is a bigger change than
+#    adding a hook.
+make workload-patch NAMESPACE=my-models \
+    WVA_WORKLOAD_PATCH_APPLY=true \
+    WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true
+```
+
+Step 3 patches the live objects, which **replaces their pods**. The durable
+alternative is to copy the emitted file's contents into your modelservice values
+and let the chart roll them out — the next `helm upgrade` reverts anything
+applied directly. Either way step 2 is the same: the claim is yours, not the
+chart's.
+
+`make model-cache` is safe to re-run. If the claim already exists it reports what
+it is and changes nothing, so "did I already create this?" is a question you can
+answer by typing the command again.
+
+**The weights half is refused, with the reason, when it would break something:**
+a volume of that name already exists on the workload (a strategic merge cannot
+replace one, so the API server rejects the whole object — including the drain
+hook), something is already mounted at that path, or the claim does not exist
+(every pod the rollout creates would stay `Pending`). In each case the drain half
+is still applied and the weights half stays in the emitted file.
+
 It writes `wva-workload-patch.yaml`: one document per model server that needs
 something, naming the engine container, with a comment saying which of the two
 problems that workload has.
@@ -434,14 +473,19 @@ at the time, and both are worth reading before you type it:
   With the default strategy at `replicas: 1` the new pod must schedule before the
   old one goes, so on a cluster with no spare GPU the rollout stalls with the old
   pod still serving.
-- **The weights half is never applied, only emitted.** A strategic merge cannot
-  *replace* a volume that already exists under the same name — `volumes` merges
-  with `retainKeys`, and only `kubectl apply` generates that directive — so a pod
-  that already has a `model-storage` volume rejects the whole object
-  (`may not specify more than 1 volume type`), and the drain half goes down with
-  it. It also needs a claim that may not exist, and it changes where an engine
-  reads its weights from: a storage decision, not a side effect of fixing
-  draining.
+- **The weights half has its own opt-in**, `WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true`,
+  because mounting storage is a bigger change than adding a hook: it can be
+  refused by the API server outright, and it changes where an engine reads its
+  weights from. With the opt-in it is applied only where it cannot break the
+  workload — no volume of that name, nothing already mounted at that path, and
+  the claim exists. Any of those three refuses it, says which, and still applies
+  the drain half.
+
+  The first check is the one that matters: `volumes` merges with `retainKeys`,
+  and only `kubectl apply` generates that directive, so
+  `kubectl patch --type=strategic` merges *into* a volume of the same name and
+  the API server rejects the whole object — `may not specify more than 1 volume
+  type` — taking the drain hook down with it.
 
 | variable | default | what it sets |
 | --- | --- | --- |
@@ -455,7 +499,7 @@ at the time, and both are worth reading before you type it:
 
 The last three affect the emitted file only — nothing applies a volume.
 
-Three things it will not do:
+What it will and will not do:
 
 - **It reuses a claim you already have, where there is an unambiguous one.**
   A namespace whose cache is called `llm-d-model-cache` should not be told to
@@ -465,9 +509,9 @@ Three things it will not do:
   takes the one whose name says what it holds, and with two equally plausible
   ones it names none and falls back to the default rather than guessing at
   someone else's data.
-- **It does not create the PersistentVolumeClaim** — it emits one to fill in.
-  Two fields decide whether the cache helps or breaks scale-up, and neither can
-  be guessed from inside a namespace:
+- **`workload-patch` does not create the PersistentVolumeClaim** — `make
+  model-cache` does, as a separate, deliberate step. Two fields decide whether
+  the cache helps or breaks scale-up, and neither is guessed:
 
   - **`accessModes` must be `ReadWriteMany`.** Many replicas reading one copy is
     the entire point. A cluster's *default* StorageClass is often RWO block
@@ -478,9 +522,23 @@ Three things it will not do:
     are.** 0.6B is ~1.2 GiB of weights; a 70B is ~140 GB. Real llm-d installs run
     these from hundreds of GiB up to 1Ti.
 
-  A claim also holds data, so creating it at install time would mean an uninstall
-  that either deletes someone's weights or leaves a terabyte behind. The emitted
-  file carries the claim as a commented manifest with those two fields blank.
+  ```bash
+  make model-cache NAMESPACE=<ns>     # lists classes this cluster serves RWX from
+  make model-cache NAMESPACE=<ns> WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<class>
+  ```
+
+  Run bare, it answers "which class do I use?" from evidence — the classes this
+  cluster already has Bound RWX claims on — rather than from a table of
+  provisioner names that would go stale. It is safe to re-run: an existing claim
+  is reported, not touched. A `WaitForFirstConsumer` class stays `Pending` until a
+  pod mounts it, which is correct and is reported as such rather than waited on.
+
+  It is not part of the install, and the claim is not deleted by `undeploy-wva`:
+  a claim holds data, so an uninstall that removed it would either destroy
+  someone's weights or silently leave a terabyte behind. Deciding that is the
+  operator's, which is why it is a separate command. The emitted patch file also
+  carries the claim as a commented manifest, for anyone who would rather apply
+  their own.
 - **It skips LeaderWorkerSets, loudly.** Draining a multi-node group means the
   worker template too — killing a worker aborts the leader's in-flight
   generations whatever hook the leader carries — and the API server will not
@@ -488,7 +546,7 @@ Three things it will not do:
   document is worse than emitting nothing.
 - **It never reports a workload it could not read as healthy.** A listing or a
   `get` that fails is said out loud and makes the run exit non-zero, and so does
-  a missing `jq` or `yq`. "Nothing to patch" is a claim about pods, and it is not
+  a missing `jq` (or `yq`, which is needed only when applying). "Nothing to patch" is a claim about pods, and it is not
   made about pods nobody could read.
 
 The emitted file opens with a header saying most of this, because it otherwise

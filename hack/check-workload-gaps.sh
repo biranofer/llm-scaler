@@ -64,6 +64,11 @@ PATCH_RC=0
 PATCH_BODY=""     # the last --patch-file content kubectl was handed
 PVC_FIXTURE='{"items":[]}'   # JSON for `kubectl get pvc -n <ns>`
 PVC_RC=0
+# Per-NAME object fixtures, for the cases about a namespace holding more than
+# one workload. A single FIXTURE cannot express "this one is readable and that
+# one is not", nor tell two patch documents apart. "__RC1__" means the read
+# fails for that name.
+declare -A FIXTURE_MAP=()
 
 kubectl() {
     local a f
@@ -82,6 +87,10 @@ kubectl() {
                     if [ "${3:-}" = "-n" ]; then
                         [ "$LIST_RC" -eq 0 ] || return "$LIST_RC"
                         printf '%s' "$LIST_FIXTURE"
+                    elif [ "${#FIXTURE_MAP[@]}" -gt 0 ] \
+                         && [ -n "${FIXTURE_MAP[${3:-}]+set}" ]; then
+                        [ "${FIXTURE_MAP[${3:-}]}" = "__RC1__" ] && return 1
+                        printf '%s' "${FIXTURE_MAP[${3:-}]}"
                     else
                         [ "$FIXTURE_RC" -eq 0 ] || return "$FIXTURE_RC"
                         printf '%s' "$FIXTURE"
@@ -108,13 +117,18 @@ POD_DEPLOY='["spec","template"]'
 POD_LWS='["spec","leaderWorkerTemplate","leaderTemplate"]'
 FAILED=0
 CASE=""
+RAN=0
+# Counted from the file rather than hand-maintained, so adding a case cannot
+# leave the tally stale. It is the number of `CASE=` labels with a name; the
+# tally at the bottom checks that every one of them reached an `ok`.
+EXPECT_CASES="$(grep -c '^CASE="[^"]' "${BASH_SOURCE[0]}")"
 
 fail() {
     printf 'FAIL  %s\n      %s\n' "$CASE" "$1" >&2
     FAILED=$((FAILED + 1))
 }
 
-ok() { printf 'ok    %s\n' "$CASE"; }
+ok() { RAN=$((RAN + 1)); printf 'ok    %s\n' "$CASE"; }
 
 # gaps_field reads one field the way PRODUCTION reads it: `IFS read`, not `cut`.
 # The difference is the whole point of one of the cases below -- `cut` is
@@ -287,6 +301,7 @@ reset() {
     FIXTURE=""; FIXTURE_RC=0; LIST_FIXTURE=''; LIST_RC=0; CRD_RC=1
     PATCH_CALLS=0; PATCH_RC=0; PATCH_BODY=""
     PVC_FIXTURE='{"items":[]}'; PVC_RC=0
+    FIXTURE_MAP=()
 }
 
 # --- canary -----------------------------------------------------------------
@@ -653,7 +668,11 @@ spec:
         persistentVolumeClaim:
           claimName: model-pvc
 YAML
-so_workload_patch_drop_cache "$d" && fail "expected non-zero: nothing actionable is left"
+drop_rc=0
+so_workload_patch_drop_cache "$d" || drop_rc=$?
+# EXACTLY 1, not merely non-zero. A function that does not exist returns 127,
+# and this case passed against a zero-byte library on `&& fail` alone.
+assert_eq "$drop_rc" "1" "return code"
 assert_contains "$(cat "$d")" "HF_HOME"   # anchor: the file was left intact
 rm -f "$d"
 [ "$FAILED" -eq "$before" ] && ok
@@ -681,8 +700,45 @@ before=$FAILED
 PVC_FIXTURE="$(pvc_list llm-d-model-cache:ReadWriteMany)"
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 assert_contains "$doc" "claimName: llm-d-model-cache"
-assert_contains "$doc" "an EXISTING shared claim"
+assert_contains "$doc" "already exists in ns"
 assert_not_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the only RWX claim is not assumed to be a model cache"
+reset; f_llmd_real_downloads
+before=$FAILED
+# A benchmark namespace has exactly one RWX claim and it is the RESULTS volume.
+# Mounting that at /model-cache with HF_HOME inside it is wrong, and with the
+# weights opt-in it is wrong on a live workload. One candidate is not the same
+# as one candidate that is a model cache.
+PVC_FIXTURE="$(pvc_list llm-d-benchmark-results:ReadWriteMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_not_contains "$doc" "llm-d-benchmark-results"
+assert_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a ReadOnlyMany claim is not proposed for a path we write to"
+reset; f_llmd_real_downloads
+before=$FAILED
+# The emitted patch points HF_HOME INTO the mount. A ROX volume mounts
+# read-only, so reusing one turns a re-download into a crash on first write.
+PVC_FIXTURE="$(pvc_list shared-model-datasets:ReadOnlyMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_not_contains "$doc" "shared-model-datasets"
+assert_contains "$doc" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a discovered claim is never followed by instructions to create one"
+reset; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list llm-d-model-cache:ReadWriteMany)"
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName: llm-d-model-cache"
+# The emitted file used to mount the discovered claim and then tell the reader
+# to create `model-pvc` -- the second claim this feature exists to prevent, and
+# not even the one the patch mounts.
+assert_not_contains "$doc" "kind: PersistentVolumeClaim"
+assert_not_contains "$doc" "make model-cache"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="a ReadWriteOnce claim is not proposed as a shared cache"
@@ -693,7 +749,7 @@ before=$FAILED
 PVC_FIXTURE="$(pvc_list scratch:ReadWriteOnce)"
 doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
 assert_contains "$doc" "claimName: model-pvc"
-assert_contains "$doc" "does not exist yet"
+assert_contains "$doc" "does NOT exist yet"
 [ "$FAILED" -eq "$before" ] && ok
 
 CASE="two candidate claims are ambiguous, so neither is guessed"
@@ -828,7 +884,12 @@ CASE="a file this tool did NOT write is never deleted"
 reset; LIST_FIXTURE="$(serving_list)"; f_cached_properly
 before=$FAILED
 mine="$(mktemp)"; printf 'hand written, do not delete\n' > "$mine"
-WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_FILE="$mine" wva_workload_patch >/dev/null 2>&1 || true
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_FILE="$mine" \
+    wva_workload_patch >"$WORK/nd.log" 2>&1 || true
+# Anchor: the tool must have REACHED the decision and said so. Without it a
+# library that does not run at all also leaves the file untouched -- this case
+# printed `ok` against a zero-byte library.
+assert_contains "$(cat "$WORK/nd.log")" "was not written by this tool"
 assert_contains "$(cat "$mine" 2>/dev/null || echo GONE)" "hand written"
 rm -f "$mine"
 [ "$FAILED" -eq "$before" ] && ok
@@ -913,6 +974,89 @@ assert_contains "$(cat "$dir/log")" "yq is not installed"
 assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
 [ "$FAILED" -eq "$before" ] && ok
 
+# --- applying the weights half ----------------------------------------------
+#
+# Its own opt-in, separate from APPLY: adding a hook cannot conflict with
+# anything, while mounting storage can be refused by the API server outright and
+# changes where an engine reads its weights from.
+
+apply_weights_run() {
+    local dir; dir="$(mktemp -d)"
+    DRIVER_RC=0; DRIVER_LOG="$dir/log"; DRIVER_OUT="$dir/p.yaml"
+    WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_APPLY=true \
+        WVA_WORKLOAD_PATCH_APPLY_WEIGHTS=true WVA_WORKLOAD_PATCH_FILE="$DRIVER_OUT" \
+        wva_workload_patch >"$DRIVER_LOG" 2>&1 || DRIVER_RC=$?
+}
+
+CASE="with the opt-in and no collision, the weights volume IS applied"
+reset; LIST_FIXTURE="$(serving_list)"; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list model-pvc:ReadWriteMany)"
+apply_weights_run
+assert_contains "$PATCH_BODY" "claimName"
+assert_contains "$PATCH_BODY" "preStop"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a volume of the same name blocks the weights half, NOT the drain half"
+reset; LIST_FIXTURE="$(serving_list)"
+before=$FAILED
+# The 422 that made this unconditional once: `volumes` merges with retainKeys,
+# which `kubectl patch --type=strategic` does not generate, so a same-named
+# volume gets the WHOLE object rejected -- drain hook included.
+FIXTURE='{"spec":{"template":{"spec":{
+    "terminationGracePeriodSeconds":30,
+    "volumes":[{"name":"model-storage","emptyDir":{}}],
+    "containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
+                   "volumeMounts":[{"name":"model-storage","mountPath":"/model-cache"}],
+                   "env":[{"name":"HF_HOME","value":"/root/.cache/huggingface"}],
+                   "args":["vllm","serve","Qwen/Qwen3-0.6B"]}]}}}}'
+PVC_FIXTURE="$(pvc_list model-pvc:ReadWriteMany)"
+apply_weights_run
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "claimName"
+assert_contains "$(cat "$DRIVER_LOG")" "already exists"
+# ...and the emitted file still carries it, for whoever owns the chart.
+assert_contains "$(cat "$DRIVER_OUT")" "claimName"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a missing claim blocks the weights half rather than stranding pods Pending"
+reset; LIST_FIXTURE="$(serving_list)"; f_llmd_real_downloads
+before=$FAILED
+PVC_RC=1     # the claim cannot be read
+apply_weights_run
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "claimName"
+assert_contains "$(cat "$DRIVER_LOG")" "does not exist"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="without the opt-in the weights half is never applied, claim or no claim"
+reset; LIST_FIXTURE="$(serving_list)"; f_llmd_real_downloads
+before=$FAILED
+PVC_FIXTURE="$(pvc_list model-pvc:ReadWriteMany)"
+dir="$(mktemp -d)"
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_APPLY=true WVA_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    wva_workload_patch >"$dir/log" 2>&1 || true
+assert_contains "$PATCH_BODY" "preStop"
+assert_not_contains "$PATCH_BODY" "claimName"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="candidate StorageClasses are ranked by observed RWX use"
+before=$FAILED
+PVC_FIXTURE='{"items":[
+  {"spec":{"accessModes":["ReadWriteMany"],"storageClassName":"shared-fs"},"status":{"phase":"Bound"}},
+  {"spec":{"accessModes":["ReadWriteMany"],"storageClassName":"shared-fs"},"status":{"phase":"Bound"}},
+  {"spec":{"accessModes":["ReadWriteMany"],"storageClassName":"other-fs"},"status":{"phase":"Bound"}},
+  {"spec":{"accessModes":["ReadWriteOnce"],"storageClassName":"block"},"status":{"phase":"Bound"}},
+  {"spec":{"accessModes":["ReadWriteMany"],"storageClassName":"unbound-fs"},"status":{"phase":"Pending"}}]}'
+out="$(so_model_cache_classes)"
+assert_contains "$out" "shared-fs (2 bound RWX claim(s))"
+assert_contains "$out" "other-fs (1 bound RWX claim(s))"
+# A class only ever seen backing RWO is not evidence that it can do RWX.
+assert_not_contains "$out" "block"
+assert_not_contains "$out" "unbound-fs"
+assert_eq "$(printf '%s' "$out" | head -1)" "shared-fs (2 bound RWX claim(s))" "most-used first"
+[ "$FAILED" -eq "$before" ] && ok
+
 CASE="an unwritable destination keeps the patch instead of deleting it"
 reset; LIST_FIXTURE="$(serving_list)"; f_vllm_plain
 before=$FAILED
@@ -926,10 +1070,196 @@ kept="$(sed -n 's/.*kept at \([^ ]*\).*/\1/p' "$WORK/uw.log" | tail -1)"
 [ -n "$kept" ] && rm -f "$kept"
 [ "$FAILED" -eq "$before" ] && ok
 
+
+# --- ADDED BY MUTATION TESTING ------------------------------------------------
+
+# The engine identified by IMAGE alone -- the command is a wrapper script.
+f_engine_by_image_only() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":30,
+        "containers":[
+          {"name":"routing-proxy","image":"quay.io/x/proxy:1","args":["--listen",":80"]},
+          {"name":"server","image":"quay.io/x/vllm-openai:v0.11",
+           "command":["/opt/entrypoint.sh"]}]}}}}'
+}
+
+# The engine identified by COMMAND alone -- the image name says nothing.
+f_engine_by_command_only() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":30,
+        "containers":[
+          {"name":"routing-proxy","image":"quay.io/x/proxy:1","args":["--listen",":80"]},
+          {"name":"engine","image":"registry.example.com/ai/runtime:1.2",
+           "args":["vllm","serve","Qwen/Qwen3-0.6B"]}]}}}}'
+}
+
+# The SIDECAR mounts the cache; the engine does not.
+f_sidecar_mounts_cache() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":30,
+        "volumes":[{"name":"model-storage","persistentVolumeClaim":{"claimName":"model-pvc"}}],
+        "containers":[
+          {"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
+           "env":[{"name":"HF_HOME","value":"/model-cache/huggingface"}],
+           "args":["vllm","serve","Qwen/Qwen3-0.6B"]},
+          {"name":"sidecar","image":"quay.io/x/proxy:1",
+           "volumeMounts":[{"name":"model-storage","mountPath":"/model-cache"}]}]}}}}'
+}
+
+# An engine that already drains but re-downloads -- the DEFERRAL shape.
+f_hooked_but_downloads() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":120,
+        "containers":[{"name":"vllm","image":"quay.io/x/vllm-openai:v0.11",
+                       "lifecycle":{"preStop":{"exec":{"command":["sleep","45"]}}},
+                       "args":["vllm","serve","Qwen/Qwen3-0.6B"]}]}}}}'
+}
+
+CASE="the engine is found by IMAGE when the command is a wrapper script"
+reset; f_engine_by_image_only
+before=$FAILED
+assert_field 1 "server"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the engine is found by COMMAND when the image name says nothing"
+reset; f_engine_by_command_only
+before=$FAILED
+assert_field 1 "engine"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a cache the SIDECAR mounts is not a cache the engine can use"
+reset; f_sidecar_mounts_cache
+before=$FAILED
+assert_field 1 "vllm"
+assert_field 5 "0"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the weights note is silent when the download dir IS on a mount"
+reset; f_cached_properly
+before=$FAILED
+note="$(so_weights_note ns deployments w "$POD_DEPLOY")"
+[ -z "$note" ] || fail "expected silence, got: $note"
+reset; f_cache_mounted_elsewhere
+assert_contains "$(so_weights_note ns deployments w "$POD_DEPLOY")" "Weights do not persist"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="hasPVC counts PVC-backed volumes, not every volume"
+reset; f_llmd_real
+before=$FAILED
+assert_field 1 "vllm"
+assert_field 4 "1"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a bare glob as the model argument does not become the answer"
+before=$FAILED
+tmpd="$(mktemp -d)"; : > "$tmpd/decoy.log"
+assert_eq "$(cd "$tmpd" && so_model_source 'vllm serve * --port 8000')" "*" "glob after serve"
+assert_eq "$(cd "$tmpd" && so_model_source 'vllm --model *')" "*" "glob as --model"
+rm -rf "$tmpd"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the emitted preStop is a shell sleep of the configured length"
+reset; f_vllm_plain
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" 'command: ["/bin/sh", "-c", "sleep 45"]'
+assert_contains "$(WVA_DRAIN_SLEEP_SECONDS=90 so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)" \
+    '"sleep 90"'
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a workload that already drains but re-downloads is deferred, not patched"
+reset; LIST_FIXTURE="$(serving_list)"; f_hooked_but_downloads
+before=$FAILED
+dir="$(mktemp -d)"
+DRIVER_RC=0
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_APPLY=true WVA_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    wva_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_eq "$PATCH_CALLS" "0" "kubectl patch calls"
+assert_contains "$(cat "$dir/log")" "need only the weights volume"
+assert_not_contains "$(cat "$dir/log")" "were NOT patched"
+assert_contains "$(cat "$dir/p.yaml")" "claimName: model-pvc"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="each workload is patched with ITS OWN document, not the whole file"
+reset
+LIST_FIXTURE='{"items":[{"metadata":{"name":"w1","labels":{"llm-d.ai/role":"decode"}}},
+                        {"metadata":{"name":"w2","labels":{"llm-d.ai/role":"decode"}}}]}'
+before=$FAILED
+f_vllm_plain
+FIXTURE_MAP=([w1]="$FIXTURE" [w2]="$FIXTURE")
+dir="$(mktemp -d)"
+DRIVER_RC=0
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_APPLY=true WVA_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    wva_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_eq "$DRIVER_RC" "0" "return code"
+assert_eq "$PATCH_CALLS" "2" "kubectl patch calls"
+assert_contains "$PATCH_BODY" "name: w2"
+assert_not_contains "$PATCH_BODY" "name: w1"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a file IS written for the readable half, and the run is still non-zero"
+reset
+LIST_FIXTURE='{"items":[{"metadata":{"name":"good","labels":{"llm-d.ai/role":"decode"}}},
+                        {"metadata":{"name":"bad","labels":{"llm-d.ai/role":"decode"}}}]}'
+before=$FAILED
+f_vllm_plain
+FIXTURE_MAP=([good]="$FIXTURE" [bad]="__RC1__")
+dir="$(mktemp -d)"
+DRIVER_RC=0
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    wva_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+assert_contains "$(cat "$dir/p.yaml" 2>/dev/null)" "name: good"
+assert_eq "$DRIVER_RC" "1" "return code"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a listing that cannot be PARSED is not an empty namespace"
+reset; LIST_FIXTURE='{"items":['
+before=$FAILED
+run_driver
+assert_eq "$DRIVER_RC" "1" "return code"
+assert_contains "$(cat "$DRIVER_LOG")" "not being reported as clean"
+assert_not_contains "$(cat "$DRIVER_LOG")" "No model servers found in scope"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="an index that reads back empty is a failure, not nothing-to-do"
+reset; LIST_FIXTURE="$(serving_list)"; f_vllm_plain
+before=$FAILED
+so_index_orig="$(declare -f so_workload_patch_index)"
+so_workload_patch_index() { :; }
+dir="$(mktemp -d)"
+DRIVER_RC=0
+WVA_DEFAULT_SO_NS=ns1 WVA_WORKLOAD_PATCH_APPLY=true WVA_WORKLOAD_PATCH_FILE="$dir/p.yaml" \
+    wva_workload_patch >"$dir/log" 2>&1 || DRIVER_RC=$?
+unset -f so_workload_patch_index
+[ -n "$so_index_orig" ] && eval "$so_index_orig"
+assert_eq "$DRIVER_RC" "1" "return code"
+assert_contains "$(cat "$dir/log")" "NOTHING was applied"
+assert_contains "$(cat "$dir/log")" "were NOT patched"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="LeaderWorkerSets are looked at only where the CRD exists"
+reset; LIST_FIXTURE="$(serving_list)"; f_lws; CRD_RC=1
+before=$FAILED
+run_driver
+assert_not_contains "$(cat "$DRIVER_LOG")" "Skipping LeaderWorkerSet"
+reset; LIST_FIXTURE="$(serving_list)"; f_lws; CRD_RC=0
+run_driver
+assert_contains "$(cat "$DRIVER_LOG")" "Skipping LeaderWorkerSet"
+[ "$FAILED" -eq "$before" ] && ok
+
 # ----------------------------------------------------------------------------
 
 if [ "$FAILED" -gt 0 ]; then
     printf '\n%d workload-readiness assertion(s) failed.\n' "$FAILED" >&2
+    exit 1
+fi
+# Every `ok` above increments RAN. A run that ends early -- a library that
+# aborts, a case whose command substitution dies under `set -u`, a case deleted
+# by accident -- otherwise exits 0 having checked less than it claims.
+if [ "$RAN" -ne "$EXPECT_CASES" ]; then
+    printf '\n%d case(s) reported ok, %d expected -- the run did not finish.\n' \
+        "$RAN" "$EXPECT_CASES" >&2
     exit 1
 fi
 printf '\nWorkload readiness checks passed.\n'

@@ -111,6 +111,30 @@ jobs:
         run: |
           make test
 
+  deploy-scripts-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      # The deploy libraries are ~5k lines of shell that no Go test covers, and
+      # `make lint-deploy-scripts` -- their entire safety net -- ran in no
+      # workflow: it was a command a human had to remember. Every defect it now
+      # catches was found by hand instead, including several that reached main.
+      #
+      # yq is not preinstalled on ubuntu-latest; the readiness checks are FATAL
+      # without it rather than skipping, because a skip is how a green run comes
+      # to mean nothing.
+      - name: Install yq
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Run make lint-deploy-scripts
+        run: make lint-deploy-scripts
+
   docs-check:
     runs-on: ubuntu-latest
     steps:

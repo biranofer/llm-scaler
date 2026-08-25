@@ -71,10 +71,19 @@ Nothing scales until a ScaledObject exists. At this scope the plan covers every
 namespace holding model servers, so read it before applying it.
 
 The same is true of `make workload-patch`, which reports the pod-spec settings
-autoscaling needs — a drain hook, and weights on a volume. At cluster scope it
-walks every namespace holding model servers; `NAMESPACE=<ns>` pins it to one.
-That matters most with `WVA_WORKLOAD_PATCH_APPLY=true`, which replaces the pods
-it patches: unpinned, at this scope, that is a rolling restart of every model
+autoscaling needs — a drain hook, and weights on a volume. Say which you mean,
+because `SCOPE` defaults to `namespace` everywhere in this repo:
+
+```bash
+make workload-patch SCOPE=cluster        # every namespace holding model servers
+make workload-patch NAMESPACE=<ns>       # one namespace
+```
+
+With neither, it scans the controller's own namespace and reports
+`No model servers found in scope` — which is accurate and not what you meant.
+
+`SCOPE=cluster` matters most with `WVA_WORKLOAD_PATCH_APPLY=true`, which replaces
+the pods it patches: at this scope that is a rolling restart of every model
 server on the cluster. See [Writing the
 patch](../../deployment/operations.md#writing-the-patch-make-workload-patch).
 

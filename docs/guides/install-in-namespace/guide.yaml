@@ -17,6 +17,11 @@ deploy:
     run: make setup-prereqs
   controller:
     run: make deploy-wva
+  readiness:
+    note: |
+      What the model servers need before anything scales them. Reports first;
+      changes nothing until you ask.
+    run: make workload-patch NAMESPACE=${NAMESPACE}
   register:
     run: |
       make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml

@@ -91,10 +91,16 @@ scenario:
           # and it looks like the autoscaler not working.
           #
           # llm-d-benchmark's own cluster-config for this cluster says the same
-          # (config/cluster-configs/examples/openshift-pokprod.yaml). Requesting
-          # it here means a cluster that cannot provide it fails at PVC creation
-          # -- immediately, with a clear reason -- rather than at the first
-          # scale-up, an hour into a run.
+          # (config/cluster-configs/examples/openshift-pokprod.yaml).
+          #
+          # It does NOT fail fast, and an earlier version of this comment claimed
+          # it did. Measured: the API server accepts a ReadWriteMany request
+          # against a class that cannot provide it, returns rc 0, and the claim
+          # then sits Pending forever -- accessModes is a REQUEST, and nothing
+          # validates it against the StorageClass. What this line buys is that
+          # the failure is a Pending claim with no pods, which benchmark-standup
+          # reports as such, instead of a stack that comes up on one node and
+          # fails at the first scale-up.
           accessModes:
             - ReadWriteMany
         hostPath:

@@ -191,7 +191,11 @@ safe to apply. Full description in
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `WVA_WORKLOAD_PATCH_FILE` | Where the patch is written | `wva-workload-patch.yaml` |
-| `WVA_WORKLOAD_PATCH_APPLY` | `true` also applies the **drain half** to the live workloads, which replaces their pods. The weights half is never applied — a strategic merge cannot replace a volume of the same name, and it needs a claim that may not exist | `false` |
+| `WVA_WORKLOAD_PATCH_APPLY` | `true` also applies the **drain half** to the live workloads, which replaces their pods | `false` |
+| `WVA_WORKLOAD_PATCH_APPLY_WEIGHTS` | `true` also applies the **weights volume**, but only where it cannot break the workload: no volume of that name, nothing already mounted at that path, and the claim exists. Otherwise it is emitted with the reason, and the drain half still applies | `false` |
+| `WVA_MODEL_PVC_SIZE` | Size for `make model-cache`. No default — it depends on how many models share the claim | *(required)* |
+| `WVA_MODEL_PVC_CLASS` | StorageClass for `make model-cache`. No default, and it must support ReadWriteMany. Run `make model-cache` with neither to list the classes this cluster already serves RWX from | *(required)* |
+| `WVA_MODEL_PVC_TIMEOUT` | How long to wait for the claim to bind. A `WaitForFirstConsumer` class is detected and not waited on | `120` |
 | `WVA_DRAIN_GRACE_SECONDS` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered | `120` |
 | `WVA_DRAIN_SLEEP_SECONDS` | The preStop sleep — the drain window itself | `45` |
 | `WVA_MODEL_PVC_NAME` | The claim the emitted weights volume names. Nothing creates it | `model-pvc` |

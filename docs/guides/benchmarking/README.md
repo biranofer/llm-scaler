@@ -67,8 +67,10 @@ make benchmark-standup BENCHMARK_NAMESPACE=${BENCHMARK_NAMESPACE} IMG=${IMG}
 Stands up the model servers via llm-d-benchmark, then installs WVA from this
 repo and registers the workloads.
 
-**The model cache has to be ReadWriteMany.** The scenario asks for it
-explicitly. It matters more here than anywhere else: an RWO cache stands the
+**The model cache has to be ReadWriteMany.** The two WVA scenarios in this repo
+ask for it explicitly; `guides/epp-keda-saturation` — which
+`BENCHMARK_DIRECT_KEDA=true` selects — comes from llm-d-benchmark and does not,
+so on that path check the `Model cache:` line the standup prints. It matters more here than anywhere else: an RWO cache stands the
 stack up perfectly — one replica, one node, everything green — and then the
 first scale-up leaves the new pod Pending on a volume it cannot attach, so the
 run measures an autoscaler that appears not to work. A cluster's *default*
@@ -96,6 +98,18 @@ Patching is safe here because the standup deployed these workloads itself; it is
 pinned to `BENCHMARK_NAMESPACE` and reaches nothing else on the cluster.
 `BENCHMARK_DRAIN_ROLLOUT_TIMEOUT` (default 900s) bounds the wait.
 `make benchmark-add-variant` does the same for the variant it adds.
+
+**It also moves the timeline you are measuring, so say so in the writeup.** The
+hook is a `sleep 45` under a 120s grace period, which means a replica now lingers
+for the drain window after KEDA decides to remove it. Scale-down latency and the
+replica-count timeline both shift by roughly that much, so a run taken before
+this change and one taken after are not directly comparable — compare runs on
+the same side of it.
+
+One cosmetic consequence: `benchmark-deploy-wva` writes the ScaledObject plan
+*before* the patch is applied, so the plan you see reports
+`vllm declares no preStop hook` for workloads that have one thirty seconds
+later.
 
 prometheus-adapter is deliberately not installed: it and KEDA both claim the `external.metrics.k8s.io` APIService, of
 which a cluster has one.
