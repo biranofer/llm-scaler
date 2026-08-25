@@ -475,6 +475,53 @@ so_model_id() {
     return 0
 }
 
+# so_model_source echoes WHERE a serving container gets its weights: the argument
+# of --model, or the positional model of `vllm serve <model>`.
+#
+# Deliberately NOT so_model_id, and the difference is not cosmetic.  so_model_id
+# prefers --served-model-name, because that is the name clients and the EPP use --
+# but it is an ADVERTISED NAME, not a source.  llm-d's own chart, with
+# uriProtocol: pvc, renders
+#
+#     vllm serve /model-cache/models/Qwen/Qwen3-0.6B --served-model-name Qwen/Qwen3-0.6B
+#
+# so the served name is a repository id while the weights are already on the
+# volume.  Asking so_model_id whether this workload downloads its weights gets the
+# answer "yes, from Qwen/Qwen3-0.6B", and the patch then mounts a second cache
+# into a pod that reads from one -- on the single most common llm-d layout there
+# is.  The source is the only field that answers the question.
+so_model_source() {
+    local args="$1" tok next take
+    take=""
+    for tok in $args; do
+        if [ -n "$take" ]; then
+            case "$tok" in
+                --*) : ;;
+                *) echo "$tok"; return 0 ;;
+            esac
+            take=""
+        fi
+        case "$tok" in
+            --model=*) next="${tok#*=}"; [ -n "$next" ] && { echo "$next"; return 0; } ;;
+            --model)   take=1 ;;
+        esac
+    done
+    # Falls through to the same `serve` anchor so_model_id uses, and for the same
+    # reasons -- see the comment there.
+    take=""
+    for tok in $args; do
+        if [ -n "$take" ]; then
+            case "$tok" in
+                -*) : ;;
+                *) echo "$tok"; return 0 ;;
+            esac
+            take=""
+        fi
+        if [ "$tok" = "serve" ]; then take=1; fi
+    done
+    return 0
+}
+
 # so_pool echoes the InferencePool whose selector matches a workload's pod labels,
 # which is how WVA itself resolves it — the pool is derived, never declared. Shown
 # in the plan for orientation only: it tells you which EPP queue a workload sits
@@ -580,9 +627,10 @@ so_weights_note() {
     [ -n "$engine" ] || return 0
     [ "${onvol:-0}" -eq 1 ] && return 0
 
-    # A local path is already-resident weights. Parsed by so_model_id, which
-    # anchors on `serve`, rather than by looking for a slash anywhere.
-    model="$(so_model_id "$argv")" || model=""
+    # A local path is already-resident weights. Parsed by so_model_source, which
+    # reads the SOURCE rather than the advertised name, and anchors on `serve`
+    # rather than looking for a slash anywhere.
+    model="$(so_model_source "$argv")" || model=""
     case "$model" in
         ""|/*) return 0 ;;
     esac
@@ -859,7 +907,21 @@ so_workload_gaps() {
         # relatives are where vLLM puts weights; --download-dir overrides them.
         | ( [ $e.env[]? | select(.name == "HF_HOME" or .name == "HF_HUB_CACHE"
                                  or .name == "TRANSFORMERS_CACHE") | .value ] | first ) as $envdir
-        | ( ((($e.command // []) + ($e.args // [])) | join(" ")) ) as $argv
+        # gsub, for the same reason discovery does it below. NOTE: no apostrophes
+        # in this comment. The jq program is inside a single-quoted shell string,
+        # so one apostrophe ends the quoting and the next reopens it -- the text
+        # between them is handed to the shell, and quoting REBALANCES, so bash -n
+        # reports no error while jq gets a truncated program.
+        #
+        # The modelservice chart writes the command as a multi-line block scalar.
+        # The consumer reads this record with `read`, which STOPS AT THE FIRST
+        # NEWLINE, so every flag on a later line was invisible -- on real chart
+        # output that hid --served-model-name and would hide --download-dir. CR
+        # goes with it: a chart authored on Windows carries CRLF inside the
+        # scalar, and CR is not in bash IFS, so a value would keep an invisible
+        # trailing character.
+        | ( ((($e.command // []) + ($e.args // []))
+             | map(tostring | gsub("[\n\r]"; " ")) | join(" ")) ) as $argv
         | ( ($argv | capture("--download-dir[= ]+(?<d>[^ ]+)").d) // $envdir ) as $dldir
         | [ ($e.name // ""),
             (if ($e | not) then 0 elif ($e.lifecycle.preStop != null) then 1 else 0 end),
@@ -910,12 +972,12 @@ so_workload_patch_doc() {
     [ "${prestop:-0}" -eq 0 ] && want_drain=1
 
     # The cache half asks whether WEIGHTS LAND ON A VOLUME, not whether a volume
-    # exists. so_model_id is the parser the plan already uses for modelID: it
-    # anchors on `serve` and handles the `sh -c "vllm serve <model> ..."` form the
-    # modelservice chart emits. A local path needs no cache; an unreadable model
-    # is left alone, because a confidently wrong answer here mounts a PVC into a
-    # workload that had no use for one.
-    model="$(so_model_id "$argv")" || model=""
+    # exists. so_model_source reads where the weights COME FROM -- which is not
+    # the same as the name the workload advertises, and only the source answers
+    # this question. A local path needs no cache; an unreadable model is left
+    # alone, because a confidently wrong answer here mounts a PVC into a workload
+    # that had no use for one.
+    model="$(so_model_source "$argv")" || model=""
     case "$model" in
         ""|/*) : ;;
         *) [ "${onvol:-0}" -eq 0 ] && want_cache=1 ;;

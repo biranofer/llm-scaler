@@ -156,6 +156,39 @@ f_no_engine() {
         "containers":[{"name":"sidecar","image":"quay.io/x/proxy:1","args":["--listen",":80"]}]}}}}'
 }
 
+# Copied from a running llm-d deployment on an OpenShift cluster
+# (qwen-...-decode, modelservice chart, uriProtocol: pvc). Two things about it
+# broke assumptions the invented fixtures could not:
+#   * the command is a multi-line block scalar, so a `read` on an argv field that
+#     still contains newlines is truncated at the first one;
+#   * the weights are served FROM the volume by local path, while
+#     --served-model-name advertises a repository id -- so the advertised name
+#     says "downloads from the Hub" and the source says "already on disk".
+f_llmd_real() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":30,
+        "volumes":[{"name":"model-storage","persistentVolumeClaim":{"claimName":"model-pvc"}},
+                   {"name":"dshm"},{"name":"shared-config"}],
+        "containers":[{"name":"vllm","image":"docker.io/vllm/vllm-openai:v0.26.0",
+                       "env":[{"name":"HF_HOME","value":"/tmp/huggingface"}],
+                       "volumeMounts":[{"name":"dshm","mountPath":"/dev/shm"},
+                                       {"name":"shared-config","mountPath":"/shared-config"},
+                                       {"name":"model-storage","mountPath":"/model-cache"}],
+                       "command":["/bin/bash","-c"],
+                       "args":["/bin/true ; vllm serve /model-cache/models/Qwen/Qwen3-0.6B \\\n  --host 0.0.0.0 \\\n  --served-model-name Qwen/Qwen3-0.6B \\\n  --port 8000\n"]}]}}}}'
+}
+
+# The same block-scalar shape, but genuinely fetching from the Hub: the source is
+# a repository id and HF_HOME points outside every mount.
+f_llmd_real_downloads() {
+    FIXTURE='{"spec":{"template":{"spec":{
+        "terminationGracePeriodSeconds":30,
+        "containers":[{"name":"vllm","image":"docker.io/vllm/vllm-openai:v0.26.0",
+                       "env":[{"name":"HF_HOME","value":"/tmp/huggingface"}],
+                       "command":["/bin/bash","-c"],
+                       "args":["/bin/true ; vllm serve Qwen/Qwen3-0.6B \\\n  --host 0.0.0.0 \\\n  --served-model-name my-alias \\\n  --port 8000\n"]}]}}}}'
+}
+
 f_unreadable() { FIXTURE=""; FIXTURE_RC=1; }
 
 reset() { FIXTURE=""; FIXTURE_RC=0; }
@@ -197,6 +230,35 @@ reset; f_unreadable
 before=$FAILED
 out="$(so_workload_gaps ns deployments w "$POD_DEPLOY")" && fail "expected non-zero"
 [ -z "$out" ] || fail "expected no output, got: $out"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="a multi-line block scalar keeps its later flags (read stops at newline 1)"
+reset; f_llmd_real
+before=$FAILED
+gaps="$(so_workload_gaps ns deployments w "$POD_DEPLOY")" || fail "returned non-zero"
+argv="$(printf '%s' "$gaps" | cut -d$'\037' -f6)"
+assert_contains "$argv" "--served-model-name"
+assert_contains "$argv" "--port"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="weights served BY LOCAL PATH need no cache, whatever name is advertised"
+reset; f_llmd_real
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+# The drain half is still owed -- this deployment has no preStop hook.
+assert_contains "$doc" "preStop"
+# ...but mounting a second cache into a pod already reading from one is the
+# false positive that --served-model-name produces.
+assert_not_contains "$doc" "claimName"
+assert_not_contains "$doc" "HF_HOME"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="the same shape genuinely downloading from the Hub does get a cache"
+reset; f_llmd_real_downloads
+before=$FAILED
+doc="$(so_workload_patch_doc ns deployments w "$POD_DEPLOY" 2>/dev/null)"
+assert_contains "$doc" "claimName"
+assert_contains "$doc" "HF_HOME"
 [ "$FAILED" -eq "$before" ] && ok
 
 # --- notes ------------------------------------------------------------------
