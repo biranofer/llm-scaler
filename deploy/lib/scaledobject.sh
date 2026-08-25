@@ -2910,7 +2910,17 @@ so_list() {
 # divergent implementation. Never calls so_apply_plan, never mutates anything.
 so_verify_scaledobjects() {
     local plan_file
-    plan_file=$(mktemp -t wva-verify-plan.XXXXXX.yaml)
+    # X's at the END of the template, and no `-t`: GNU mktemp deprecates -t, and
+    # BSD/macOS -t takes a PREFIX rather than a template, so
+    # `-t name.XXXXXX.yaml` means different things on the two platforms this repo
+    # is developed on. An explicit directory plus a trailing-X template is the
+    # one form both accept.
+    plan_file=$(mktemp "${TMPDIR:-/tmp}/wva-verify-plan.XXXXXX") || return 1
+    # Expanded at trap-set time, not read from $plan_file when the trap fires: a
+    # RETURN trap runs after the function locals are gone. (A `log_error` inside
+    # so_plan_rows exits the shell outright, and no RETURN trap covers that --
+    # that path still leaves one file behind.)
+    trap "rm -f '$plan_file'" RETURN
 
     # Silenced on both streams: log_info/log_success write to stderr, and this
     # call's own "plan written, edit it" messaging is about a temp file this
@@ -2961,6 +2971,18 @@ so_verify_scaledobjects() {
         log_warning "  UNREGISTERED: a discovered model server has no ScaledObject at all --"
         log_warning "    it is never autoscaled by WVA. Review with:  make scaledobjects-plan"
     fi
+    # Said out loud. An unresolved workload is one this check COULD NOT VERIFY,
+    # and it used to be counted and then passed over in silence -- so a drifted
+    # ScaledObject on a workload whose model is unreadable produced a clean bill
+    # of health. Not a hard failure, because a legitimate non-vLLM workload (the
+    # inference simulator the e2e runs) has no readable model and would fail
+    # every run; but silence is the wrong answer to "is this right?".
+    if [ "$unresolved" -gt 0 ]; then
+        log_warning "  UNRESOLVED: $unresolved workload(s) serve a model this check could not read,"
+        log_warning "    so their ScaledObjects were NOT checked for drift. This is not a report that"
+        log_warning "    they are correct. Expected for a non-vLLM/SGLang server; otherwise look at"
+        log_warning "    the container's args:  make scaledobjects-plan"
+    fi
 
     [ "$drift" -eq 0 ] && [ "$unregistered" -eq 0 ]
 }
@@ -2983,10 +3005,20 @@ so_verify_fma() {
     echo "=== FMA launcher scrape check ==="
     printf '%-40s %-10s %s\n' "NAMESPACE" "LAUNCHERS" "STATUS"
 
-    local ns launchers scrapers unscraped=0 none=0 ok=0
+    local ns launchers scrapers unscraped=0 none=0 ok=0 unreadable=0
     for ns in $(so_target_namespaces); do
-        launchers=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
-            --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        # The listing status is checked, not just its line count. Piping a failed
+        # `kubectl get` into `wc -l` yields 0, which read as "this namespace has
+        # no launcher pods" -- so a Forbidden listing was reported as nothing to
+        # check, and the run still exited 0. Forbidden is not absent.
+        local pods_out
+        if ! pods_out=$(kubectl get pods -n "$ns" -l app.kubernetes.io/component=launcher \
+                        --no-headers 2>/dev/null); then
+            printf '%-40s %-10s %s\n' "$ns" "?" "UNREADABLE"
+            unreadable=$((unreadable + 1))
+            continue
+        fi
+        launchers=$(printf '%s' "$pods_out" | grep -c . || true)
         if [ "${launchers:-0}" -eq 0 ]; then
             printf '%-40s %-10s %s\n' "$ns" "0" "-"
             none=$((none + 1))
@@ -3003,7 +3035,11 @@ so_verify_fma() {
     done
 
     echo
-    echo "verify-fma: $ok ok, $unscraped unscraped, $none with no launcher pods"
+    echo "verify-fma: $ok ok, $unscraped unscraped, $none with no launcher pods, $unreadable unreadable"
+    if [ "$unreadable" -gt 0 ]; then
+        log_warning "  UNREADABLE: $unreadable namespace(s) could not be listed, so nothing is known"
+        log_warning "    about their launcher pods. This is NOT a report that they are scraped."
+    fi
     if [ "$unscraped" -gt 0 ]; then
         log_warning "  UNSCRAPED: launcher pods present but nothing generates a scrape target for them."
         log_warning "    That FMA variant scales blind -- WVA never sees its engine metrics, and the HPA"
@@ -3011,5 +3047,8 @@ so_verify_fma() {
         log_warning "      kubectl apply -k config/fma-launcher-metrics -n <ns>   # or WVA_FMA_LAUNCHER_METRICS=true at install"
     fi
 
-    [ "$unscraped" -eq 0 ]
+    # Unreadable counts against the result here, unlike an unresolved model
+    # above: not being allowed to look at a namespace is a problem with the run,
+    # not a property of the workload.
+    [ "$unscraped" -eq 0 ] && [ "$unreadable" -eq 0 ]
 }

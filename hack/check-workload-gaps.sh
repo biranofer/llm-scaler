@@ -824,6 +824,56 @@ assert_eq "$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "" | grep 
 assert_contains "$(so_plan_entry yes ns Deployment w model 1 10 10 "" "" "" "")" "namespace: ns"
 [ "$FAILED" -eq "$before" ] && ok
 
+# --- the verify-* health checks ----------------------------------------------
+#
+# These report on a live cluster and are the kind of code that passes review by
+# inspection and fails in the field: every branch is a printf and a counter, and
+# the interesting ones are the branches nobody has on their cluster.
+
+# The stub is SAVED and restored below rather than retyped: a hand-written copy
+# silently dropped the per-name FIXTURE_MAP branch and broke a later case.
+orig_kubectl="$(declare -f kubectl)"
+
+CASE="verify-fma: a namespace that cannot be listed is not an empty one"
+reset
+before=$FAILED
+# Piping a failed `kubectl get` into `wc -l` yields 0, which read as "no launcher
+# pods here" -- so a Forbidden listing was reported as nothing to check and the
+# run still exited 0.
+kubectl() {
+    case "${1:-}${2:-}" in
+        getpods) return 1 ;;          # the listing is refused
+        *) return 0 ;;
+    esac
+}
+out=""; rc=0
+out="$(WVA_DEFAULT_SO_NS=ns1 so_verify_fma 2>&1)" || rc=$?
+assert_contains "$out" "UNREADABLE"
+assert_contains "$out" "NOT a report that they are scraped"
+assert_eq "$rc" "1" "return code"
+assert_not_contains "$out" "0          -"
+[ "$FAILED" -eq "$before" ] && ok
+
+CASE="verify-fma: a genuinely empty namespace is reported as such, and passes"
+reset
+before=$FAILED
+kubectl() {
+    case "${1:-}${2:-}" in
+        getpods) printf '' ;;         # listing succeeds, no launchers
+        *) return 0 ;;
+    esac
+}
+out=""; rc=0
+out="$(WVA_DEFAULT_SO_NS=ns1 so_verify_fma 2>&1)" || rc=$?
+assert_eq "$rc" "0" "return code"
+assert_contains "$out" "with no launcher pods"
+assert_not_contains "$out" "UNREADABLE"
+[ "$FAILED" -eq "$before" ] && ok
+
+# Restore the fixture stub for anything after this.
+unset -f kubectl
+eval "$orig_kubectl"
+
 # --- the driver -------------------------------------------------------------
 #
 # wva_workload_patch's return code is load-bearing: benchmark-standup runs it as
