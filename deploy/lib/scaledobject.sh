@@ -1260,6 +1260,28 @@ wva_model_cache() {
         return 1
     fi
 
+    # Warn BEFORE creating, when the cluster has never bound an RWX claim on this
+    # class. ReadWriteMany is a REQUEST: the API server accepts it against a class
+    # that cannot provide it, returns 0, and the claim then sits Pending forever.
+    # On a WaitForFirstConsumer class -- kind's default, and many plain-Kubernetes
+    # defaults -- Pending is also the NORMAL state, so the two are
+    # indistinguishable until a pod mounts it and hangs as well.
+    #
+    # Evidence, not a capability list: a class already backing RWX claims here can
+    # do it, whatever its provisioner is called. Silence is not proof of the
+    # opposite (a fresh cluster has no claims yet, and a namespace-scoped token
+    # cannot list them), so this warns and continues rather than refusing.
+    if [ -n "$(so_model_cache_classes)" ] \
+       && ! so_model_cache_classes | grep -q "^$class "; then
+        log_warning "No ReadWriteMany claim has ever bound on class '$class' on this cluster."
+        log_warning "  RWX is a request, not a guarantee: if $class cannot provide it, the claim is"
+        log_warning "  accepted and then stays Pending, and every pod that mounts it stays Pending too."
+        log_info "  Classes that HAVE bound RWX here:"
+        so_model_cache_classes | while IFS= read -r line; do
+            [ -n "$line" ] && log_info "    $line"
+        done
+    fi
+
     log_info "Creating $ns/$claim: $size, ReadWriteMany, class $class"
     if ! kubectl apply -f - <<EOF
 apiVersion: v1
@@ -1290,8 +1312,10 @@ EOF
     # default class is WaitForFirstConsumer.)
     if kubectl get storageclass "$class" -o jsonpath='{.volumeBindingMode}' 2>/dev/null | grep -q WaitForFirstConsumer; then
         log_success "Created $ns/$claim."
-        log_info "  Class $class binds on first use, so it stays Pending until a pod mounts it."
-        log_info "  It will bind when the model servers roll with the volume attached."
+        log_info "  Class $class binds on first use, so Pending is expected until a pod mounts it."
+        log_info "  That also means this command cannot tell you whether $class can actually do"
+        log_info "  ReadWriteMany -- you find out when the first pod mounts it. If that pod stays"
+        log_info "  Pending, the class is the reason:  kubectl describe pvc $claim -n $ns"
         log_info "  Next: make workload-patch NAMESPACE=$ns"
         return 0
     fi
