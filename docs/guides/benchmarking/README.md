@@ -80,7 +80,7 @@ bound and warns if it is not shareable:
 
 ```text
 Model cache:
-  model-pvc  1Ti  [ReadWriteMany]  class=ibm-spectrum-scale-fileset
+  <claim>  <size>  [ReadWriteMany]  Bound  class=<your-rwx-class>
 ```
 
 Re-running in the **same namespace** reuses that claim and its contents, which
@@ -90,10 +90,11 @@ tens of GB for a 32B — so keep the namespace when you intend to compare runs.
 
 **The standup also patches those model servers to drain on scale-down, which
 restarts them, and waits for the rollout.** A replica removed mid-stream takes its open
-responses with it — 39 truncated streams in one measured run, in four bursts each
-ending 25-30s after a scale-down. Those failures land in the same TTFT
-percentiles and error counts the run exists to measure, so a comparison between
-two scaling policies would partly be measuring which one removed more pods.
+responses with it, and each scale-down produces a burst of client-side stream
+failures beginning when the replica goes and ending roughly a generation later.
+Those failures land in the same TTFT percentiles and error counts the run exists
+to measure, so a comparison between two scaling policies would partly be
+measuring which one removed more pods.
 Patching is safe here because the standup deployed these workloads itself; it is
 pinned to `BENCHMARK_NAMESPACE` and reaches nothing else on the cluster.
 `BENCHMARK_DRAIN_ROLLOUT_TIMEOUT` (default 900s) bounds the wait.

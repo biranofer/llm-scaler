@@ -362,11 +362,11 @@ spec decides what happens to a pod that is going away, and on llm-d that spec
 belongs to the modelservice chart (`managed-by: Helm`, release `<model>-ms`).
 Anything the installer wrote there would be reverted by the next `helm upgrade`.
 
-It is worth knowing how much this costs before you turn autoscaling on. In one
-benchmark, four scale-downs produced four bursts of failures, each ending 25–30
-seconds after its reduction: 39 truncated streams over a single run. Long
-generations make it worse, because the window in which a pod is mid-response is
-most of its life.
+It is worth knowing how much this costs before you turn autoscaling on. Each
+scale-down produces a burst of client-side stream failures: they begin when the
+replica goes and stop about a generation later, once the responses it was
+writing have all been cut. Long generations make it worse, because the window in
+which a pod is mid-response is then most of its life.
 
 Two fields on the **model server's** pod template fix it:
 
@@ -540,8 +540,8 @@ What it will and will not do:
     then cannot schedule at all. An auto-created claim on the wrong class turns a
     slow scale-up into a failed one, which is worse than no cache.
   - **`storage` is a function of how many models share it and how large they
-    are.** 0.6B is ~1.2 GiB of weights; a 70B is ~140 GB. Real llm-d installs run
-    these from hundreds of GiB up to 1Ti.
+    are.** At roughly two bytes per parameter, a 0.6B model is ~1.2 GiB and a 70B
+    is ~140 GB; size the claim for every model that will share it, plus room.
 
   ```bash
   make model-cache NAMESPACE=<ns>     # lists classes this cluster serves RWX from
