@@ -517,15 +517,18 @@ scaledobjects-plan: ## List llm-d model servers and write an editable ScaledObje
 ## this cluster is already serving RWX from.
 .PHONY: model-cache
 model-cache: ## Create the weights PVC. NAMESPACE=<ns> WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<rwx-class>. With no size/class, lists candidate classes.
+	@# An explicit NAMESPACE wins, and is passed as the ARGUMENT rather than left to
+	@# wva_resolve_namespace, which only copies NAMESPACE into WVA_NS at namespace
+	@# scope -- so under SCOPE=cluster this created the claim in the controllers own
+	@# namespace while the operator watched it name theirs.
+	@#
+	@# These comments sit BEFORE the recipe, not inside it: a \ line placed after
+	@# a backslash continuation is not a recipe line at all, it is part of the
+	@# command, and the shell tried to run it -- "@#: command not found".
 	@$(if $(filter command line environment,$(origin WVA_NS)),WVA_NS=$(WVA_NS),) $(if $(filter command line environment,$(origin NAMESPACE)),NAMESPACE=$(NAMESPACE),) WVA_SCOPE=$(SCOPE) \
 		$(if $(WVA_MODEL_PVC_NAME),WVA_MODEL_PVC_NAME=$(WVA_MODEL_PVC_NAME),) \
 		$(if $(WVA_MODEL_PVC_SIZE),WVA_MODEL_PVC_SIZE=$(WVA_MODEL_PVC_SIZE),) \
 		$(if $(WVA_MODEL_PVC_CLASS),WVA_MODEL_PVC_CLASS=$(WVA_MODEL_PVC_CLASS),) \
-	@# An explicit NAMESPACE wins, and is passed as the ARGUMENT rather than left
-	@# to wva_resolve_namespace. That helper only copies NAMESPACE into WVA_NS
-	@# when the scope is namespace, so under SCOPE=cluster this created the claim
-	@# in the CONTROLLERS OWN namespace while the operator watched it name theirs.
-	@# Creating storage in the wrong namespace is not a cosmetic slip.
 		bash -c 'source deploy/lib/common.sh; source deploy/lib/scaledobject.sh; wva_bootstrap_env; wva_model_cache "$(if $(filter command line environment,$(origin NAMESPACE)),$(NAMESPACE),$${WVA_NS})"'
 
 .PHONY: workload-patch
@@ -2016,6 +2019,8 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 		exit 1; \
 	fi
 	@echo "deploy script line continuations OK"
+	@echo "Checking for make comments inside a continued recipe..."
+	@bash hack/check-make-recipes.sh
 	@echo "deploy script syntax OK"
 
 .PHONY: smoke-deploy-scripts
