@@ -1385,7 +1385,15 @@ benchmark-standup: ## Stand up the benchmark environment, then install WVA from 
 	@# waited for, so the run starts against pods that are already settled rather
 	@# than mid-restart.
 	@echo "Making the model servers drain on scale-down..."
-	@$(MAKE) --no-print-directory workload-patch NAMESPACE=$(BENCHMARK_NAMESPACE) \
+	@# SCOPE and WVA_NS are PINNED, not inherited. workload-patch honours WVA_SCOPE
+	@# from the environment, and anyone running a cluster-scoped install has that
+	@# exported -- which would make this line walk every namespace on the cluster
+	@# and apply a live patch, restarting model servers that have nothing to do
+	@# with the benchmark. The justification for applying rather than emitting is
+	@# that these workloads are ours; that holds only inside BENCHMARK_NAMESPACE.
+	@$(MAKE) --no-print-directory workload-patch \
+		NAMESPACE=$(BENCHMARK_NAMESPACE) WVA_NS=$(BENCHMARK_NAMESPACE) \
+		SCOPE=namespace WVA_SCOPE=namespace WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE) \
 		WVA_WORKLOAD_PATCH_APPLY=true \
 		WVA_WORKLOAD_PATCH_FILE=$(BENCHMARK_WORKSPACE)/wva-workload-patch.yaml || \
 		echo "  WARNING: could not patch the model servers; scale-downs in this run will truncate in-flight requests."
@@ -1711,6 +1719,15 @@ benchmark-add-variant: ## Add a secondary WVA variant to the running benchmark (
 	python3 $(CURDIR)/hack/benchmark/add_variant.py \
 		-n $(BENCHMARK_NAMESPACE) \
 		--config $(VARIANT_CONFIG)
+	@# The variant is a new model server, deployed the same way and with the same
+	@# gap: no preStop hook. Without this the second model truncates streams on
+	@# every scale-down while the first one does not, which is a difference
+	@# between the two arms of whatever the run is comparing.
+	@$(MAKE) --no-print-directory workload-patch \
+		NAMESPACE=$(BENCHMARK_NAMESPACE) WVA_NS=$(BENCHMARK_NAMESPACE) \
+		SCOPE=namespace WVA_SCOPE=namespace WVA_DEFAULT_SO_NS=$(BENCHMARK_NAMESPACE) \
+		WVA_WORKLOAD_PATCH_APPLY=true || \
+		echo "  WARNING: the variant was added but not patched; its scale-downs will truncate in-flight requests."
 
 .PHONY: benchmark-enable-v2-saturation
 benchmark-enable-v2-saturation: ## Enable WVA saturation V2 analyzer (apply configmap + restart controller)
@@ -1896,6 +1913,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@for script in deploy/kind-emulator/*.sh; do if [ -f "$$script" ]; then bash -n "$$script"; fi; done
 	@echo "Checking the jq marker predicates..."
 	@bash hack/check-jq-predicates.sh
+	@echo "Checking workload readiness detection..."
+	@# Executes the real functions against fixture pod specs. `bash -n` above
+	@# cannot see any of what this covers: choosing the wrong container, counting
+	@# preStop hooks pod-wide, or reporting an unreadable workload as healthy all
+	@# parse perfectly and are all wrong about a running cluster.
+	@bash hack/check-workload-gaps.sh
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,

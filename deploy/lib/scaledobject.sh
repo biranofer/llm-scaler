@@ -564,24 +564,30 @@ so_pool() {
 # stays silent. It fires for a workload that was pointed at the Hub directly.
 so_weights_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local out served pvcs
-    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
-        | jq -r --argjson p "$pod" '
-            (getpath($p) // {}) as $t
-            | [ ([ $t.spec.volumes[]? | select(.persistentVolumeClaim != null) ] | length),
-                ([ $t.spec.containers[]? | (.command // []) + (.args // []) | .[] ]
-                 | join(" ")) ] | @tsv' 2>/dev/null) || out=""
-    [ -n "$out" ] || return 0
-    pvcs="${out%%	*}"
-    served="${out#*	}"
-    # Any persistent volume at all means weights can be kept off the Hub, and
-    # whether the operator wired it to the right path is theirs to know.
-    [ "${pvcs:-0}" -gt 0 ] && return 0
-    # A local path anywhere in the command means the weights are already resident.
-    case "$served" in
-        *" /"*|"/"*) return 0 ;;
+    local gaps engine prestop grace pvcs onvol argv model
+
+    # One detector, shared with the patch emitter. This function used to carry
+    # its own copy and the copies disagreed: it accepted "a PVC exists anywhere
+    # in the pod" as proof weights persist, and its local-path test matched any
+    # absolute path in the command line -- so the `/bin/sh -c "vllm serve ..."`
+    # form the modelservice chart emits matched on `/bin/sh` and suppressed the
+    # warning for every deployment the chart produces.
+    if ! gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")"; then
+        printf '%s' "Could not read the pod spec, so whether weights persist across scale-ups is unknown -- this is not a report that they do."
+        return 0
+    fi
+    IFS=$'' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
+    [ -n "$engine" ] || return 0
+    [ "${onvol:-0}" -eq 1 ] && return 0
+
+    # A local path is already-resident weights. Parsed by so_model_id, which
+    # anchors on `serve`, rather than by looking for a slash anywhere.
+    model="$(so_model_id "$argv")" || model=""
+    case "$model" in
+        ""|/*) return 0 ;;
     esac
-    printf '%s' "No persistent volume for weights, and the model is served by repo id -- so every scale-up re-downloads it from Hugging Face. That is a per-replica cost on the path this ScaledObject is about to start exercising, and a dependency on the Hub being reachable. llm-d's modelservice chart mounts a model cache by default (uriProtocol: pvc at /model-cache); see docs/deployment/operations.md#weights-and-the-model-cache."
+
+    printf '%s' "Weights do not persist: ${engine} downloads outside any volume it has mounted, so every scale-up re-fetches ${model} from Hugging Face. That is a per-replica cost on the path this ScaledObject is about to start exercising, and a dependency on the Hub being reachable. llm-d's modelservice chart mounts a model cache by default (uriProtocol: pvc at /model-cache); see docs/deployment/operations.md#weights-and-the-model-cache."
     return 0
 }
 
@@ -600,55 +606,94 @@ so_weights_note() {
 # ---------------------------------------------------------------------------
 
 # so_workload_patch_index lists the documents in an emitted patch file as
-# "<namespace>\t<name>\t<kind>", one per line.
+# "<namespace>\037<name>", one per line.
+#
+# `yq eval`, NOT `eval-all`. eval-all evaluates the expression ONCE across the
+# whole stream, so `[...] | @tsv` returns a single line with every document's
+# fields concatenated -- the consumer's `read` then ran once, patched only the
+# first workload, and the success message reported the full count anyway. Four
+# reviewers found it independently and it was invisible in testing because the
+# default benchmark scenario runs one decode Deployment.
 so_workload_patch_index() {
-    yq eval-all '[.metadata.namespace, .metadata.name, .kind] | @tsv' "$1" 2>/dev/null \
+    yq eval '[.metadata.namespace, .metadata.name] | join("\u001f")' "$1" 2>/dev/null \
         | grep -v '^$' || true
 }
 
-# so_workload_patch_one applies the one document matching ns/name from an emitted
-# patch file.
-#
-# The document is passed to `kubectl patch --patch-file` unchanged. Its
-# apiVersion, kind and metadata match the object being patched, so a strategic
-# merge treats them as no-ops, and the YAML comments explaining each field go
-# along harmlessly.
+# so_workload_patch_one applies the one document matching ns/name, and returns
+# non-zero when it does not.
 so_workload_patch_one() {
-    local file="$1" ns="$2" name="$3" resource="$4" doc rc=0
+    local file="$1" ns="$2" name="$3" doc rc=0
     doc="$(mktemp)" || return 1
+    # shellcheck disable=SC2016
     yq eval-all "select(.metadata.namespace == \"$ns\" and .metadata.name == \"$name\")" \
         "$file" > "$doc" 2>/dev/null
     if [ ! -s "$doc" ]; then
         rm -f "$doc"
-        log_warning "  Could not isolate the patch for $ns/$name; skipped."
-        return 0
+        log_warning "  Could not isolate the patch for $ns/$name."
+        return 1
     fi
-    kubectl patch "$resource" "$name" -n "$ns" --type=strategic --patch-file="$doc" || rc=$?
+    # Checked against THIS document, not the file. The claim check used to read
+    # the whole stream, so one workload needing a cache blocked the drain patch
+    # for every other workload in the run.
+    if ! so_workload_patch_claim_ok "$ns" "$doc"; then
+        rm -f "$doc"
+        return 1
+    fi
+    # `kubectl patch --type=strategic`, never `kubectl apply`. These objects were
+    # created by Helm and carry no last-applied-configuration annotation, so apply
+    # both warns and writes one, adopting a resource this installer does not own
+    # into kubectl's bookkeeping. Server-side apply is refused outright:
+    # "conflict with helm ... .spec.template.spec.terminationGracePeriodSeconds".
+    kubectl patch deployments "$name" -n "$ns" --type=strategic --patch-file="$doc" || rc=$?
     rm -f "$doc"
-    [ "$rc" -eq 0 ] || log_warning "  Patching $ns/$name failed (rc=$rc); the emitted file still has it."
-    return 0
+    return "$rc"
 }
 
-# wva_workload_patch walks the same model servers the plan discovers and writes a
-# patch for each one that needs it.
+# so_workload_patch_claim_ok reports whether the PVC a cache patch names exists.
 #
-# Emit is the default and the point. Applying is opt-in via
-# WVA_WORKLOAD_PATCH_APPLY=true, and it is a plain strategic-merge patch rather
-# than a server-side apply: `kubectl apply --server-side` on these fields is
-# REFUSED by the API server, because Helm owns them --
+# Applying a volume whose claim is absent pins every pod the rollout creates at
+# "persistentvolumeclaim not found" -- turning a warning about weights into an
+# outage. Checked before applying, never before emitting: an emitted patch is for
+# someone to read, and naming a claim they still have to create is the point.
+so_workload_patch_claim_ok() {
+    local ns="$1" file="$2" claim
+    claim="$(yq eval '.spec.template.spec.volumes[]?.persistentVolumeClaim.claimName' "$file" 2>/dev/null \
+             | grep -v '^null$' | grep -v '^$' | head -1)"
+    [ -n "$claim" ] || return 0            # no cache half in this patch
+    kubectl get pvc "$claim" -n "$ns" >/dev/null 2>&1 && return 0
+    log_warning "  $ns: PersistentVolumeClaim '$claim' does not exist, so the weights half is NOT applied."
+    log_warning "    Create it first (size and storage class are a cluster decision), or apply the emitted file yourself."
+    return 1
+}
+
+# wva_workload_patch walks the model servers the plan discovers and writes a patch
+# for each one that needs it.
 #
-#   conflict with "helm" using apps/v1: .spec.template.spec.terminationGracePeriodSeconds
+# Emit is the default and the point. These fields belong to the model server's
+# chart, and the API server says so: a server-side apply is REFUSED with
+# "conflict with helm". The emitted patch goes where ownership already is.
 #
-# Getting past that needs --force-conflicts, which takes the field from Helm and
-# leaves the two of them contesting it. A plain patch sets the value and claims
-# nothing, so the next `helm upgrade` simply reverts it -- which is the honest
-# behaviour to have, and what the warning says.
+# WVA_WORKLOAD_PATCH_APPLY=true patches the live objects, and says plainly that
+# the next `helm upgrade` reverts it.
+#
+# Returns non-zero when anything could not be read or patched, so a caller's
+# `|| echo WARNING` can actually fire. It used to return 0 on every path, which
+# made the standup's warning unreachable for the only failure it named.
 wva_workload_patch() {
     local out="${WVA_WORKLOAD_PATCH_FILE:-wva-workload-patch.yaml}"
     local apply="${WVA_WORKLOAD_PATCH_APPLY:-false}"
-    local ns resource pod kind name container found=0 tmp
+    local ns resource pod kind name found=0 tmp rc=0 unreadable=0
+    local patched=0 failed=0 doc_ns doc_name
 
     tmp="$(mktemp)" || return 1
+    # Without this a Ctrl-C during a namespace scan leaves the patch in /tmp.
+    #
+    # DOUBLE quotes: the path is expanded into the trap string now, not read from
+    # $tmp when the trap fires. A RETURN trap runs after the function's locals are
+    # gone, so the single-quoted form expanded to nothing -- it removed nothing,
+    # and under `set -u` it aborted the caller outright.
+    trap "rm -f '$tmp'" RETURN
+
     for ns in $(so_target_namespaces); do
         for kind in Deployment LWS; do
             if [ "$kind" = "Deployment" ]; then
@@ -657,10 +702,19 @@ wva_workload_patch() {
                 kubectl get crd leaderworkersets.leaderworkerset.x-k8s.io >/dev/null 2>&1 || continue
                 resource=leaderworkersets; pod="$SO_POD_PATH_LWS"
             fi
-            while IFS=$'\t' read -r name container; do
+            # A failed listing is NOT an empty namespace. Reported, and it makes
+            # the whole run non-zero, because "nothing to patch" is a claim about
+            # pods and must not be made about pods nobody could read.
+            local listing
+            if ! listing="$(kubectl get "$resource" -n "$ns" -o json 2>/dev/null)"; then
+                log_warning "  Could not list $resource in $ns -- it is not being reported as clean."
+                unreadable=1
+                continue
+            fi
+            while IFS= read -r name; do
                 [ -n "$name" ] || continue
-                so_workload_patch_doc "$ns" "$resource" "$name" "$pod" "$container" >> "$tmp"
-            done < <(kubectl get "$resource" -n "$ns" -o json 2>/dev/null \
+                so_workload_patch_doc "$ns" "$resource" "$name" "$pod" >> "$tmp"
+            done < <(printf '%s' "$listing" \
                 | jq -r --argjson p "$pod" --argjson markers "$(so_serving_markers_json)" '
                     def serving_labels: to_entries
                         | any((.key + "=" + (.value|tostring)) as $kv
@@ -669,113 +723,195 @@ wva_workload_patch() {
                     | . as $o
                     | (getpath($p) // {}) as $t
                     | select((($t.metadata.labels // {}) + ($o.metadata.labels // {})) | serving_labels)
-                    # The engine container, not container 0: llm-d puts a routing
-                    # sidecar alongside vllm, and patching the proxy drains nothing.
-                    | [ $o.metadata.name,
-                        ( [ $t.spec.containers[]? | select(.name | test("vllm|sglang|engine|decode|prefill")) | .name ][0]
-                          // $t.spec.containers[0].name ) ] | @tsv' 2>/dev/null || true)
+                    | $o.metadata.name' 2>/dev/null || true)
         done
     done
 
     if [ ! -s "$tmp" ]; then
-        rm -f "$tmp"
-        log_success "Every model server already drains on scale-down and has its weights on a volume. Nothing to patch."
+        if [ "$unreadable" -eq 1 ]; then
+            log_warning "Nothing was written: some workloads could not be read (see above)."
+            return 1
+        fi
+        log_success "Every model server already drains on scale-down and keeps its weights on a volume."
+        # A stale file from an earlier run would otherwise keep asserting that
+        # work is outstanding after it has been done.
+        [ -f "$out" ] && rm -f "$out" && log_info "  Removed the previous $out, which is now out of date."
         return 0
     fi
-    found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null || echo 0)
+    found=$(grep -c '^apiVersion:' "$tmp" 2>/dev/null) || found=0
 
     if [ "$apply" = "true" ]; then
         log_warning "WVA_WORKLOAD_PATCH_APPLY=true: patching $found workload(s) directly."
         log_warning "  These fields belong to the model server's chart. The next \`helm upgrade\` reverts them,"
         log_warning "  silently, and the workload goes back to what it was. Put them in your chart values to keep them."
-        # `kubectl patch --type=strategic`, never `kubectl apply`. These objects were
-        # created by Helm, so they carry no last-applied-configuration annotation, and
-        # apply both warns and writes one -- adopting a resource this installer does not
-        # own into kubectl's apply bookkeeping. A strategic patch sets the fields and
-        # claims nothing. (Server-side apply is worse still: the API server REFUSES it,
-        # "conflict with helm ... .spec.template.spec.terminationGracePeriodSeconds",
-        # and getting past that needs --force-conflicts, which seizes the field.)
-        local doc_ns doc_name doc_kind doc_res
-        while IFS=$'	' read -r doc_ns doc_name doc_kind; do
+        while IFS=$'\037' read -r doc_ns doc_name; do
             [ -n "$doc_name" ] || continue
-            doc_res=deployments
-            [ "$doc_kind" = "LeaderWorkerSet" ] && doc_res=leaderworkersets
-            so_workload_patch_one "$tmp" "$doc_ns" "$doc_name" "$doc_res"
+            if so_workload_patch_one "$tmp" "$doc_ns" "$doc_name"; then
+                patched=$((patched + 1))
+            else
+                failed=$((failed + 1))
+                log_warning "  Patching $doc_ns/$doc_name failed; the emitted file still has it."
+            fi
         done < <(so_workload_patch_index "$tmp")
-        log_success "Patched $found workload(s)."
+        # Counted from patches that SUCCEEDED, not documents emitted. The old
+        # message printed the emitted count unconditionally -- it reported
+        # "Patched 3" with yq missing and zero patch calls made.
+        if [ "$patched" -gt 0 ]; then
+            log_success "Patched $patched of $found workload(s)."
+        fi
+        if [ "$failed" -gt 0 ]; then
+            log_warning "$failed of $found workload(s) were NOT patched."
+            rc=1
+        fi
     fi
 
-    mv "$tmp" "$out"
+    if ! mv "$tmp" "$out"; then
+        log_warning "Could not write $out; the patch is complete but unsaved."
+        return 1
+    fi
+    trap - RETURN
     log_success "Wrote $out ($found workload(s) need something)."
     log_info "  Apply it where the pod spec is owned -- your modelservice values, or the chart that made it."
-    log_info "  To patch the live objects anyway: WVA_WORKLOAD_PATCH_APPLY=true make workload-patch"
-    return 0
+    [ "$apply" != "true" ] && log_info "  To patch the live objects anyway: WVA_WORKLOAD_PATCH_APPLY=true make workload-patch"
+    [ "$unreadable" -eq 1 ] && rc=1
+    return "$rc"
 }
 
-# so_workload_gaps reports what a scale target is missing, as
-# "<hasPreStop> <grace> <hasPVC> <servedLocal>". Empty when it cannot be read.
-so_workload_gaps() {
-    local ns="$1" resource="$2" name="$3" pod="$4"
-    kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
-        | jq -r --argjson p "$pod" '
-            (getpath($p) // {}) as $t
-            | [ ([ $t.spec.containers[]? | select(.lifecycle.preStop != null) ] | length),
-                ($t.spec.terminationGracePeriodSeconds // 30),
-                ([ $t.spec.volumes[]? | select(.persistentVolumeClaim != null) ] | length),
-                ([ $t.spec.containers[]? | (.command // []) + (.args // []) | .[]
-                   | select(startswith("/")) ] | length)
-              ] | @tsv' 2>/dev/null || true
-}
-
-# so_workload_patch_doc writes one YAML document for a workload that needs
-# something, or nothing at all when it does not.
+# so_workload_gaps reports the pod-spec facts that decide whether autoscaling a
+# workload is safe, as \037-separated fields:
 #
-# A strategic-merge patch, not a whole spec: it names only what it changes, so it
-# reads as a diff and can be pasted into chart values without carrying the rest
-# of somebody's Deployment along with it.
+#   engine \037 hasPreStop \037 grace \037 hasPVC \037 weightsOnVolume \037 argv
+#
+# Returns 1 and prints NOTHING when the object cannot be read. That distinction is
+# the point: an empty result used to mean both "no gaps" and "not allowed to
+# look", and the caller reported the reassuring one. This file already carries
+# the rule, above wva_namespaces_with_model_servers -- "callers that care must ask
+# which, because they are different problems" -- and this is a caller that cares.
+#
+# \037 rather than tab, for the reason given at the top of this file: an empty
+# field in a tab stream shifts every later field left, and `engine` is empty
+# exactly when the rest matters least.
+#
+# THE ENGINE CONTAINER IS IDENTIFIED BY IMAGE AND COMMAND, not by name. A name
+# regex was tried and is wrong: an SGLang engine is routinely called `server`,
+# and falling back to containers[0] lands on a routing proxy where one exists --
+# putting the drain hook on the sidecar and leaving the engine to be SIGKILLed,
+# which is the exact failure the hook exists to prevent. The rule below mirrors
+# isSGLangContainer in internal/inferenceengine/engine.go: the image names the
+# engine, or the joined command+args carries a documented launch form. Empty when
+# no container matches, and the caller then skips the workload rather than
+# guessing.
+so_workload_gaps() {
+    local ns="$1" resource="$2" name="$3" pod="$4" out
+    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null) || return 1
+    [ -n "$out" ] || return 1
+    printf '%s' "$out" | jq -r --argjson p "$pod" '
+        (getpath($p) // {}) as $t
+        | ([ $t.spec.containers[]?
+             | ((.command // []) + (.args // []) | join(" ") | ascii_downcase) as $cmd
+             | select(((.image // "") | ascii_downcase | test("vllm|sglang"))
+                      or ($cmd | test("vllm serve|sglang\\.launch_server|sglang serve")))
+           ] | first) as $e
+        # Where the engine would find weights already on disk: every path it has
+        # mounted. Used below to decide whether a cache is REAL, rather than
+        # whether a volume merely exists somewhere in the pod.
+        | ([ $e.volumeMounts[]?.mountPath ] // []) as $mounts
+        # The directory the engine actually downloads into. HF_HOME and its
+        # relatives are where vLLM puts weights; --download-dir overrides them.
+        | ( [ $e.env[]? | select(.name == "HF_HOME" or .name == "HF_HUB_CACHE"
+                                 or .name == "TRANSFORMERS_CACHE") | .value ] | first ) as $envdir
+        | ( ((($e.command // []) + ($e.args // [])) | join(" ")) ) as $argv
+        | ( ($argv | capture("--download-dir[= ]+(?<d>[^ ]+)").d) // $envdir ) as $dldir
+        | [ ($e.name // ""),
+            (if ($e | not) then 0 elif ($e.lifecycle.preStop != null) then 1 else 0 end),
+            ($t.spec.terminationGracePeriodSeconds // 30),
+            ([ $t.spec.volumes[]? | select(.persistentVolumeClaim != null) ] | length),
+            # weightsOnVolume: the download directory lies under something the
+            # ENGINE has mounted. A PVC mounted anywhere else does not make
+            # downloads persist, which is why "a PVC exists" is not the test --
+            # a mount with no HF_HOME silences the check and fixes nothing.
+            (if ($dldir | not) then 0
+             elif ([ $mounts[] | select(. != null) | select($dldir | startswith(.)) ] | length) > 0 then 1
+             else 0 end),
+            $argv
+          ] | join("\u001f")' 2>/dev/null || return 1
+}
+
 so_workload_patch_doc() {
-    local ns="$1" resource="$2" name="$3" pod="$4" container="$5"
-    local gaps prestop grace pvcs localpath want_drain=0 want_cache=0 kind
-    gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")"
-    [ -n "$gaps" ] || return 0
-    read -r prestop grace pvcs localpath <<< "$gaps"
+    local ns="$1" resource="$2" name="$3" pod="$4"
+    local gaps engine prestop grace pvcs onvol argv model
+    local want_drain=0 want_cache=0 grace_want mountpath
+
+    # LWS is skipped, deliberately and loudly. Three things would each have to be
+    # solved and none is: the pod template is spec.leaderWorkerTemplate, not
+    # spec.template, so a Deployment-shaped patch writes a field the type does not
+    # have; the API server does not accept a strategic merge for a custom
+    # resource, so applying it is an unconditional 415; and draining a multi-node
+    # group means the WORKER template too, since killing a worker aborts the
+    # leader's in-flight generations whatever hook the leader carries. Emitting a
+    # confident, wrong document is worse than emitting nothing.
+    if [ "$resource" = "leaderworkersets" ]; then
+        log_warning "  Skipping LeaderWorkerSet $ns/$name: draining a multi-node group needs the worker template too, and is not implemented."
+        return 0
+    fi
+
+    if ! gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")"; then
+        log_warning "  Could not read $resource/$name in $ns -- skipped. It is not being reported as healthy; it was not readable."
+        return 0
+    fi
+    IFS=$'\037' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
+
+    # No identifiable engine means no idea which container to patch, and the
+    # fallback that guessed container 0 is what put hooks on routing proxies.
+    if [ -z "$engine" ]; then
+        log_warning "  No vLLM or SGLang container found in $resource/$name ($ns) -- skipped rather than guessing which one serves."
+        return 0
+    fi
 
     [ "${prestop:-0}" -eq 0 ] && want_drain=1
-    # Grace period alone is not a gap: the hook is what drains and the period only
-    # bounds it. Raised alongside the hook, never on its own.
-    [ "${pvcs:-0}" -eq 0 ] && [ "${localpath:-0}" -eq 0 ] && want_cache=1
+
+    # The cache half asks whether WEIGHTS LAND ON A VOLUME, not whether a volume
+    # exists. so_model_id is the parser the plan already uses for modelID: it
+    # anchors on `serve` and handles the `sh -c "vllm serve <model> ..."` form the
+    # modelservice chart emits. A local path needs no cache; an unreadable model
+    # is left alone, because a confidently wrong answer here mounts a PVC into a
+    # workload that had no use for one.
+    model="$(so_model_id "$argv")" || model=""
+    case "$model" in
+        ""|/*) : ;;
+        *) [ "${onvol:-0}" -eq 0 ] && want_cache=1 ;;
+    esac
+
     [ "$want_drain" -eq 1 ] || [ "$want_cache" -eq 1 ] || return 0
 
-    kind=Deployment
-    [ "$resource" = "leaderworkersets" ] && kind=LeaderWorkerSet
-
-    # Heredocs, not printf. The deploy-script lint rejects a literal \n inside a
-    # command, because that is nearly always a line continuation an edit
-    # collapsed -- it shipped once and broke the limiter install. A format string
-    # full of them is indistinguishable from that, so the YAML is written as YAML.
     cat <<HDR
 ---
-# ${resource}/${name} in ${ns}
+# ${resource}/${name} in ${ns}   (engine container: ${engine})
 HDR
     if [ "$want_drain" -eq 1 ]; then
+        # Never LOWER an existing grace period. A long grace with no hook is
+        # exactly the configuration not to shorten, and the emitted document used
+        # to print the old value in a comment while quietly reducing it.
+        grace_want="${WVA_DRAIN_GRACE_SECONDS:-120}"
+        [ "${grace:-30}" -gt "$grace_want" ] && grace_want="$grace"
         cat <<DRAINWHY
-#   drain: no preStop hook; terminationGracePeriodSeconds is ${grace:-30}.
+#   drain: ${engine} declares no preStop hook; terminationGracePeriodSeconds is ${grace:-30}.
 #          A replica removed mid-stream cuts the responses it is still writing.
 DRAINWHY
     fi
     if [ "$want_cache" -eq 1 ]; then
         cat <<CACHEWHY
-#   cache: no persistent volume and the model is served by repo id, so every
-#          scale-up re-downloads the weights from Hugging Face.
+#   cache: ${model} is a repository id and the engine downloads outside any
+#          mounted volume, so every scale-up fetches the weights again.
 CACHEWHY
     fi
     cat <<HEAD
 #
-# Apply where the pod spec is OWNED -- your modelservice values, or the chart
-# that produced this object. Applying it directly works until the next
+# Apply where the pod spec is OWNED -- your modelservice values, or the chart that
+# produced this object. Applying it directly works until the next
 # \`helm upgrade\` reverts it.
 apiVersion: apps/v1
-kind: ${kind}
+kind: Deployment
 metadata:
   name: ${name}
   namespace: ${ns}
@@ -785,57 +921,71 @@ spec:
 HEAD
     if [ "$want_drain" -eq 1 ]; then
         cat <<GRACE
-      # Long enough for the longest generation you will wait for. It is the total
-      # budget: the kubelet sends SIGKILL when it expires, hook or not.
-      terminationGracePeriodSeconds: ${WVA_DRAIN_GRACE_SECONDS:-120}
+      # The kubelet sends SIGKILL when this expires, hook or not, so it is the
+      # total budget rather than the drain window. The drain window is the
+      # preStop sleep below; this only has to be comfortably larger.
+      terminationGracePeriodSeconds: ${grace_want}
 GRACE
     fi
     cat <<CONTAINERS
       containers:
-      - name: ${container}
+      - name: ${engine}
 CONTAINERS
     if [ "$want_drain" -eq 1 ]; then
         cat <<PRESTOP
         lifecycle:
           preStop:
             exec:
-              # The endpoint leaves the Service the moment the pod goes
-              # Terminating, so no new work arrives; this only has to outlast the
-              # requests already on it.
-              command: ["/bin/sh", "-c", "sleep ${WVA_DRAIN_SLEEP_SECONDS:-30}"]
+              # Two things share this window, which is why it is not merely "long
+              # enough to finish a request": the endpoint's removal from the
+              # Service propagates asynchronously through kube-proxy and the EPP,
+              # so part of it is covering arrivals that are still being routed
+              # here, and the rest is letting what is already in flight finish.
+              command: ["/bin/sh", "-c", "sleep ${WVA_DRAIN_SLEEP_SECONDS:-45}"]
 PRESTOP
     fi
     if [ "$want_cache" -eq 1 ]; then
+        mountpath="${WVA_MODEL_CACHE_PATH:-/model-cache}"
         cat <<CACHE
+        # The mount alone changes nothing: vLLM downloads to HF_HOME, so without
+        # this the weights land inside the container and the volume sits unused
+        # while every replica fetches them again.
+        env:
+        - name: HF_HOME
+          value: ${mountpath}/huggingface
         volumeMounts:
-        - name: model-storage
-          mountPath: /model-cache
+        - name: ${WVA_MODEL_VOLUME_NAME:-model-storage}
+          mountPath: ${mountpath}
       volumes:
-      - name: model-storage
+      - name: ${WVA_MODEL_VOLUME_NAME:-model-storage}
         persistentVolumeClaim:
           claimName: ${WVA_MODEL_PVC_NAME:-model-pvc}
-      # The claim itself is not created here: its size and storage class are a
-      # cluster decision, and one claim is normally shared by every model.
+      # The claim is NOT created here: its size and storage class are cluster
+      # decisions and one claim is normally shared by every model. It must exist
+      # before this is applied, or the pods it creates stay Pending.
 CACHE
     fi
 }
 
 so_drain_note() {
     local ns="$1" resource="$2" name="$3" pod="$4"
-    local out grace prestop
-    out=$(kubectl get "$resource" "$name" -n "$ns" -o json 2>/dev/null \
-        | jq -r --argjson p "$pod" '
-            (getpath($p) // {}) as $t
-            | [ ($t.spec.terminationGracePeriodSeconds // 30),
-                ([ $t.spec.containers[]? | select(.lifecycle.preStop != null) ] | length)
-              ] | @tsv' 2>/dev/null) || out=""
-    [ -n "$out" ] || return 0
-    read -r grace prestop <<< "$out"
+    local gaps engine prestop grace pvcs onvol argv
+
+    # preStop is checked on the ENGINE, not pod-wide. The previous copy counted
+    # containers with a hook across the whole pod, so an llm-d deployment whose
+    # routing proxy has one reported clean while the engine -- the container
+    # actually holding the streams -- had none.
+    if ! gaps="$(so_workload_gaps "$ns" "$resource" "$name" "$pod")"; then
+        printf '%s' "Could not read the pod spec, so whether scale-down drains cleanly is unknown -- this is not a report that it does."
+        return 0
+    fi
+    IFS=$'' read -r engine prestop grace pvcs onvol argv <<< "$gaps"
+    [ -n "$engine" ] || return 0
     # A hook of any shape counts. Whether it drains for long enough is the
     # operator's judgement, and guessing at a threshold would produce a warning
     # nobody can act on.
     [ "${prestop:-0}" -gt 0 ] && return 0
-    printf '%s' "Scale-down will cut in-flight requests: no container declares a preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing. The pod spec belongs to the model server's chart rather than to WVA -- see docs/deployment/operations.md#draining-before-scale-down."
+    printf '%s' "Scale-down will cut in-flight requests: ${engine} declares no preStop hook, and terminationGracePeriodSeconds is ${grace:-30}. A replica removed mid-stream terminates the responses it is still writing. The pod spec belongs to the model server's chart rather than to WVA -- see docs/deployment/operations.md#draining-before-scale-down."
     return 0
 }
 

@@ -311,9 +311,12 @@ kubectl get deploy <model>-decode -n <ns> \
   -o jsonpath='{.spec.template.spec.volumes[?(@.persistentVolumeClaim)].persistentVolumeClaim.claimName}{"\n"}'
 ```
 
-`make scaledobjects-plan` reports a workload that has neither a persistent volume
-nor a local model path, because registering a ScaledObject is the point at which
-new replicas start appearing without anyone asking.
+`make scaledobjects-plan` reports a workload whose engine downloads outside any
+volume it has mounted, because registering a ScaledObject is the point at which
+new replicas start appearing without anyone asking. The test is where the weights
+*land* — `HF_HOME` (or `--download-dir`) under a mounted path — not whether a
+volume exists somewhere in the pod: a cache mounted with nothing pointed at it is
+the case that looks solved and is not.
 
 ### What it does not buy
 
@@ -377,9 +380,60 @@ sends SIGKILL when it expires regardless of what the hook is doing.
 ScaledObject is the moment scale-down becomes possible:
 
 ```
-note: Scale-down will cut in-flight requests: no container declares a preStop
-      hook, and terminationGracePeriodSeconds is 30. ...
+note: Scale-down will cut in-flight requests: vllm declares no preStop hook,
+      and terminationGracePeriodSeconds is 30. ...
 ```
+
+## Writing the patch: `make workload-patch`
+
+The two sections above describe the same shape of problem — a pod spec that is
+fine while the replica count is fixed and costly once something starts changing
+it — and `make workload-patch` writes the fix for both:
+
+```bash
+make workload-patch                       # everything in scope
+make workload-patch NAMESPACE=my-models   # one namespace
+```
+
+It writes `wva-workload-patch.yaml`: one document per model server that needs
+something, naming the engine container, with a comment saying which of the two
+problems that workload has.
+
+**It writes a file rather than applying it, and that is deliberate.** The pod
+spec belongs to the model server's chart. A server-side apply is not merely
+impolite here, it is refused — `conflict with helm ...
+.spec.template.spec.terminationGracePeriodSeconds` — and a patch that does land
+is reverted by the next `helm upgrade`, silently. Put the contents into your
+modelservice values, where they will survive.
+
+`WVA_WORKLOAD_PATCH_APPLY=true` patches the live objects anyway, for a cluster
+where that is the trade you want. It restarts the pods it patches and says so.
+
+| variable | default | what it sets |
+| --- | --- | --- |
+| `WVA_WORKLOAD_PATCH_FILE` | `wva-workload-patch.yaml` | where the patch is written |
+| `WVA_WORKLOAD_PATCH_APPLY` | `false` | `true` patches the live workloads too |
+| `WVA_DRAIN_GRACE_SECONDS` | `120` | `terminationGracePeriodSeconds` in the emitted patch. An existing longer value is kept, never lowered |
+| `WVA_DRAIN_SLEEP_SECONDS` | `45` | the preStop sleep — the drain window itself |
+| `WVA_MODEL_PVC_NAME` | `model-pvc` | the claim the weights volume names |
+| `WVA_MODEL_VOLUME_NAME` | `model-storage` | the volume name in the pod spec |
+| `WVA_MODEL_CACHE_PATH` | `/model-cache` | where the volume is mounted, and the parent of the emitted `HF_HOME` |
+
+Two things it will not do:
+
+- **It does not create the PersistentVolumeClaim.** Size and storage class are
+  cluster decisions, and one claim is normally shared by every model. When
+  applying, a claim that does not exist stops the weights half rather than
+  leaving pods stuck at `persistentvolumeclaim not found`.
+- **It skips LeaderWorkerSets, loudly.** Draining a multi-node group means the
+  worker template too — killing a worker aborts the leader's in-flight
+  generations whatever hook the leader carries — and the API server will not
+  accept a strategic merge for a custom resource. Emitting a confident, wrong
+  document is worse than emitting nothing.
+
+`make benchmark-standup` runs this with `APPLY=true`, pinned to the benchmark
+namespace: those model servers are ours, and a run whose scale-downs truncate
+requests is measuring the harness rather than the autoscaler.
 
 ## First-line troubleshooting
 

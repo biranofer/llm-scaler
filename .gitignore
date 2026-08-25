@@ -50,6 +50,11 @@ hack/tls-certs/
 benchmark-scaledobject-plan.yaml
 wva-plan.yaml
 
+# Workload patch written by `make workload-patch`. It is generated from a live
+# cluster and names that cluster's namespaces, so it is a local artifact rather
+# than something to commit.
+wva-workload-patch.yaml
+
 # Python bytecode from the hack/benchmark scripts
 __pycache__/
 *.pyc
