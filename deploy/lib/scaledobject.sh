@@ -494,36 +494,68 @@ so_model_id() {
 }
 
 # so_resolve_env_ref answers a so_model_id result that is itself an unexpanded
-# shell variable reference ($MODEL_NAME or ${MODEL_NAME}) rather than a model
-# name. Some guides -- pd-disaggregation among them -- write the engine
-# container's customCommand as a shell script that references $MODEL_NAME
-# rather than the literal model name; Kubernetes stores that script as-is, so
-# $MODEL_NAME only becomes "Qwen/Qwen3-0.6B" when bash runs it inside the
-# container, and so_model_id, reading the pod spec, can only ever see the
-# unresolved reference. The container's own env entries are NOT shell script --
-# .value is already the resolved string -- so a variable reference can be
-# answered from there instead of guessed at or left empty.
+# variable reference -- $MODEL_NAME, ${MODEL_NAME}, or Kubernetes' own
+# $(MODEL_NAME) -- rather than a model name. Some guides -- pd-disaggregation
+# among them -- write the engine container's customCommand as a shell script
+# that references $MODEL_NAME rather than the literal model name; Kubernetes
+# stores that script as-is, so $MODEL_NAME only becomes "Qwen/Qwen3-0.6B" when
+# bash runs it inside the container, and so_model_id, reading the pod spec, can
+# only ever see the unresolved reference. The container's own env entries are
+# NOT script -- .value is already the resolved string -- so a variable
+# reference can be answered from there instead of guessed at or left empty.
 #
-# $2 is the engine container's env as NAME=value pairs, space-joined (see
-# so_discover's jq query, where it is read off the same container $c that args
-# came from). A token that is not a variable reference is echoed back
-# unchanged. A reference naming an env var this container does not set
+# $(MODEL_NAME) is the same problem one layer down, and not a rarer one: that
+# spelling is expanded by the KUBELET rather than by bash, and it is what the
+# scenarios that pass the model as a plain args entry write --
+# config/scenarios/cicd/kind.yaml and examples/sim.yaml both render
+#
+#     args: ["--served-model-name", "$(MODEL_NAME)"]
+#
+# so the running process sees the model while the pod spec, which is all this
+# reads, keeps the literal. It is answered from the same env list.
+#
+# $2 is the engine container's env as NAME=value pairs, space-joined (see the
+# so_discover query, where it is read off the same container $c that args came
+# from -- and note the missing apostrophe there: hack/check-quoted-programs
+# reads a comment line naming jq with an odd apostrophe count as the line that
+# OPENS a quoted program). A token that is not a variable reference is echoed
+# back unchanged. A reference naming an env var this container does not set
 # produces EMPTY, not the raw "$VARNAME" text: that text is never a valid
 # modelID (no metric series is ever named after a shell variable), so
 # returning it would recreate the same bug under a different spelling. Empty
-# joins the caller's existing "model could not be read" handling instead,
-# which is the correct outcome for a reference that cannot be answered.
+# joins the caller's existing "model could not be read" handling -- which the
+# caller reports as an UNRESOLVED REFERENCE rather than as a missing flag, and
+# the difference matters: the flag is there in plain sight, it just names a
+# variable nothing here answers, and an operator sent looking for a
+# --served-model-name that is written on the very next line learns nothing.
+#
+# Only a token that is ENTIRELY one reference is resolved. A compound one --
+# ${BASE}-instruct, /model-cache/$MODEL_PATH -- yields empty deliberately:
+# resolving the variable half would produce a plausible-looking modelID that is
+# not the served name, which is the failure this function exists to prevent.
 so_resolve_env_ref() {
     local tok="$1" envs="$2" name e
     case "$tok" in
-        '$'*) name="${tok#\$}"; name="${name#\{}"; name="${name%\}}" ;;
-        *) echo "$tok"; return ;;
+        # The bracketed forms first, and matched on their CLOSING bracket: the
+        # bare '$'* arm would otherwise take "(MODEL_NAME)" or "{MODEL_NAME}"
+        # for the variable name and answer nothing. A token that opens a
+        # bracket without closing it, or carries anything after the close, is
+        # compound -- it falls through to the bare arm, keeps a bracket in
+        # $name, and so matches no env entry, which is the wanted answer.
+        '$('*')') name="${tok#\$(}"; name="${name%)}" ;;
+        '${'*'}') name="${tok#\$\{}"; name="${name%\}}" ;;
+        '$'*)     name="${tok#\$}" ;;
+        # printf, not echo: a value that begins with -n or -e is eaten by echo
+        # as an option and the model comes back empty. so_model_source takes
+        # the same care for the same reason.
+        *) printf '%s\n' "$tok"; return 0 ;;
     esac
     for e in $envs; do
         case "$e" in
-            "$name="*) echo "${e#*=}"; return ;;
+            "$name="*) printf '%s\n' "${e#*=}"; return 0 ;;
         esac
     done
+    return 0
 }
 
 # so_model_source echoes WHERE a serving container gets its weights: the argument
@@ -1754,7 +1786,7 @@ so_existing_name() {
 # then the whole truth about what was found, and turning a "no" into a "yes" is a
 # deliberate act rather than an undiscoverable one.
 so_discover() {
-    local ns name args envs labels objlabels model pool kind apply note drain weights
+    local ns name args envs labels objlabels model model_ref pool kind apply note drain weights
     local existing existing_name existing_min existing_max existing_cost existing_policy existing_is_wva
     local min max cost policy
     so_plan_preamble
@@ -1786,10 +1818,23 @@ so_discover() {
                 # object that scales something else entirely.
                 cost="$SO_DEFAULT_VARIANT_COST"; policy=""; existing_name=""
                 model=$(so_model_id "$args")
+                # Remembered BEFORE resolution, because both outcomes are empty
+                # after it and they are not the same problem. A container with
+                # no --served-model-name at all needs the operator to go and
+                # write one; a container whose --served-model-name is
+                # $MODEL_NAME has one in plain sight, and telling that operator
+                # the flag is missing sends them to look at a line that already
+                # says what they are being asked to add.
+                model_ref=""
+                case "$model" in '$'*) model_ref="$model" ;; esac
                 model=$(so_resolve_env_ref "$model" "$envs")
                 if [ -z "$model" ]; then
                     apply=no
-                    note="no --served-model-name, --model, or 'vllm serve <model>' on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+                    if [ -n "$model_ref" ]; then
+                        note="the model is written as $model_ref, a reference the engine container env does not answer -- it has a value only inside the running container, so the pod spec cannot be read any further. Fill in modelID with the name the engine actually serves and set apply: yes to include it."
+                    else
+                        note="no --served-model-name, --model, or 'vllm serve <model>' on the container, so the model could not be read. Fill in modelID and set apply: yes to include it."
+                    fi
                 fi
                 # FMA: report it, do NOT retarget.
                 #
@@ -1906,13 +1951,23 @@ so_discover() {
                            # Kubernetes already stores as a literal value.
                            # so_resolve_env_ref uses this to answer a variable
                            # reference so_model_id could not. Vars whose value
-                           # contains a space or the record delimiter are
+                           # holds WHITESPACE or the record delimiter are
                            # dropped: this list is itself space-joined and
                            # pipe-delimited from the fields around it, and no
                            # served-model-name value legitimately needs either.
+                           #
+                           # The newline half of that is load-bearing, not
+                           # tidiness: read below takes ONE RECORD PER LINE,
+                           # and a YAML block scalar (value: |) ends every
+                           # value it writes with one. A value that kept its
+                           # newline would split a single workload record over
+                           # two lines -- the real entry losing the args field
+                           # that trails it, and so its model, plus a phantom
+                           # entry named after whatever followed the break. A
+                           # test for one literal space let that straight in.
                            (($c.env // []) | map(
                                select(.value != null
-                                      and (.value | test(" ") | not)
+                                      and (.value | test("\\s") | not)
                                       and (.value | test("\\|") | not))
                                | .name + "=" + .value) | join(" ")),
                            # Newlines collapsed to spaces: read below takes one
