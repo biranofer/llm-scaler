@@ -51,6 +51,20 @@ var (
 	cancel        context.CancelFunc
 )
 
+// suiteModelID gives one suite a model of its own, derived from the configured
+// base so a run still honours MODEL_ID.
+//
+// Suites share a namespace, a controller and -- unless they ask otherwise -- a
+// model ID, and the engine keys REAL STATE on that ID: which workloads serve the
+// model, and what it has learned about their capacity. Two suites under one ID
+// are therefore not isolated from each other, and what follows lands on whichever
+// of them ran second. See sfzModelID and the policy-tier suite for the two cases
+// that have forced this so far; a suite whose assertions depend on the engine
+// knowing nothing about its model yet wants one of these.
+func suiteModelID(suffix string) string {
+	return cfg.ModelID + "-" + suffix
+}
+
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "E2E Test Suite")
