@@ -363,12 +363,15 @@ spec:
         # the port the InferencePool dials. This owns it and follows whichever
         # model is awake; WVA re-points it through the control endpoint.
         - name: proxy
-          # NOT SHIPPABLE AS-IS: a personal namespace, pinned by digest so at
-          # least the bytes are fixed. Build it from this tree with
-          # `make docker-build-warmpool-proxy docker-push-warmpool-proxy
-          # WARMPOOL_PROXY_IMG=...` (Dockerfile.warmpool-proxy) and republish
-          # under the project's own namespace before this leaves a test cluster.
-          image: ghcr.io/ev-shindin/warmpool-proxy:v8@sha256:66e8bb63b985c87db81716b2047f07a5deba2f1729e5397f4476d2415af72093
+          # Published under the PROJECT's namespace and pinned by digest, so the
+          # bytes are fixed and the package belongs to the repository rather than
+          # to a person. Republished from the build proven on this cluster rather
+          # than rebuilt: the digest is unchanged, byte for byte.
+          #
+          # Build your own from this tree with `make docker-build-warmpool-proxy
+          # docker-push-warmpool-proxy WARMPOOL_PROXY_IMG=<ref>`
+          # (Dockerfile.warmpool-proxy) and pass --proxy-image.
+          image: ghcr.io/ev-shindin/llm-scaler/warmpool-proxy:v8@sha256:66e8bb63b985c87db81716b2047f07a5deba2f1729e5397f4476d2415af72093
           imagePullPolicy: IfNotPresent
           args:
             - --port=8000

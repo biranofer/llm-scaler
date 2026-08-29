@@ -11,7 +11,7 @@ IMG_TAG ?= main
 IMG ?= $(IMAGE_TAG_BASE)/llm-scaler:$(IMG_TAG)
 # The warm-pool proxy ships as its own image because it runs in the pool's Pod,
 # not the controller's. Pin a digest in the manifest; this tag is for building.
-WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/warmpool-proxy:$(IMG_TAG)
+WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-scaler/warmpool-proxy:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 CLUSTER_GPU_TYPE ?= nvidia-mix
 CLUSTER_NODES ?= 3
