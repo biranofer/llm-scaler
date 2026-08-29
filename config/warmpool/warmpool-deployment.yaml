@@ -87,10 +87,21 @@ spec:
         - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
-      # CLUSTER-SPECIFIC. Needed where the GPU operator installs a RuntimeClass
-      # (pokprod uses `nvidia-legacy`); on a cluster without it, admission fails
-      # outright, so remove this line rather than guess at a name.
-      runtimeClassName: nvidia-legacy
+      # NO RuntimeClass, deliberately.
+      #
+      # Most GPU clusters need none: the GPU operator makes the NVIDIA runtime
+      # the default, and requesting nvidia.com/gpu above is the whole of it.
+      # Nothing else in this repo sets one -- not the benchmark workloads, not
+      # the e2e fixtures -- and the models this pool warms run on the same nodes
+      # with the same runtime.
+      #
+      # A few clusters do require one to be named (pokprod installs
+      # `nvidia-legacy`). Naming it here would be guessing on behalf of every
+      # other cluster, where a RuntimeClass that does not exist fails ADMISSION
+      # and no Pod is ever created. So if yours needs one, add
+      # `runtimeClassName: <name>` here -- and `deploy/warmpool.sh` will adopt
+      # whatever the namespace's own model workloads use, so the scripted path
+      # needs no flag either.
       # Long enough for the preStop drain below to finish, which the drain
       # enforces rather than assumes: it holds ONE deadline for the whole hook
       # (100s) instead of a timeout per call. Per-call timeouts sum, and for a

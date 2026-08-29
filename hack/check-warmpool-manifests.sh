@@ -287,20 +287,39 @@ else
 fi
 
 # --- the RuntimeClass ------------------------------------------------------
-# Cluster-specific and wrong in both directions: a name the cluster does not have
-# fails ADMISSION, so the Deployment exists and no Pod ever appears; omitting one
-# the cluster requires gives containers with no GPU access, which fails later and
-# far more quietly. It was baked in with no way to change it, which meant every
-# pool this script created named one cluster's RuntimeClass.
+# NONE by default, and that is the correct default: most GPU clusters need none,
+# because the operator makes the NVIDIA runtime the default. Nothing else in this
+# repo sets one. It was hardcoded to the name ONE cluster installs, so every
+# other cluster was refused on first use -- a name the cluster lacks fails
+# ADMISSION, so the Deployment exists and no Pod ever appears.
 printf '%s
-' "$POOL" | grep -q 'runtimeClassName:'   && ok "a pool names a RuntimeClass by default"   || fail "no runtimeClassName: on a cluster whose GPU operator installs one, the containers get no GPU"
+' "$POOL" | grep -q 'runtimeClassName:'   && fail "a pool names a RuntimeClass nobody asked for: on a cluster without it every Pod fails admission"   || ok "no RuntimeClass unless one is asked for"
 
-NORC="$(render --runtime-class none)"
 printf '%s
-' "$NORC" | grep -q 'runtimeClassName:'   && fail "--runtime-class none still names one, so a cluster without a RuntimeClass cannot create this pool"   || ok "--runtime-class none omits the key entirely"
+' "$(render --runtime-class none)" | grep -q 'runtimeClassName:'   && fail "--runtime-class none still names one"   || ok "--runtime-class none names none"
 
 printf '%s
 ' "$(render --runtime-class nvidia)" | grep -q 'runtimeClassName: nvidia$'   && ok "--runtime-class names the one given"   || fail "--runtime-class did not reach the Pod spec"
+
+# --- the default proxy image ------------------------------------------------
+# --proxy-image is optional: the default comes from config/warmpool, emitted into
+# the script by `make warmpool-render` so the two cannot disagree about which
+# image a pool runs. A default that drifted from the manifest would give the
+# scripted and the hand-applied pool different proxies.
+DEFAULTED="$(bash "$SCRIPT" create -n tenant --name pool --wva-namespace wva-system   --accelerator NVIDIA-H100-80GB-HBM3 --dry-run 2>/dev/null)"
+
+if [ -z "$DEFAULTED" ]; then
+  fail "create without --proxy-image produced nothing: the flag is still required"
+else
+  ok "create works without --proxy-image"
+  MANIFEST_IMG="$(grep -A2 'name: proxy$' "$(dirname "$0")/../config/warmpool/warmpool-deployment.yaml"     | grep -m1 'image:' | sed 's/.*image: //')"
+  if printf '%s
+' "$DEFAULTED" | grep -qF "$MANIFEST_IMG"; then
+    ok "the default proxy image is the one config/warmpool pins"
+  else
+    fail "the default proxy image is not the manifest's ($MANIFEST_IMG): the scripted and hand-applied pools would run different proxies"
+  fi
+fi
 
 # The SHIPPED manifests name no monitoring namespace at all.
 #

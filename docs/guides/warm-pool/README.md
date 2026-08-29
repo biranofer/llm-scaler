@@ -161,7 +161,7 @@ Three values the plan cannot know, and where they come from:
 | --- | --- | --- |
 | `WARMPOOL_PROXY_IMG` | optional — defaults to the published image `config/warmpool` pins. Build your own with `make docker-build-warmpool-proxy docker-push-warmpool-proxy` | nothing: the default is used, and the installer says which |
 | `MONITORING_NAMESPACE` | the install already has it — where it put the monitoring stack | the pool is created **unscraped**: it works, and every model it lends to reads as having less demand than it has |
-| `WARMPOOL_RUNTIME_CLASS` | your GPU operator, if it installed one (default `nvidia-legacy`; `none` if it installed none) | `create` refuses rather than making Pods that all fail admission |
+| `WARMPOOL_RUNTIME_CLASS` | usually nothing — `create` adopts whatever the namespace's own GPU workloads use | nothing: most clusters need no RuntimeClass at all |
 
 `WVA_DEFAULT_SO=plan` writes the plan and stops, if you would rather edit it and
 apply later with `WVA_DEFAULT_SO_PLAN=<file>`.

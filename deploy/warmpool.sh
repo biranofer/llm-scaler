@@ -46,14 +46,17 @@ WVA_NAMESPACE=""
 # to it. Guessing a namespace would be worse -- a rule admitting the wrong one
 # reads as monitoring that is configured.
 MONITORING_NAMESPACE=""
-# The RuntimeClass the GPU operator installed, if it installed one. CLUSTER
-# SPECIFIC, and wrong in either direction is a failure: naming one the cluster
-# does not have fails ADMISSION, so the Pods are never created; omitting one it
-# requires gives containers with no GPU access, which fails later and far more
-# quietly. So the default is the value the manifests carry, and create REFUSES
-# if the cluster has no such RuntimeClass rather than producing Pods that cannot
-# schedule. Pass --runtime-class none to omit it.
-RUNTIME_CLASS="nvidia-legacy"
+# The RuntimeClass for the pool Pods. EMPTY BY DEFAULT, and that is the right
+# default: most GPU clusters need none, because the GPU operator makes the NVIDIA
+# runtime the default and requesting nvidia.com/gpu is the whole of it. Nothing
+# else in this repo sets one.
+#
+# Where a cluster DOES require one, it is not guessed: create reads what the
+# namespace's own model workloads use and adopts it, because the pool runs the
+# same engines on the same nodes as the models it warms. --runtime-class
+# overrides that, and --runtime-class none forces none.
+RUNTIME_CLASS=""
+RUNTIME_CLASS_SET=0
 CACHE_CLAIM="model-pvc"
 APPLY=1
 # On by DEFAULT. The only cluster-specific value the shipped policy needs is the
@@ -95,9 +98,10 @@ create options:
   --proxy-image REF    the pool proxy image. Optional: defaults to the one
                        config/warmpool pins, which is published
   --wva-namespace NS   where WVA runs, for scalerAddress
-  --runtime-class NAME the RuntimeClass for the pool Pods (default nvidia-legacy),
-                       or `none` to set none. Cluster-specific: a name the
-                       cluster does not have fails admission outright, and
+  --runtime-class NAME the RuntimeClass for the pool Pods, or `none` for none.
+                       Omit it and create adopts whatever the namespace's model
+                       workloads use, which is what the pool must match: a name
+                       the cluster does not have fails admission outright, and
                        omitting one it needs gives containers with no GPU
   --monitoring-namespace NS
                        where Prometheus runs. Creates a PodMonitor for the pool
@@ -261,6 +265,65 @@ cmd_create() {
     log_info "  and a worker template that hard-coded a rank would fight the fan-out."
   fi
 
+  # THE RUNTIME CLASS, ADOPTED RATHER THAN GUESSED.
+  #
+  # The pool runs the same engines on the same nodes as the models it warms, so
+  # whatever those models need to reach a GPU, the pool needs too. Reading it
+  # from them is the same discipline the accelerator already follows, and it is
+  # the only source that cannot be wrong.
+  #
+  # Most clusters answer "none": the GPU operator makes the NVIDIA runtime the
+  # default and requesting nvidia.com/gpu is the whole of it. A few name one.
+  # Guessing either way is a silent failure in one direction and a loud one in
+  # the other -- a name the cluster lacks fails ADMISSION, so no Pod ever
+  # appears, and a missing name gives containers with no GPU access.
+  if [ "$RUNTIME_CLASS_SET" -eq 0 ] && [ "$APPLY" -eq 1 ]; then
+    local found
+    found="$(workload_runtime_classes)" || found=""
+    case "$(printf '%s' "$found" | wc -w)" in
+      0) : ;; # nobody names one; none is right
+      1)
+        RUNTIME_CLASS="$(printf '%s' "$found" | tr -d '[:space:]')"
+        log_info "RuntimeClass ${RUNTIME_CLASS}: adopted from the GPU workloads already running in ${NAMESPACE}"
+        ;;
+      *)
+        log_warning "The GPU workloads in ${NAMESPACE} do not agree on a RuntimeClass ($(printf '%s' "$found" | tr '
+' ' ')); creating the pool with none. If its Pods start without GPUs, name one with --runtime-class."
+        ;;
+    esac
+  fi
+
+  # An explicitly named one has to EXIST. Naming one the cluster does not have
+  # fails admission, so the Deployment is created, reports nothing useful, and no
+  # Pod ever appears -- which reads as a scheduling problem rather than a name
+  # that was wrong from the start.
+  #
+  # FORBIDDEN IS NOT ABSENT. RuntimeClass is cluster-scoped, and an installer
+  # under a namespace-scoped identity may be unable to read it while the
+  # RuntimeClass is perfectly present. Folding that into "not found" would refuse
+  # a pool that would have worked, over a permission the pool does not need: the
+  # API server checks the RuntimeClass when it admits the Pod, not this script.
+  # So an unanswerable question is not a denial -- the same rule the controller
+  # applies to its own borrow preflight.
+  if [ -n "$RUNTIME_CLASS" ] && [ "$APPLY" -eq 1 ]; then
+    # `|| rc_rc=$?` and not a bare assignment: under errexit a failing command
+    # substitution in an assignment aborts the script, so the check that exists
+    # to EXPLAIN a wrong RuntimeClass exited silently for the one input it was
+    # written for. It did, and printed nothing at all.
+    local rc_err rc_rc=0
+    rc_err="$(kubectl get runtimeclass "$RUNTIME_CLASS" 2>&1 >/dev/null)" || rc_rc=$?
+    if [ "$rc_rc" -ne 0 ]; then
+      case "$rc_err" in
+        *orbidden*|*"cannot get"*|*"cannot list"*|*nauthorized*)
+          log_warning "cannot check whether RuntimeClass '${RUNTIME_CLASS}' exists (${rc_err}); creating the pool anyway. If its Pods never appear, that is the first thing to check."
+          ;;
+        *)
+          log_error "no RuntimeClass '${RUNTIME_CLASS}' on this cluster, so every pool Pod would fail admission and none would ever be created. Name the one your GPU operator installed with --runtime-class, or pass --runtime-class none if it installed none. Available: $(kubectl get runtimeclass -o name 2>/dev/null | tr '\n' ' ')"
+          ;;
+      esac
+    fi
+  fi
+
   local manifest
   if [ "$GROUP_SIZE" -gt 1 ]; then
     manifest=$(warmpool_group_manifest "$memory")
@@ -291,20 +354,6 @@ $(warmpool_podmonitor)"
   if [ "$APPLY" -eq 0 ]; then
     printf '%s\n' "$manifest"
     return 0
-  fi
-
-  # The RuntimeClass has to EXIST. Naming one the cluster does not have fails
-  # admission, so the Deployment is created, reports nothing useful, and no Pod
-  # ever appears -- which reads as a scheduling problem rather than as a name
-  # that was wrong from the start. The default is the name ONE cluster's GPU
-  # operator installed, so this is the flag most likely to be wrong on a cluster
-  # nobody has run this on yet.
-  #
-  # Checked rather than guessed away: --runtime-class none is how you say the
-  # cluster needs none, and that is a different statement from not having thought
-  # about it.
-  if [ -n "$RUNTIME_CLASS" ] && ! kubectl get runtimeclass "$RUNTIME_CLASS" >/dev/null 2>&1; then
-    log_error "no RuntimeClass '${RUNTIME_CLASS}' on this cluster, so every pool Pod would fail admission and none would ever be created. Name the one your GPU operator installed with --runtime-class, or pass --runtime-class none if it installed none. Available: $(kubectl get runtimeclass -o name 2>/dev/null | tr '\n' ' ')"
   fi
 
   printf '%s\n' "$manifest" | kubectl apply -f - >/dev/null
@@ -724,6 +773,22 @@ YAML
 # before a target is built is what keeps an idle pool from showing as a wall of
 # permanently-DOWN targets, which reads as broken monitoring rather than as a
 # pool with nothing awake.
+# workload_runtime_classes lists the distinct RuntimeClass names used by the GPU
+# workloads in this namespace, one per line, empty if none of them name one.
+#
+# GPU workloads only. A namespace holds plenty of Pods that never touch an
+# accelerator and have no opinion worth copying; the ones that request
+# nvidia.com/gpu are the ones running under whatever runtime the pool will need.
+workload_runtime_classes() {
+  kubectl get deployments -n "$NAMESPACE" -o json 2>/dev/null |
+    jq -r '
+      .items[]
+      | .spec.template.spec as $pod
+      | select(any($pod.containers[]?; .resources.limits["nvidia.com/gpu"] // empty))
+      | $pod.runtimeClassName // empty
+    ' 2>/dev/null | sort -u
+}
+
 warmpool_podmonitor() {
   cat <<YAML
 apiVersion: monitoring.coreos.com/v1
@@ -1055,8 +1120,11 @@ while [ $# -gt 0 ]; do
     --monitoring-namespace) MONITORING_NAMESPACE="$2"; shift 2 ;;
     --runtime-class)
       # `none` omits the key. An empty string would too, but spelling it makes
-      # the intent unmistakable in a script somebody reads later.
+      # the intent unmistakable in a script somebody reads later -- and it is a
+      # different statement from saying nothing, which lets create adopt the
+      # one the namespace's workloads use.
       if [ "$2" = "none" ]; then RUNTIME_CLASS=""; else RUNTIME_CLASS="$2"; fi
+      RUNTIME_CLASS_SET=1
       shift 2 ;;
     --cache-claim)   CACHE_CLAIM="$2"; shift 2 ;;
     --dry-run)       APPLY=0; shift ;;
