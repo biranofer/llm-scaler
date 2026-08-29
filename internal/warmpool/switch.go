@@ -28,6 +28,10 @@ type SwitchConfig struct {
 	// requests and sleeps, and the model taking over wakes. Without a floor, two
 	// variants hovering either side of the threshold would trade the GPUs back
 	// and forth and spend most of their time doing neither's work.
+	//
+	// It bounds the SPARE rule only. A candidate that needs to scale up is short
+	// of capacity now rather than heading that way, and holding it behind the
+	// floor leaves it short for as long as the floor lasts.
 	MinInterval time.Duration
 }
 
@@ -81,7 +85,10 @@ func urgencyOf(p decision.Pressure, cfg SwitchConfig) urgency {
 //     one model to the other and pays a drain and a wake to do it.
 //  2. Ties go to the variant with the least spare capacity, so the pool lands on
 //     the one furthest into trouble rather than whichever was listed first.
-//  3. A switch may not follow another within MinInterval.
+//  3. A switch may not follow another within MinInterval -- UNLESS the candidate
+//     needs to scale up, which preempts the floor. By rule 1 that can only
+//     happen when the awake model does not also need to scale up, so the pool
+//     cannot trade its GPUs between two models that are both growing.
 //
 // Nothing is decided from an absent reading. A variant the optimizer has not
 // measured is neither a candidate nor a reason to stay: acting either way would
@@ -147,16 +154,24 @@ func chooseAwake(
 		return "", reasonNoCandidate, false
 	}
 
-	// The floor applies to the scale-up case too. A scale-up need is what makes
-	// a switch worth making at all, not a licence to make it twice a minute:
-	// the signal flaps as replicas come and go, and a pool that chased it would
-	// spend its time draining and waking rather than serving.
-	if !lastSwitch.IsZero() && now.Sub(lastSwitch) < cfg.MinInterval {
+	// A SCALE-UP NEED PREEMPTS THE FLOOR. The candidate is short of capacity now,
+	// not heading that way, and making it wait out the interval leaves it short
+	// for as long as the interval lasts.
+	//
+	// Safe only because of the filter above. Reaching here at this urgency means
+	// the candidate needs to scale up and the awake model does NOT -- if both
+	// did, the candidate would have been dropped as no more urgent, and nothing
+	// would preempt anything. So the pool cannot trade the GPUs back and forth
+	// between two models that are both growing: the only way to preempt twice in
+	// quick succession is for a genuinely comfortable model to have become
+	// urgent in between, which is the case worth acting on.
+	urgent := best.urgency == urgencyNeedsScaleUp
+	if !urgent && !lastSwitch.IsZero() && now.Sub(lastSwitch) < cfg.MinInterval {
 		return best.variant, reasonTooSoon, false
 	}
 
 	reason := reasonSpare
-	if best.urgency == urgencyNeedsScaleUp {
+	if urgent {
 		reason = reasonScaleUp
 	}
 	return best.variant, reason, true

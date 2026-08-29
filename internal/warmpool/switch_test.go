@@ -129,19 +129,18 @@ func TestNoSwitchWhenTheAwakeModelAlsoNeedsToScaleUp(t *testing.T) {
 	}
 }
 
-// A switch that is due still waits out MinInterval.
+// A switch on SPARE capacity waits out MinInterval.
 //
-// This applies to the scale-up case too, deliberately. A scale-up need is what
-// makes a switch worth making, not a licence to make it repeatedly: the signal
-// flaps as replicas come and go, and a pool chasing it would spend its time
-// draining and waking rather than serving.
-func TestASwitchWaitsOutTheMinimumInterval(t *testing.T) {
+// The candidate is heading toward trouble rather than in it, and switching costs
+// a drain and a wake. Without the floor, two models either side of the threshold
+// trade the GPUs back and forth and spend their time doing neither's work.
+func TestASpareSwitchWaitsOutTheMinimumInterval(t *testing.T) {
 	now := time.Now()
 	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
 		now.Add(-time.Minute), // the last switch was one minute ago
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
-			decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true},
+			decision.Pressure{SpareFraction: 0.01},
 		), now)
 
 	if switching {
@@ -151,7 +150,7 @@ func TestASwitchWaitsOutTheMinimumInterval(t *testing.T) {
 		t.Errorf("reason = %q, want too-soon -- the candidate is named so the log says what is waiting", reason)
 	}
 	if got != variantOther {
-		t.Errorf("candidate = %q, want other-one reported even though the switch is deferred", got)
+		t.Errorf("candidate = %q, want it reported even though the switch is deferred", got)
 	}
 
 	// ...and goes through once the interval has passed.
@@ -159,10 +158,54 @@ func TestASwitchWaitsOutTheMinimumInterval(t *testing.T) {
 		now.Add(-11*time.Minute),
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
-			decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true},
+			decision.Pressure{SpareFraction: 0.01},
 		), now)
 	if !switching {
 		t.Error("the switch should proceed once MinInterval has passed")
+	}
+}
+
+// A SCALE-UP need does not wait.
+//
+// The candidate is short of capacity NOW, and holding it behind the floor leaves
+// it short for as long as the floor lasts -- on a retained pool, where no
+// replicas are coming, that is the whole of its shortfall.
+func TestAScaleUpPreemptsTheMinimumInterval(t *testing.T) {
+	now := time.Now()
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+		now.Add(-time.Second), // a switch one second ago
+		readings(
+			decision.Pressure{SpareFraction: 0.60},
+			decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true},
+		), now)
+
+	if !switching || got != variantOther {
+		t.Fatalf("chooseAwake = %q, %v; want an immediate switch: the candidate needs to scale up", got, switching)
+	}
+	if reason != reasonScaleUp {
+		t.Errorf("reason = %q, want the scale-up reason", reason)
+	}
+}
+
+// ...but preemption cannot make the pool trade GPUs between two models that are
+// both growing.
+//
+// That is not a second guard -- it falls out of the first rule. A candidate must
+// be under MORE pressure than the awake model, so if both need to scale up the
+// candidate is dropped before the floor is ever considered. The test pins it
+// because the preemption above would be dangerous without it, and the guard that
+// makes it safe is in a different part of the function.
+func TestPreemptionCannotThrashBetweenTwoGrowingModels(t *testing.T) {
+	now := time.Now()
+	got, _, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+		now.Add(-time.Second),
+		readings(
+			decision.Pressure{SpareFraction: 0.02, NeedsScaleUp: true},
+			decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true},
+		), now)
+
+	if switching {
+		t.Errorf("switched to %q one second after the last switch, with BOTH models growing", got)
 	}
 }
 

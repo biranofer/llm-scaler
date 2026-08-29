@@ -748,11 +748,13 @@ The rule, in the order it is applied:
    The pool cannot make two models comfortable at once.
 3. **Ties go to the tightest.** Between two candidates at the same urgency, the
    one with least spare capacity wins.
-4. **No switch within `warmPoolMinSwitchInterval` of the last one.** This applies
-   to the scale-up case too: a scale-up need is what makes a switch worth making,
-   not a licence to make it repeatedly. The signal flaps as replicas come and go,
-   and a pool chasing it would spend its time draining and waking rather than
-   serving.
+4. **No switch within `warmPoolMinSwitchInterval` of the last one — unless the
+   candidate needs to scale up.** A model heading toward trouble can wait; one
+   that is short of capacity *now* cannot, and on a retained pool no replicas are
+   coming to relieve it. Preemption is safe because of rule 2: a candidate has to
+   be under more pressure than the awake model, so if both are growing the
+   candidate never gets this far and the pool cannot trade its GPUs between
+   them.
 
 Spare is measured as a **fraction of each model's own supply**, so one threshold
 compares models of different sizes. Nothing is decided from a reading that does
