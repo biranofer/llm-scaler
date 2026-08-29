@@ -157,6 +157,11 @@ func (e *Engine) runAnalyzersAndScore(
 	// that measures per-replica capacity; it is deliberately absent from every
 	// supply total above.
 	publishWarmPoolSupply(namespace, namedResults[0])
+	// How hard each variant is being pushed, for the retained pool's switching
+	// decision. Published from saturation's result and with saturation's own
+	// scale-up threshold, so the pool never switches for a variant the optimizer
+	// considers comfortable, nor sits still for one it is already growing.
+	publishVariantPressure(namespace, namedResults[0], satUp)
 	for _, entry := range e.analyzerRunEntries() {
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
@@ -1235,5 +1240,37 @@ func publishWarmPoolSupply(namespace string, nr allocation.NamedAnalyzerResult) 
 		}
 		decision.PublishWarmPoolSupply(namespace, vc.VariantName,
 			vc.WarmPoolReplicas, vc.WarmPoolCapacity, now)
+	}
+}
+
+// publishVariantPressure records how close each variant is to needing capacity.
+//
+// Spare is expressed as a FRACTION of the variant's own supply, because the
+// consumer compares variants of different sizes against one threshold. A variant
+// with no measurable supply is skipped rather than published as fully spare:
+// unknown and idle are opposite answers to the question a retained pool asks,
+// and the safer of the two is to say nothing.
+func publishVariantPressure(namespace string, nr allocation.NamedAnalyzerResult, scaleUp float64) {
+	if nr.Result == nil {
+		return
+	}
+	now := time.Now()
+	for _, vc := range nr.Result.VariantCapacities {
+		if vc.VariantName == "" {
+			continue
+		}
+		supply := float64(vc.ReplicaCount) * vc.PerReplicaCapacity
+		if supply <= 0 {
+			continue
+		}
+		// Utilization is demand over the variant's OWN supply, so a bridge
+		// carrying its load raises it rather than hiding it -- which is what
+		// makes this the right number for deciding whether the pool should be
+		// serving this model instead of another.
+		decision.PublishPressure(namespace, vc.VariantName, decision.Pressure{
+			SpareFraction: 1 - vc.Utilization,
+			NeedsScaleUp:  vc.Utilization > scaleUp,
+			At:            now,
+		})
 	}
 }

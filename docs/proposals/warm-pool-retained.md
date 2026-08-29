@@ -1,10 +1,15 @@
 # Retained pools: holding several big models on one set of GPUs
 
-**Status: partly built.** The pool half is in place -- `warmPoolRetained` is
-read from the trigger, plumbed through the pool spec, and enforced by the policy
-(a retained pool never times a bridge out). What is not built is the half that
-decides: nothing publishes an awake-intent yet, so a retained pool still follows
-demand. See "Order of work" below.
+**Status: built.** `warmPoolRetained` is read from the trigger, plumbed through
+the pool spec, and enforced by the policy (a retained pool never times a bridge
+out). The half that DECIDES is built too: the optimizer publishes each variant's
+spare capacity and whether it wants to scale up, and the pool switches to the
+model under more pressure than the one awake -- never between two that are both
+short, and never twice inside `warmPoolMinSwitchInterval`. See the guide for the
+rule as an operator meets it.
+
+Still open: nothing measures the switch on a cluster. The cost was measured for
+the mechanism (drain + sleep + wake) but the RULE has only unit tests.
 
 What a pool has to do differently when the models
 in it are large enough that nobody can afford a set of cards each.

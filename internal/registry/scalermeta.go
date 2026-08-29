@@ -224,6 +224,26 @@ const (
 	// Set it and the hold timeout no longer applies: a lent Pod goes back when
 	// the variant stops needing it, and not before.
 	WarmPoolRetainedKey = "warmPoolRetained"
+	// WarmPoolSwitchSpareKey is how little spare capacity a model must have
+	// before a RETAINED pool will switch to it, as a PERCENT of its own supply.
+	//
+	// A percent rather than an absolute, because the pool compares models of
+	// different sizes: ten thousand spare tokens means one thing on a model with
+	// a hundred thousand and another on a model with eleven.
+	//
+	// A candidate below it only wins if the model currently awake is NOT also
+	// below it. Switching between two models that are both short moves the
+	// shortage and pays a drain and a wake to do it. Unset or 0 leaves only the
+	// scale-up rule.
+	WarmPoolSwitchSpareKey = "warmPoolSwitchSpareThreshold"
+	// WarmPoolMinSwitchIntervalKey is the shortest time between two switches of
+	// one retained pool. A Go duration; defaults to 10m.
+	//
+	// A switch drains the outgoing model's in-flight requests, sleeps it, and
+	// wakes the incoming one. Without a floor, two models either side of the
+	// threshold trade the GPUs back and forth and spend most of their time doing
+	// neither's work.
+	WarmPoolMinSwitchIntervalKey = "warmPoolMinSwitchInterval"
 	// WarmPoolPreloadTopKey warms this many of the busiest variants without
 	// waiting for each to miss first.
 	WarmPoolPreloadTopKey = "warmPoolPreloadTop"
@@ -240,7 +260,13 @@ type PoolMeta struct {
 	MaxHold      *time.Duration
 	// Retained makes the pool serving capacity rather than a bridge. See
 	// WarmPoolRetainedKey.
-	Retained             *bool
+	Retained *bool
+	// SwitchSpareThreshold is the spare-capacity percent below which a retained
+	// pool will switch to a model. See WarmPoolSwitchSpareKey.
+	SwitchSpareThreshold *float64
+	// MinSwitchInterval floors the time between two switches of one retained
+	// pool. See WarmPoolMinSwitchIntervalKey.
+	MinSwitchInterval    *time.Duration
 	PreloadTop           *int
 	GPUMemoryUtilization float64
 }
@@ -281,6 +307,26 @@ func ParsePoolMeta(metadata map[string]string) (PoolMeta, error) {
 				WarmPoolRetainedKey, raw)
 		}
 		out.Retained = &v
+	}
+	if raw := metadata[WarmPoolSwitchSpareKey]; raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		// A PERCENT, so 0-100. Rejecting >100 catches the operator who wrote a
+		// fraction: 0.2 meaning "20%" is a valid percent too, and reads as
+		// "switch only when a model is down to its last fifth of a percent" --
+		// which is silently never rather than obviously wrong.
+		if err != nil || v < 0 || v > 100 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a percent between 0 and 100, got %q",
+				WarmPoolSwitchSpareKey, raw)
+		}
+		out.SwitchSpareThreshold = &v
+	}
+	if raw := metadata[WarmPoolMinSwitchIntervalKey]; raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 0 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a non-negative duration such as 10m, got %q",
+				WarmPoolMinSwitchIntervalKey, raw)
+		}
+		out.MinSwitchInterval = &d
 	}
 	if raw := metadata[WarmPoolPreloadTopKey]; raw != "" {
 		n, err := strconv.Atoi(raw)

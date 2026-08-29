@@ -721,6 +721,51 @@ Never scale the pool to zero. A pool at zero holds nothing warm, so the first
 spike after a quiet period pays a full cold start — and then the pool grows,
 loads a model, and is ready exactly in time for the spike that is already over.
 
+## Retained pools: which model holds the GPUs
+
+A retained pool *is* the serving capacity — the models in it are too large to
+start on demand, so no ordinary replicas are coming and exactly one model is
+awake at a time. Something has to decide which, or the model that happened to
+wake first keeps the accelerators however the load moves.
+
+Two knobs, both trigger metadata on the pool's ScaledObject:
+
+```yaml
+warmPoolRetained: "true"
+warmPoolSwitchSpareThreshold: "20"    # percent
+warmPoolMinSwitchInterval: "10m"      # default 10m
+```
+
+The rule, in the order it is applied:
+
+1. **A candidate must be under more pressure than the model already awake.**
+   Either it has fallen below the spare threshold and the awake one has not, or
+   the optimizer wants to scale it up and does not want to scale up the awake
+   one.
+2. **Equal pressure is not enough.** If the awake model is *also* below the
+   threshold, or *also* needs to scale up, nothing moves — switching would move
+   the shortage from one model to the other and pay a drain and a wake to do it.
+   The pool cannot make two models comfortable at once.
+3. **Ties go to the tightest.** Between two candidates at the same urgency, the
+   one with least spare capacity wins.
+4. **No switch within `warmPoolMinSwitchInterval` of the last one.** This applies
+   to the scale-up case too: a scale-up need is what makes a switch worth making,
+   not a licence to make it repeatedly. The signal flaps as replicas come and go,
+   and a pool chasing it would spend its time draining and waking rather than
+   serving.
+
+Spare is measured as a **fraction of each model's own supply**, so one threshold
+compares models of different sizes. Nothing is decided from a reading that does
+not exist: a model the optimizer has not measured is neither a candidate nor a
+reason to stay put.
+
+Leave `warmPoolSwitchSpareThreshold` unset and only the scale-up rule applies —
+the pool has not been asked to switch on spare capacity, so it will not.
+
+Look for `retained pool is switching the model it holds awake` in the controller
+log, which names the model, the reason and the interval. The decision *not* to
+switch is logged too, at debug, with the reason.
+
 ## Scraping the pool, and why the demand number depends on it
 
 The installer does this for you: it passes the namespace it put the monitoring

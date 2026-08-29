@@ -34,6 +34,9 @@ type PoolSpec struct {
 	// GPUMemoryUtilization is a pool-scoped override of the adapter's value.
 	// Zero inherits it.
 	GPUMemoryUtilization float64
+	// Switch is when this pool changes which model it has awake. Retained pools
+	// only: an ordinary pool lends to whoever is short and needs no policy.
+	Switch SwitchConfig
 	// Deployment is the object to resize. Empty when the pool was not
 	// discovered from one, in which case it cannot be resized at all.
 	Deployment string
@@ -148,6 +151,18 @@ func poolSpecFrom(meta registry.PoolMeta, entry registry.Entry, fallback policy.
 	}
 	if meta.PreloadTop != nil {
 		spec.Config.PreloadTop = *meta.PreloadTop
+	}
+	if meta.SwitchSpareThreshold != nil {
+		// Stated as a percent and held as a fraction, because everything it is
+		// compared against is a fraction.
+		spec.Switch.SpareThreshold = *meta.SwitchSpareThreshold / 100
+	}
+	// A floor whether or not anybody set one. Unset must not mean "switch as
+	// often as the signal moves": a switch drains and wakes, so a pool chasing
+	// an unfloored signal would spend its time doing neither model's work.
+	spec.Switch.MinInterval = DefaultMinSwitchInterval
+	if meta.MinSwitchInterval != nil {
+		spec.Switch.MinInterval = *meta.MinSwitchInterval
 	}
 	if entry.Target.MaxReplicas != nil {
 		spec.MaxReplicas = int(*entry.Target.MaxReplicas)

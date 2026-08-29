@@ -1068,6 +1068,13 @@ func runWarmPool(
 	reconciler.WantAwake = func(namespace, pool string) (string, bool) {
 		return decision.Awake(namespace, pool, warmpool.ContentionMaxAge, time.Now())
 	}
+	// How hard each variant is being pushed, for a RETAINED pool choosing which
+	// of its resident models holds the GPUs. Published by the optimizer, which
+	// is the only component that measures demand against capacity; a pool
+	// without it never switches on its own.
+	reconciler.Pressure = func(namespace, target string) (decision.Pressure, bool) {
+		return decision.PressureFor(namespace, target, warmpool.ContentionMaxAge, time.Now())
+	}
 	reconciler.Contended = func(namespace, accelerator string) bool {
 		return decision.GPUContended(namespace, accelerator, warmpool.ContentionMaxAge, time.Now())
 	}

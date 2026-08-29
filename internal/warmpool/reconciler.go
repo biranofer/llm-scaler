@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/policy"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/pool"
@@ -146,6 +147,19 @@ type Reconciler struct {
 	// often the optimizer runs.
 	WantAwake func(namespace, pool string) (string, bool)
 
+	// Pressure reports how close a variant is to needing more capacity, and
+	// whether that has been measured at all.
+	//
+	// Read only by RETAINED pools, which have to choose which of several
+	// resident models holds the GPUs. Optional: without it a retained pool never
+	// switches on its own, which is what it did before this existed and is the
+	// safe direction -- the alternative is switching on numbers nobody produced.
+	Pressure func(namespace, target string) (decision.Pressure, bool)
+
+	// lastSwitchAt is when each pool last formed an intent to change its awake
+	// model, keyed by pool name. It is what MinInterval is measured from.
+	lastSwitchAt map[string]time.Time
+
 	// lastHeld is the last reason each pool was held at its current size.
 	lastHeld map[string]string
 
@@ -213,6 +227,7 @@ func New(p pool.Pool, demand DemandSource, cfg policy.Config) *Reconciler {
 		missesAt:         map[string][]time.Time{},
 		admitting:        map[string]bool{},
 		admittingPods:    map[types.NamespacedName]bool{},
+		lastSwitchAt:     map[string]time.Time{},
 		lastShort:        map[string]int{},
 		lastSummary:      map[string]string{},
 		lastUnassignable: map[string]string{},
@@ -351,7 +366,7 @@ func (r *Reconciler) Once(ctx context.Context) (policy.Plan, error) {
 			Memberships: mine,
 			Variants:    theirs,
 			BorrowedAt:  copyBorrows(r.borrowedAt),
-			WantAwake:   r.wantAwake(spec),
+			WantAwake:   r.awakeIntent(ctx, spec, mine, theirs),
 			MissesAt:    copyMisses(r.missesAt),
 			Admitting:   maps.Clone(r.admittingPods),
 			Now:         r.now(),
@@ -1140,6 +1155,82 @@ func (r *Reconciler) wantAwake(spec PoolSpec) string {
 		return ""
 	}
 	return variant
+}
+
+// awakeIntent is which model this pool should have awake, if any.
+//
+// An externally published intent WINS. It is the override -- an operator, or a
+// component that knows something the pressure readings do not -- and a rule that
+// could talk over it would make the override useless exactly when it was needed.
+//
+// Otherwise the pool decides for itself, and only if it is RETAINED. An ordinary
+// pool needs no rule: it lends a bridge to whatever variant is short and takes it
+// back when the replicas arrive, all of it demand-led. A retained pool has no
+// replicas coming, so the model that happened to wake first would keep the GPUs
+// however the load moved.
+//
+// Called with the lock NOT held: it reads the switch clock under its own.
+func (r *Reconciler) awakeIntent(
+	ctx context.Context,
+	spec PoolSpec,
+	memberships []pool.Membership,
+	variants []policy.VariantDemand,
+) string {
+	if external := r.wantAwake(spec); external != "" {
+		return external
+	}
+	if !spec.Config.Retained {
+		return ""
+	}
+	pressureFor := r.Pressure
+	if pressureFor == nil {
+		return ""
+	}
+
+	awake := awakeVariantIn(memberships)
+	r.mu.Lock()
+	last := r.lastSwitchAt[spec.Name]
+	r.mu.Unlock()
+
+	now := r.now()
+	want, reason, switching := chooseAwake(spec.Switch, variants, awake, last, pressureFor, now)
+	logger := log.FromContext(ctx).WithName("warmpool")
+	if !switching {
+		// Logged at DEBUG because it is the steady state: most passes decide to
+		// leave a retained pool alone, and saying so every five seconds at
+		// default verbosity would bury everything else.
+		logger.V(logging.DEBUG).Info("retained pool is staying on its awake model",
+			"pool", spec.Name, "awake", awake, "candidate", want,
+			"reason", string(reason), "variants", sortedVariantNames(variants))
+		return ""
+	}
+	logger.V(logging.DEFAULT).Info("retained pool is switching the model it holds awake",
+		"pool", spec.Name, "from", awake, "to", want, "reason", string(reason),
+		"minInterval", spec.Switch.MinInterval)
+	r.mu.Lock()
+	if r.lastSwitchAt == nil {
+		r.lastSwitchAt = map[string]time.Time{}
+	}
+	// Stamped when the intent is FORMED, not when the switch completes. The
+	// actuation takes a drain and a wake, and a clock that only started at the
+	// end would let the next pass form a second intent while the first was still
+	// being carried out.
+	r.lastSwitchAt[spec.Name] = now
+	r.mu.Unlock()
+	return want
+}
+
+// awakeVariantIn is the variant a pool is currently serving, or "" if none is.
+//
+// Serving rather than merely resident: several models are resident in a retained
+// pool at once, and exactly one of them holds the GPUs.
+func awakeVariantIn(memberships []pool.Membership) string {
+	for _, m := range memberships {
+		if m.State == pool.Serving {
+			return m.Model.Variant
+		}
+	}
+	return ""
 }
 
 // lentPodsByTarget maps each LENT pool Pod to the scale target it is serving.
