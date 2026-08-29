@@ -29,7 +29,7 @@ namespace's owner installs and upgrades the controller themselves.
   a download from Hugging Face. llm-d mounts one by default, so this is
   normally already true — `make scaledobjects-plan` says so per workload if it
   is not. See [Weights and the model
-  cache](../../deployment/operations.md#weights-and-the-model-cache), which
+  cache](../../deployment/workload-preparation.md#weights-and-the-model-cache), which
   also covers what it does not buy: the cache removes the download, not the
   load.
 - **a drain hook on those model servers.** Autoscaling also means replicas being
@@ -41,7 +41,7 @@ namespace's owner installs and upgrades the controller themselves.
 `make workload-patch` reports both and writes the fix for whichever is missing.
 It writes a file rather than changing your workloads, because the pod spec
 belongs to your modelservice chart; see [Writing the
-patch](../../deployment/operations.md#writing-the-patch-make-workload-patch).
+patch](../../deployment/workload-preparation.md#writing-the-patch-make-workload-patch).
 
 If you want a model to scale **from zero**, its EPP must run with the
 `flowControl` feature gate: that gate is what publishes the queue depth, and at
@@ -151,7 +151,7 @@ scale-down, and one that downloads its weights outside every volume it mounts
 re-fetches them on every scale-up. Both are pod-spec settings owned by the chart
 that deployed the model server, so this writes a patch rather than applying one.
 See [Writing the
-patch](../../deployment/operations.md#writing-the-patch-make-workload-patch) for
+patch](../../deployment/workload-preparation.md#writing-the-patch-make-workload-patch) for
 what to do with it, including `make model-cache` when the weights half is what is
 missing.
 
@@ -195,7 +195,53 @@ not be read is written as `no` with the reason, and never created without one.
 > **Running Fast Model Actuation?** The plan can carry a second entry for the
 > same model — the FMA half — switched off by default, and an entry can arrive as
 > `apply: no` until the launcher pods are scraped. See
-> [WVA with Fast Model Actuation](../fma/).
+> [the FMA post-mortem](../../proposals/fma-post-mortem.md).
+
+#### The same file also suggests warm pools
+
+Below the `plan:` entries, `wva-plan.yaml` carries a second section. Every
+workload above was read for the two things a warm copy cannot change — the
+accelerator, and how many devices one replica takes — and the ones that agree on
+both are grouped, because they could share a pool:
+
+```yaml
+warmPools:
+
+  # serves: Deployment/dev-model-decode
+  # serves: Deployment/other-model-decode
+  - apply: "no"           # yes | no -- "yes" creates this pool on apply
+    namespace: llm-d-sim  # where the pool Pods run: with the models they serve
+    name: h200-1gpu       # the pool's name; a model selects it with warmPool: <name>
+    accelerator: NVIDIA-H200  # nvidia.com/gpu.product these Pods must land on
+    gpus: 1               # GPUs per Pod. Must match what one replica takes
+    models: 4             # how many models one Pod must hold at once
+    modelSize: 8B         # the largest of them
+    replicas: 2           # Pods to start, and the floor KEDA holds
+    max: 6                # ceiling KEDA may grow the pool to
+    reserve: 1            # Pods kept free for the next borrow
+```
+
+A warm pool holds engines already loaded on a GPU, so a scale-up serves while
+its own replica is still loading — seconds instead of the minute or more a cold
+model load takes. It holds those accelerators the whole time it exists, which is
+why every suggestion is written `apply: "no"`: turning one to `"yes"` is a
+decision to spend GPUs, and `scaledobjects-apply` then creates it alongside the
+ScaledObjects.
+
+Two of those fields are guesses the tool cannot make for you. `models` and
+`modelSize` together set the Pod's memory limit, which **is** the warm-set
+budget — and that budget has to cover the level-1 sleep charge, which appears
+the first time a model sleeps and is never released. Run
+`deploy/warmpool.sh sizing --params <size>` to see what this cluster's nodes can
+actually hold before trusting the placeholders.
+
+Creating a pool can take `WARMPOOL_PROXY_IMG`, though it defaults to the
+published image `config/warmpool` pins. Set it to run your own build of an
+image this repo builds (`make docker-build-warmpool-proxy`). The apply says
+which image it used.
+
+Full reasoning, the configuration surface, and how to remove a pool are in
+[Bridge a scale-up with a warm pool](../warm-pool/).
 
 ## Verification
 
@@ -305,6 +351,48 @@ It is not a measurement of the model: five minutes of Poisson arrivals is not a
 latency study, and a small model's TTFT says nothing about a large one's. For
 numbers worth comparing, see [Benchmark WVA](../benchmarking/).
 
+### 5. (Optional) See whether this namespace wants a warm pool
+
+Everything above scales by starting a new replica, which cannot serve until it
+has loaded its weights. A **warm pool** holds engines already loaded on a GPU so
+a scale-up serves while its own replica is still starting. It costs held
+accelerators, so it is worth it only where that load time actually costs
+something.
+
+`wva-plan.yaml` above already carries a `warmPools:` section suggesting this,
+grouped from the workloads it found, with every entry `apply: "no"` — so if you
+have applied that plan you have already seen the suggestion, and turning one
+entry to `"yes"` creates the pool on the next `scaledobjects-apply`. That path
+takes an optional `WARMPOOL_PROXY_IMG`, defaulting to the published image
+`config/warmpool` pins; set it to run your own build of an image this repo
+builds.
+
+The standalone command below answers the same question for a namespace that is
+already running, where the ScaledObjects exist and their triggers are the better
+evidence.
+
+<!-- guide:warmpool.plan start -->
+```bash
+# Read-only. Groups this namespace's models by what a warm pool would have to
+# provide, and prints a create command for each group it could serve.
+deploy/warmpool.sh plan -n ${NAMESPACE}
+```
+<!-- guide:warmpool.plan end -->
+
+It reads nothing but ScaledObjects and their scale targets, and groups by the two
+things a warm copy cannot change: the accelerator, and how many devices one
+replica takes. Models that agree on both can share a pool. For each group it
+prints a ready-to-run `deploy/warmpool.sh create ...`, and it also names any pool
+that is declared but unused, or selected by a model but never created.
+
+The `--models`/`--model-size` in what it prints are PLACEHOLDERS. They set the
+Pod memory limit, which *is* the warm-set budget, and only you know how many
+models of what size a pool must hold at once. `deploy/warmpool.sh sizing --params
+<size>` answers that against this cluster's actual nodes.
+
+Full reasoning, the configuration surface, and how to remove one are in
+[Bridge a scale-up with a warm pool](../warm-pool/).
+
 ## Cleanup
 
 <!-- guide:cleanup.uninstall start -->
@@ -374,4 +462,6 @@ Full list: [Configuration reference](../../deployment/configuration.md).
 - [After the install](../../deployment/operations.md)
 - [Bound every WVA by real GPUs](../admin-gpu-bounding/) — otherwise
   scaling is bounded only by each workload's `maxReplicaCount`
+- [Bridge a scale-up with a warm pool](../warm-pool/) — hold models loaded and
+  asleep so a scale-up serves while its replica is still loading
 - [Scaling policy](../../developer-guide/scaling-policy-config.md)

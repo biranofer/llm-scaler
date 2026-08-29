@@ -1,6 +1,7 @@
 package decision
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -46,15 +47,9 @@ func (s *GPUUsageStore) Publish(byType map[string]int, byNamespace map[string]ma
 		ByType:      make(map[string]int, len(byType)),
 		ByNamespace: make(map[string]map[string]int, len(byNamespace)),
 	}
-	for k, v := range byType {
-		snap.ByType[k] = v
-	}
+	maps.Copy(snap.ByType, byType)
 	for ns, perType := range byNamespace {
-		cp := make(map[string]int, len(perType))
-		for k, v := range perType {
-			cp[k] = v
-		}
-		snap.ByNamespace[ns] = cp
+		snap.ByNamespace[ns] = maps.Clone(perType)
 	}
 
 	s.mu.Lock()
@@ -123,6 +118,55 @@ var DefaultGPUUsage = NewGPUUsageStore()
 // one. It is deliberately not published when collection FAILED, where an empty
 // population means "we could not see", not "nothing is running".
 var DefaultManagedGPUUsage = NewGPUUsageStore()
+
+// warmPoolGPUs is what WVA's own warm pools hold, per namespace and accelerator.
+//
+// A pool Pod is not a variant, so the saturation engine's population does not
+// contain it and DefaultManagedGPUUsage would not count it. But a quota is an
+// allowance granted to WVA, and a pool is WVA's: it exists because WVA asked for
+// it, and WVA publishes the size KEDA scales it to. Leaving it out let a
+// namespace with a 4-GPU quota and a 3-GPU pool place four more replicas and
+// consume seven.
+//
+// This is an INPUT to the managed figure, not a second publisher of it. The
+// saturation engine remains the only thing that writes DefaultManagedGPUUsage --
+// two producers summing "what WVA holds" differently is exactly what that store's
+// comment warns against -- and it folds this in on each cycle.
+var (
+	warmPoolGPUsMu sync.RWMutex
+	warmPoolGPUs   = map[string]map[string]int{}
+)
+
+// PublishWarmPoolGPUs records what the warm pools in one namespace hold, keyed by
+// accelerator. Replaces that namespace's previous figure wholesale, so a pool
+// that shrank or went away stops being charged for.
+func PublishWarmPoolGPUs(namespace string, byType map[string]int) {
+	warmPoolGPUsMu.Lock()
+	defer warmPoolGPUsMu.Unlock()
+	if len(byType) == 0 {
+		delete(warmPoolGPUs, namespace)
+		return
+	}
+	warmPoolGPUs[namespace] = maps.Clone(byType)
+}
+
+// WarmPoolGPUs returns a copy of what every namespace's pools hold.
+func WarmPoolGPUs() map[string]map[string]int {
+	warmPoolGPUsMu.RLock()
+	defer warmPoolGPUsMu.RUnlock()
+	out := make(map[string]map[string]int, len(warmPoolGPUs))
+	for ns, byType := range warmPoolGPUs {
+		out[ns] = maps.Clone(byType)
+	}
+	return out
+}
+
+// ResetWarmPoolGPUs clears the record. For tests.
+func ResetWarmPoolGPUs() {
+	warmPoolGPUsMu.Lock()
+	defer warmPoolGPUsMu.Unlock()
+	warmPoolGPUs = map[string]map[string]int{}
+}
 
 // PublishGPUUsage records a physical-usage snapshot in the default store.
 func PublishGPUUsage(byType map[string]int, byNamespace map[string]map[string]int) {

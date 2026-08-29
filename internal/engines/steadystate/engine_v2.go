@@ -152,6 +152,11 @@ func (e *Engine) runAnalyzersAndScore(
 	namedResults := []allocation.NamedAnalyzerResult{
 		buildNamedResult(ctx, domain.SaturationAnalyzerName, baseResult, config, metaByVariant, satUp, satDown),
 	}
+	// What each variant is getting from the pool, for the retained-pool switching
+	// decision. Published from saturation's result because that is the analyzer
+	// that measures per-replica capacity; it is deliberately absent from every
+	// supply total above.
+	publishWarmPoolSupply(namespace, namedResults[0])
 	for _, entry := range e.analyzerRunEntries() {
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
@@ -597,6 +602,12 @@ func gpuUsageViews(requests []allocation.ModelScalingRequest) allocation.GPUUsag
 		ManagedByType:      computeCurrentGPUUsage(requests),
 		ManagedByNamespace: computeCurrentGPUUsageByNamespace(requests),
 	}
+	// The warm pools too, and HERE rather than only where the managed figure is
+	// published. These views are what the constraint providers are given, so a
+	// quota built without them does not bind on the pool at all -- the published
+	// figure would say the pool costs something while the limiter enforcing it
+	// carried on as though it did not.
+	addWarmPoolGPUs(views.ManagedByType, views.ManagedByNamespace)
 	if snap, ok := decision.LatestGPUUsage(); ok {
 		views.PhysicalByType = snap.ByType
 		views.PhysicalByNamespace = withActiveNamespaces(snap.ByNamespace, requests)
@@ -1167,4 +1178,62 @@ func unattributedGPUs(byType map[string]int) (total int, keys []string) {
 	}
 	sort.Strings(keys)
 	return total, keys
+}
+
+// publishHeadroomForIdleFleet answers "how many GPUs may this namespace still
+// take" when there is nothing to optimize.
+//
+// The usage it measures against is gpuUsageViews(nil): no variants hold
+// anything, so what remains is whatever the warm pools hold. That is the whole
+// point -- a pool is WVA's own consumption and is charged against the same
+// allowance, so a pool at its quota must read as no headroom left rather than as
+// a namespace nobody bounds.
+//
+// Silent on every failure. Publishing a wrong figure here is worse than
+// publishing none: an absent namespace reads as unbounded, which is the
+// behaviour that existed before this function, while a fabricated one would cap
+// a pool for a reason nobody could find.
+func (e *Engine) publishHeadroomForIdleFleet(ctx context.Context) {
+	providers := gpuConstraintProviders(e.currentGPULimiter())
+	if len(providers) == 0 {
+		return // nothing bounds anything; the pool grows freely, as it should
+	}
+	views := gpuUsageViews(nil)
+	if _, missing := views.MissingBasis(providers); missing {
+		return // no observation on a basis some provider needs
+	}
+	var constraints []*allocation.ResourceConstraints
+	for _, cp := range providers {
+		usageByType, usageByNS := views.For(cp)
+		constraint, err := cp.ComputeConstraints(ctx, usageByType, usageByNS)
+		if err != nil {
+			continue
+		}
+		constraints = append(constraints, constraint)
+	}
+	if len(constraints) == 0 {
+		return
+	}
+	allocation.PublishNamespaceHeadroom(constraints, time.Now())
+}
+
+// publishWarmPoolSupply records what BRIDGES are contributing to each variant.
+//
+// Zero is published as readily as a positive figure, and for every variant the
+// analyzer saw. A switching decision needs "this variant has no bridge" as much
+// as it needs the number, and publishing only the non-zero ones would leave the
+// last reading standing after the Pod went back -- saying a variant is being
+// carried by a pool that has already reclaimed it.
+func publishWarmPoolSupply(namespace string, nr allocation.NamedAnalyzerResult) {
+	if nr.Result == nil {
+		return
+	}
+	now := time.Now()
+	for _, vc := range nr.Result.VariantCapacities {
+		if vc.VariantName == "" {
+			continue
+		}
+		decision.PublishWarmPoolSupply(namespace, vc.VariantName,
+			vc.WarmPoolReplicas, vc.WarmPoolCapacity, now)
+	}
 }

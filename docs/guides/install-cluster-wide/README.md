@@ -85,7 +85,7 @@ With neither, it scans the controller's own namespace and reports
 `SCOPE=cluster` matters most with `WVA_WORKLOAD_PATCH_APPLY=true`, which replaces
 the pods it patches: at this scope that is a rolling restart of every model
 server on the cluster. See [Writing the
-patch](../../deployment/operations.md#writing-the-patch-make-workload-patch).
+patch](../../deployment/workload-preparation.md#writing-the-patch-make-workload-patch).
 
 <!-- guide:deploy.register start -->
 ```bash
@@ -172,6 +172,9 @@ Full list: [Configuration reference](../../deployment/configuration.md).
 - `make benchmark-smoke NAMESPACE=<ns>` — drive load at one of the namespaces
   this controller manages and snapshot the dashboard
 - [Bound every WVA by real GPUs](../admin-gpu-bounding/)
+- `deploy/warmpool.sh plan -n <ns>` — read-only: whether a namespace this
+  controller manages has models that could share a [warm pool](../warm-pool/),
+  which holds engines loaded so a scale-up serves while its replica starts
 - [After the install](../../deployment/operations.md)
 - [Install methods](../../deployment/install-methods.md) — GitOps, direct
   Kustomize, and what the script does

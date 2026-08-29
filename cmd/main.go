@@ -56,6 +56,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/controller"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/datastore"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/analyzers/throughput"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/scalefromzero"
@@ -69,6 +70,9 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/scaler"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/crd"
 	poolutil "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/utils/pool"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool"
+	warmpoolpolicy "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/policy"
+	warmpoolpool "github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/pool"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -133,6 +137,46 @@ func main() {
 	externalScalerBindAddress := flag.String("external-scaler-bind-address", ":9090",
 		"The address the KEDA external scaler gRPC service binds to. "+
 			"KEDA ScaledObjects reference this via an external trigger's scalerAddress.")
+
+	// The warm pool is OFF unless a namespace is named, because it holds GPUs
+	// continuously: that is a cost decision an operator makes, never a default.
+	warmPoolNamespace := flag.String("warm-pool-namespace", "",
+		"Namespace holding warm-pool Pods. For a NAMESPACE-SCOPED install this is already "+
+			"known -- the pool lives where the workloads it warms live -- so leaving it empty "+
+			"derives it from the watched namespace rather than making an operator restate it. "+
+			"A cluster-scoped install has no such namespace to derive, so naming one there is "+
+			"what turns the pool on.")
+	warmPoolSleepMinSize := flag.Int("warm-pool-sleep-min-size", 1,
+		"Floor on FREE pool Pods -- ones with every instance asleep. This is the reserve "+
+			"the pool keeps for the next spike, per pool rather than per model.")
+	warmPoolMaxHold := flag.Duration("warm-pool-max-hold", 2*time.Minute,
+		"How long a borrowed Pod may serve before it is returned regardless. Bounds the case "+
+			"where the ordinary replicas never arrive, which would otherwise turn insurance "+
+			"into permanent capacity for one variant.")
+	warmPoolMemoryBudget := flag.Int64("warm-pool-memory-bytes", 0,
+		"Host memory ONE pool Pod may commit to sleeping weights. A level-1 sleeper keeps its "+
+			"weights in host memory, so admitting one model too many does not fail that "+
+			"admission -- it OOM-kills the launcher and destroys every model already resident "+
+			"in the Pod. Clamped to the container's own limit, so it cannot pretend to be a "+
+			"wall it is not; 0 means use that limit. A sleeper costs 2.6GiB + 1.4x its weights, "+
+			"measured -- so 120Gi is four 8B models, which is where the break-even sits. "+
+			"Defaults to 0: TAKE the container's limit, which is the wall the kubelet actually "+
+			"enforces, rather than restating it here where the two can disagree.")
+	warmPoolGPUUtil := flag.Float64("warm-pool-gpu-memory-utilization", 0.90,
+		"Override --gpu-memory-utilization for warm copies. A workload's value is sized for a "+
+			"Pod running ONE engine and typically claims ~95% of the card, which leaves room "+
+			"for about three sleepers on an 80GiB GPU rather than the sixteen the warm set "+
+			"allows. Lowering it trades KV cache for warm-set size, and costs one extra "+
+			"compile (~9s) per model because the value is part of the torch.compile cache key. "+
+			"0 inherits the workload's value. Defaults to 0.90, which leaves room for three 8B "+
+			"sleepers' GPU residue beside an awake one at a cost of ~6% of KV cache -- the pool "+
+			"only pays when it holds several models per GPU, and an inherited 0.95 leaves room "+
+			"for none.")
+	warmPoolPreloadTop := flag.Int("warm-pool-preload-top", 2,
+		"Preload this many of the busiest variants while the pool has spare reserve, instead "+
+			"of waiting for each to miss. Popularity is share of desired replicas, which "+
+			"tracks share of requests. 0 disables preloading, leaving admission to parking "+
+			"and the frequency filter.")
 
 	// Leader election timeout configuration flags
 	// These can be overridden in manager.yaml to tune for different environments
@@ -714,6 +758,69 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The warm pool: GPU-holding Pods that keep models resident but asleep, so a
+	// scale-up can be covered in ~0.4 s while the ordinary replicas take ~35 s.
+	//
+	// Leader-gated with everything else, and driven off the decision store rather
+	// than off KEDA: a decision is known here before KEDA is told about it, so a
+	// bridge starts at decision time instead of a poll interval later. The pool
+	// never touches the metric KEDA reads -- it borrows underneath the same
+	// decision KEDA is about to act on, which is what keeps lent capacity out of
+	// the scaling arithmetic.
+	// The pool namespace is derived, not configured, wherever it can be: a
+	// namespace-scoped install watches exactly one namespace, and the pool warms
+	// the workloads in it, so the flag could only ever repeat watchNS or
+	// contradict it. Contradicting it is the interesting case -- the controller
+	// cannot see across the boundary, so every read fails and the pool reports
+	// itself empty, which is indistinguishable from a pool that is simply too
+	// small.
+	warmPoolNS := *warmPoolNamespace
+	if warmPoolNS == "" {
+		warmPoolNS = watchNS
+	}
+	// One namespace, named by flag or derived from the watched one.
+	if warmPoolNS != "" {
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			return runWarmPool(ctx, mgr, ds, warmPoolNS, warmPoolGPUUtil, warmPoolSleepMinSize,
+				warmPoolMaxHold, warmPoolPreloadTop, warmPoolMemoryBudget)
+		})); err != nil {
+			setupLog.Error(err, "unable to add the warm pool to manager")
+			os.Exit(1)
+		}
+	} else if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		// EVERY namespace that declares a pool, discovered as they appear.
+		//
+		// Reached only by a cluster-scoped install that named no namespace,
+		// where the alternative was not a safer default but no warm pool at
+		// all: the operator created the workload and the ScaledObject that
+		// declares it, and WVA ignored both. The opt-in is unchanged -- it is
+		// that declaration -- and this acts on it wherever it appears.
+		mux := &warmpool.Multiplexer{
+			Snapshot: registry.Default.Snapshot,
+			Start: func(ctx context.Context, ns string) (context.CancelFunc, <-chan struct{}) {
+				nsCtx, cancel := context.WithCancel(ctx)
+				// Closed when this namespace's reconciler has stopped, so the
+				// Multiplexer can start it again. runWarmPool returns on its own
+				// when the RBAC review denies borrows, and without this the
+				// namespace would look permanently handled by a goroutine that
+				// had already returned.
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					if err := runWarmPool(nsCtx, mgr, ds, ns, warmPoolGPUUtil, warmPoolSleepMinSize,
+						warmPoolMaxHold, warmPoolPreloadTop, warmPoolMemoryBudget); err != nil {
+						setupLog.Error(err, "warm pool stopped", "namespace", ns)
+					}
+				}()
+				return cancel, done
+			},
+		}
+		return mux.Run(ctx)
+	})); err != nil {
+		setupLog.Error(err, "unable to add the warm pool multiplexer to manager")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	// Create InferencePool reconciler
@@ -856,4 +963,136 @@ func nodeReadProbe(ctx context.Context, c client.Reader) error {
 	err := c.List(ctx, nodes, client.Limit(1))
 	nodeReadProbeAt, nodeReadProbeErr, nodeReadProbeOnce = time.Now(), err, true
 	return err
+}
+
+// runWarmPool reconciles the warm pools of ONE namespace until ctx ends.
+//
+// Hoisted out of main so it can be started per namespace. A cluster-scoped
+// install has no namespace to derive, and naming one by flag serves exactly
+// that namespace: a pool anywhere else is never used, and a pool created after
+// startup needs a restart. Both look the same from outside -- Pods running,
+// accelerators held, WVA silent about them.
+func runWarmPool(
+	ctx context.Context,
+	mgr ctrl.Manager,
+	ds datastore.Datastore,
+	warmPoolNS string,
+	warmPoolGPUUtil *float64,
+	warmPoolSleepMinSize *int,
+	warmPoolMaxHold *time.Duration,
+	warmPoolPreloadTop *int,
+	warmPoolMemoryBudget *int64,
+) error {
+	// Its own, because the original sat in main() as a local. Same name so the
+	// lines this function emits are indistinguishable from before the hoist.
+	setupLog := ctrl.Log.WithName("setup")
+
+	trigger := warmpool.NewDecisionTrigger(decision.Default, nil)
+	defer trigger.Close()
+	// Discovery is call-driven, so the set of scale targets grows during
+	// a run; a trigger built once at startup would never fire for a
+	// workload registered later.
+	go trigger.WatchRegistry(ctx, registry.Default, 30*time.Second)
+
+	reconciler := warmpool.New(
+		warmpoolpool.NewAdapter(mgr.GetClient(), warmPoolNS, warmpoolpool.Ram),
+		&warmpool.Demand{
+			Namespace:            warmPoolNS,
+			GPUMemoryUtilization: *warmPoolGPUUtil,
+			Registry:             registry.Default,
+			Decisions:            decision.Default,
+			Client:               mgr.GetClient(),
+			Datastore:            ds,
+			// SERVING replicas rather than merely Ready ones, for the return
+			// rule -- see Demand.Serving. Unknown falls back to the Ready count,
+			// which is all a fleet whose collector has not run yet has.
+			Serving: func(namespace, target string) (int, bool) {
+				return decision.Serving(namespace, target, warmpool.ContentionMaxAge, time.Now())
+			},
+		},
+		warmpoolpolicy.Config{
+			SleepMinSize:       *warmPoolSleepMinSize,
+			MaxHold:            *warmPoolMaxHold,
+			AdmissionWindow:    time.Hour,
+			MinMissesToAdmit:   2,
+			PreloadTop:         *warmPoolPreloadTop,
+			MaxInstancesPerPod: warmpoolpool.MaxInstancesPerPod,
+			PodMemoryBytes:     *warmPoolMemoryBudget,
+		},
+	)
+	// Asked before anything is loaded. Without patch on pods the pool
+	// admits happily, holds GPUs, and then fails at the only moment
+	// that matters -- once per spike, in a path nobody is watching.
+	// An UNANSWERABLE question is not a denial: if the review itself
+	// fails the pool starts, because refusing to run on a broken API
+	// call would be a worse failure than the one being guarded against.
+	switch allowed, err := warmpool.CanBorrow(ctx, mgr.GetClient(), warmPoolNS); {
+	case err != nil:
+		setupLog.Info("could not check whether this controller may patch Pods; "+
+			"starting the warm pool anyway. If borrows fail, check RBAC first",
+			"namespace", warmPoolNS, "err", err.Error())
+	case !allowed:
+		setupLog.Error(nil, warmpool.BorrowDenied, "namespace", warmPoolNS)
+		return nil
+	}
+
+	reconciler.Name = warmPoolNS
+	reconciler.Trigger = trigger
+	// Pools are DISCOVERED from the Deployments that declare them, so a
+	// second pool is a manifest rather than a manifest plus a controller
+	// restart. The flags above become the base every pool's annotations
+	// are layered onto, and are used whole when nothing declares a pool.
+	// The pool is scaled through KEDA like everything else: WVA
+	// publishes a size and the pool's own ScaledObject acts on it. An
+	// install with no pool ScaledObject simply never reads this, and
+	// the pool stays the size its Deployment says.
+	reconciler.Namespace = warmPoolNS
+	reconciler.PublishSize = decision.Set
+	// Arbitration: while the optimizer is denying GPUs to a model
+	// replica on this pool's accelerator, the pool stops asking for
+	// more. contentionMaxAge keeps a stale reading from holding it
+	// down forever if the optimizer stops running.
+	// The pool must not ask KEDA for Pods the namespace cannot afford:
+	// they would be created and sit Pending, or be refused outright, and
+	// the pool would report itself short forever with nothing able to
+	// fill it. Published by the allocation layer, which is the only
+	// component that sees every constraint provider at once.
+	reconciler.Headroom = func(namespace, accelerator string) (int, bool) {
+		return decision.GPUHeadroom(namespace, accelerator, warmpool.ContentionMaxAge, time.Now())
+	}
+	// Which model the optimizer says should be awake in a pool. Nothing
+	// publishes one yet -- the rule that decides is the open half of this
+	// design -- so today it is always absent and every pool decides from demand
+	// exactly as before. Wired now so the transport is one change rather than
+	// two, and so the pool half can be exercised end to end.
+	reconciler.WantAwake = func(namespace, pool string) (string, bool) {
+		return decision.Awake(namespace, pool, warmpool.ContentionMaxAge, time.Now())
+	}
+	reconciler.Contended = func(namespace, accelerator string) bool {
+		return decision.GPUContended(namespace, accelerator, warmpool.ContentionMaxAge, time.Now())
+	}
+	// Pools are DECLARED by their ScaledObjects, like everything else
+	// WVA knows about. The flags above are the base each pool's trigger
+	// is layered onto, and the whole config for an install that
+	// declares no pool at all.
+	reconciler.Pools = &warmpool.RegistryPools{
+		Snapshot:  registry.Default.Snapshot,
+		Namespace: warmPoolNS,
+		Fallback:  reconciler.Config,
+	}
+	// Listed only to REPORT a pool Deployment nothing declares. It
+	// holds GPUs and WVA will not use it, which is exactly the silence
+	// moving the declaration to the ScaledObject could have introduced.
+	reconciler.Undeclared = (&warmpool.UndeclaredPools{
+		Client:    mgr.GetClient(),
+		Namespace: warmPoolNS,
+	}).Find
+	setupLog.Info("warm pool enabled",
+		"namespace", warmPoolNS,
+		"sleepMinSize", *warmPoolSleepMinSize,
+		"maxHold", *warmPoolMaxHold,
+		"memoryBudgetBytes", *warmPoolMemoryBudget,
+		"gpuMemoryUtilization", *warmPoolGPUUtil,
+		"preloadTop", *warmPoolPreloadTop)
+	return reconciler.Start(ctx)
 }

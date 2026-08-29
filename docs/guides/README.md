@@ -29,14 +29,16 @@ source docs/guides/env.sh
 | [Scale a model to zero, and get it back](scale-to-zero/) | release an idle model's accelerators — and check it can wake before it parks |
 | [Test against a full llm-d stack](testing-with-llm-d/) | llm-d + WVA on kind, emulated GPUs, no hardware |
 | [Benchmark WVA](benchmarking/) | drive load through a real stack and compare runs |
-| [Autoscale a Fast Model Actuation stack](fma/) | FMA runs the engine in a pod no ScaledObject owns |
+| [Bridge a scale-up with a warm pool](warm-pool/) | hold models loaded and asleep so a scale-up serves while its replica starts |
 
 ## Reference
 
 | page | covers |
 | --- | --- |
 | [Configuration](../deployment/configuration.md) | every variable the installer reads |
-| [After the install](../deployment/operations.md) | what to watch, first-line troubleshooting |
+| [After the install](../deployment/operations.md) | verifying the install, first-line troubleshooting |
+| [Watching what WVA decides](../deployment/monitoring.md) | the dashboard, the metrics, the logs |
+| [Preparing a workload](../deployment/workload-preparation.md) | the model cache, draining, `make workload-patch` |
 | [Install methods](../deployment/install-methods.md) | GitOps, direct Kustomize, what the script does |
 | [The GPU limiter](../deployment/gpu-limiter.md) | where policy lives, and the accelerator precondition |
 
