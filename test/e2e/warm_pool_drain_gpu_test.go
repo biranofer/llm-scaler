@@ -95,8 +95,22 @@ var _ = Describe("Warm pool - a returned Pod finishes what it was writing", Labe
 		controller = fixtures.ControllerDeployment{Namespace: cfg.WVANamespace, Name: "wva-controller-manager"}
 
 		By("Applying the NetworkPolicy the pool ships with, so the driver is the admitted path")
-		_, err := fixtures.ApplyWarmPoolNetworkPolicy(ctx, k8sClient, cfg.LLMDNamespace)
+		policyName, err := fixtures.ApplyWarmPoolNetworkPolicy(ctx, k8sClient, cfg.LLMDNamespace)
 		Expect(err).NotTo(HaveOccurred())
+		// REMOVED AFTERWARDS, and that is not tidiness. This policy restricts
+		// :8001, :8002 and the engine range to Pods in the WVA namespace, and it
+		// selects every warm pool Pod in the namespace -- not just this spec's.
+		// Left behind, the next spec that reaches a supervisor through the
+		// API server's pod proxy has its packets DROPPED, because the proxy
+		// originates outside the namespace and matches no `from:` rule. It fails
+		// as `dial tcp <ip>:8001: i/o timeout` inside a 503, which reads as a Pod
+		// that never came up rather than as a policy from a spec that already
+		// finished. warm_pool_policy_test.go is exactly that spec, and this is
+		// exactly how it failed in CI.
+		DeferCleanup(func() {
+			_ = fixtures.DeleteWarmPoolNetworkPolicy(
+				context.Background(), k8sClient, cfg.LLMDNamespace, policyName)
+		})
 
 		By("Enabling the warm pool")
 		restore, err := fixtures.EnableWarmPool(ctx, k8sClient, controller, cfg.LLMDNamespace)

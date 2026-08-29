@@ -335,6 +335,25 @@ sys.exit(0)
   fi
 fi
 
+# --- the e2e suite must not leave the policy behind ------------------------
+# The shipped policy restricts :8001, :8002 and the engine range to the WVA
+# namespace, and it selects EVERY warm pool Pod in the namespace -- not just the
+# Pods of the spec that applied it. A spec that leaves it behind therefore breaks
+# every LATER spec that reaches a supervisor through the API server pod proxy,
+# whose packets match no `from:` rule and are dropped.
+#
+# It fails as `dial tcp <ip>:8001: i/o timeout` inside a 503, which reads as a
+# Pod that never came up. Two specs shipped without the cleanup and cost a CI red
+# on exactly that: the spec that failed had applied no policy of its own.
+for f in "$(dirname "$0")/../test/e2e"/*_test.go; do
+  grep -q "ApplyWarmPoolNetworkPolicy" "$f" || continue
+  if grep -q "DeleteWarmPoolNetworkPolicy" "$f"; then
+    ok "$(basename "$f") removes the network policy it applies"
+  else
+    fail "$(basename "$f") applies the warm pool NetworkPolicy and never deletes it: every later spec that talks to a supervisor through the pod proxy will time out"
+  fi
+done
+
 if [ "$FAILED" -eq 0 ]; then
   echo "Warm pool manifest checks passed."
 else
