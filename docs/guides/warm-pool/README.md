@@ -807,6 +807,20 @@ Two details worth knowing:
   target for every idle Pod — a pool of ten mostly-idle Pods would read as broken
   monitoring.
 
+> **Check your Prometheus actually selects it.** The operator only reads
+> PodMonitors matching its `podMonitorSelector`. A stack installed with a
+> selector like `release: kube-prometheus-stack` will ignore this one **without
+> saying anything** — the PodMonitor exists, no scrape job is ever generated, and
+> the symptom is the under-reading demand described above. To confirm, look for
+> `podMonitor/<namespace>/wva-warm-pool-<pool>/0` in the generated config:
+>
+> ```
+> kubectl get secret prometheus-<prometheus-name> -n <monitoring-ns> -o jsonpath='{.data.prometheus\.yaml\.gz}' | base64 -d | gunzip | grep warm-pool
+> ```
+>
+> If it is absent, add whatever label your Prometheus selects on to the
+> PodMonitor.
+
 What WVA then does with the measurement is deliberately asymmetric:
 
 | | counted? | why |
