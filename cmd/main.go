@@ -140,12 +140,6 @@ func main() {
 
 	// The warm pool is OFF unless a namespace is named, because it holds GPUs
 	// continuously: that is a cost decision an operator makes, never a default.
-	warmPoolNamespace := flag.String("warm-pool-namespace", "",
-		"Namespace holding warm-pool Pods. For a NAMESPACE-SCOPED install this is already "+
-			"known -- the pool lives where the workloads it warms live -- so leaving it empty "+
-			"derives it from the watched namespace rather than making an operator restate it. "+
-			"A cluster-scoped install has no such namespace to derive, so naming one there is "+
-			"what turns the pool on.")
 	warmPoolSleepMinSize := flag.Int("warm-pool-sleep-min-size", 1,
 		"Floor on FREE pool Pods -- ones with every instance asleep. This is the reserve "+
 			"the pool keeps for the next spike, per pool rather than per model.")
@@ -774,11 +768,15 @@ func main() {
 	// cannot see across the boundary, so every read fails and the pool reports
 	// itself empty, which is indistinguishable from a pool that is simply too
 	// small.
-	warmPoolNS := *warmPoolNamespace
-	if warmPoolNS == "" {
-		warmPoolNS = watchNS
-	}
-	// One namespace, named by flag or derived from the watched one.
+	// The pool's namespace is the WATCHED one, and there is no way to say
+	// otherwise. A flag used to exist and could only repeat this or contradict
+	// it: contradicting it means the controller cannot read across the boundary,
+	// so every pool read fails and the pool reports itself empty, which is
+	// indistinguishable from a pool that is simply too small. Nothing set it
+	// except the e2e, which used it to force a reconciler into a namespace that
+	// declared no pool -- and paid for that with a controller restart per spec.
+	warmPoolNS := watchNS
+	// One namespace, derived from the watched one.
 	if warmPoolNS != "" {
 		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 			return runWarmPool(ctx, mgr, ds, warmPoolNS, warmPoolGPUUtil, warmPoolSleepMinSize,

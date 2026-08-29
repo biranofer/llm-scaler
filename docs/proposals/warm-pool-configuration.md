@@ -21,6 +21,10 @@ Seven process-global flags, one pool, discovered by the label
 `--warm-pool-namespace`. Binding is implicit: every variant the controller sees
 competes for that one pool.
 
+*(Since resolved: pools are named and declared by their ScaledObject trigger, and
+`--warm-pool-namespace` has been removed -- the namespace is derived from the
+watched one, or discovered per namespace on a cluster-scoped install.)*
+
 Turning the pool on takes four steps, and **three of them fail closed and
 silently**:
 
@@ -60,7 +64,9 @@ Deployment:
   already states. **Default to the limit; keep the flag as an override only.**
 - `--warm-pool-namespace` — for a namespaced WVA this is *always* the namespace
   the ScaledObject lives in. **Derive it.** Cluster-scoped WVA is the case where
-  it can differ; see Part 2.
+  it can differ; see Part 2. *(Done: the flag is gone. A namespace-scoped install
+  derives it; a cluster-scoped one runs a reconciler per namespace that declares
+  a pool.)*
 
 That leaves four genuine policy knobs: `sleepMinSize`, `maxHold`, `preloadTop`,
 `gpuMemoryUtilization`.

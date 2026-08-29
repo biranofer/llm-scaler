@@ -140,6 +140,24 @@ var _ = Describe("Warm pool - a returned Pod finishes what it was writing", Labe
 		Expect(fixtures.CreateWarmPool(ctx, k8sClient, poolSpec)).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteWarmPool(context.Background(), k8sClient, poolSpec) })
 
+		// A pool is DECLARED by a ScaledObject trigger, not by the existence of
+		// its Pods. Without this the Deployment runs, the Pods are healthy, and
+		// the controller has no opinion about any of it -- which reads exactly
+		// like a controller that decided not to act.
+		//
+		// This spec used to get a reconciler anyway, because the suite forced one
+		// into the namespace with --warm-pool-namespace. That flag is gone, so
+		// the spec now opts in the way an operator does.
+		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace,
+			drainPool, drainPool, drainPool, 1, 4, cfg.MonitoringNS,
+			fixtures.WithWarmPoolTrigger(drainPool, map[string]string{
+				"warmPoolSleepMinSize": "0",
+			}),
+		)).To(Succeed())
+		DeferCleanup(func() {
+			_ = fixtures.DeleteScaledObject(context.Background(), crClient, cfg.LLMDNamespace, drainPool)
+		})
+
 		asControl = fixtures.DriverSpec{
 			Name: controlDriver, Namespace: cfg.LLMDNamespace, Labels: fixtures.ControllerDriverLabels(),
 		}

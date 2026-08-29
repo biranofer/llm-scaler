@@ -3,7 +3,6 @@ package fixtures
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,74 +12,32 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 )
 
-// warmPoolNamespaceFlag is the argument that turns the pool on.
-const warmPoolNamespaceFlag = "--warm-pool-namespace="
-
 // ControllerDeployment is the WVA controller, wherever the suite installed it.
 type ControllerDeployment struct {
 	Namespace string
 	Name      string
 }
 
-// EnableWarmPool restarts the controller with the warm pool watching a
-// namespace, and returns a function that puts the arguments back.
+// EnableWarmPool used to restart the controller with --warm-pool-namespace, and
+// no longer does anything. It is kept so the specs read the same and so this
+// explanation has somewhere to live.
 //
-// The suite's controller is deployed WITHOUT warm-pool flags, so every policy
-// the pool implements -- what it admits, what it declines, which pool a Pod
-// belongs to -- was unreachable from an e2e until this existed. That is the gap
-// this closes: not a test that was never run, but a scenario that could not be
-// built.
+// The pool is always on. A namespace-scoped controller derives the pool's
+// namespace from the one it watches; a cluster-scoped one discovers pools
+// wherever a ScaledObject trigger declares them. The flag could only repeat
+// that or contradict it, and nothing but this fixture ever set it.
 //
-// Mutating a shared Deployment mid-suite is not free, which is why the restore
-// is returned rather than left to the caller to remember, and why specs that use
-// this should be Ordered and serial. The alternative -- a second controller
-// deployment -- would need its own RBAC, service and leader-election identity,
-// and would still race the first one for the same ScaledObjects.
-func EnableWarmPool(ctx context.Context, clientset *kubernetes.Clientset, c ControllerDeployment, poolNamespace string) (func(context.Context) error, error) {
-	before, err := clientset.AppsV1().Deployments(c.Namespace).Get(ctx, c.Name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("read controller %s/%s: %w", c.Namespace, c.Name, err)
-	}
-	original := append([]string(nil), before.Spec.Template.Spec.Containers[0].Args...)
-
-	withFlag := append([]string(nil), original...)
-	replaced := false
-	for i, a := range withFlag {
-		if strings.HasPrefix(a, warmPoolNamespaceFlag) {
-			withFlag[i] = warmPoolNamespaceFlag + poolNamespace
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		withFlag = append(withFlag, warmPoolNamespaceFlag+poolNamespace)
-	}
-
-	if err := setControllerArgs(ctx, clientset, c, withFlag); err != nil {
-		return nil, err
-	}
-	restore := func(ctx context.Context) error {
-		return setControllerArgs(ctx, clientset, c, original)
-	}
-	if err := WaitForControllerReady(ctx, clientset, c); err != nil {
-		// Put it back before failing, or every later spec runs against a
-		// controller this one broke.
-		_ = restore(context.WithoutCancel(ctx))
-		return nil, err
-	}
-	return restore, nil
-}
-
-func setControllerArgs(ctx context.Context, clientset *kubernetes.Clientset, c ControllerDeployment, args []string) error {
-	d, err := clientset.AppsV1().Deployments(c.Namespace).Get(ctx, c.Name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("read controller %s/%s: %w", c.Namespace, c.Name, err)
-	}
-	d.Spec.Template.Spec.Containers[0].Args = args
-	if _, err := clientset.AppsV1().Deployments(c.Namespace).Update(ctx, d, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("set controller args: %w", err)
-	}
-	return nil
+// Restarting the controller was never the point, and it cost more than it gave:
+// it forced every spec that used it to be Ordered and Serial, and because the
+// patch was a no-op when the arguments were already right, the restart happened
+// only SOMETIMES -- which is how a spec came to read a startup line that had
+// aged out of its window on the runs where nothing restarted.
+//
+// A spec that wants the pool to act on its namespace declares a pool there, the
+// way an operator would: a ScaledObject whose trigger carries warmPoolName.
+// That is the opt-in, and it is the same one in production.
+func EnableWarmPool(_ context.Context, _ *kubernetes.Clientset, _ ControllerDeployment, _ string) (func(context.Context) error, error) {
+	return func(context.Context) error { return nil }, nil
 }
 
 // WaitForControllerReady waits until the controller has exactly one ready Pod

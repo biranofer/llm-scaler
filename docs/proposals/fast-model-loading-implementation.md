@@ -6,8 +6,8 @@ How to build the pool described in
 
 **Status.** The mechanism is BUILT and running: `internal/warmpool` (port,
 adapter, policy, reconciler), `internal/warmpool/proxy` + `cmd/warmpool-proxy`,
-`config/warmpool`, wired into the controller behind `--warm-pool-namespace` and
-off by default. A pool Pod has served real EPP traffic on pokprod with ~437 ms
+`config/warmpool`, wired into the controller and on wherever a ScaledObject
+trigger declares a pool. A pool Pod has served real EPP traffic on pokprod with ~437 ms
 model switches.
 
 What is NOT built, and is marked so where it appears below: eviction and
@@ -674,7 +674,7 @@ scale-ups are failing and the pool is masking it.
 > | the Pod's **node** | the accelerator a warm copy is reusable on |
 > | pool **ScaledObject** | the pool's own size, via KEDA; `minReplicaCount` must exceed the reserve |
 > | model **trigger metadata** | `warmPool` selects a pool, `warmPoolCopies` pins / opts out / asks for N copies |
-> | remaining **flags** | `--warm-pool-namespace` (derived from the watched namespace when empty), plus the four knobs above as defaults |
+> | remaining **flags** | the four knobs above, as defaults a pool's trigger overrides. The pool's namespace is derived, never configured: `--warm-pool-namespace` was removed, because it could only repeat the watched namespace or contradict it |
 >
 > `--warm-pool-gpus-per-pod` is DELETED: its own help said it had to match the
 > Deployment's GPU request, and a value that must equal another object's field

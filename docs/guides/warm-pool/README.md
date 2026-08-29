@@ -201,15 +201,12 @@ accelerator it can prove differs.
 The rest of this section is the manual path, for when you want to edit the
 manifests directly.
 
-### 1. Point the controller at the pool
+### 1. Nothing to point at the pool
 
-For a namespace-scoped install this is already known and you can skip it: the
-pool lives where the workloads live. Only a cluster-scoped controller needs to
-be told:
-
-```bash
---warm-pool-namespace=<namespace>
-```
+There is no step here, and that is the design. A namespace-scoped controller
+warms the namespace it watches; a cluster-scoped one acts on pools wherever a
+ScaledObject trigger declares them. Neither needs telling, and neither needs a
+restart when a pool appears.
 
 ### 2. Edit the four things the manifests cannot know
 
