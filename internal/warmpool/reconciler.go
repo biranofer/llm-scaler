@@ -361,12 +361,26 @@ func (r *Reconciler) Once(ctx context.Context) (policy.Plan, error) {
 		mine := MembershipsIn(memberships, spec.Name)
 		theirs := VariantsFor(variants, spec, pools)
 
+		// BEFORE the lock, and that is not a style choice: awakeIntent takes
+		// r.mu itself to read the switch clock, and sync.Mutex is not reentrant.
+		// Called from inside the locked region below it deadlocks the pass --
+		// permanently, since nothing ever releases it, so the pool stops
+		// reconciling and holds its GPUs doing nothing.
+		//
+		// It only bit RETAINED pools, which is why it survived: awakeIntent
+		// returns at its `!Retained` guard before reaching the lock, so every
+		// ordinary bridge pool takes the harmless path. On a cluster the pool
+		// went silent the instant warmPoolRetained took effect, and never
+		// logged the state line that would have said so, because the pass hung
+		// before reaching it.
+		wantAwake := r.awakeIntent(ctx, spec, mine, theirs)
+
 		r.mu.Lock()
 		in := policy.Input{
 			Memberships: mine,
 			Variants:    theirs,
 			BorrowedAt:  copyBorrows(r.borrowedAt),
-			WantAwake:   r.awakeIntent(ctx, spec, mine, theirs),
+			WantAwake:   wantAwake,
 			MissesAt:    copyMisses(r.missesAt),
 			Admitting:   maps.Clone(r.admittingPods),
 			Now:         r.now(),
