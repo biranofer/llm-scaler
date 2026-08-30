@@ -8,6 +8,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/logging"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/registry"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/policy"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/pool"
@@ -125,6 +126,34 @@ func (r *RegistryPools) Pools(ctx context.Context) ([]PoolSpec, error) {
 		out = append(out, poolSpecFrom(meta, entry, r.Fallback))
 	}
 	if len(out) == 0 {
+		// Say WHAT WAS SEEN, not just that nothing declared a pool.
+		//
+		// The fallback below is indistinguishable from a working single-pool
+		// install, so this is the only place that can tell an operator whether
+		// their pool's ScaledObject reached WVA at all. The distinction that
+		// matters is between "no entry" -- KEDA has not called about it -- and
+		// "an entry with no warmPoolName", which is the same trigger arriving
+		// stripped of the metadata that declares it. Those need opposite fixes
+		// and produced identical silence, which cost a cluster session.
+		//
+		// Keys only. A trigger's values are the operator's, and the question
+		// here is only ever which keys survived the trip.
+		seen := make([]string, 0, 4)
+		for _, entry := range r.Snapshot() {
+			if r.Namespace != "" && entry.Namespace != r.Namespace {
+				continue
+			}
+			keys := make([]string, 0, len(entry.Metadata))
+			for k := range entry.Metadata {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			seen = append(seen, entry.Name+"["+strings.Join(keys, ",")+"]")
+		}
+		sort.Strings(seen)
+		logger.V(logging.DEFAULT).Info(
+			"no ScaledObject declares a warm pool; falling back to the unnamed one",
+			"namespace", r.Namespace, "entriesSeen", seen)
 		return []PoolSpec{{Name: "", Config: r.Fallback}}, nil
 	}
 	// Ordered so two pools resolve the same way on every pass and every process.
