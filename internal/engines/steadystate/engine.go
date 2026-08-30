@@ -1935,14 +1935,27 @@ func (e *Engine) emitSafetyNetMetrics(
 	}
 }
 
-// publishServing records, per scale target, how many distinct Pods reported
-// engine metrics.
+// publishServing records, per variant, how many distinct Pods of its OWN
+// replicas reported engine metrics.
 //
 // Counted by POD, not by metric: an engine that spans several processes reports
 // more than once for one replica, and the warm pool is comparing this against a
 // replica count. Empty variant names are skipped rather than collapsed into one
 // bucket -- a metric WVA cannot attribute says nothing about any particular
 // variant's readiness to take traffic back.
+//
+// BRIDGES ARE EXCLUDED, and that is the whole point of the count. The pool asks
+// this to decide whether the ordinary replicas have arrived and its lent Pod can
+// go home. A bridge is attributed to the variant it serves -- correctly, because
+// its DEMAND is the variant's -- so counting it here answers "yes" one replica
+// early: the pool hands back the very Pod that was carrying the traffic, to a
+// fleet one replica short of covering it. Demand yes, supply no; this is a
+// supply-side count.
+//
+// A variant whose only rows are bridges still publishes, as zero. That is not
+// the same as publishing nothing: no reading falls back to the scale target's
+// Ready count, while zero says its own replicas are demonstrably not serving --
+// which is exactly when a bridge must be kept.
 func publishServing(namespace string, metrics []domain.ReplicaMetrics) {
 	byVariant := map[string]map[string]bool{}
 	for _, m := range metrics {
@@ -1951,6 +1964,9 @@ func publishServing(namespace string, metrics []domain.ReplicaMetrics) {
 		}
 		if byVariant[m.VariantName] == nil {
 			byVariant[m.VariantName] = map[string]bool{}
+		}
+		if m.FromWarmPool {
+			continue // seen, so it publishes a count; not counted in it
 		}
 		byVariant[m.VariantName][m.PodName] = true
 	}

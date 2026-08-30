@@ -1,0 +1,104 @@
+package steadystate
+
+import (
+	"testing"
+	"time"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
+)
+
+// servingRow is one collected replica, named and flagged.
+func servingRow(variant, pod string, bridge bool) domain.ReplicaMetrics {
+	return domain.ReplicaMetrics{VariantName: variant, PodName: pod, FromWarmPool: bridge}
+}
+
+func servingCountFor(t *testing.T, variant string) (int, bool) {
+	t.Helper()
+	return decision.Serving("tenant", variant, time.Minute, time.Now())
+}
+
+// A BRIDGE is not one of the variant's own replicas, and must not be counted as
+// one.
+//
+// The pool asks this figure whether the ordinary replicas have arrived so it can
+// take its lent Pod back. A bridge is attributed to the variant it serves --
+// correctly, its demand is the variant's -- so counting it here answers yes one
+// replica early, and the pool hands back the Pod that was carrying the traffic.
+//
+// Measured on pokprod 2026-08-30: with one ordinary replica Ready and one bridge
+// lent, the pool was told "ready 1, serving 2".
+func TestABridgeIsNotCountedAsAServingReplica(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	publishServing("tenant", []domain.ReplicaMetrics{
+		servingRow("qwen-decode-wva", "qwen-decode-abc", false),
+		servingRow("qwen-decode-wva", "wva-warm-pool-0", true),
+	})
+
+	got, known := servingCountFor(t, "qwen-decode-wva")
+	if !known {
+		t.Fatal("no serving count published; the variant had rows")
+	}
+	if got != 1 {
+		t.Errorf("serving = %d, want 1 -- the bridge is not one of the variant's own replicas", got)
+	}
+}
+
+// A variant carried ENTIRELY by bridges publishes ZERO, not nothing.
+//
+// The two are opposite answers. No reading means the collector has not run and
+// the Ready count stands in; zero means the variant's own replicas are
+// demonstrably not serving, which is precisely when its bridge must be kept.
+// Skipping the row outright would produce the first while meaning the second.
+func TestAVariantServedOnlyByBridgesPublishesZero(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	publishServing("tenant", []domain.ReplicaMetrics{
+		servingRow("qwen-decode-wva", "wva-warm-pool-0", true),
+		servingRow("qwen-decode-wva", "wva-warm-pool-1", true),
+	})
+
+	got, known := servingCountFor(t, "qwen-decode-wva")
+	if !known {
+		t.Fatal("want a published zero, not an absent reading -- they mean opposite things")
+	}
+	if got != 0 {
+		t.Errorf("serving = %d, want 0", got)
+	}
+}
+
+// Ordinary replicas are still counted by POD, so an engine reporting several
+// times for one replica counts once.
+func TestOrdinaryReplicasAreCountedByPod(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	publishServing("tenant", []domain.ReplicaMetrics{
+		servingRow("qwen-decode-wva", "qwen-decode-abc", false),
+		servingRow("qwen-decode-wva", "qwen-decode-abc", false),
+		servingRow("qwen-decode-wva", "qwen-decode-def", false),
+	})
+
+	got, _ := servingCountFor(t, "qwen-decode-wva")
+	if got != 2 {
+		t.Errorf("serving = %d, want 2 distinct Pods", got)
+	}
+}
+
+// A row WVA could not attribute says nothing about any variant, so it publishes
+// nothing rather than collecting into an empty-named bucket.
+func TestAnUnattributedRowPublishesNothing(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	publishServing("tenant", []domain.ReplicaMetrics{
+		servingRow("", "some-pod", false),
+		servingRow("qwen-decode-wva", "", false),
+	})
+
+	if _, known := servingCountFor(t, ""); known {
+		t.Error("an empty variant name must not become a bucket")
+	}
+	if _, known := servingCountFor(t, "qwen-decode-wva"); known {
+		t.Error("a row with no Pod name is not evidence that the variant is serving")
+	}
+}
