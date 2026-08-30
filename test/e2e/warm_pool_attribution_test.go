@@ -48,12 +48,12 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		modelSvcName = "e2e-attr-ms"
 		fixturePool  = "e2e-attr-pool"
 
-		// THE TWO NAMES. scalerName is the ScaledObject, which is what the
-		// collector resolves for a Pod and what the analyzer keys its rows by;
-		// scaleTarget is the Deployment underneath it. On a real deployment they
-		// differ -- qwen-decode-wva scales qwen-decode -- and everything this
-		// spec asserts is about telling them apart.
-		scalerName  = "e2e-attr"
+		// THE TWO NAMES, and the fixture derives the first from scalerBase: the
+		// ScaledObject it creates is scalerBase + "-so", and THAT is the variant
+		// identity WVA keys everything by. scaleTarget is the Deployment underneath
+		// it. On a real deployment they differ too -- qwen-decode-wva scales
+		// qwen-decode -- and this whole spec is about telling them apart.
+		scalerBase  = "e2e-attr"
 		scaleTarget = modelSvcName + "-decode"
 
 		tenantDriver = "e2e-attr-tenant"
@@ -74,7 +74,10 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		poolSpec   fixtures.WarmPoolSpec
 		poolPod    string
 		poolPodIP  string
-		modelNode  string
+		// variantName is the identity WVA uses: the ScaledObject the fixture
+		// actually created, not the base name handed to it.
+		variantName string
+		modelNode   string
 	)
 
 	controllerLog := func() string {
@@ -128,6 +131,7 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodes).NotTo(BeEmpty())
 		modelNode = nodes[0].Name
+		variantName = fixtures.ScaledObjectNameFor(scalerBase)
 
 		By("Restarting the controller with the warm pool enabled")
 		restoreCtl, err := fixtures.EnableWarmPool(ctx, k8sClient, controller, cfg.LLMDNamespace)
@@ -249,12 +253,12 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 
 		By("Registering the variant under a name that is NOT its scale target")
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace,
-			scalerName, scaleTarget, modelSvcName+"-variant", 1, 4, cfg.MonitoringNS,
+			scalerBase, scaleTarget, modelSvcName+"-variant", 1, 4, cfg.MonitoringNS,
 			fixtures.WithWVATriggerMetadata(cfg.ModelID, "10.0"),
 			fixtures.WithWarmPoolSelection(attrPool, 1),
 		)).To(Succeed())
 		DeferCleanup(func() {
-			_ = fixtures.DeleteScaledObject(context.Background(), crClient, cfg.LLMDNamespace, scalerName)
+			_ = fixtures.DeleteScaledObject(context.Background(), crClient, cfg.LLMDNamespace, scalerBase)
 		})
 
 		By("Setting thresholds the fake metrics exceed")
@@ -320,25 +324,21 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 			}, 3*time.Minute, 10*time.Second).Should(Succeed())
 		}
 
-		By("Waiting for the bridge to be SCRAPED and attributed")
-		// The gate that stops every assertion below from passing vacuously. Until
-		// the collector has produced a row for the pool Pod there is nothing to
-		// be attributed rightly or wrongly.
+		By("Waiting for the bridge to reach the ANALYZER, under the variant's name")
+		// The gate, and it reads an analyzer row rather than the collector's
+		// attribution line on purpose. The attribution line is logged at
+		// logging.DEBUG -- V(4) -- and the shipped controller runs at V(2), so a
+		// spec that waited for it would wait forever on a chain that is working
+		// perfectly. That is exactly how this spec failed first: everything
+		// downstream was right and the evidence simply was not being printed.
+		//
+		// replica-capacity-decision is V(2), names the variant AND the Pod, and
+		// is the row the whole fix exists to produce. Waiting for it proves the
+		// bridge was scraped, collected, attributed and priced.
 		Eventually(func() []string {
-			return linesContaining("attributing it to the variant it is lent to", poolPod)
+			return linesContaining("replica-capacity-decision", `"variant": "`+variantName+`"`, poolPod)
 		}, settle, 10*time.Second).ShouldNot(BeEmpty(),
-			"the bridge was never attributed: check that the pool PodMonitor has a live target "+
-				"and that the emulated engine serves /metrics")
-
-		By("Attributing it under the VARIANT's name")
-		attributions := linesContaining("attributing it to the variant it is lent to", poolPod)
-		for _, line := range attributions {
-			Expect(line).To(ContainSubstring(`"lentTo": "`+scalerName+`"`),
-				"a bridge must be attributed to the ScaledObject the collector resolves a variant by")
-			Expect(line).NotTo(ContainSubstring(`"lentTo": "`+scaleTarget+`"`),
-				"the scale target is the Deployment underneath the ScaledObject; "+
-					"a lending published under it matches no analyzer row")
-		}
+			"the bridge's capacity never reached the analyzer under the variant's name")
 
 		By("Producing NO phantom variant named after the scale target")
 		// The visible shape of the bug: the analyzer grew a second variant, made
@@ -346,23 +346,28 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		Expect(linesContaining("replica-capacity-decision", `"variant": "`+scaleTarget+`"`)).To(BeEmpty(),
 			"the analyzer keyed a row by the scale target, which is a variant nothing is scaling")
 
-		By("Counting the bridge in the variant's own capacity rows")
-		// The positive half: the row for the pool Pod exists AND names the
-		// variant. Without this the assertion above is satisfied by a bridge that
-		// is simply dropped, which is the behaviour before any of this worked.
-		Expect(linesContaining("replica-capacity-decision", `"variant": "`+scalerName+`"`, poolPod)).
-			NotTo(BeEmpty(), "the bridge's capacity was never attributed to the variant it serves")
+		By("Attributing it under the VARIANT's name wherever the collector says so")
+		// Only checked when the controller is verbose enough to say. Not a gate:
+		// at the shipped V(2) there is nothing here to read, and the row asserted
+		// above already proves the attribution happened.
+		for _, line := range linesContaining("attributing it to the variant it is lent to", poolPod) {
+			Expect(line).To(ContainSubstring(`"lentTo": "`+variantName+`"`),
+				"a bridge must be attributed to the ScaledObject the collector resolves a variant by")
+			Expect(line).NotTo(ContainSubstring(`"lentTo": "`+scaleTarget+`"`),
+				"the scale target is the Deployment underneath the ScaledObject; "+
+					"a lending published under it matches no analyzer row")
+		}
 
 		By("Never counting the bridge among the variant's own SERVING replicas")
 		// Demand yes, supply no. The pool reads this to decide whether the
 		// ordinary replicas have arrived; counting the bridge answers yes one
 		// replica early and hands back the Pod that was carrying the traffic.
 		//
-		// Asserted as a relation rather than against a fixed number, because the
-		// ordinary replica count is the scale target's and this spec deliberately
-		// stops a second one from arriving rather than pinning what Ready is.
+		// Also V(4)-only, so also not a gate here. The rule itself is pinned by
+		// TestABridgeIsNotCountedAsAServingReplica in the steadystate package,
+		// which does not depend on a log level to say so.
 		servingLine := regexp.MustCompile(`"ready": (\d+), "serving": (\d+)`)
-		for _, line := range linesContaining("counting SERVING replicas", `"variant": "`+scalerName+`"`) {
+		for _, line := range linesContaining("counting SERVING replicas", `"variant": "`+variantName+`"`) {
 			m := servingLine.FindStringSubmatch(line)
 			Expect(m).To(HaveLen(3), "unparseable serving line: %s", line)
 			ready, err := strconv.Atoi(m[1])

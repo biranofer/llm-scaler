@@ -419,3 +419,15 @@ func buildScaledObject(namespace, name, scaleTargetName, variantName string, min
 	applyWVATriggerMetadata(so)
 	return so
 }
+
+// ScaledObjectNameFor returns the ScaledObject resource name these fixtures
+// create for a base name.
+//
+// Exported because it is a variant's IDENTITY, not a naming detail. WVA keys a
+// variant by the ScaledObject KEDA calls it about, so a spec asserting anything
+// about attribution has to use this name and not the base it passed in --
+// getting that wrong reads as "the bridge was attributed to the wrong variant"
+// when nothing is wrong at all.
+func ScaledObjectNameFor(name string) string {
+	return name + scaledObjectSuffix
+}
