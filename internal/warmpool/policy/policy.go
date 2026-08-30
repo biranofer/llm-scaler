@@ -72,13 +72,17 @@ type Config struct {
 // VariantDemand is what WVA has decided about one variant, plus what the pool
 // needs to know to serve it.
 type VariantDemand struct {
+	// Model carries the variant's identity, and Model.Variant -- the
+	// ScaledObject's name -- is the ONLY name anything downstream keys it by.
+	//
+	// There is deliberately no scale target here. The Deployment beneath the
+	// ScaledObject is a different string on any real deployment
+	// (`qwen-decode-wva` scales `qwen-decode`), and carrying it invited exactly
+	// one mistake: publishing a bridge, a serving count or a pressure reading
+	// under it. None of those ever matched an analyzer row. What genuinely needs
+	// the target -- reading the scale target's own object -- has the registry
+	// entry to hand and takes it from there.
 	Model pool.ModelRef
-	// Target is the scale target this variant scales, which is the name the
-	// COLLECTOR and the analyzer key a variant by. Model.Variant is the
-	// ScaledObject's name and is what the pool keys its warm set by; the two are
-	// usually the same string and are not required to be, so anything published
-	// for the analyzer to read has to use this one.
-	Target string
 	// Desired and Ready are ORDINARY replicas -- the scale target's, never the
 	// pool's. Counting lent Pods as capacity here is what would let the pool
 	// suppress the scale-up it exists to cover.

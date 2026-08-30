@@ -17,21 +17,22 @@ func lentMembership(podName, variant string, state pool.State) pool.Membership {
 	}
 }
 
-func bridgeDemandFor(variant, target string) policy.VariantDemand {
+func bridgeDemandFor(variant string) policy.VariantDemand {
 	return policy.VariantDemand{
-		Model:  pool.ModelRef{Namespace: "tenant", Variant: variant},
-		Target: target,
+		Model: pool.ModelRef{Namespace: "tenant", Variant: variant},
 	}
 }
 
-// Only a SERVING Pod is a bridge, and it is published under the scale target's
-// name.
+// Only a SERVING Pod is a bridge, and it is published under the VARIANT's name.
 //
-// The name matters as much as the set. The pool keys its warm set by the
-// ScaledObject's name; the collector and the analyzer key a variant by the scale
-// target it drives. Publishing the pool's name would attribute the Pod's metrics
-// to a variant nothing recognises, which is the same as not publishing at all --
-// except that it would look as though it were working.
+// The name matters as much as the set. The collector resolves a Pod's identity
+// by walking its ownerReferences to the managed scaler and takes that scaler's
+// name -- the ScaledObject's -- and the analyzer carries the same string. The
+// scale target is the Deployment underneath it, a different name on any real
+// deployment: `qwen-decode-wva` scales `qwen-decode`. Publishing the target
+// attributes the Pod's metrics to a variant nothing recognises, which is the
+// same as not publishing at all -- except that it looks as though it were
+// working.
 func TestOnlyALentPodIsPublishedAsABridge(t *testing.T) {
 	memberships := []pool.Membership{
 		lentMembership("pool-0", "variant-a", pool.Serving),
@@ -40,20 +41,40 @@ func TestOnlyALentPodIsPublishedAsABridge(t *testing.T) {
 		lentMembership("pool-3", "variant-b", pool.Serving),
 	}
 	variants := []policy.VariantDemand{
-		bridgeDemandFor("variant-a", "deploy-a"),
-		bridgeDemandFor("variant-b", "deploy-b"),
+		bridgeDemandFor("variant-a"),
+		bridgeDemandFor("variant-b"),
 	}
 
-	got := lentPodsByTarget(memberships, variants)
+	got := lentPodsByVariant(memberships, variants)
 
-	want := map[string]string{"pool-0": "deploy-a", "pool-3": "deploy-b"}
+	want := map[string]string{"pool-0": "variant-a", "pool-3": "variant-b"}
 	if len(got) != len(want) {
 		t.Fatalf("lending = %v, want %v", got, want)
 	}
-	for pod, target := range want {
-		if got[pod] != target {
-			t.Errorf("lending[%s] = %q, want %q", pod, got[pod], target)
+	for pod, variant := range want {
+		if got[pod] != variant {
+			t.Errorf("lending[%s] = %q, want %q", pod, got[pod], variant)
 		}
+	}
+}
+
+// The scale target's name is never published, however plausible it looks.
+//
+// Pinned separately from the test above because the two names are equal in most
+// fixtures and were equal in the ones that let this ship: a lending keyed by the
+// Deployment matched no analyzer row, so the bridge supply the whole chain
+// exists to report was never once emitted.
+func TestABridgeIsPublishedUnderTheVariantNotTheScaleTarget(t *testing.T) {
+	memberships := []pool.Membership{lentMembership("pool-0", "qwen-decode-wva", pool.Serving)}
+	variants := []policy.VariantDemand{bridgeDemandFor("qwen-decode-wva")}
+
+	got := lentPodsByVariant(memberships, variants)
+
+	if got["pool-0"] == "qwen-decode" {
+		t.Fatal("published the Deployment's name; the collector keys a variant by the ScaledObject's")
+	}
+	if got["pool-0"] != "qwen-decode-wva" {
+		t.Errorf("lending[pool-0] = %q, want the variant name qwen-decode-wva", got["pool-0"])
 	}
 }
 
@@ -64,19 +85,20 @@ func TestOnlyALentPodIsPublishedAsABridge(t *testing.T) {
 func TestAPodLentToAVanishedVariantIsNotPublished(t *testing.T) {
 	memberships := []pool.Membership{lentMembership("pool-0", "variant-gone", pool.Serving)}
 
-	if got := lentPodsByTarget(memberships, nil); len(got) != 0 {
+	if got := lentPodsByVariant(memberships, nil); len(got) != 0 {
 		t.Errorf("lending = %v, want nothing for a variant no longer in the demand", got)
 	}
 }
 
-// A variant whose demand carries no scale target is skipped for the same reason:
-// there is no name to publish it under that anything downstream would match.
-func TestAVariantWithNoScaleTargetIsSkipped(t *testing.T) {
-	memberships := []pool.Membership{lentMembership("pool-0", "variant-a", pool.Serving)}
-	variants := []policy.VariantDemand{bridgeDemandFor("variant-a", "")}
+// An UNNAMED variant is skipped for the same reason: there is no name to publish
+// it under that anything downstream would match, and an empty key would collect
+// every unnamed Pod into one bucket that attributes them all to each other.
+func TestAnUnnamedVariantIsSkipped(t *testing.T) {
+	memberships := []pool.Membership{lentMembership("pool-0", "", pool.Serving)}
+	variants := []policy.VariantDemand{bridgeDemandFor("")}
 
-	if got := lentPodsByTarget(memberships, variants); len(got) != 0 {
-		t.Errorf("lending = %v, want nothing when the variant names no scale target", got)
+	if got := lentPodsByVariant(memberships, variants); len(got) != 0 {
+		t.Errorf("lending = %v, want nothing for a variant with no name", got)
 	}
 }
 
@@ -85,9 +107,9 @@ func TestAVariantWithNoScaleTargetIsSkipped(t *testing.T) {
 // and an empty answer is what clears a Pod that has been handed back.
 func TestNothingLentPublishesAnEmptyMap(t *testing.T) {
 	memberships := []pool.Membership{lentMembership("pool-0", "variant-a", pool.Asleep)}
-	variants := []policy.VariantDemand{bridgeDemandFor("variant-a", "deploy-a")}
+	variants := []policy.VariantDemand{bridgeDemandFor("variant-a")}
 
-	got := lentPodsByTarget(memberships, variants)
+	got := lentPodsByVariant(memberships, variants)
 	if got == nil {
 		t.Fatal("want an empty map, not nil")
 	}

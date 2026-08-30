@@ -1022,8 +1022,8 @@ func runWarmPool(
 			// SERVING replicas rather than merely Ready ones, for the return
 			// rule -- see Demand.Serving. Unknown falls back to the Ready count,
 			// which is all a fleet whose collector has not run yet has.
-			Serving: func(namespace, target string) (int, bool) {
-				return decision.Serving(namespace, target, warmpool.ContentionMaxAge, time.Now())
+			Serving: func(namespace, variant string) (int, bool) {
+				return decision.Serving(namespace, variant, warmpool.ContentionMaxAge, time.Now())
 			},
 		},
 		warmpoolpolicy.Config{
@@ -1088,8 +1088,8 @@ func runWarmPool(
 	// of its resident models holds the GPUs. Published by the optimizer, which
 	// is the only component that measures demand against capacity; a pool
 	// without it never switches on its own.
-	reconciler.Pressure = func(namespace, target string) (decision.Pressure, bool) {
-		return decision.PressureFor(namespace, target, warmpool.ContentionMaxAge, time.Now())
+	reconciler.Pressure = func(namespace, variant string) (decision.Pressure, bool) {
+		return decision.PressureFor(namespace, variant, warmpool.ContentionMaxAge, time.Now())
 	}
 	reconciler.Contended = func(namespace, accelerator string) bool {
 		return decision.GPUContended(namespace, accelerator, warmpool.ContentionMaxAge, time.Now())

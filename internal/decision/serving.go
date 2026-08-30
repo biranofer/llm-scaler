@@ -25,8 +25,10 @@ import (
 // registered, is scraping, and can attribute traffic to.
 type ServingStore struct {
 	mu sync.RWMutex
-	// by is namespace → scale target → count, keyed by SCALE TARGET because that
-	// is what the warm pool's demand is keyed by and what a decision names.
+	// by is namespace → variant → count, where a variant is named by its
+	// ScaledObject -- the name the collector resolved for the Pods this count
+	// came from, and the one the warm pool must read it back under. The scale
+	// target is the Deployment beneath it and is a different string.
 	by map[string]map[string]servingCount
 }
 
@@ -43,11 +45,11 @@ func NewServingStore() *ServingStore {
 // DefaultServing is the store the engine writes and the warm pool reads.
 var DefaultServing = NewServingStore()
 
-// Publish records how many replicas of one scale target are reporting.
+// Publish records how many replicas of one variant are reporting.
 //
 // Zero is a real answer and is recorded: a variant whose replicas have all gone
 // away is exactly the case a bridge must NOT be returned for.
-func (s *ServingStore) Publish(namespace, target string, replicas int, at time.Time) {
+func (s *ServingStore) Publish(namespace, variant string, replicas int, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.by == nil {
@@ -56,7 +58,7 @@ func (s *ServingStore) Publish(namespace, target string, replicas int, at time.T
 	if s.by[namespace] == nil {
 		s.by[namespace] = map[string]servingCount{}
 	}
-	s.by[namespace][target] = servingCount{replicas: replicas, at: at}
+	s.by[namespace][variant] = servingCount{replicas: replicas, at: at}
 }
 
 // Get returns the serving count and whether there is a fresh one.
@@ -66,10 +68,10 @@ func (s *ServingStore) Publish(namespace, target string, replicas int, at time.T
 // yet, where falling back to the Ready count is right; zero is a variant whose
 // replicas are demonstrably not serving, where returning its bridge would strand
 // the traffic.
-func (s *ServingStore) Get(namespace, target string, maxAge time.Duration, now time.Time) (int, bool) {
+func (s *ServingStore) Get(namespace, variant string, maxAge time.Duration, now time.Time) (int, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	c, ok := s.by[namespace][target]
+	c, ok := s.by[namespace][variant]
 	if !ok {
 		return 0, false
 	}
@@ -87,11 +89,11 @@ func (s *ServingStore) Reset() {
 }
 
 // PublishServing records a count in the default store.
-func PublishServing(namespace, target string, replicas int, at time.Time) {
-	DefaultServing.Publish(namespace, target, replicas, at)
+func PublishServing(namespace, variant string, replicas int, at time.Time) {
+	DefaultServing.Publish(namespace, variant, replicas, at)
 }
 
 // Serving reads a count from the default store.
-func Serving(namespace, target string, maxAge time.Duration, now time.Time) (int, bool) {
-	return DefaultServing.Get(namespace, target, maxAge, now)
+func Serving(namespace, variant string, maxAge time.Duration, now time.Time) (int, bool) {
+	return DefaultServing.Get(namespace, variant, maxAge, now)
 }

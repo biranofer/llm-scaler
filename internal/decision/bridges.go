@@ -35,8 +35,11 @@ type BridgeStore struct {
 
 // bridgeSnapshot is one namespace's lending, as of one pass.
 type bridgeSnapshot struct {
-	// lentTo is pod name → the SCALE TARGET the Pod is lent to, which is the
-	// name the analyzer and the collector both key a variant by.
+	// lentTo is pod name → the VARIANT the Pod is lent to, named by its
+	// ScaledObject, which is what the collector resolves for every other Pod
+	// and what the analyzer keys its rows by. NOT the scale target: that is the
+	// Deployment beneath the ScaledObject, a different string on any real
+	// deployment, and a lending published under it matches no analyzer row.
 	lentTo map[string]string
 	at     time.Time
 }
@@ -66,8 +69,8 @@ func (s *BridgeStore) Publish(namespace string, lentTo map[string]string, at tim
 	s.by[namespace] = bridgeSnapshot{lentTo: maps.Clone(lentTo), at: at}
 }
 
-// VariantFor returns the scale target a Pod is lent to, and whether it is a
-// bridge at all.
+// VariantFor returns the variant a Pod is lent to, and whether it is a bridge at
+// all.
 //
 // A reading older than maxAge answers false. The pool republishes every pass, so
 // a stale map means the pool's reconciler has stopped -- and attributing a Pod

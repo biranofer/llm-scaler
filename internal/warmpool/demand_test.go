@@ -356,6 +356,45 @@ func TestVariantsReadDesireFromTheDecisionStoreAndReadinessFromTheWorkload(t *te
 	}
 }
 
+// The SERVING count is looked up under the VARIANT's name, not the scale
+// target's.
+//
+// The engine publishes it under the name the collector resolved for the Pod --
+// the managed scaler's, so the ScaledObject's -- while the scale target is the
+// Deployment beneath it. Reading it under the Deployment's name never hits, and
+// the miss is silent by design: an absent reading falls back to the Ready count,
+// so the probe-based answer this exists to replace goes on being used and
+// nothing says so.
+func TestServingIsLookedUpUnderTheVariantsOwnName(t *testing.T) {
+	d, reg, _ := demandFor(t,
+		[]client.Object{deployment(1, vllmContainer())},
+		&fakeDatastore{pool: inferencePool()})
+	registerVariant(reg, scaleTarget)
+
+	var askedFor []string
+	// Answers for the VARIANT only. A lookup by scale target gets "not known",
+	// which is the case the Ready count covers.
+	d.Serving = func(_, name string) (int, bool) {
+		askedFor = append(askedFor, name)
+		if name != "qwen" {
+			return 0, false
+		}
+		return 3, true
+	}
+
+	got, err := d.Variants(context.Background())
+	if err != nil {
+		t.Fatalf("Variants: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Variants = %+v, want one", got)
+	}
+	if got[0].Ready != 3 {
+		t.Errorf("ready = %d, want the SERVING count 3; asked for %v, and the variant is named %q",
+			got[0].Ready, askedFor, "qwen")
+	}
+}
+
 func TestPoolLabelsComeFromTheInferencePoolsOwnSelector(t *testing.T) {
 	// Read rather than assumed. A selector belongs to the tenant, and one that
 	// requires something other than llm-d.ai/model is not hypothetical -- a pool

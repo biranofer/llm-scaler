@@ -9,29 +9,36 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/warmpool/pool"
 )
 
-// The two models the retained pool in these tests holds, and the scale targets
-// they are keyed by.
+// The models the retained pool in these tests holds, named the way everything
+// downstream names them: by the ScaledObject, never by the Deployment beneath
+// it. The switching rule reads pressure under exactly this name.
 const (
+	variantAwake = "awake-one"
 	variantOther = "other-one"
-	targetAwake  = "deploy-awake"
-	targetOther  = "deploy-other"
+	variantThird = "third"
 )
 
 // switchVariants is a retained pool holding two models.
 func switchVariants() []policy.VariantDemand {
 	return []policy.VariantDemand{
-		{Model: pool.ModelRef{Namespace: "tenant", Variant: "awake-one"}, Target: targetAwake},
-		{Model: pool.ModelRef{Namespace: "tenant", Variant: variantOther}, Target: targetOther},
+		{Model: pool.ModelRef{Namespace: "tenant", Variant: variantAwake}},
+		{Model: pool.ModelRef{Namespace: "tenant", Variant: variantOther}},
 	}
 }
 
-// readings answers for the two targets above and knows nothing else.
+// readings answers for the two VARIANTS above and knows nothing else.
+//
+// Keyed by variant because that is what the analyzer publishes pressure under:
+// the collector resolves a Pod to its managed scaler and carries that name, so a
+// reading looked up by the Deployment underneath never hits. These fixtures give
+// the two names different strings on purpose -- when they matched, a lookup
+// under the wrong one passed every test here and answered nothing on a cluster.
 func readings(awake, other decision.Pressure) func(string, string) (decision.Pressure, bool) {
-	return func(_, target string) (decision.Pressure, bool) {
-		switch target {
-		case targetAwake:
+	return func(_, variant string) (decision.Pressure, bool) {
+		switch variant {
+		case variantAwake:
 			return awake, true
-		case targetOther:
+		case variantOther:
 			return other, true
 		}
 		return decision.Pressure{}, false
@@ -46,7 +53,7 @@ var switchCfg = SwitchConfig{SpareThreshold: 0.20, MinInterval: 10 * time.Minute
 // out of it.
 func TestThePoolSwitchesToTheModelRunningOutOfRoom(t *testing.T) {
 	now := time.Now()
-	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Hour),
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
@@ -68,7 +75,7 @@ func TestThePoolSwitchesToTheModelRunningOutOfRoom(t *testing.T) {
 // once, and choosing between two unhappy ones is not what this rule is for.
 func TestNoSwitchWhenTheAwakeModelIsAlsoShort(t *testing.T) {
 	now := time.Now()
-	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Hour),
 		readings(
 			decision.Pressure{SpareFraction: 0.10},
@@ -88,23 +95,23 @@ func TestNoSwitchWhenTheAwakeModelIsAlsoShort(t *testing.T) {
 func TestAModelNeedingToScaleUpOutranksALowSpareOne(t *testing.T) {
 	now := time.Now()
 	variants := append(switchVariants(),
-		policy.VariantDemand{Model: pool.ModelRef{Namespace: "tenant", Variant: "third"}, Target: "deploy-third"})
+		policy.VariantDemand{Model: pool.ModelRef{Namespace: "tenant", Variant: variantThird}})
 
-	pressure := func(_, target string) (decision.Pressure, bool) {
-		switch target {
-		case targetAwake:
+	pressure := func(_, variant string) (decision.Pressure, bool) {
+		switch variant {
+		case variantAwake:
 			return decision.Pressure{SpareFraction: 0.60}, true
-		case targetOther:
+		case variantOther:
 			return decision.Pressure{SpareFraction: 0.05}, true
-		case "deploy-third":
+		case variantThird:
 			return decision.Pressure{SpareFraction: 0.15, NeedsScaleUp: true}, true
 		}
 		return decision.Pressure{}, false
 	}
 
-	got, reason, switching := chooseAwake(switchCfg, variants, "awake-one", now.Add(-time.Hour), pressure, now)
+	got, reason, switching := chooseAwake(switchCfg, variants, variantAwake, now.Add(-time.Hour), pressure, now)
 
-	if !switching || got != "third" {
+	if !switching || got != variantThird {
 		t.Fatalf("chooseAwake = %q, %v; want the scale-up candidate, not the merely-low-spare one", got, switching)
 	}
 	if reason != reasonScaleUp {
@@ -117,7 +124,7 @@ func TestAModelNeedingToScaleUpOutranksALowSpareOne(t *testing.T) {
 // one already awake is at least already awake.
 func TestNoSwitchWhenTheAwakeModelAlsoNeedsToScaleUp(t *testing.T) {
 	now := time.Now()
-	got, _, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, _, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Hour),
 		readings(
 			decision.Pressure{SpareFraction: 0.02, NeedsScaleUp: true},
@@ -136,7 +143,7 @@ func TestNoSwitchWhenTheAwakeModelAlsoNeedsToScaleUp(t *testing.T) {
 // trade the GPUs back and forth and spend their time doing neither's work.
 func TestASpareSwitchWaitsOutTheMinimumInterval(t *testing.T) {
 	now := time.Now()
-	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Minute), // the last switch was one minute ago
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
@@ -154,7 +161,7 @@ func TestASpareSwitchWaitsOutTheMinimumInterval(t *testing.T) {
 	}
 
 	// ...and goes through once the interval has passed.
-	_, _, switching = chooseAwake(switchCfg, switchVariants(), "awake-one",
+	_, _, switching = chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-11*time.Minute),
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
@@ -172,7 +179,7 @@ func TestASpareSwitchWaitsOutTheMinimumInterval(t *testing.T) {
 // replicas are coming, that is the whole of its shortfall.
 func TestAScaleUpPreemptsTheMinimumInterval(t *testing.T) {
 	now := time.Now()
-	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Second), // a switch one second ago
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
@@ -197,7 +204,7 @@ func TestAScaleUpPreemptsTheMinimumInterval(t *testing.T) {
 // makes it safe is in a different part of the function.
 func TestPreemptionCannotThrashBetweenTwoGrowingModels(t *testing.T) {
 	now := time.Now()
-	got, _, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, _, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Second),
 		readings(
 			decision.Pressure{SpareFraction: 0.02, NeedsScaleUp: true},
@@ -215,14 +222,14 @@ func TestPreemptionCannotThrashBetweenTwoGrowingModels(t *testing.T) {
 // silence, at the cost of every model in the pool.
 func TestNoSwitchWhenTheAwakeModelHasNoReading(t *testing.T) {
 	now := time.Now()
-	pressure := func(_, target string) (decision.Pressure, bool) {
-		if target == targetOther {
+	pressure := func(_, variant string) (decision.Pressure, bool) {
+		if variant == variantOther {
 			return decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true}, true
 		}
 		return decision.Pressure{}, false // the awake model was never measured
 	}
 
-	got, reason, switching := chooseAwake(switchCfg, switchVariants(), "awake-one",
+	got, reason, switching := chooseAwake(switchCfg, switchVariants(), variantAwake,
 		now.Add(-time.Hour), pressure, now)
 
 	if switching {
@@ -257,7 +264,7 @@ func TestWithNoThresholdOnlyScaleUpSwitches(t *testing.T) {
 	now := time.Now()
 	cfg := SwitchConfig{MinInterval: 10 * time.Minute}
 
-	_, _, switching := chooseAwake(cfg, switchVariants(), "awake-one", now.Add(-time.Hour),
+	_, _, switching := chooseAwake(cfg, switchVariants(), variantAwake, now.Add(-time.Hour),
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
 			decision.Pressure{SpareFraction: 0.01},
@@ -266,7 +273,7 @@ func TestWithNoThresholdOnlyScaleUpSwitches(t *testing.T) {
 		t.Error("switched on spare capacity though no threshold was configured")
 	}
 
-	_, _, switching = chooseAwake(cfg, switchVariants(), "awake-one", now.Add(-time.Hour),
+	_, _, switching = chooseAwake(cfg, switchVariants(), variantAwake, now.Add(-time.Hour),
 		readings(
 			decision.Pressure{SpareFraction: 0.60},
 			decision.Pressure{SpareFraction: 0.01, NeedsScaleUp: true},
@@ -281,22 +288,22 @@ func TestWithNoThresholdOnlyScaleUpSwitches(t *testing.T) {
 func TestTheTightestCandidateWins(t *testing.T) {
 	now := time.Now()
 	variants := append(switchVariants(),
-		policy.VariantDemand{Model: pool.ModelRef{Namespace: "tenant", Variant: "third"}, Target: "deploy-third"})
+		policy.VariantDemand{Model: pool.ModelRef{Namespace: "tenant", Variant: variantThird}})
 
-	pressure := func(_, target string) (decision.Pressure, bool) {
-		switch target {
-		case targetAwake:
+	pressure := func(_, variant string) (decision.Pressure, bool) {
+		switch variant {
+		case variantAwake:
 			return decision.Pressure{SpareFraction: 0.60}, true
-		case targetOther:
+		case variantOther:
 			return decision.Pressure{SpareFraction: 0.15}, true
-		case "deploy-third":
+		case variantThird:
 			return decision.Pressure{SpareFraction: 0.02}, true
 		}
 		return decision.Pressure{}, false
 	}
 
-	got, _, switching := chooseAwake(switchCfg, variants, "awake-one", now.Add(-time.Hour), pressure, now)
-	if !switching || got != "third" {
+	got, _, switching := chooseAwake(switchCfg, variants, variantAwake, now.Add(-time.Hour), pressure, now)
+	if !switching || got != variantThird {
 		t.Errorf("chooseAwake = %q, %v; want third, which has the least spare", got, switching)
 	}
 }

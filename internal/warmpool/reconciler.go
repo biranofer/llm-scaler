@@ -154,7 +154,7 @@ type Reconciler struct {
 	// resident models holds the GPUs. Optional: without it a retained pool never
 	// switches on its own, which is what it did before this existed and is the
 	// safe direction -- the alternative is switching on numbers nobody produced.
-	Pressure func(namespace, target string) (decision.Pressure, bool)
+	Pressure func(namespace, variant string) (decision.Pressure, bool)
 
 	// lastSwitchAt is when each pool last formed an intent to change its awake
 	// model, keyed by pool name. It is what MinInterval is measured from.
@@ -321,7 +321,7 @@ func (r *Reconciler) Once(ctx context.Context) (policy.Plan, error) {
 	//
 	// Published beside the GPU figure and under the same rule: on every pass
 	// that could observe the pool, never on one that could not.
-	decision.PublishBridges(r.Namespace, lentPodsByTarget(memberships, variants), time.Now())
+	decision.PublishBridges(r.Namespace, lentPodsByVariant(memberships, variants), time.Now())
 
 	pools, err := r.poolSpecs(ctx)
 	if err != nil {
@@ -1233,19 +1233,25 @@ func awakeVariantIn(memberships []pool.Membership) string {
 	return ""
 }
 
-// lentPodsByTarget maps each LENT pool Pod to the scale target it is serving.
+// lentPodsByVariant maps each LENT pool Pod to the variant it is serving.
 //
-// Keyed by the scale target rather than by the pool's own name for the variant:
-// this is published for the collector, which knows a variant by the target it
-// scales. A variant the pool is lending to but that no longer appears in the
-// demand -- its ScaledObject deleted mid-flight -- is left out rather than
-// guessed at, because attributing a Pod to a variant nothing is scaling would
-// add demand no optimizer pass could act on.
-func lentPodsByTarget(memberships []pool.Membership, variants []policy.VariantDemand) map[string]string {
-	target := make(map[string]string, len(variants))
+// Keyed by the VARIANT -- the ScaledObject's name -- because that is the
+// identity the collector resolves for a Pod, by walking its ownerReferences to
+// the managed scaler, and the name the analyzer carries on every row. The scale
+// target is the Deployment underneath it and is a DIFFERENT string on any real
+// deployment: `qwen-decode-wva` scales `qwen-decode`. Publishing the target
+// matches no analyzer row, so the bridge's metrics stay unattributed while this
+// map looks correctly populated -- which is how it went unnoticed.
+//
+// A variant the pool is lending to but that no longer appears in the demand --
+// its ScaledObject deleted mid-flight -- is left out rather than guessed at,
+// because attributing a Pod to a variant nothing is scaling would add demand no
+// optimizer pass could act on.
+func lentPodsByVariant(memberships []pool.Membership, variants []policy.VariantDemand) map[string]string {
+	known := make(map[string]bool, len(variants))
 	for _, v := range variants {
-		if v.Target != "" {
-			target[v.Model.Variant] = v.Target
+		if v.Model.Variant != "" {
+			known[v.Model.Variant] = true
 		}
 	}
 	out := map[string]string{}
@@ -1253,8 +1259,8 @@ func lentPodsByTarget(memberships []pool.Membership, variants []policy.VariantDe
 		if m.State != pool.Serving {
 			continue
 		}
-		if name := target[m.Model.Variant]; name != "" {
-			out[m.Pod.Name] = name
+		if known[m.Model.Variant] {
+			out[m.Pod.Name] = m.Model.Variant
 		}
 	}
 	return out

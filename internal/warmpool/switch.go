@@ -99,7 +99,7 @@ func chooseAwake(
 	variants []policy.VariantDemand,
 	awake string,
 	lastSwitch time.Time,
-	pressureFor func(namespace, target string) (decision.Pressure, bool),
+	pressureFor func(namespace, variant string) (decision.Pressure, bool),
 	now time.Time,
 ) (string, switchReason, bool) {
 	// What the incumbent is putting up with. Without it there is no comparison
@@ -107,8 +107,8 @@ func chooseAwake(
 	var awakePressure decision.Pressure
 	awakeKnown := false
 	for _, v := range variants {
-		if v.Model.Variant == awake && v.Target != "" {
-			awakePressure, awakeKnown = pressureFor(v.Model.Namespace, v.Target)
+		if v.Model.Variant == awake {
+			awakePressure, awakeKnown = pressureFor(v.Model.Namespace, v.Model.Variant)
 			break
 		}
 	}
@@ -129,10 +129,10 @@ func chooseAwake(
 	}
 	var best *candidate
 	for _, v := range variants {
-		if v.Model.Variant == awake || v.Target == "" {
+		if v.Model.Variant == awake || v.Model.Variant == "" {
 			continue
 		}
-		p, known := pressureFor(v.Model.Namespace, v.Target)
+		p, known := pressureFor(v.Model.Namespace, v.Model.Variant)
 		if !known {
 			continue
 		}

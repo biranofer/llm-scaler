@@ -37,7 +37,7 @@ type WarmPoolSupply struct {
 // WarmPoolSupplyStore holds the current bridge supply per variant.
 type WarmPoolSupplyStore struct {
 	mu sync.RWMutex
-	// by is namespace → scale target → supply.
+	// by is namespace → variant → supply.
 	by map[string]map[string]WarmPoolSupply
 }
 
@@ -54,7 +54,7 @@ var DefaultWarmPoolSupply = NewWarmPoolSupplyStore()
 // Zero is recorded rather than deleted: "this variant has no bridge" is the
 // answer a switching decision most needs, and leaving the previous non-zero
 // figure standing would say the opposite.
-func (s *WarmPoolSupplyStore) Publish(namespace, target string, replicas int, capacity float64, at time.Time) {
+func (s *WarmPoolSupplyStore) Publish(namespace, variant string, replicas int, capacity float64, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.by == nil {
@@ -63,17 +63,17 @@ func (s *WarmPoolSupplyStore) Publish(namespace, target string, replicas int, ca
 	if s.by[namespace] == nil {
 		s.by[namespace] = map[string]WarmPoolSupply{}
 	}
-	s.by[namespace][target] = WarmPoolSupply{Replicas: replicas, Capacity: capacity, At: at}
+	s.by[namespace][variant] = WarmPoolSupply{Replicas: replicas, Capacity: capacity, At: at}
 }
 
 // Get returns a variant's bridge supply and whether there is a fresh reading.
 //
 // False means "not measured", which is not zero: no reading means the analyzer
 // has not run for this variant, where zero means it ran and found no bridge.
-func (s *WarmPoolSupplyStore) Get(namespace, target string, maxAge time.Duration, now time.Time) (WarmPoolSupply, bool) {
+func (s *WarmPoolSupplyStore) Get(namespace, variant string, maxAge time.Duration, now time.Time) (WarmPoolSupply, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	got, ok := s.by[namespace][target]
+	got, ok := s.by[namespace][variant]
 	if !ok {
 		return WarmPoolSupply{}, false
 	}
@@ -91,11 +91,11 @@ func (s *WarmPoolSupplyStore) Reset() {
 }
 
 // PublishWarmPoolSupply records a reading in the default store.
-func PublishWarmPoolSupply(namespace, target string, replicas int, capacity float64, at time.Time) {
-	DefaultWarmPoolSupply.Publish(namespace, target, replicas, capacity, at)
+func PublishWarmPoolSupply(namespace, variant string, replicas int, capacity float64, at time.Time) {
+	DefaultWarmPoolSupply.Publish(namespace, variant, replicas, capacity, at)
 }
 
 // WarmPoolSupplyFor reads a variant's bridge supply from the default store.
-func WarmPoolSupplyFor(namespace, target string, maxAge time.Duration, now time.Time) (WarmPoolSupply, bool) {
-	return DefaultWarmPoolSupply.Get(namespace, target, maxAge, now)
+func WarmPoolSupplyFor(namespace, variant string, maxAge time.Duration, now time.Time) (WarmPoolSupply, bool) {
+	return DefaultWarmPoolSupply.Get(namespace, variant, maxAge, now)
 }

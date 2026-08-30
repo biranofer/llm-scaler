@@ -59,8 +59,15 @@ type Demand struct {
 	// Zero inherits the workload's value, which is the previous behaviour.
 	GPUMemoryUtilization float64
 
-	// Serving reports how many replicas of a scale target are actually taking
+	// Serving reports how many replicas of a VARIANT are actually taking
 	// traffic -- reporting engine metrics -- and whether that is known.
+	//
+	// Keyed by the variant, which is the ScaledObject's name, because that is
+	// the identity the collector resolves for a Pod and the name the engine
+	// publishes this figure under. The scale target is the Deployment beneath
+	// it and a different string on any real deployment, and a lookup by that
+	// name simply never hits -- silently, because an absent reading falls back
+	// to the Ready count.
 	//
 	// Optional. Without it the Ready count is used, which is what this did
 	// before: the kubelet's probe, which a replica passes before it is
@@ -72,7 +79,7 @@ type Demand struct {
 	// answer means the collector has not run for this variant, where the Ready
 	// count is the best available; zero means its replicas are demonstrably not
 	// serving, which is precisely when a bridge must be kept.
-	Serving func(namespace, target string) (int, bool)
+	Serving func(namespace, variant string) (int, bool)
 
 	// Namespace is the pool's, and variants outside it are not its business.
 	//
@@ -162,7 +169,7 @@ func (d *Demand) Variants(ctx context.Context) ([]policy.VariantDemand, error) {
 		// own work. Prefer the second where it is known -- see Demand.Serving.
 		ready := int(workload.Status.ReadyReplicas)
 		if d.Serving != nil {
-			if serving, known := d.Serving(entry.Namespace, entry.Target.Name); known {
+			if serving, known := d.Serving(entry.Namespace, entry.Name); known {
 				if serving != ready {
 					logger.V(logging.DEBUG).Info(
 						"counting SERVING replicas rather than Ready ones for the pool's return rule",
@@ -183,9 +190,6 @@ func (d *Demand) Variants(ctx context.Context) ([]policy.VariantDemand, error) {
 				// the scheduler will actually enforce for the ordinary replicas.
 				Accelerator: pool.AcceleratorRequiredBy(&workload.Spec.Template.Spec),
 			},
-			// The scale target, carried so anything published for the collector
-			// and the analyzer is keyed the way they key a variant.
-			Target:  entry.Target.Name,
 			Desired: desired,
 			Ready:   ready,
 			// Which pool this variant may borrow from, and how many copies it

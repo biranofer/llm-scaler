@@ -36,8 +36,11 @@ type Pressure struct {
 // PressureStore holds the current reading per variant.
 type PressureStore struct {
 	mu sync.RWMutex
-	// by is namespace → scale target → pressure, keyed by SCALE TARGET because
-	// that is what the warm pool's demand is keyed by.
+	// by is namespace → variant → pressure, where a variant is named by its
+	// ScaledObject. That is the identity the analyzer carries, having got it
+	// from the collector's walk up a Pod's ownerReferences to the managed
+	// scaler; the Deployment beneath it is a different name and reading under
+	// it finds nothing.
 	by map[string]map[string]Pressure
 }
 
@@ -50,7 +53,7 @@ func NewPressureStore() *PressureStore {
 var DefaultPressure = NewPressureStore()
 
 // Publish records one variant's reading.
-func (s *PressureStore) Publish(namespace, target string, p Pressure) {
+func (s *PressureStore) Publish(namespace, variant string, p Pressure) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.by == nil {
@@ -59,7 +62,7 @@ func (s *PressureStore) Publish(namespace, target string, p Pressure) {
 	if s.by[namespace] == nil {
 		s.by[namespace] = map[string]Pressure{}
 	}
-	s.by[namespace][target] = p
+	s.by[namespace][variant] = p
 }
 
 // Get returns a variant's reading and whether there is a fresh one.
@@ -68,10 +71,10 @@ func (s *PressureStore) Publish(namespace, target string, p Pressure) {
 // the optimizer has not looked at yet must not be switched TO on the strength of
 // a number nobody produced, and must not be switched AWAY from either -- both
 // would be acting on an absence.
-func (s *PressureStore) Get(namespace, target string, maxAge time.Duration, now time.Time) (Pressure, bool) {
+func (s *PressureStore) Get(namespace, variant string, maxAge time.Duration, now time.Time) (Pressure, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	p, ok := s.by[namespace][target]
+	p, ok := s.by[namespace][variant]
 	if !ok {
 		return Pressure{}, false
 	}
@@ -89,11 +92,11 @@ func (s *PressureStore) Reset() {
 }
 
 // PublishPressure records a reading in the default store.
-func PublishPressure(namespace, target string, p Pressure) {
-	DefaultPressure.Publish(namespace, target, p)
+func PublishPressure(namespace, variant string, p Pressure) {
+	DefaultPressure.Publish(namespace, variant, p)
 }
 
 // PressureFor reads a variant's pressure from the default store.
-func PressureFor(namespace, target string, maxAge time.Duration, now time.Time) (Pressure, bool) {
-	return DefaultPressure.Get(namespace, target, maxAge, now)
+func PressureFor(namespace, variant string, maxAge time.Duration, now time.Time) (Pressure, bool) {
+	return DefaultPressure.Get(namespace, variant, maxAge, now)
 }
