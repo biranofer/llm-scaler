@@ -159,6 +159,10 @@ type Reconciler struct {
 	// lastSwitchAt is when each pool last formed an intent to change its awake
 	// model, keyed by pool name. It is what MinInterval is measured from.
 	lastSwitchAt map[string]time.Time
+	// lastSwitchTo is the model each pool last formed an intent to wake. It is
+	// what tells a NEW switch from a restatement of the standing one, which is
+	// the difference between announcing a decision and spamming it.
+	lastSwitchTo map[string]string
 
 	// lastHeld is the last reason each pool was held at its current size.
 	lastHeld map[string]string
@@ -228,6 +232,7 @@ func New(p pool.Pool, demand DemandSource, cfg policy.Config) *Reconciler {
 		admitting:        map[string]bool{},
 		admittingPods:    map[types.NamespacedName]bool{},
 		lastSwitchAt:     map[string]time.Time{},
+		lastSwitchTo:     map[string]string{},
 		lastShort:        map[string]int{},
 		lastSummary:      map[string]string{},
 		lastUnassignable: map[string]string{},
@@ -1233,19 +1238,51 @@ func (r *Reconciler) awakeIntent(
 			"reason", string(reason), "variants", sortedVariantNames(variants))
 		return ""
 	}
+	// RESTATING the standing intent is not a new switch.
+	//
+	// A switch is decided from what is AWAKE, and the intent only lands once the
+	// chosen model is actually serving. Until then `awake` still reads empty --
+	// or still reads the old model -- so the same candidate wins again on the
+	// very next pass. Nothing brakes that: a candidate that needs to scale up
+	// preempts MinInterval by design, and the argument for that preemption
+	// assumes there is an awake model to trade away, which there is not.
+	//
+	// Measured on pokprod 2026-08-30: 263 identical switch intents in about four
+	// minutes, several per second, all `from ""` to the same variant. Two real
+	// costs, beyond the noise: the intent was announced at default verbosity
+	// every pass, and lastSwitchAt was re-stamped every pass -- so the floor
+	// never elapsed and a later switch on SPARE capacity could be deferred
+	// forever by a standing intent that had not landed.
+	//
+	// The intent itself is still returned, because the pool has to keep acting
+	// on it; a model that has not woken yet is exactly what the next pass should
+	// go on trying to wake. Only the announcement and the clock are suppressed.
+	r.mu.Lock()
+	standing := r.lastSwitchTo[spec.Name] == want
+	if !standing {
+		if r.lastSwitchAt == nil {
+			r.lastSwitchAt = map[string]time.Time{}
+		}
+		if r.lastSwitchTo == nil {
+			r.lastSwitchTo = map[string]string{}
+		}
+		// Stamped when the intent is FORMED, not when the switch completes. The
+		// actuation takes a drain and a wake, and a clock that only started at
+		// the end would let the next pass form a second intent while the first
+		// was still being carried out.
+		r.lastSwitchAt[spec.Name] = now
+		r.lastSwitchTo[spec.Name] = want
+	}
+	r.mu.Unlock()
+
+	if standing {
+		logger.V(logging.DEBUG).Info("retained pool is still waiting for its chosen model to wake",
+			"pool", spec.Name, "from", awake, "to", want, "reason", string(reason))
+		return want
+	}
 	logger.V(logging.DEFAULT).Info("retained pool is switching the model it holds awake",
 		"pool", spec.Name, "from", awake, "to", want, "reason", string(reason),
 		"minInterval", spec.Switch.MinInterval)
-	r.mu.Lock()
-	if r.lastSwitchAt == nil {
-		r.lastSwitchAt = map[string]time.Time{}
-	}
-	// Stamped when the intent is FORMED, not when the switch completes. The
-	// actuation takes a drain and a wake, and a clock that only started at the
-	// end would let the next pass form a second intent while the first was still
-	// being carried out.
-	r.lastSwitchAt[spec.Name] = now
-	r.mu.Unlock()
 	return want
 }
 
