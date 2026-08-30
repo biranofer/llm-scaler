@@ -241,7 +241,8 @@ them, on its next pass.
 **What exists now**
 
 ```bash
-deploy/warmpool.sh plan -n <namespace>       # what this namespace wants, from its triggers
+deploy/warmpool.sh plan -n <namespace>       # what this namespace wants, from its triggers,
+                                            # and any pool workload nothing declares
 kubectl get deploy,scaledobject,networkpolicy,podmonitor -n <namespace> -l app.kubernetes.io/component=warm-pool
 ```
 
@@ -261,6 +262,18 @@ warmPoolCopies: "1"    # optional: how many copies of THIS model to keep warm
 A model with no `warmPool` uses the namespace's only pool, if there is exactly
 one. Adding or removing that line is the whole of joining or leaving a pool —
 there is nothing to restart, and the next reconcile acts on it.
+
+**Add scraping to a pool that already exists**
+
+```bash
+deploy/warmpool.sh monitor -n <namespace> --name <pool> --monitoring-namespace <where Prometheus runs>
+```
+
+`create` does this for you. `monitor` is for pools that predate it, or that were
+applied from `config/warmpool`, which ships no PodMonitor because a static
+manifest cannot know where Prometheus runs. It adds the PodMonitor and admits the
+scraper to the serving port, and it is safe to re-run: an already-admitted
+namespace is left alone.
 
 **Remove one**
 

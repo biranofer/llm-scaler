@@ -373,6 +373,25 @@ for f in "$(dirname "$0")/../test/e2e"/*_test.go; do
   fi
 done
 
+# --- monitor and plan, which talk to a cluster --------------------------------
+# Only the argument handling is checked here; the cluster behaviour is verified
+# by hand. Both subcommands died SILENTLY in their first form -- a failing
+# command substitution in a bare assignment aborts the script under errexit, and
+# `kubectl get leaderworkersets` fails on every cluster without that CRD -- so
+# `plan` printed its plan and simply stopped, looking like it had nothing to say.
+if bash "$SCRIPT" monitor -n tenant --name pool 2>&1 | grep -qi "monitoring-namespace"; then
+  ok "monitor requires a monitoring namespace"
+else
+  fail "monitor accepted no --monitoring-namespace: it would create a scrape config nothing could reach"
+fi
+
+if grep -q 'for kind in deployments leaderworkersets' "$SCRIPT" &&
+   grep -q '|| names=""' "$SCRIPT"; then
+  ok "the undeclared-pool report survives a cluster with no LeaderWorkerSet CRD"
+else
+  fail "the undeclared-pool report reads both kinds without tolerating a missing CRD; it will abort on most clusters"
+fi
+
 if [ "$FAILED" -eq 0 ]; then
   echo "Warm pool manifest checks passed."
 else

@@ -76,6 +76,9 @@ Warm pool lifecycle.
   warmpool.sh plan   -n NS                     which pools this namespace wants
   warmpool.sh create -n NS --name NAME ...     make one (Deployment + ScaledObject)
   warmpool.sh delete -n NS --name NAME         remove both objects
+  warmpool.sh monitor -n NS --name NAME --monitoring-namespace NS
+                                              scrape an EXISTING pool: adds the
+                                              PodMonitor and admits the scraper
   warmpool.sh sizing --params 744B [--dtype fp8]
                                               should this model be warmed on THIS
                                               cluster? Reads the nodes and answers.
@@ -181,8 +184,79 @@ require() {
 cmd_plan() {
   require NAMESPACE namespace
   log_info "Grouping ScaledObjects in $NAMESPACE by what a pool would have to provide"
+  # The plan's own status is kept and returned, but it must not decide whether
+  # the report below runs. Under pipefail this pipeline exits non-zero whenever
+  # the namespace holds no model ScaledObjects -- which is EXACTLY the namespace
+  # most likely to hold a pool nothing declares, so the check went missing
+  # precisely where it was needed.
+  local rc=0
   kubectl get scaledobject -n "$NAMESPACE" -o json 2>/dev/null |
-    python3 "$HERE/lib/warmpool_plan.py" "$NAMESPACE"
+    python3 "$HERE/lib/warmpool_plan.py" "$NAMESPACE" || rc=$?
+  report_undeclared_pools
+  return "$rc"
+}
+
+# report_undeclared_pools names pool workloads no ScaledObject declares.
+#
+# A pool is DECLARED by a trigger, not by the existence of its Pods, so a
+# Deployment nobody declares holds accelerators WVA will never use -- and the
+# controller cannot report it, because discovery is call-driven and nothing ever
+# calls about a pool that no ScaledObject describes. It is invisible by
+# construction.
+#
+# Asked HERE rather than in the controller deliberately. This is the command an
+# operator runs to ask what a namespace has, so the one question the controller
+# cannot answer costs a list nobody pays for on every reconcile.
+report_undeclared_pools() {
+  local declared workloads orphans
+  declared=$(kubectl get scaledobject -n "$NAMESPACE" -o json 2>/dev/null |
+    jq -r '[.items[]? | .spec.triggers[]? | .metadata.warmPoolName // empty] | unique | .[]' 2>/dev/null)
+  # One kind at a time. `kubectl get deployments,leaderworkersets` fails WHOLE
+  # when either resource type is unknown -- and LeaderWorkerSet is a CRD that
+  # most clusters do not have. Asking for both together therefore returned
+  # nothing at all on an ordinary cluster, so this check reported no undeclared
+  # pools because it could not see any pools: a silent pass, which is the exact
+  # failure it exists to prevent.
+  workloads=""
+  local kind names
+  for kind in deployments leaderworkersets; do
+    # `|| names=""` and NOT a bare assignment. LeaderWorkerSet is a CRD most
+    # clusters do not have, so this kubectl fails there; pipefail makes the
+    # pipeline fail with it, and under errexit a failing command substitution in
+    # an assignment ABORTS THE SCRIPT. It did -- silently, after the plan had
+    # printed, so `plan` looked like it had simply found nothing to say.
+    names=$(kubectl get "$kind" -n "$NAMESPACE"       -l app.kubernetes.io/component=warm-pool -o json 2>/dev/null |
+      jq -r '.items[]?.metadata.name' 2>/dev/null) || names=""
+    workloads="${workloads}${names}
+"
+  done
+  [ -n "$workloads" ] || return 0
+
+  orphans=""
+  local w short
+  while IFS= read -r w; do
+    [ -n "$w" ] || continue
+    # The workload is wva-warm-pool-<name>; the trigger names <name>. An unnamed
+    # pool is plain wva-warm-pool and is declared by a trigger naming "default"
+    # or nothing, so it is left alone rather than guessed at.
+    short="${w#wva-warm-pool-}"
+    # `if`, NOT `[ ... ] && continue`: under errexit a false test makes the
+    # whole && list return non-zero, which aborts the script. This function then
+    # printed nothing and reported no undeclared pools -- a silent pass, from the
+    # check whose entire job is to break a silence.
+    if [ "$short" = "$w" ]; then
+      continue
+    fi
+    printf '%s
+' "$declared" | grep -qx "$short" || orphans="${orphans}${w} "
+  done <<< "$workloads"
+
+  if [ -n "$orphans" ]; then
+    log_warning "Holding accelerators, declared by nothing: ${orphans}"
+    log_warning "  A pool is declared by a ScaledObject trigger carrying warmPoolName."
+    log_warning "  Until one does, WVA will not lend from these Pods -- they hold GPUs and warm nothing."
+    log_warning "  Give each a trigger, or: ${0##*/} delete -n ${NAMESPACE} --name <name>"
+  fi
 }
 
 cmd_create() {
@@ -1066,6 +1140,77 @@ spec:
 YAML
 }
 
+# cmd_monitor makes an EXISTING pool scrapeable.
+#
+# create does this already, so this is for pools that predate it or were applied
+# from config/warmpool -- which ships no PodMonitor, because a static manifest
+# cannot know where Prometheus runs.
+#
+# It is not cosmetic. A lent pool Pod serves a model's traffic, and unscraped
+# that load is invisible: the model reads as having LESS demand than it has for
+# as long as the pool is covering for it, and nothing anywhere says so.
+cmd_monitor() {
+  require NAMESPACE namespace
+  require MONITORING_NAMESPACE monitoring-namespace
+
+  # The pool has to exist. Creating a scrape config for a pool that is not there
+  # would sit generating no targets, which reads exactly like a scrape that is
+  # configured and working.
+  local workload=""
+  for kind in deployment leaderworkerset; do
+    if kubectl get "$kind" "wva-warm-pool-${POOL_NAME}" -n "$NAMESPACE" >/dev/null 2>&1; then
+      workload="$kind/wva-warm-pool-${POOL_NAME}"
+      break
+    fi
+  done
+  if [ -z "$workload" ]; then
+    log_error "no pool named '${POOL_NAME}' in ${NAMESPACE} (looked for a Deployment and a LeaderWorkerSet called wva-warm-pool-${POOL_NAME}). Create it first, or pass the --name it was created with"
+  fi
+  log_info "Pool: ${workload}"
+
+  warmpool_podmonitor | kubectl apply -f - >/dev/null
+  log_success "PodMonitor wva-warm-pool-${POOL_NAME}: scrapes :8000/metrics on AWAKE Pods only"
+
+  # The scrape is dropped without this. The pool's policy admits the serving port
+  # from its own namespace, and Prometheus is somewhere else -- so the PodMonitor
+  # would exist, generate targets, and every one of them would time out.
+  if kubectl get networkpolicy "wva-warm-pool-${POOL_NAME}" -n "$NAMESPACE" >/dev/null 2>&1; then
+    monitoring_peer_patch "wva-warm-pool-${POOL_NAME}"
+  elif kubectl get networkpolicy wva-warm-pool -n "$NAMESPACE" >/dev/null 2>&1; then
+    # The name config/warmpool ships, for a pool applied by kustomize.
+    monitoring_peer_patch wva-warm-pool
+  else
+    log_warning "No NetworkPolicy found for this pool, so nothing needed opening. If your cluster restricts traffic by other means, admit ${MONITORING_NAMESPACE} to port 8000 on the pool Pods."
+  fi
+}
+
+# monitoring_peer_patch admits the monitoring namespace to the serving port of an
+# existing policy, and says nothing if it is already admitted.
+#
+# Matched on the namespace NAME rather than on rule position: the serving rule is
+# first today, and a patch that assumed that would silently open the CONTROL port
+# instead if the order ever changed -- which is the one thing this file must
+# never do.
+monitoring_peer_patch() {
+  local name="$1" idx
+  idx=$(kubectl get networkpolicy "$name" -n "$NAMESPACE" -o json 2>/dev/null |
+    jq -r '[.spec.ingress | to_entries[] | select(any(.value.ports[]?; .port == 8000)) | .key][0] // empty')
+  if [ -z "$idx" ]; then
+    log_warning "NetworkPolicy ${name} has no rule for port 8000, so the scraper was not admitted. Add one, or the targets will time out."
+    return 0
+  fi
+  if kubectl get networkpolicy "$name" -n "$NAMESPACE" -o json 2>/dev/null |
+      jq -e --arg ns "$MONITORING_NAMESPACE" --argjson i "$idx"         '.spec.ingress[$i].from[]? | select(.namespaceSelector.matchLabels["kubernetes.io/metadata.name"] == $ns)' >/dev/null; then
+    log_info "NetworkPolicy ${name}: ${MONITORING_NAMESPACE} already admitted to :8000"
+    return 0
+  fi
+  local patch
+  patch=$(jq -n --arg ns "$MONITORING_NAMESPACE" --argjson i "$idx"     '[{op:"add", path:("/spec/ingress/" + ($i|tostring) + "/from/-"),
+       value:{namespaceSelector:{matchLabels:{"kubernetes.io/metadata.name":$ns}}}}]')
+  kubectl patch networkpolicy "$name" -n "$NAMESPACE" --type=json -p "$patch" >/dev/null
+  log_success "NetworkPolicy ${name}: ${MONITORING_NAMESPACE} admitted to :8000"
+}
+
 cmd_delete() {
   require NAMESPACE namespace
   # --dry-run means the same thing here as everywhere else: say what would
@@ -1140,5 +1285,6 @@ case "$ACTION" in
   sizing) cmd_sizing "${SIZING_ARGS[@]}" ;;
   create) cmd_create ;;
   delete) cmd_delete ;;
+  monitor) cmd_monitor ;;
   *) usage; log_error "unknown action: $ACTION" ;;
 esac
