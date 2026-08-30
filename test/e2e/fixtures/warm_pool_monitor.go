@@ -5,8 +5,11 @@ import (
 	"fmt"
 
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -74,3 +77,68 @@ func DeleteWarmPoolPodMonitor(ctx context.Context, crClient client.Client, names
 }
 
 func ptrString(s string) *string { return &s }
+
+// EnsureWarmPoolScrapeIngress admits Prometheus to the pool's serving port.
+//
+// The shipped NetworkPolicy (config/warmpool/warmpool-networkpolicy.yaml) does
+// NOT do this, and says so in a comment: a lent Pod's engine metrics are
+// reachable on that port, so a scraper has to be admitted, but the manifest
+// cannot know which namespace Prometheus runs in and refuses to guess -- a rule
+// admitting somebody else's namespace reads as monitoring that is configured.
+//
+// So admitting it is the OPERATOR's step, and this fixture is that step. Doing
+// it here rather than relaxing the shipped policy keeps the suite honest about
+// what an operator must actually do to see a bridge.
+//
+// A SECOND policy rather than an edit to the first, because NetworkPolicy
+// ingress is additive: the pool keeps its narrow rules exactly as shipped, and
+// this grants one more source one more port. Getting it wrong is silent in the
+// worst way -- the Pod serves metrics, a tenant can read them, and only the
+// scrape is refused, so the pool looks healthy and its bridge is simply never
+// measured.
+func EnsureWarmPoolScrapeIngress(
+	ctx context.Context,
+	clientset *kubernetes.Clientset,
+	namespace, monitoringNamespace string,
+) error {
+	port := intstr.FromInt32(int32(WarmPoolServingPort))
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "warm-pool-allow-scrape",
+			Namespace: namespace,
+			Labels:    map[string]string{"test-resource": defaultTestResourceLabelValue},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// The same selector the shipped policy uses, so it lands on exactly
+			// the Pods that policy is protecting.
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{
+				"app.kubernetes.io/name":      "workload-variant-autoscaler",
+				"app.kubernetes.io/component": "warm-pool",
+			}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": monitoringNamespace,
+					}},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{{Port: &port}},
+			}},
+		},
+	}
+	if _, err := clientset.NetworkingV1().NetworkPolicies(namespace).Create(
+		ctx, policy, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("create warm pool scrape ingress policy: %w", err)
+	}
+	return nil
+}
+
+// DeleteWarmPoolScrapeIngress removes it; a missing object is not an error.
+func DeleteWarmPoolScrapeIngress(ctx context.Context, clientset *kubernetes.Clientset, namespace string) error {
+	err := clientset.NetworkingV1().NetworkPolicies(namespace).Delete(
+		ctx, "warm-pool-allow-scrape", metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}

@@ -73,6 +73,7 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		controller fixtures.ControllerDeployment
 		poolSpec   fixtures.WarmPoolSpec
 		poolPod    string
+		poolPodIP  string
 		modelNode  string
 	)
 
@@ -162,9 +163,17 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		// attributed. A pool nothing scrapes produces no metrics, the collector
 		// produces no row, and every one of those assertions passes while
 		// proving nothing -- which is an empty result, not a green one.
+		// BOTH halves, and the second is the one that is easy to miss. The pool's
+		// shipped NetworkPolicy admits the controller and the model's namespace
+		// and nothing else, deliberately -- so a PodMonitor on its own produces a
+		// target that is refused at the network, which looks exactly like a Pod
+		// that serves no metrics. Discovered by this spec failing with the engine
+		// answering /metrics perfectly well to a tenant.
 		Expect(fixtures.EnsureWarmPoolPodMonitor(ctx, crClient, cfg.LLMDNamespace, attrPool)).To(Succeed())
+		Expect(fixtures.EnsureWarmPoolScrapeIngress(ctx, k8sClient, cfg.LLMDNamespace, cfg.MonitoringNS)).To(Succeed())
 		DeferCleanup(func() {
 			_ = fixtures.DeleteWarmPoolPodMonitor(context.Background(), crClient, cfg.LLMDNamespace, attrPool)
+			_ = fixtures.DeleteWarmPoolScrapeIngress(context.Background(), k8sClient, cfg.LLMDNamespace)
 		})
 
 		By("Waiting for the pool Pod")
@@ -174,7 +183,9 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 			})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(pods.Items).To(HaveLen(1))
+			g.Expect(pods.Items[0].Status.PodIP).NotTo(BeEmpty())
 			poolPod = pods.Items[0].Name
+			poolPodIP = pods.Items[0].Status.PodIP
 		}, settle, 5*time.Second).Should(Succeed())
 
 		Expect(fixtures.CreateHTTPDriver(ctx, k8sClient, fixtures.DriverSpec{
@@ -270,6 +281,44 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 			"the pool never warmed the model, so there was never anything to lend")
 		Eventually(poolState, settle, 5*time.Second).Should(MatchRegexp(`lent=[1-9]`),
 			"WVA never decided to borrow, so nothing below is being tested")
+
+		By("Checking the bridge SERVES metrics at all, before blaming the scrape")
+		// Splits the one failure that matters into two. "The bridge was never
+		// attributed" has two very different causes -- the Pod is not producing
+		// metrics, or it is and nothing collected them -- and they need opposite
+		// fixes. Asking the Pod directly, from inside the cluster, settles which.
+		//
+		// Through the PROXY's serving port, because that is the address the
+		// PodMonitor scrapes: a Pod whose engine serves metrics on some other
+		// port is exactly as unscrapeable as one serving none.
+		Eventually(func(g Gomega) {
+			got, err := fixtures.DriverCall(ctx, k8sClient, cfg.LLMDNamespace, tenantDriver,
+				"GET", fmt.Sprintf("http://%s:%d/metrics", poolPodIP, fixtures.WarmPoolServingPort), "")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(got.Status).To(Equal(200),
+				"the lent Pod does not serve /metrics through its proxy: %s", got.Body)
+			g.Expect(got.Body).To(ContainSubstring("vllm:"),
+				"the lent Pod answered /metrics with no vLLM series, so there is nothing to attribute: %s",
+				got.Body)
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+		By("Confirming Prometheus actually COLLECTED the bridge's series")
+		// The third distinct failure hiding behind one symptom. The Pod serves
+		// metrics (proved above) and something still has to carry them to the
+		// collector; if the PodMonitor target never comes up, the collector is
+		// working perfectly on data it was never given. Asking Prometheus
+		// directly separates "not scraped" from "scraped and not attributed".
+		if pc := promClientForCheck(); pc != nil {
+			Eventually(func(g Gomega) {
+				n, err := pc.QueryWithRetry(ctx,
+					fmt.Sprintf(`count(vllm:kv_cache_usage_perc{pod=%q})`, poolPod))
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(n).To(BeNumerically(">", 0),
+					"Prometheus holds no vLLM series for the lent Pod: its PodMonitor target "+
+						"is not up. Check the pool's NetworkPolicy admits the monitoring "+
+						"namespace on the serving port, and that the port name matches")
+			}, 3*time.Minute, 10*time.Second).Should(Succeed())
+		}
 
 		By("Waiting for the bridge to be SCRAPED and attributed")
 		// The gate that stops every assertion below from passing vacuously. Until
