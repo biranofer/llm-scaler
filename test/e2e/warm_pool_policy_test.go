@@ -135,8 +135,15 @@ var _ = Describe("Warm pool - what the pool decides", Label("full"), Label("warm
 			_ = fixtures.WaitForControllerReady(context.Background(), k8sClient, controller)
 		})
 
-		Eventually(controllerSaid("warm pool enabled"), 3*time.Minute, 5*time.Second).
-			Should(Succeed(), "the controller should report the pool as enabled")
+		// NOT waited on: "warm pool enabled". The controller says that when it
+		// STARTS reconciling a namespace, and it starts when a ScaledObject
+		// declares a pool there -- which happens in each context below, after
+		// this. Waiting for it here waits for something that cannot have
+		// happened yet, which is exactly how this spec hung for three minutes
+		// once the fixture stopped restarting the controller.
+		//
+		// Nothing is lost. Every context asserts on lines naming ITS pool, and
+		// those cannot appear before the reconciler exists.
 	})
 
 	Context("when a model needs an accelerator the pool does not have", func() {
