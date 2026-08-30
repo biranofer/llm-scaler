@@ -764,8 +764,15 @@ func (r *Reconciler) report(ctx context.Context, spec PoolSpec, memberships []po
 	// case: an install that cannot read nodes matches nothing, and the fit check
 	// then treats every model as portable. That is the right failure direction,
 	// but a silent one, and this line is deduplicated so saying it costs nothing.
-	summary := fmt.Sprintf("pods=%d free=%d resident=%d variants=%d lent=%d accelerator=%s",
-		pods, free, residentModels(memberships), len(variants), lent, acceleratorsIn(memberships))
+	// retained is in the summary because its ABSENCE is invisible everywhere
+	// else. A pool whose ScaledObject sets warmPoolRetained but whose spec did
+	// not pick it up behaves exactly like an ordinary bridge pool -- it lends and
+	// returns, never switches, and says nothing about why. Reading it back here
+	// is the difference between "the switch rule decided not to" and "the switch
+	// rule was never reached", which took a cluster session to tell apart.
+	summary := fmt.Sprintf("pods=%d free=%d resident=%d variants=%d lent=%d retained=%t accelerator=%s",
+		pods, free, residentModels(memberships), len(variants), lent,
+		spec.Config.Retained, acceleratorsIn(memberships))
 	if summary != r.lastSummary[name] {
 		logger.V(1).Info("warm pool state", "pool", name, "state", summary)
 		r.lastSummary[name] = summary
@@ -1179,11 +1186,20 @@ func (r *Reconciler) awakeIntent(
 	if external := r.wantAwake(spec); external != "" {
 		return external
 	}
+	// Both early returns say WHY. Between them they are every way the switch rule
+	// can fail to run at all, and until this existed the two were indistinguish-
+	// able from a rule that ran and chose to stay -- all three produced silence,
+	// and a retained pool that never switches looks the same in each case.
+	logger := log.FromContext(ctx).WithName("warmpool")
 	if !spec.Config.Retained {
+		logger.V(logging.DEBUG).Info("pool is not retained, so it never chooses which model is awake",
+			"pool", spec.Name)
 		return ""
 	}
 	pressureFor := r.Pressure
 	if pressureFor == nil {
+		logger.V(logging.DEBUG).Info("retained pool has no pressure source, so it cannot compare models",
+			"pool", spec.Name)
 		return ""
 	}
 
@@ -1194,7 +1210,6 @@ func (r *Reconciler) awakeIntent(
 
 	now := r.now()
 	want, reason, switching := chooseAwake(spec.Switch, variants, awake, last, pressureFor, now)
-	logger := log.FromContext(ctx).WithName("warmpool")
 	if !switching {
 		// Logged at DEBUG because it is the steady state: most passes decide to
 		// leave a retained pool alone, and saying so every five seconds at
