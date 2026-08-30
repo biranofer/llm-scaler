@@ -140,6 +140,10 @@ func main() {
 
 	// The warm pool is OFF unless a namespace is named, because it holds GPUs
 	// continuously: that is a cost decision an operator makes, never a default.
+	// Deprecated, inert, and deliberately still parsed: see where it is read.
+	deprecatedWarmPoolNamespace := flag.String("warm-pool-namespace", "",
+		"DEPRECATED and ignored. The pool's namespace is the watched one; a "+
+			"cluster-scoped install discovers pools wherever a ScaledObject declares one.")
 	warmPoolSleepMinSize := flag.Int("warm-pool-sleep-min-size", 1,
 		"Floor on FREE pool Pods -- ones with every instance asleep. This is the reserve "+
 			"the pool keeps for the next spike, per pool rather than per model.")
@@ -768,6 +772,20 @@ func main() {
 	// cannot see across the boundary, so every read fails and the pool reports
 	// itself empty, which is indistinguishable from a pool that is simply too
 	// small.
+	// ACCEPTED AND IGNORED, not removed outright. Go's flag package exits on an
+	// unknown flag, so deleting this made every Deployment that still passes it
+	// crash-loop on upgrade -- which is what happened the first time this build
+	// was rolled onto a cluster whose manifest set it. A flag nothing should
+	// pass is still a flag something DOES pass.
+	//
+	// Kept hidden and inert for one release, so an upgrade is a no-op and the
+	// operator is told once rather than discovering it as a CrashLoopBackOff.
+	if *deprecatedWarmPoolNamespace != "" {
+		setupLog.Info("--warm-pool-namespace is deprecated and ignored; the pool's namespace is "+
+			"the watched one, and a cluster-scoped install discovers pools wherever a ScaledObject "+
+			"declares them. Remove it from your manifest.",
+			"ignoredValue", *deprecatedWarmPoolNamespace, "watching", watchNS)
+	}
 	// The pool's namespace is the WATCHED one, and there is no way to say
 	// otherwise. A flag used to exist and could only repeat this or contradict
 	// it: contradicting it means the controller cannot read across the boundary,
