@@ -108,6 +108,13 @@ class Engine(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text(self, code, body):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; version=0.0.4")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/health":
@@ -115,6 +122,41 @@ class Engine(BaseHTTPRequestHandler):
             # /health cannot distinguish the two states. That is exactly why the
             # pool asks /is_sleeping instead of inferring.
             self._send(200, b"{}")
+        elif path == "/metrics":
+            # vLLM-shaped series, so a BRIDGE can be scraped like any other
+            # replica. Without these the pool Pod is invisible to Prometheus,
+            # the collector never sees a row for it, and every assertion about
+            # how a bridge is ATTRIBUTED passes vacuously.
+            #
+            # Labelled with model_name only. That is the whole point: the engine
+            # has no idea which variant it is lent to, so attribution can only
+            # come from what the pool publishes -- which is the thing under test.
+            #
+            # A SLEEPING engine reports nothing. It holds no KV cache and serves
+            # no requests, and emitting zeros instead would make a returned
+            # bridge look like a replica sitting idle.
+            with LOCK:
+                asleep = SLEEPING.get(self.server.server_address[1], True)
+            if asleep:
+                self._send_text(200, b"")
+                return
+            model = self.server.model
+            lines = [
+                "# HELP vllm:kv_cache_usage_perc KV cache usage.",
+                "# TYPE vllm:kv_cache_usage_perc gauge",
+                'vllm:kv_cache_usage_perc{model_name="' + model + '"} 0.5',
+                "# HELP vllm:num_requests_waiting Requests in the queue.",
+                "# TYPE vllm:num_requests_waiting gauge",
+                'vllm:num_requests_waiting{model_name="' + model + '"} 2',
+                "# HELP vllm:num_requests_running Requests being served.",
+                "# TYPE vllm:num_requests_running gauge",
+                'vllm:num_requests_running{model_name="' + model + '"} 4',
+                "# HELP vllm:cache_config_info Cache configuration.",
+                "# TYPE vllm:cache_config_info gauge",
+                'vllm:cache_config_info{model_name="' + model +
+                '",block_size="16",num_gpu_blocks="4096"} 1',
+            ]
+            self._send_text(200, ("\n".join(lines) + "\n").encode())
         elif path == "/last_sleep":
             with LOCK:
                 asked = LAST_SLEEP.get(self.server.server_address[1], "")
