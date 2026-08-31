@@ -32,6 +32,14 @@ WVA_NS=${WVA_NS:-"workload-variant-autoscaler-system"}
 # Simulator image — must match defaultModelServiceSimulatorImage in test/e2e/fixtures/model_service_conventions.go
 SIM_IMAGE=${SIM_IMAGE:-"ghcr.io/llm-d/llm-d-inference-sim:v0.9.0"}
 
+# Warm pool images, pre-loaded for the same reason as the simulator's.
+# WARMPOOL_EMULATOR_IMAGE must match warmPoolEmulatorImage in
+# test/e2e/fixtures/warm_pool_builder.go; WARMPOOL_PROXY_IMAGE takes the same
+# env var and default as the suite's own WarmPoolProxyImage (test/e2e/config.go),
+# so overriding one overrides what is pre-loaded.
+WARMPOOL_EMULATOR_IMAGE=${WARMPOOL_EMULATOR_IMAGE:-"registry.access.redhat.com/ubi9/python-311:latest"}
+WARMPOOL_PROXY_IMAGE=${WARMPOOL_PROXY_IMAGE:-"ghcr.io/ev-shindin/warmpool-proxy:v8"}
+
 # WVA Configuration
 WVA_RECONCILE_INTERVAL=${WVA_RECONCILE_INTERVAL:-"60s"} # WVA controller reconcile interval - tests set 30s interval
 SKIP_TLS_VERIFY=true  # Skip TLS verification in emulated environments
@@ -109,6 +117,10 @@ check_specific_prerequisites() {
 
     # Pre-load the simulator image so tests don't pull it cold (avoids PodReadyTimeout).
     load_sim_image
+
+    # Same for the warm pool's images, for the same reason and with the same
+    # symptom: the pool Pod is what a warm-pool spec waits on.
+    load_warmpool_images
 
     log_success "All Kind emulated deployment prerequisites met"
 }
@@ -240,6 +252,41 @@ load_sim_image() {
     fi
 
     _load_into_kind "$SIM_IMAGE" || log_warning "Failed to load simulator image into KIND cluster — tests may be slow on first run"
+}
+
+# Pre-loads the warm pool's images, for the same reason as the simulator's: a
+# warm-pool spec waits on the POOL Pod, and a cold pull is charged against that
+# wait rather than against anything the spec is testing.
+#
+# Measured on a fresh cluster: the attribution spec failed after its full 300s
+# with "pods=0 ... the pool never warmed the model, so there was never anything
+# to lend", while the emulator image (402MB) was still being pulled. It had
+# arrived by the time the run finished, so every later spec passed and the
+# failure looked like a code regression rather than an empty image cache. The
+# same suite is green on a cluster that has run before, which is what makes this
+# worth pre-loading rather than waiting longer.
+#
+# Warnings, never errors: a pool image that cannot be pulled is a slow test, not
+# a broken cluster, and the specs that use it skip on their own.
+load_warmpool_images() {
+    local platform="${KIND_IMAGE_PLATFORM:-}"
+    if [ -z "$platform" ]; then
+        case "$(uname -m)" in
+            aarch64|arm64) platform="linux/arm64" ;;
+            *) platform="linux/amd64" ;;
+        esac
+    fi
+
+    local image
+    for image in "$WARMPOOL_EMULATOR_IMAGE" "$WARMPOOL_PROXY_IMAGE"; do
+        [ -n "$image" ] || continue
+        log_info "Pre-loading warm pool image '$image' into KIND cluster..."
+        if ! docker pull --platform "$platform" "$image"; then
+            log_warning "Failed to pull warm pool image '$image' — warm pool tests may be slow on first run"
+            continue
+        fi
+        _load_into_kind "$image" || log_warning "Failed to load warm pool image '$image' into KIND cluster — warm pool tests may be slow on first run"
+    done
 }
 
 
