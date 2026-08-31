@@ -374,7 +374,7 @@ func (a *Adapter) Warm(ctx context.Context, pod types.NamespacedName, model Mode
 	}
 
 	spec := InstanceSpec{
-		Options: fmt.Sprintf("%s --port %d", model.EngineOptions, port),
+		Options: withAssignedPorts(model.EngineOptions, port),
 		EnvVars: map[string]string{
 			// Without this vLLM does not expose /sleep or /wake_up at all, and
 			// the pool has no mechanism. It belongs with the instance, not with
@@ -588,7 +588,8 @@ func (a *Adapter) groupMembers(ctx context.Context, leader *corev1.Pod) ([]*core
 // because it is part of the engine's shape and the pool matches groups against
 // it. Only the position within the group is added here.
 func rankOptions(base string, rank int, master string, port int) string {
-	opts := fmt.Sprintf("%s --port %d --node-rank %d --master-addr %s", base, port, rank, master)
+	opts := fmt.Sprintf("%s --node-rank %d --master-addr %s",
+		withAssignedPorts(base, port), rank, master)
 	if rank > 0 {
 		opts += " --headless"
 	}
@@ -933,17 +934,23 @@ func isIdentityLabel(key string) bool {
 // removed, which is what makes two instances comparable: the port is the pool's
 // choice and differs between Pods, everything else is the engine's identity.
 func optionsWithoutPort(options string) string {
-	return optionsWithout(options, map[string]bool{"--port": true})
+	return optionsWithout(options, map[string]bool{
+		"--port": true,
+		// Assigned by the pool for the same reason and on the same terms as
+		// --port; see withAssignedPorts.
+		"--data-parallel-rpc-port": true,
+	})
 }
 
 // rankFlags are the flags warmGroup ADDS to place an engine in a process group.
 // They are not part of what the caller asked for, so comparing a resident
 // instance against a requested one has to ignore them.
 var rankFlags = map[string]bool{
-	"--port":        true,
-	"--node-rank":   true,
-	"--master-addr": true,
-	"--headless":    true,
+	"--port":                   true,
+	"--data-parallel-rpc-port": true,
+	"--node-rank":              true,
+	"--master-addr":            true,
+	"--headless":               true,
 }
 
 // optionsWithoutRank is what the CALLER asked for, recovered from what was
@@ -1016,6 +1023,40 @@ func portOf(options string) int {
 }
 
 func localAddr(port int) string { return fmt.Sprintf("127.0.0.1:%d", port) }
+
+// dpRPCBasePort is the first port assigned for DATA-PARALLEL messaging.
+//
+// vLLM's own default is 29550 and it is a CONSTANT, unlike the data-parallel
+// MASTER port, which vLLM picks from get_open_ports_list at startup. Verified
+// against the running engine: ParallelConfig.data_parallel_rpc_port = 29550.
+//
+// A constant is fine for the ordinary deployment, where a Pod runs one engine.
+// It is not fine here: the whole premise of the pool is several engines in one
+// Pod, so a second data-parallel model would bind a port the first already
+// holds and simply fail to start. Starting at vLLM's own default keeps the
+// first instance on the port an operator would expect to see.
+const dpRPCBasePort = 29550
+
+// withAssignedPorts appends the ports the POOL owns, rather than the engine.
+//
+// --port always: the pool decides where an instance listens, which is why the
+// demand filter strips whatever the workload declared.
+//
+// --data-parallel-rpc-port only when the engine is actually data-parallel.
+// Adding it unconditionally would put an unused flag on every warm copy, and a
+// warm copy's options are compared against the ordinary replicas' to decide
+// whether a resident instance matches what was asked for.
+//
+// Both are derived from the assigned port, which freePort already guarantees is
+// unique within the Pod -- so the messaging ports inherit that uniqueness
+// instead of needing a second allocator to keep in step with the first.
+func withAssignedPorts(base string, port int) string {
+	opts := fmt.Sprintf("%s --port %d", base, port)
+	if dp, err := strconv.Atoi(flagValue(base, "--data-parallel-size")); err == nil && dp > 1 {
+		opts += fmt.Sprintf(" --data-parallel-rpc-port %d", dpRPCBasePort+(port-BasePort))
+	}
+	return opts
+}
 
 // freePort picks the lowest port in the Pod's range that no instance holds.
 func freePort(existing []Instance) (int, error) {
