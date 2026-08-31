@@ -114,29 +114,26 @@ func (d *Demand) Variants(ctx context.Context) ([]policy.VariantDemand, error) {
 		}
 		target := types.NamespacedName{Namespace: entry.Namespace, Name: entry.Target.Name}
 
-		// An engine that spans PODS cannot be warmed, and saying why matters:
-		// the Deployment read below would fail for a LeaderWorkerSet anyway, but
-		// with "cannot read its scale target", which sends an operator looking
-		// for a permissions or naming problem that does not exist.
+		// An engine that spans PODS needs a pool of GROUPS, not of Pods: a pool
+		// Pod is ONE Pod holding several engines, while an LWS engine is several
+		// Pods holding one. Holding one warm means holding an entire group warm
+		// and coordinating sleep and wake across every member.
 		//
-		// It is not a gap the pool could close by trying harder. A pool Pod is
-		// ONE Pod holding several engines; an LWS engine is several Pods holding
-		// one. Warming it would mean holding an entire group warm and
-		// coordinating sleep and wake across every member, which is a different
-		// design rather than a missing feature.
+		// That is a real pool shape now, so it is NOT refused here. The fit check
+		// decides, against a group's actual size, and says so per variant when it
+		// declines; refusing at discovery could only repeat that judgement with
+		// less information. What the fit check needs is --nnodes in the engine
+		// options, which the flag list above keeps for exactly this reason.
 		//
-		// Parallelism WITHIN a Pod is fine and needs nothing special: tensor and
-		// pipeline sizes multiply into the GPU count, and a pool whose Pods hold
-		// that many devices warms it like any other model. See
+		// Parallelism WITHIN a Pod is a different case and needs nothing special:
+		// tensor and pipeline sizes multiply into the GPU count, and a pool whose
+		// Pods hold that many devices warms it like any other model. See
 		// config/warmpool-multi-gpu.
-		// An engine that spans Pods needs a pool of GROUPS, not of Pods. That
-		// is a real pool shape now, so this is no longer refused here -- the
-		// fit check decides, against a group's actual size, and says so per
-		// variant when it declines. Refusing at discovery could only repeat
-		// that judgement with less information.
 		//
-		// What the fit check needs is --nnodes in the engine options, which the
-		// flag list above keeps for exactly this reason.
+		// The read below still fails for a LeaderWorkerSet with "cannot read its
+		// scale target", which sends an operator looking for a permissions or
+		// naming problem that does not exist -- so the group path reports its own
+		// reason rather than letting that stand.
 
 		var workload appsv1.Deployment
 		if err := d.Client.Get(ctx, target, &workload); err != nil {

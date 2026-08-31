@@ -18,8 +18,19 @@ is a cost decision, which is why WVA never creates a pool for you.
 
 Two properties are worth knowing before you size one:
 
-- A warm copy is only reusable on the **accelerator it was loaded on**. One pool
-  cannot serve two GPU types.
+- **A pool Pod has to match the model's shape, in three ways.** The fit check
+  declines per variant and says which one failed:
+
+  | must match | declined with | set by |
+  | --- | --- | --- |
+  | GPUs per Pod — the Pod needs at least as many as the engine | `needs N GPUs, this Pod holds M` | `create --gpus` |
+  | how those GPUs are **divided** — 16 over two Pods and over four are the same count and different engines | `spans N Pod(s), this warm unit is M` | `create --group-size` |
+  | the accelerator itself — a warm copy is only reusable on the one it was loaded on | accelerator mismatch | `create --accelerator` (a nodeSelector) |
+
+  A Pod cannot change node or device count, so a model that fails any of these
+  will *never* be warmed by that pool — it is not a wait. Nothing refuses a
+  mixed pool, and it does not fail loudly: the reserve is counted pool-wide, so
+  part of it cannot serve the model you are holding it for.
 - A pool whose replica count does not **exceed** its reserve can never warm
   anything at all. See [Sizing](#sizing).
 
@@ -45,10 +56,15 @@ Each pool Pod runs two containers, and only one of them is built here:
 
 | container | image | owner |
 | --- | --- | --- |
-| `inference-server` | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher` | Fast Model Actuation |
+| `inference-server` (pool of Pods) | `ghcr.io/llm-d-incubation/llm-d-fast-model-actuation/launcher` | Fast Model Actuation |
+| `inference-server` (pool of **groups**) | `ghcr.io/ev-shindin/fma-launcher:v0.6.4-headless` — `--launcher-image` is required, and `create` refuses without it | **our fork**, [ev-shindin/llm-d-fast-model-actuation](https://github.com/ev-shindin/llm-d-fast-model-actuation) — see [pools of groups](#a-group-needs-a-patched-supervisor-image) |
 | `proxy` | the image `config/warmpool` pins, or `--proxy-image` | this repo (`make docker-build-warmpool-proxy`) |
 
-The launcher image is **not** ours and is not optional. It is a full vLLM
+Everything below is about the **stock** launcher, which a pool of Pods runs. A
+pool of groups needs the fork instead: the stock one cannot start a multi-node
+follower at all.
+
+The stock launcher image is **not** ours and is not optional. It is a full vLLM
 runtime — vLLM, torch and CUDA — with FMA's launcher on top, and the pool needs
 both halves of that:
 
@@ -61,10 +77,10 @@ both halves of that:
   gone, which is exactly what happened when a hand-written manifest lost this
   container.
 
-So a pool node must be able to pull from `ghcr.io/llm-d-incubation`. On an
-air-gapped or mirrored registry, mirror that image too — it is easy to miss,
-because it is the only image in this design that this repo neither builds nor
-names in its own registry.
+So a pool node must be able to pull from `ghcr.io/llm-d-incubation` — or, for a
+pool of groups, from `ghcr.io/ev-shindin`. On an air-gapped or mirrored registry,
+mirror whichever applies: it is easy to miss, because neither is built by this
+repo, and the stock one is not even named in a registry we control.
 
 Substituting your own is possible in principle: the launcher's source is
 vendored at `warmpool/supervisor/` and any image offering the same instance API
@@ -94,12 +110,14 @@ describe a node instead:
 deploy/warmpool.sh sizing --params 744B --dtype fp8   --gpus-per-node 8 --gpu-mem-gib 141 --ram-gib 2016
 ```
 
-It answers whether the model fits one node (if not, its engine spans Pods and a
-pool cannot hold it), whether host RAM can hold a level-1 sleeper at all,
-whether it can hold MORE THAN ONE -- which is the whole question, because a pool
-that holds one model is an idle replica that costs the same accelerators without
-answering requests -- and whether the cold start is dominated by reading weights
-or by fixed startup, which decides whether faster storage helps or nothing does.
+It answers four questions:
+
+| Question | Why it decides |
+|---|---|
+| Does the model fit one node? | If not, its engine spans Pods, and it needs a pool of **groups** rather than of Pods — see [pools of groups](#when-the-engine-spans-machines-pools-of-groups). |
+| Can host RAM hold a level-1 sleeper at all? | Below this, warming is impossible here. |
+| Can it hold **more than one**? | The whole question. A pool holding one model is an idle replica: same accelerators, no requests answered. |
+| Is cold start dominated by reading weights, or by fixed startup? | Decides whether faster storage helps, or whether nothing does. |
 
 Two results tend to surprise: **host RAM, not GPU memory, is what rules warming
 out**, and a model split across MORE nodes is often more poolable, because the
