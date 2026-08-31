@@ -36,12 +36,12 @@ type WarmPoolSupply struct {
 
 // WarmPoolSupplyStore holds the current bridge supply per variant.
 //
-// Keyed by variant and NOT by (variant, pool), which is correct only because a
+// Keyed by variant and NOT by (variant, pool), which is correct because a
 // variant is warmed by at most one pool -- so there is exactly one pool whose
-// bridges could appear under a given key, and one reader that cares. Different
-// variants of one model may live in different pools; that is fine here, since
-// each has its own key. See domain.ReplicaMetrics.FromWarmPool for the
-// invariant and what breaks without it.
+// bridges could appear under a given key, and one reader that cares. That is
+// enforced where variants are handed to pools (warmpool.VariantsFor), not merely
+// assumed. Different variants of one model may live in different pools; that is
+// fine here, since each has its own key. See domain.ReplicaMetrics.FromWarmPool.
 type WarmPoolSupplyStore struct {
 	mu sync.RWMutex
 	// by is namespace → variant → supply.

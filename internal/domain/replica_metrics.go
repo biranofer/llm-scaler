@@ -58,11 +58,14 @@ type ReplicaMetrics struct {
 	// ScaledObject, role included, and every figure here is per variant, so those
 	// aggregate independently and never meet.
 	//
-	// Warming ONE variant from two pools would break this. Their bridges would
-	// carry genuinely different capacities and the median would describe neither.
-	// Nothing enforces the invariant today -- a pool enumerates every variant in
-	// its namespace and its fit check sees only its own Pods -- so two pools in
-	// one namespace is a configuration to avoid, not one that is refused.
+	// Warming ONE variant from two pools would break this -- their bridges would
+	// carry genuinely different capacities and the median would describe neither
+	// -- and the pool layer makes that unreachable rather than merely unlikely.
+	// A variant names at most one pool, in the `warmPool` trigger metadata key,
+	// and warmpool.VariantsFor hands a variant only to the pool it names (or to
+	// the single pool, when a namespace has exactly one and there is nothing to
+	// disambiguate). With several pools declared, a variant naming none is
+	// Unassignable: it gets no warm copy at all, and is reported.
 	FromWarmPool bool
 
 	// Ready is the Pod's own readiness condition, read from the Pod and not

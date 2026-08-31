@@ -141,9 +141,16 @@ above is per variant, so they aggregate independently. What the invariant rules
 out is one variant bridged by two pools at once — their bridges would carry
 genuinely different capacities and the median would describe neither.
 
-Nothing enforces this today: a pool enumerates every variant in its namespace and
-its fit check sees only its own Pods. Two pools in one namespace is a
-configuration to avoid rather than one that is refused.
+**The pool layer enforces it structurally**, so the accounting above is not
+relying on operator discipline. A variant names at most one pool through the
+`warmPool` trigger metadata key, and `warmpool.VariantsFor` hands a variant only
+to the pool it names — or to the single pool, when the namespace has exactly one
+and there is nothing to disambiguate. With several pools declared, a variant that
+names none is *Unassignable*: it gets no warm copy and is reported, rather than
+being warmed by whichever pool saw it first. Several pools per namespace is an
+anticipated configuration, not a hazard — a warm copy is only reusable on the
+accelerator it was loaded on, so a cluster with two GPU types needs one pool per
+type.
 
 ### Responsibility table
 
