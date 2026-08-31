@@ -81,19 +81,64 @@ over it via shared free functions in `internal/engines/allocation/`.
 | Concept | Definition |
 |---|---|
 | **Analyzer** | Implementation of `interfaces.Analyzer`. Examples: saturation V2 (kv-token capacity), throughput (RPS/ITL-derived), queueing-model. |
-| **`VariantCapacity`** | Per-variant primitives: `ReplicaCount`, `PendingReplicas`, `PerReplicaCapacity` (analyzer-specific units), `Cost`, `AcceleratorName`, `Role`, `TotalDemand`. |
-| **`AnalyzerResult`** | Per-(model, analyzer) output: `VariantCapacities[]`, model-level `Total*`, `RoleCapacities[role]` (P/D only), `RequiredCapacity` / `SpareCapacity` (engine-written by post-step; analyzers must not populate these). |
+| **`VariantCapacity`** | Per-variant primitives: `ReplicaCount`, `PendingReplicas`, `PerReplicaCapacity` (analyzer-specific units), `Role`, `TotalDemand`, and the warm-pool trio `WarmPoolReplicas` / `WarmPoolPerReplicaCapacity` / `WarmPoolCapacity`. `Cost` and `AcceleratorName` are **not** on this struct — the optimizer reads them from `VariantMetadata`. |
+| **`AnalyzerResult`** | Per-(model, analyzer) output: the pure (D, P) signal — `VariantCapacities[]`, `TotalDemand`, `RoleDemand`. It has **no** supply or scaling-signal fields; those live on `NamedAnalyzerResult` and are the builder's. |
 | **`RoleCapacity`** | Per-role aggregate within an `AnalyzerResult`: `TotalSupply`, `TotalDemand`, `TotalAnticipatedSupply`, `RequiredCapacity` / `SpareCapacity` (engine-written). Used for P/D disaggregated models only. |
 | **`NamedAnalyzerResult`** | Optimizer-side wrapper: `{Name, Result, Score, Remaining, Spare, RoleSpare, Live}`. Working `Remaining`/`Spare`/`RoleSpare` are decremented by helpers during allocation; `Result` is never mutated. `Live` is set by the engine each cycle and gates scale-down participation (see "How results combine"). |
 | **Linearity invariant** | Adding *n* replicas of variant *v* reduces analyzer *i*'s working `Remaining` by exactly *n × PRC_i[v]*. Holds at model scope (non-disaggregated) and at role scope (disaggregated). |
+
+### The three layers
+
+Everything below follows from one split, and getting it wrong is the most common
+mistake in this pipeline — logic written inside one analyzer is silently absent
+from the other two.
+
+| Layer | Owns | Where |
+|---|---|---|
+| **Collector** | Collecting metrics: which rows exist at all. Variant identity (the owner walk to the managed scaler), the Pod-state gate, collapsing a Pod's engine instances into one replica row, and the per-row flags `Ready` and `FromWarmPool`. | `internal/collector` |
+| **Analyzers** | Analysis: the **measured** signal, and nothing else. Demand `D` (model-level and per role) and per-replica capacity `P`, per variant, in analyzer-specific units. | `internal/engines/analyzers/*` |
+| **Builder** | Building demands and capacities: everything **derived**. Supply totals, utilization, per-role capacities, `RequiredCapacity`/`SpareCapacity`, and `WarmPoolCapacity`. | `buildCapacities`, `internal/engines/steadystate/engine_v2.go` |
+
+`AnalyzerResult` has no supply fields at all, so an analyzer *cannot* write a
+supply that contradicts its own (D, P) — the linearity invariant holds by
+construction rather than by convention.
+
+### Warm pool bridges: demand yes, supply no
+
+A **bridge** is a warm pool Pod lent to a variant while it is short. It reports
+metrics under the variant it serves, and the collector flags those rows
+`FromWarmPool`.
+
+- Its **demand counts**. The traffic is the variant's. Leave it out and demand
+  reads lowest exactly while a bridge covers the shortfall, then reappears from
+  nowhere when the Pod goes back.
+- Its **capacity is never supply**. The Pod is borrowed; counting it would tell
+  the optimizer the fleet is already big enough and suppress the scale-up the
+  bridge exists to cover — after which the pool holds the Pod indefinitely,
+  because the replicas that would release it were never created.
+- **`P` is measured over the variant's own replicas only.** `ReplicaCount` is
+  clamped to the scale target, which a warm pool Pod is not part of, so a `P`
+  blended over a bridge would price the counted replicas at a figure none of them
+  delivers. The readings genuinely differ: the pool runs its engines at a lower
+  `--gpu-memory-utilization` than the workload (measured on pokprod 2026-08-31:
+  pool 0.90, workload 0.95), so less of the GPU is KV cache.
+
+An analyzer that reads replica rows must therefore exclude `FromWarmPool` rows
+from its per-replica maths. `saturation_v2` splits them and reports the bridge's
+own reading; `throughput` filters them via `ownReplicasOnly`; `external` needs
+nothing, because its `P` is a constant target from config and it never reads
+replica rows.
 
 ### Responsibility table
 
 | Field | Written by | Read by |
 |---|---|---|
-| Per-variant `ReplicaCount`, `PendingReplicas`, `PerReplicaCapacity`, `Cost`, `Role`, `AcceleratorName` | Analyzer | Optimizer (picker + scaling math) |
-| Model-level `TotalSupply`, `TotalAnticipatedSupply`, `TotalDemand` | Analyzer (via aggregation helpers) | Engine post-step |
-| Per-role `RoleCapacities[role].Total*` | Analyzer (via aggregation helpers) | Engine post-step |
+| Per-variant `ReplicaCount`, `PendingReplicas`, `PerReplicaCapacity` (own replicas only), `Role`, `TotalDemand` | Analyzer | Builder, then optimizer (picker + scaling math) |
+| Per-variant `WarmPoolReplicas`, `WarmPoolPerReplicaCapacity` | Analyzer (measurements) | Builder |
+| Per-variant `WarmPoolCapacity` | **Builder** — `WarmPoolReplicas × WarmPoolPerReplicaCapacity`; in no supply total. Analyzer-written values are overwritten | Retained-pool switching decision |
+| Per-variant `Role`, and the `ReplicaCount` clamp to the scale target | **Builder** (from discovery) | Optimizer |
+| Model-level `TotalSupply`, `TotalAnticipatedSupply` | **Builder** — not fields on `AnalyzerResult` at all | Engine post-step, optimizer |
+| Per-role `RoleCapacities[role].Total*` | **Builder** (`buildRoleCapacities`), pairing analyzer `RoleDemand` with supply it groups by role | Engine post-step, optimizer |
 | `RequiredCapacity`, `SpareCapacity` (model + role scope) | **Engine post-step only** — analyzer-written values are overwritten | Optimizer |
 | `NamedAnalyzerResult.Remaining`, `Spare`, `RoleSpare` | Optimizer helpers (`applyAllocation`, `applyDeallocationForRole`) | Optimizer allocation loop |
 | `NamedAnalyzerResult.Live` | Engine (`runAnalyzersAndScore`, each cycle) | Scale-down veto gate (`needsScaleDownForRole`, `safeRemovalReplicasForRole`) |
@@ -112,10 +157,17 @@ over it via shared free functions in `internal/engines/allocation/`.
   formula `RC = max(0, TotalDemand/scaleUp − TotalAnticipatedSupply)` /
   `SC = max(0, TotalSupply − TotalDemand/scaleDown)` at model scope and
   each role in `RoleCapacities`.
+- **Capacity-build step** — `internal/engines/steadystate/engine_v2.go`:
+  `buildCapacities(ctx, *NamedAnalyzerResult, metaByVariant, scaleUp, scaleDown)`
+  runs between the analyzers and the optimizer. It joins discovery identity,
+  clamps `ReplicaCount` to the scale target, derives each variant's
+  `WarmPoolCapacity`, assembles model and per-role supply, and applies the
+  universal threshold. Every derived capacity in the pipeline is written here.
 - **Aggregation helpers** — `internal/engines/aggregation/`:
   `SumTotalSupply`, `SumTotalAnticipatedSupply`, `SumTotalDemand`,
-  `AggregateByRole` over `[]VariantCapacity`. Analyzer authors use these to
-  populate per-scope `Total*` fields without reimplementing the math.
+  `AggregateByRole` over `[]VariantCapacity`. Used by the **builder** to assemble
+  per-scope totals without reimplementing the math; analyzers do not call them to
+  publish supply, because they have nowhere to publish it to.
 - **Optimizer slice flow** — `internal/engines/allocation/`:
   `NamedAnalyzerResult` slice carries each analyzer's calibrated result plus
   working scratch state for the allocation loop. `CostAwareOptimizer` and
@@ -194,23 +246,35 @@ Key `AnalyzerInput` fields:
 
 ### Output invariants
 
-The **linearity invariant**: `TotalSupply = Σ_v PerReplicaCapacity × ReplicaCount`
-across all entries in `VariantCapacities`. Use the aggregation helpers to
-populate `VariantCapacities[]`, then call:
+Emit the measured (D, P) signal and stop there. Concretely, fill in:
 
 ```go
-result.TotalSupply             = aggregation.SumTotalSupply(result.VariantCapacities)
-result.TotalDemand             = aggregation.SumTotalDemand(result.VariantCapacities)
-result.TotalAnticipatedSupply  = aggregation.SumTotalAnticipatedSupply(result.VariantCapacities)
+result.VariantCapacities = []domain.VariantCapacity{ /* ReplicaCount, PendingReplicas,
+    PerReplicaCapacity, Role, TotalDemand, and the WarmPool* measurements */ }
+result.TotalDemand = /* model-level demand: yours to attribute */
+result.RoleDemand  = /* per role, or nil when not disaggregated */
 ```
 
-For P/D disaggregated models, also populate `RoleCapacities` using
-`aggregation.AggregateByRole(result.VariantCapacities)`. The engine applies
-`applyUniversalThreshold` to every role entry.
+**There is nothing else to populate.** `AnalyzerResult` has no `TotalSupply`,
+`TotalAnticipatedSupply`, `RoleCapacities`, `RequiredCapacity` or
+`SpareCapacity` fields — the builder computes all of them on
+`NamedAnalyzerResult`. This is what makes the **linearity invariant**
+(`supply = Σ_v ReplicaCount × PerReplicaCapacity`, at model and role scope) hold
+by construction: an analyzer has no way to state a supply that disagrees with its
+own (D, P).
 
-**Do NOT populate `RequiredCapacity` or `SpareCapacity`** in the returned
-`AnalyzerResult`. The engine overwrites both fields in the post-step; any
-analyzer-written values are discarded.
+Two rules that follow from that invariant, and are easy to get wrong:
+
+- **`P` must be measured over the same population `ReplicaCount` counts** — the
+  variant's own replicas. The builder clamps that count to the scale target, so
+  any row that is not part of the scale target (a warm pool bridge) must be kept
+  out of the per-replica maths. See "Warm pool bridges" above.
+- **`ReplicaCount` is what actually reported this cycle**, in scale-target units
+  (pods, or LWS groups). The builder only ever lowers it.
+
+Aggregation helpers (`aggregation.SumTotalSupply`, `SumTotalAnticipatedSupply`,
+`AggregateByRole`) still exist, but they are the **builder's** tools, not the
+analyzer's; an analyzer normally has no reason to call them.
 
 ---
 
