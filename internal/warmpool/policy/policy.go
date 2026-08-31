@@ -845,8 +845,26 @@ func holding(byPod map[types.NamespacedName][]pool.Membership, free map[types.Na
 			}
 		}
 	}
-	// Deterministic, so a plan is reproducible and testable.
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	// EMPTIEST FIRST, then by name.
+	//
+	// A borrow takes the whole Pod out of the free set, so every OTHER model
+	// sleeping in it becomes unborrowable for the length of the loan. Taking the
+	// Pod that holds four models to serve one of them blocks the other three;
+	// taking a Pod that holds only the wanted model blocks nothing. Same wake,
+	// different cost to the rest of the pool.
+	//
+	// It also leaves the fuller Pods intact, which is where the pool's warm set
+	// is concentrated -- the thing that took ~35 s per model to build.
+	//
+	// The name is the tie-break rather than the rule, so a plan is still
+	// deterministic and reproducible.
+	sort.Slice(out, func(i, j int) bool {
+		ri, rj := pool.Resident(byPod[out[i]]), pool.Resident(byPod[out[j]])
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].String() < out[j].String()
+	})
 	return out
 }
 

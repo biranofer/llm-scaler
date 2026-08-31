@@ -1557,3 +1557,36 @@ func TestASinglePodModelIsDeclinedByAGroup(t *testing.T) {
 		t.Fatalf("a single-Pod engine must not take a group: %+v", got.Admit)
 	}
 }
+
+// A BORROW TAKES THE EMPTIEST POD THAT HOLDS THE MODEL.
+//
+// The Pod leaves the free set for the length of the loan, so every other model
+// sleeping in it becomes unborrowable meanwhile. Serving one model out of a Pod
+// that holds three blocks the other two; serving it out of a Pod that holds only
+// it blocks nothing. Same wake, different cost to the rest of the pool -- and it
+// leaves the fuller Pods, where the warm set is concentrated, intact.
+func TestABorrowPrefersThePodHoldingLeastElse(t *testing.T) {
+	in := Input{
+		Memberships: []pool.Membership{
+			// "a" sorts first and would win on name alone, which is what this
+			// pins: it holds two other models, so borrowing it costs the pool
+			// two wakeable models for the length of the loan.
+			resident("a", qwenVariant, pool.Asleep),
+			resident("a", "other-1", pool.Asleep),
+			resident("a", "other-2", pool.Asleep),
+			resident("b", qwenVariant, pool.Asleep),
+		},
+		Variants: []VariantDemand{demand(qwenVariant, 2, 1)},
+		Now:      now,
+	}
+
+	got := Decide(in, cfg())
+	if len(got.Borrow) != 1 {
+		t.Fatalf("one replica short, so one borrow: %+v", got.Borrow)
+	}
+	if got.Borrow[0].Pod.Name != "b" {
+		t.Errorf("borrowed %q, want b: a holds two other sleepers and borrowing it "+
+			"would make both unborrowable for the length of the loan",
+			got.Borrow[0].Pod.Name)
+	}
+}
