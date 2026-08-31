@@ -243,7 +243,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		scheme:                  scheme,
 		Recorder:                recorder,
 		Config:                  cfg,
-		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, recorder, podLocator),
+		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, apiReader, recorder, podLocator),
 		ScaleToZeroEnforcer:     allocation.NewEnforcer(requestCountFunc, cfg),
 		GPULimiter:              gpuLimiter,
 		policies:                newPolicyReporter(),
@@ -409,6 +409,11 @@ func (e *Engine) reconcileExternalAnalyzers(ctx context.Context) {
 			continue
 		}
 		a, err := external.New(d, src)
+		if a != nil {
+			// The same Pod gate the builder applies, so every analyzer measures
+			// the same population -- see collector.SeriesPodIsGone.
+			a.DropSeries = e.ReplicaMetricsCollector.SeriesPodIsGone
+		}
 		if err != nil {
 			logger.Info("Skipping invalid external analyzer definition", "label", label, "error", err)
 			continue
@@ -1967,6 +1972,19 @@ func publishServing(namespace string, metrics []domain.ReplicaMetrics) {
 		}
 		if m.FromWarmPool {
 			continue // seen, so it publishes a count; not counted in it
+		}
+		// REPORTING IS NOT SERVING. An engine answers /metrics as soon as its
+		// HTTP server is up, which is before the Pod passes readiness, so a
+		// starting replica reports for some seconds while no Service and no EPP
+		// will route to it. Handing a bridge back to one strands the traffic it
+		// was carrying -- the same failure as returning it too early, arrived at
+		// from the other side.
+		//
+		// Only this count is narrowed. The analyzer still prices a starting Pod:
+		// it holds its GPU and its KV cache is real, so it is capacity even
+		// while it is not yet in the rotation.
+		if !m.Ready {
+			continue
 		}
 		byVariant[m.VariantName][m.PodName] = true
 	}

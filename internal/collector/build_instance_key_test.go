@@ -166,7 +166,7 @@ func TestBuildInstanceKey_VANameExtraction(t *testing.T) {
 				},
 			}
 
-			collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(tc.located))
+			collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(tc.located))
 			results, err := collector.CollectReplicaMetrics(
 				context.Background(),
 				"test-model",

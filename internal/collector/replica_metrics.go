@@ -76,6 +76,10 @@ import (
 type ReplicaMetricsCollector struct {
 	source    source.MetricsSource
 	k8sClient client.Client
+	// apiReader is UNCACHED, and is how Pod serving state is read. The manager's
+	// cache holds no Pods, so reading them through k8sClient would start a Pod
+	// informer -- cluster-wide on a cluster-scoped install. See podStates.
+	apiReader client.Reader
 	recorder  record.EventRecorder
 	locator   locator.PodLocator
 	// metricsAvailableState tracks whether metrics were available in the previous
@@ -89,14 +93,18 @@ type ReplicaMetricsCollector struct {
 	// model and every model in a namespace reads the first one's fetch.
 	// Nil outside a cycle — see BeginCycle.
 	cycleResults map[source.CacheKey]*source.MetricResult
-	cycleMu      sync.Mutex
+	// cyclePods is namespace -> pod name -> serving state, listed once per
+	// namespace per cycle. Nil outside a cycle, like cycleResults.
+	cyclePods map[string]namespacePods
+	cycleMu   sync.Mutex
 }
 
 // NewReplicaMetricsCollector creates a new replica metrics collector.
-func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient client.Client, recorder record.EventRecorder, podLocator locator.PodLocator) *ReplicaMetricsCollector {
+func NewReplicaMetricsCollector(metricsSource source.MetricsSource, k8sClient client.Client, apiReader client.Reader, recorder record.EventRecorder, podLocator locator.PodLocator) *ReplicaMetricsCollector {
 	return &ReplicaMetricsCollector{
 		source:                metricsSource,
 		k8sClient:             k8sClient,
+		apiReader:             apiReader,
 		recorder:              recorder,
 		locator:               podLocator,
 		metricsAvailableState: make(map[string]bool),
@@ -116,6 +124,7 @@ func (c *ReplicaMetricsCollector) BeginCycle() {
 	c.cycleMu.Lock()
 	defer c.cycleMu.Unlock()
 	c.cycleResults = make(map[source.CacheKey]*source.MetricResult)
+	c.cyclePods = make(map[string]namespacePods)
 }
 
 // EndCycle closes the cycle opened by BeginCycle and releases the memoized
@@ -124,6 +133,7 @@ func (c *ReplicaMetricsCollector) EndCycle() {
 	c.cycleMu.Lock()
 	defer c.cycleMu.Unlock()
 	c.cycleResults = nil
+	c.cyclePods = nil
 }
 
 // refreshShared executes queries, reusing any result already fetched in this
@@ -370,9 +380,28 @@ func (c *ReplicaMetricsCollector) CollectReplicaMetrics(
 // Returns vaName="" when the pod has no managed scaler above it; the caller
 // treats that as "skip".
 func (c *ReplicaMetricsCollector) buildInstanceKey(ctx context.Context, namespace string, labels map[string]string) (instanceKey, podName, vaName string) {
-	podName = labels["pod"]
-	if podName == "" {
-		podName = labels["pod_name"]
+	podName = seriesPodName(labels)
+
+	// A series is not evidence that the Pod behind it still exists.
+	//
+	// Prometheus keeps a Pod's series for about five minutes after it goes, and
+	// the locator resolves a Pod name to its scale target from a cache that is
+	// deliberately never invalidated -- correct, since ownerReferences cannot
+	// change, and together the reason a DELETED Pod went on contributing supply
+	// long after it was gone. Measured on pokprod: a variant with one replica
+	// reported four.
+	//
+	// Dropped HERE rather than at row assembly because this is the one point
+	// every series from every query passes through, so nothing downstream can
+	// use a Pod this rejected. An empty instanceKey is the existing "skip"
+	// signal and every caller already honours it, which also keeps these out of
+	// the mapping-miss count: a Pod that has been deleted is not a Pod WVA
+	// failed to map.
+	if podName != "" && c.podIsGone(ctx, namespace, podName) {
+		ctrl.LoggerFrom(ctx).V(logging.DEBUG).Info(
+			"dropping a series whose Pod is gone or terminating",
+			"pod", podName, "namespace", namespace)
+		return "", "", ""
 	}
 
 	if podName != "" && c.locator != nil {
@@ -1109,11 +1138,15 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		trackMetricFreshness(vaName, data, collectedAt, vaMetricsFreshnessStatus)
 		freshnessStatus, freshnessAge := worstFreshnessStatus(data, collectedAt)
 		metric := domain.ReplicaMetrics{
-			PodName:               podName,
-			ModelID:               modelID,
-			Namespace:             namespace,
-			VariantName:           vaName,
-			FromWarmPool:          fromWarmPool,
+			PodName:      podName,
+			ModelID:      modelID,
+			Namespace:    namespace,
+			VariantName:  vaName,
+			FromWarmPool: fromWarmPool,
+			// Read from the Pod, never inferred from the scrape. A row exists
+			// because something answered /metrics, which happens before the Pod
+			// is Ready; see domain.ReplicaMetrics.Ready.
+			Ready:                 c.podReady(ctx, namespace, podName),
 			KvCacheUsage:          kvUsage,
 			QueueLength:           queueLen,
 			NumGpuBlocks:          data.numGpuBlocks,

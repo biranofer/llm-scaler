@@ -85,22 +85,77 @@ already exist and should be stated together with the above:
 Both hold today. What does not hold is the liveness and readiness of the Pods on
 either side of that split.
 
+
+## Where the fix can and cannot reach
+
+The natural place for this is the BUILDER step, `buildInstanceKey`. Every series
+of every query the collector runs passes through it, it already resolves pod
+identity there, and a Pod it rejects can reach no downstream consumer. That
+covers the analyzers that read `domain.ReplicaMetrics` -- `saturation_v2` and
+`throughput` both take `input.ReplicaMetrics` -- so one fix serves both without
+either knowing about it.
+
+**It does NOT cover external analyzers, and that asymmetry is structural.** An
+external analyzer (`internal/engines/analyzers/external`) is config-driven
+PromQL: it calls `source.Refresh` with the operator's own query body and reduces
+the result to a single demand scalar D, then divides by a threshold P. It never
+builds a per-Pod record, never calls the builder, and has no step at which a Pod
+could be filtered. If the operator's query sums a per-Pod series, deleted Pods
+inflate D for as long as Prometheus keeps them -- the same defect, arrived at by
+a path the builder cannot see.
+
+Three ways to answer that, and it is a design decision rather than a bug fix:
+
+1. **The operator owns their query.** Honest, and it puts staleness handling in
+   PromQL that is awkward to write and easy to omit.
+2. **Push the hygiene into the metrics SOURCE**, so any query -- collector or
+   external -- can be restricted to Pods that are live and Ready. This is the
+   only option that makes "all analyzers are treated the same way" true rather
+   than nearly true.
+3. **Document the asymmetry** and accept that an external analyzer measures a
+   different population than a built-in one.
+
+**Option 2 was chosen and is implemented.** It turned out far smaller than
+feared: an external analyzer does NOT push its reduction into Prometheus. It
+asks the source for the query's series and sums them in Go, so the same Pod gate
+can be applied to each series before it is added. `collector.SeriesPodIsGone`
+exposes the builder's judgement for callers that hold raw series, and the engine
+wires it into every external analyzer it constructs.
+
+The one case it cannot judge is an ALREADY-AGGREGATED body -- `sum(...)` in the
+operator's PromQL -- where Prometheus has done the reduction and no Pod label
+survives. Those are summed untouched, which is the honest answer: there is no
+per-Pod identity left to reject, and dropping such a series would silently zero
+the demand of most useful analyzers.
+
 ## What has to change
 
-1. **Filter the collector's rows by Pod state.** Drop rows whose Pod is
-   terminating or absent. This is the cheapest fix and removes the "already
-   gone" and "terminating" classes outright.
-2. **Carry readiness onto the row**, so `publishServing` can require Ready AND
-   reporting. `domain.ReplicaMetrics` has no readiness field today; adding one
-   keeps the decision where the evidence is rather than making the warm pool
-   re-derive it.
-3. **Bound the locator cache by Pod existence.** Caching pod→target for ever is
-   correct while the Pod lives and wrong the moment it does not. An entry
-   invalidated on Pod deletion keeps the property the cache was built for and
-   stops resurrecting dead Pods.
-4. **Re-check the conceded-supply spec once 1–3 land.** If its intermittency is
-   cross-run contamination through retained series, these remove the cause; if it
-   still fails, the failure is real and belongs to the clamp.
+1. ~~Filter the collector's rows by Pod state~~ DONE, in `buildInstanceKey`.
+2. ~~Carry readiness onto the row~~ DONE: `domain.ReplicaMetrics.Ready`, required
+   by `publishServing`. Deliberately NOT used by the analyzer -- a starting Pod
+   holds its GPU and its KV cache is real, so it is still capacity.
+3. ~~Bound the locator cache by Pod existence~~ NOT NEEDED. The builder now
+   rejects a Pod the listing does not contain, so a stale cache entry can no
+   longer resurrect one; invalidating the cache as well would buy nothing and
+   would give up the property it exists for.
+4. **Re-check the conceded-supply spec.** STILL OPEN, and now the measurement
+   that says whether any of this worked: it failed 1 run in 3 before, and the
+   leading explanation was supply carried over from the previous run.
 
-Ordering matters: 1 and 3 are narrow and independently testable, 2 changes a
-shared struct, and 4 is the measurement that says whether any of it worked.
+### How Pod state is read
+
+One `List` per namespace per cycle, memoized alongside the query results and
+released by `EndCycle`, through the UNCACHED `apiReader`. Not the manager's
+client: its cache holds no Pods, so reading Pods through it would start a Pod
+informer -- namespace-wide on a scoped install, cluster-wide on a cluster-scoped
+one. Not the locator's cache either: that is sound only because ownerReferences
+cannot change, and readiness and deletion are exactly the mutable facts it must
+never serve.
+
+### Failing open is part of the design
+
+A listing that SUCCEEDED and lacks a Pod says the Pod is gone. A listing that
+FAILED says nothing. Conflating them would drop every series in the namespace on
+an RBAC error or a moment of API unavailability, hand the analyzer zero supply,
+and scale the fleet to its floor. So both helpers fail open, and under failure
+WVA behaves exactly as it did before any of this existed.

@@ -78,6 +78,22 @@ type ReplicaMetrics struct {
 	// retained-pool switching decision; see decision.WarmPoolSupply.
 	FromWarmPool bool
 
+	// Ready is the Pod's own readiness condition, read from the Pod and not
+	// inferred from the fact that it answered a scrape.
+	//
+	// The two are not the same and the gap is not small: an engine serves
+	// /metrics as soon as its HTTP server is up, which is BEFORE it passes
+	// readiness, so a starting replica reports for some seconds while no Service
+	// and no EPP will route to it.
+	//
+	// That gap matters to exactly one consumer today. The warm pool asks how
+	// many of a variant's own replicas are serving, to decide whether the Pod it
+	// lent can go home; answering with a replica that is reporting but not yet
+	// in the rotation hands the traffic back to nothing. It does NOT bear on
+	// capacity: a Pod that is starting still holds its GPU and its KV cache is
+	// real, so the analyzer counts it.
+	Ready bool
+
 	// Metadata contains freshness information (optional)
 	Metadata *ReplicaMetricsMetadata `json:"metadata,omitempty"`
 

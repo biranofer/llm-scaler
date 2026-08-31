@@ -8,9 +8,14 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
-// servingRow is one collected replica, named and flagged.
+// servingRow is one collected replica: named, flagged, and READY.
+//
+// Ready by default because that is the ordinary case and every test below is
+// about something else. The one test that turns it off says so in its name.
 func servingRow(variant, pod string, bridge bool) domain.ReplicaMetrics {
-	return domain.ReplicaMetrics{VariantName: variant, PodName: pod, FromWarmPool: bridge}
+	return domain.ReplicaMetrics{
+		VariantName: variant, PodName: pod, FromWarmPool: bridge, Ready: true,
+	}
 }
 
 func servingCountFor(t *testing.T, variant string) (int, bool) {
@@ -100,5 +105,58 @@ func TestAnUnattributedRowPublishesNothing(t *testing.T) {
 	}
 	if _, known := servingCountFor(t, "qwen-decode-wva"); known {
 		t.Error("a row with no Pod name is not evidence that the variant is serving")
+	}
+}
+
+// A replica that is REPORTING but not READY is not serving.
+//
+// An engine answers /metrics as soon as its HTTP server is up, which is before
+// the Pod passes readiness -- so a starting replica reports for some seconds
+// while no Service and no EPP will route to it. The pool reads this count to
+// decide whether its lent Pod can go home, and going home to a replica that is
+// not in the rotation strands the traffic just as surely as going home too
+// early.
+//
+// Measured on pokprod 2026-08-30: a variant with ONE replica reported four,
+// because nothing between Prometheus and this count checked the Pod at all.
+func TestAReportingButNotReadyReplicaIsNotServing(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	notReady := servingRow("qwen-decode-wva", "qwen-decode-starting", false)
+	notReady.Ready = false
+
+	publishServing("tenant", []domain.ReplicaMetrics{
+		servingRow("qwen-decode-wva", "qwen-decode-abc", false),
+		notReady,
+	})
+
+	got, known := servingCountFor(t, "qwen-decode-wva")
+	if !known {
+		t.Fatal("no serving count published; the variant had rows")
+	}
+	if got != 1 {
+		t.Errorf("serving = %d, want 1 -- a Pod that is reporting but not Ready takes no traffic", got)
+	}
+}
+
+// A variant whose replicas are ALL still starting publishes ZERO, not nothing.
+//
+// Same rule as the all-bridges case, and for the same reason: no reading falls
+// back to the scale target's Ready count, while zero says its replicas are
+// demonstrably not serving -- which is exactly when a bridge must be kept.
+func TestAVariantWhoseReplicasAreAllStartingPublishesZero(t *testing.T) {
+	decision.DefaultServing.Reset()
+
+	starting := servingRow("qwen-decode-wva", "qwen-decode-starting", false)
+	starting.Ready = false
+
+	publishServing("tenant", []domain.ReplicaMetrics{starting})
+
+	got, known := servingCountFor(t, "qwen-decode-wva")
+	if !known {
+		t.Fatal("want a published zero, not an absent reading -- they mean opposite things")
+	}
+	if got != 0 {
+		t.Errorf("serving = %d, want 0", got)
 	}
 }

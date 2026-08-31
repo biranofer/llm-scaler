@@ -118,7 +118,7 @@ func TestCollectReplicaMetrics_DPRanksCollapseToOneReplica(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"pod-dp": "va-1"}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"pod-dp": "va-1"}))
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(), "test-model", "test-ns",
 		make(map[string]scaletarget.ScaleTargetAccessor),
