@@ -21,6 +21,10 @@ import (
 // LWS needs no special handling: worker pods are dropped upstream, so a group's
 // leader is already its single row.
 //
+// Merging is keyed by pod AND MODEL, not by pod alone -- see podModel. A warm
+// pool Pod holds several models at once, and summing their capacity into one
+// row would credit a variant with cache belonging to a model it is not running.
+//
 // How each field merges follows from what it measures:
 //
 //   - Capacities, queue depth and rates are extensive — summed. A pod's KV
@@ -44,23 +48,44 @@ func collapseToPods(instances []domain.ReplicaMetrics) []domain.ReplicaMetrics {
 		return instances
 	}
 
-	order := make([]string, 0, len(instances))
-	byPod := make(map[string][]domain.ReplicaMetrics, len(instances))
+	order := make([]podModel, 0, len(instances))
+	byPod := make(map[podModel][]domain.ReplicaMetrics, len(instances))
 	for _, m := range instances {
-		if _, seen := byPod[m.PodName]; !seen {
-			order = append(order, m.PodName)
+		k := podModel{pod: m.PodName, model: m.ModelID}
+		if _, seen := byPod[k]; !seen {
+			order = append(order, k)
 		}
-		byPod[m.PodName] = append(byPod[m.PodName], m)
+		byPod[k] = append(byPod[k], m)
 	}
 	if len(order) == len(instances) {
 		return instances // one instance per pod: nothing to merge
 	}
 
 	pods := make([]domain.ReplicaMetrics, 0, len(order))
-	for _, podName := range order {
-		pods = append(pods, mergePodInstances(byPod[podName]))
+	for _, k := range order {
+		pods = append(pods, mergePodInstances(byPod[k]))
 	}
 	return pods
+}
+
+// podModel is the merge key: one pod's ranks OF ONE MODEL.
+//
+// The pod alone is not enough, and the case that breaks it is the warm pool. An
+// ordinary Pod belongs to exactly one variant, so its rows can only be DP ranks
+// of the same engine. A POOL Pod holds several models at once -- that is what a
+// warm set is -- each on its own port, and the collector keys instances
+// "pod:port", so they arrive as several rows for one Pod.
+//
+// Merging those would sum the KV capacity of unrelated models. On a lent Pod
+// every row carries the variant it is lent to, so the sleepers' cache would be
+// added to the awake model's supply: the variant is told it has more capacity
+// than the engine serving it has, which is the direction that causes a
+// scale-DOWN the fleet cannot then serve.
+//
+// Data parallelism is ranks of the SAME model, so the model separates the two.
+type podModel struct {
+	pod   string
+	model string
 }
 
 // mergePodInstances merges one pod's instance rows per the rules documented on

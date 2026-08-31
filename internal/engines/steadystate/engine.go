@@ -243,7 +243,7 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 		scheme:                  scheme,
 		Recorder:                recorder,
 		Config:                  cfg,
-		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, recorder, podLocator),
+		ReplicaMetricsCollector: collector.NewReplicaMetricsCollector(promSource, client, apiReader, recorder, podLocator),
 		ScaleToZeroEnforcer:     allocation.NewEnforcer(requestCountFunc, cfg),
 		GPULimiter:              gpuLimiter,
 		policies:                newPolicyReporter(),
@@ -290,6 +290,31 @@ func NewEngine(client client.Client, apiReader client.Reader, scheme *runtime.Sc
 // registry. Returns an error if called after StartOptimizeLoop or if name
 // is already registered — callers must check the error. The analyzer is
 // appended in registration order.
+
+// addWarmPoolGPUs charges each namespace's warm pools into the managed usage
+// about to be published.
+//
+// Namespaces are ADDED, not merely updated: a namespace whose only WVA
+// consumption is a pool has no scaling requests, so it would otherwise be absent
+// from the managed figure entirely and its quota would read as untouched while
+// the pool holds GPUs inside it.
+func addWarmPoolGPUs(byType map[string]int, byNamespace map[string]map[string]int) {
+	for namespace, pools := range decision.WarmPoolGPUs() {
+		perType, ok := byNamespace[namespace]
+		if !ok {
+			perType = make(map[string]int)
+			byNamespace[namespace] = perType
+		}
+		for accelerator, gpus := range pools {
+			if gpus <= 0 {
+				continue
+			}
+			perType[accelerator] += gpus
+			byType[accelerator] += gpus
+		}
+	}
+}
+
 func (e *Engine) RegisterAnalyzer(name string, a domain.Analyzer) error {
 	if e.started {
 		return errors.New("RegisterAnalyzer: called after StartOptimizeLoop")
@@ -384,6 +409,11 @@ func (e *Engine) reconcileExternalAnalyzers(ctx context.Context) {
 			continue
 		}
 		a, err := external.New(d, src)
+		if a != nil {
+			// The same Pod gate the builder applies, so every analyzer measures
+			// the same population -- see collector.SeriesPodIsGone.
+			a.DropSeries = e.ReplicaMetricsCollector.SeriesPodIsGone
+		}
 		if err != nil {
 			logger.Info("Skipping invalid external analyzer definition", "label", label, "error", err)
 			continue
@@ -602,6 +632,15 @@ func (e *Engine) optimize(ctx context.Context) (retErr error) {
 		// namespace they are deciding about (see scalefromzero gpuConstraints), which
 		// is what keeps a namespace-scoped quota applying to a parked namespace.
 		decision.PublishManagedGPUUsage(map[string]int{}, map[string]map[string]int{})
+		// And what is LEFT of each allowance, which nothing else here would say.
+		//
+		// Headroom is otherwise published from inside the optimizer, so a
+		// namespace with no models never gets an answer -- and the warm pool,
+		// which is the only reader, treats no answer as unbounded and grows past
+		// the quota it is charged against. A namespace holding only a pool is
+		// exactly that case, and it is not a corner: a shared pool namespace has
+		// no models by construction.
+		e.publishHeadroomForIdleFleet(ctx)
 		return nil
 	}
 
@@ -1047,7 +1086,19 @@ func (e *Engine) optimizeV2(
 	// exactly the moment WVA cannot see what it is holding. The genuinely-empty
 	// case is published separately, from the path that can tell the difference.
 	managedByType := computeCurrentGPUUsage(requests)
-	decision.PublishManagedGPUUsage(managedByType, computeCurrentGPUUsageByNamespace(requests))
+	managedByNamespace := computeCurrentGPUUsageByNamespace(requests)
+	// WVA's own warm pools are charged here too. A pool Pod is not a variant, so
+	// it is absent from `requests` -- but a quota is an allowance granted to WVA,
+	// and a pool exists because WVA asked for it and is sized by what WVA
+	// publishes. Left out, a namespace with a 4-GPU quota and a 3-GPU pool placed
+	// four more replicas and consumed seven.
+	//
+	// Folded in HERE rather than published separately, because this store has one
+	// producer on purpose: two components summing "what WVA holds" their own way
+	// is how the optimizer and the wake path come to disagree about the same
+	// cluster.
+	addWarmPoolGPUs(managedByType, managedByNamespace)
+	decision.PublishManagedGPUUsage(managedByType, managedByNamespace)
 
 	// Report unattributed GPUs from the MANAGED view, which is the only one that
 	// can have any: the physical picture attributes usage by the node a pod runs
@@ -1454,6 +1505,16 @@ func (e *Engine) prepareModelData(
 		"modelID", modelID,
 		"namespace", namespace,
 		"metricsCount", len(replicaMetrics))
+
+	// How many replicas of each variant are actually SERVING, for the warm pool.
+	//
+	// A bridge is handed back when the ordinary replicas have arrived, and
+	// "arrived" used to mean Status.ReadyReplicas -- the kubelet's probe. A
+	// replica that has passed a probe is not necessarily taking requests yet, and
+	// handing traffic back to one that is not strands it. A replica the collector
+	// can see has registered with the engine and is reporting on its work, which
+	// is a much better answer to the same question.
+	publishServing(namespace, replicaMetrics)
 
 	if len(replicaMetrics) == 0 {
 		// Two very different situations reach this line, and they used to produce
@@ -1876,5 +1937,59 @@ func (e *Engine) emitSafetyNetMetrics(
 			"desiredReplicas", desiredReplicas,
 			"accelerator", accelerator,
 			"fallbackSource", fallbackSource)
+	}
+}
+
+// publishServing records, per variant, how many distinct Pods of its OWN
+// replicas reported engine metrics.
+//
+// Counted by POD, not by metric: an engine that spans several processes reports
+// more than once for one replica, and the warm pool is comparing this against a
+// replica count. Empty variant names are skipped rather than collapsed into one
+// bucket -- a metric WVA cannot attribute says nothing about any particular
+// variant's readiness to take traffic back.
+//
+// BRIDGES ARE EXCLUDED, and that is the whole point of the count. The pool asks
+// this to decide whether the ordinary replicas have arrived and its lent Pod can
+// go home. A bridge is attributed to the variant it serves -- correctly, because
+// its DEMAND is the variant's -- so counting it here answers "yes" one replica
+// early: the pool hands back the very Pod that was carrying the traffic, to a
+// fleet one replica short of covering it. Demand yes, supply no; this is a
+// supply-side count.
+//
+// A variant whose only rows are bridges still publishes, as zero. That is not
+// the same as publishing nothing: no reading falls back to the scale target's
+// Ready count, while zero says its own replicas are demonstrably not serving --
+// which is exactly when a bridge must be kept.
+func publishServing(namespace string, metrics []domain.ReplicaMetrics) {
+	byVariant := map[string]map[string]bool{}
+	for _, m := range metrics {
+		if m.VariantName == "" || m.PodName == "" {
+			continue
+		}
+		if byVariant[m.VariantName] == nil {
+			byVariant[m.VariantName] = map[string]bool{}
+		}
+		if m.FromWarmPool {
+			continue // seen, so it publishes a count; not counted in it
+		}
+		// REPORTING IS NOT SERVING. An engine answers /metrics as soon as its
+		// HTTP server is up, which is before the Pod passes readiness, so a
+		// starting replica reports for some seconds while no Service and no EPP
+		// will route to it. Handing a bridge back to one strands the traffic it
+		// was carrying -- the same failure as returning it too early, arrived at
+		// from the other side.
+		//
+		// Only this count is narrowed. The analyzer still prices a starting Pod:
+		// it holds its GPU and its KV cache is real, so it is capacity even
+		// while it is not yet in the rotation.
+		if !m.Ready {
+			continue
+		}
+		byVariant[m.VariantName][m.PodName] = true
+	}
+	now := time.Now()
+	for variant, pods := range byVariant {
+		decision.PublishServing(namespace, variant, len(pods), now)
 	}
 }

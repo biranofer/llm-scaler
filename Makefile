@@ -9,6 +9,9 @@ IMAGE_TAG_BASE ?= ghcr.io/ev-shindin
 # automatically, so it cannot silently go stale the way a personal tag does.
 IMG_TAG ?= main
 IMG ?= $(IMAGE_TAG_BASE)/llm-scaler:$(IMG_TAG)
+# The warm-pool proxy ships as its own image because it runs in the pool's Pod,
+# not the controller's. Pin a digest in the manifest; this tag is for building.
+WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-scaler/warmpool-proxy:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 CLUSTER_GPU_TYPE ?= nvidia-mix
 CLUSTER_NODES ?= 3
@@ -362,6 +365,14 @@ guides-render: ## Regenerate the command blocks in docs/guides/*/README.md from 
 guides-check: ## Fail if any guide README is out of date with its guide.yaml, or a doc link is broken (CI).
 	python3 hack/render-guides.py --check
 	python3 hack/check-doc-links.py
+
+.PHONY: warmpool-render
+warmpool-render: ## Regenerate the pool Pod spec in deploy/warmpool.sh from config/warmpool.
+	python3 hack/render-warmpool-spec.py
+
+.PHONY: warmpool-check
+warmpool-check: ## Fail if deploy/warmpool.sh's Pod spec is out of date with config/warmpool (CI).
+	python3 hack/render-warmpool-spec.py --check
 
 .PHONY: docs-links-external
 docs-links-external: ## Resolve every external doc link over the network (not in CI: needs egress).
@@ -2088,6 +2099,12 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# read as the literal $$MODEL_NAME, or an env value whose newline splits one
 	@# workload record into two, both parse perfectly.
 	@bash hack/check-scaledobject-parsers.sh
+	@echo "Checking what warmpool.sh actually emits..."
+	@# Renders the pool manifests and asserts their shape. Every bug this covers
+	@# parses fine: one container with the proxy image under the supervisor's
+	@# name, a missing ScaledObject (so the pool is never discovered), a worker
+	@# template carrying the proxy (so the group never becomes Ready).
+	@bash hack/check-warmpool-manifests.sh
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,
@@ -2133,6 +2150,14 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
+
+.PHONY: docker-build-warmpool-proxy
+docker-build-warmpool-proxy: ## Build the warm-pool proxy image. WARMPOOL_PROXY_IMG=<ref>
+	$(CONTAINER_TOOL) build -t ${WARMPOOL_PROXY_IMG} -f Dockerfile.warmpool-proxy .
+
+.PHONY: docker-push-warmpool-proxy
+docker-push-warmpool-proxy: ## Push the warm-pool proxy image.
+	$(CONTAINER_TOOL) push ${WARMPOOL_PROXY_IMG}
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

@@ -152,6 +152,16 @@ func (e *Engine) runAnalyzersAndScore(
 	namedResults := []allocation.NamedAnalyzerResult{
 		buildNamedResult(ctx, domain.SaturationAnalyzerName, baseResult, config, metaByVariant, satUp, satDown),
 	}
+	// What each variant is getting from the pool, for the retained-pool switching
+	// decision. Published from saturation's result because that is the analyzer
+	// that measures per-replica capacity; it is deliberately absent from every
+	// supply total above.
+	publishWarmPoolSupply(namespace, namedResults[0])
+	// How hard each variant is being pushed, for the retained pool's switching
+	// decision. Published from saturation's result and with saturation's own
+	// scale-up threshold, so the pool never switches for a variant the optimizer
+	// considers comfortable, nor sits still for one it is already growing.
+	publishVariantPressure(namespace, namedResults[0], satUp)
 	for _, entry := range e.analyzerRunEntries() {
 		if entry.name == domain.SaturationAnalyzerName {
 			continue
@@ -597,6 +607,12 @@ func gpuUsageViews(requests []allocation.ModelScalingRequest) allocation.GPUUsag
 		ManagedByType:      computeCurrentGPUUsage(requests),
 		ManagedByNamespace: computeCurrentGPUUsageByNamespace(requests),
 	}
+	// The warm pools too, and HERE rather than only where the managed figure is
+	// published. These views are what the constraint providers are given, so a
+	// quota built without them does not bind on the pool at all -- the published
+	// figure would say the pool costs something while the limiter enforcing it
+	// carried on as though it did not.
+	addWarmPoolGPUs(views.ManagedByType, views.ManagedByNamespace)
 	if snap, ok := decision.LatestGPUUsage(); ok {
 		views.PhysicalByType = snap.ByType
 		views.PhysicalByNamespace = withActiveNamespaces(snap.ByNamespace, requests)
@@ -858,6 +874,22 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 				clampReplicaCountToScaleTarget(&result.VariantCapacities[i], m)
 			}
 		}
+	}
+	// (1b) What the BRIDGES serving each variant are worth.
+	//
+	// Derived from two measurements the analyzer supplies (how many bridges, and
+	// what one is worth), so it is built here for the same reason supply is: a
+	// derived capacity written inside one analyzer is absent from the others.
+	//
+	// Deliberately NOT added to any supply total below. A bridge is borrowed --
+	// counting it as supply would tell the optimizer the fleet is already big
+	// enough and suppress the scale-up the bridge exists to cover, after which the
+	// pool holds the Pod forever because the replicas that would release it were
+	// never created. The single consumer is the retained-pool switching decision.
+	// Its demand IS counted, in the analyzer's TotalDemand.
+	for i := range result.VariantCapacities {
+		vc := &result.VariantCapacities[i]
+		vc.WarmPoolCapacity = float64(vc.WarmPoolReplicas) * vc.WarmPoolPerReplicaCapacity
 	}
 	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P), and
 	// the model-level utilization from demand vs supply.
@@ -1167,4 +1199,94 @@ func unattributedGPUs(byType map[string]int) (total int, keys []string) {
 	}
 	sort.Strings(keys)
 	return total, keys
+}
+
+// publishHeadroomForIdleFleet answers "how many GPUs may this namespace still
+// take" when there is nothing to optimize.
+//
+// The usage it measures against is gpuUsageViews(nil): no variants hold
+// anything, so what remains is whatever the warm pools hold. That is the whole
+// point -- a pool is WVA's own consumption and is charged against the same
+// allowance, so a pool at its quota must read as no headroom left rather than as
+// a namespace nobody bounds.
+//
+// Silent on every failure. Publishing a wrong figure here is worse than
+// publishing none: an absent namespace reads as unbounded, which is the
+// behaviour that existed before this function, while a fabricated one would cap
+// a pool for a reason nobody could find.
+func (e *Engine) publishHeadroomForIdleFleet(ctx context.Context) {
+	providers := gpuConstraintProviders(e.currentGPULimiter())
+	if len(providers) == 0 {
+		return // nothing bounds anything; the pool grows freely, as it should
+	}
+	views := gpuUsageViews(nil)
+	if _, missing := views.MissingBasis(providers); missing {
+		return // no observation on a basis some provider needs
+	}
+	var constraints []*allocation.ResourceConstraints
+	for _, cp := range providers {
+		usageByType, usageByNS := views.For(cp)
+		constraint, err := cp.ComputeConstraints(ctx, usageByType, usageByNS)
+		if err != nil {
+			continue
+		}
+		constraints = append(constraints, constraint)
+	}
+	if len(constraints) == 0 {
+		return
+	}
+	allocation.PublishNamespaceHeadroom(constraints, time.Now())
+}
+
+// publishWarmPoolSupply records what BRIDGES are contributing to each variant.
+//
+// Zero is published as readily as a positive figure, and for every variant the
+// analyzer saw. A switching decision needs "this variant has no bridge" as much
+// as it needs the number, and publishing only the non-zero ones would leave the
+// last reading standing after the Pod went back -- saying a variant is being
+// carried by a pool that has already reclaimed it.
+func publishWarmPoolSupply(namespace string, nr allocation.NamedAnalyzerResult) {
+	if nr.Result == nil {
+		return
+	}
+	now := time.Now()
+	for _, vc := range nr.Result.VariantCapacities {
+		if vc.VariantName == "" {
+			continue
+		}
+		decision.PublishWarmPoolSupply(namespace, vc.VariantName,
+			vc.WarmPoolReplicas, vc.WarmPoolCapacity, now)
+	}
+}
+
+// publishVariantPressure records how close each variant is to needing capacity.
+//
+// Spare is expressed as a FRACTION of the variant's own supply, because the
+// consumer compares variants of different sizes against one threshold. A variant
+// with no measurable supply is skipped rather than published as fully spare:
+// unknown and idle are opposite answers to the question a retained pool asks,
+// and the safer of the two is to say nothing.
+func publishVariantPressure(namespace string, nr allocation.NamedAnalyzerResult, scaleUp float64) {
+	if nr.Result == nil {
+		return
+	}
+	now := time.Now()
+	for _, vc := range nr.Result.VariantCapacities {
+		if vc.VariantName == "" {
+			continue
+		}
+		supply := float64(vc.ReplicaCount) * vc.PerReplicaCapacity
+		if supply <= 0 {
+			continue
+		}
+		// Utilization is demand over the variant's OWN supply, so a bridge
+		// carrying its load raises it rather than hiding it -- which is what
+		// makes this the right number for deciding whether the pool should be
+		// serving this model instead of another.
+		decision.PublishPressure(namespace, vc.VariantName, decision.Pressure{
+			SpareFraction: 1 - vc.Utilization,
+			NeedsScaleUp:  vc.Utilization > scaleUp,
+			At:            now,
+		})
+	}
 }

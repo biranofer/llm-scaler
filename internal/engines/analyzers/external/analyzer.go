@@ -86,11 +86,23 @@ type Definition struct {
 }
 
 // Analyzer is the built-in wrapper that runs a Definition as a domain.Analyzer.
+// SeriesGate rejects a series whose Pod is gone, so an external analyzer counts
+// the same Pods the collector's builder would.
+type SeriesGate func(ctx context.Context, namespace string, labels map[string]string) bool
+
 type Analyzer struct {
 	def    Definition
 	source source.MetricsSource
 	// queryNames maps an engine key to the query name registered for its body.
 	queryNames map[string]string
+
+	// DropSeries applies the collector's Pod gate to this analyzer's own query
+	// results, so a deleted Pod stops contributing demand here as it does there.
+	//
+	// A field rather than a constructor argument because it is optional and
+	// layered: the engine wires the collector's gate in after construction, and
+	// an analyzer built without one sums everything, which is what it did before.
+	DropSeries SeriesGate
 }
 
 // New constructs an external analyzer from def and registers each body's query
@@ -219,6 +231,20 @@ func (a *Analyzer) queryDemand(ctx context.Context, qName, modelID, namespace st
 	}
 	var demand float64
 	for _, v := range res.Values {
+		// The SAME Pod gate the collector's builder applies, so an external
+		// analyzer measures the same population as a built-in one.
+		//
+		// It has to be applied here because this analyzer never builds a per-Pod
+		// record: it runs the operator's query and sums the series itself. Without
+		// this, a per-Pod body counts deleted Pods for as long as Prometheus keeps
+		// their series -- the same defect the builder prevents, on a path the
+		// builder cannot see.
+		//
+		// An already-aggregated body has no Pod label left to judge and is summed
+		// untouched; see collector.SeriesPodIsGone.
+		if a.DropSeries != nil && a.DropSeries(ctx, namespace, v.Labels) {
+			continue
+		}
 		demand += v.Value
 	}
 	return demand, nil

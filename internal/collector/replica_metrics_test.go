@@ -119,7 +119,7 @@ func TestRecordMetricsUnavailableEvent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeRecorder := record.NewFakeRecorder(100)
 			mockSource := &mockMetricsSource{}
-			collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
+			collector := NewReplicaMetricsCollector(mockSource, nil, nil, fakeRecorder, nil)
 
 			variantAutoscalings := make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling)
 			for i := 0; i < tt.numVAs; i++ {
@@ -198,7 +198,7 @@ func TestCollectReplicaMetrics_ErrorRecordsEvent(t *testing.T) {
 	mockSource := &mockMetricsSource{
 		refreshError: errors.New("prometheus connection failed"),
 	}
-	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, fakeRecorder, nil)
 
 	// First call with error: no event (first observation, unknown previous state)
 	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
@@ -255,7 +255,7 @@ func TestCollectReplicaMetrics_NoMetricsRecordsEvent(t *testing.T) {
 	mockSource := &mockMetricsSource{
 		results: make(map[string]*source.MetricResult),
 	}
-	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, fakeRecorder, nil)
 
 	// First call: no metrics, should NOT emit event (first observation, unknown previous state)
 	metrics, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
@@ -329,7 +329,7 @@ func TestCollectReplicaMetrics_EdgeTriggeredEvents(t *testing.T) {
 	mockSource := &mockMetricsSource{
 		results: make(map[string]*source.MetricResult),
 	}
-	collector := NewReplicaMetricsCollector(mockSource, nil, fakeRecorder, nil)
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, fakeRecorder, nil)
 
 	// First call: metrics unavailable, should NOT emit event (first observation, unknown previous state)
 	_, err := collector.CollectReplicaMetrics(ctx, "test-model", "default", scaleTargets, variantAutoscalings, nil)
@@ -390,7 +390,7 @@ func TestCollectReplicaMetrics_MetricsObservation(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	fakeRecorder := record.NewFakeRecorder(100)
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, fakeRecorder, nil)
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, fakeRecorder, nil)
 
 	// Call the function
 	_, err = collector.CollectReplicaMetrics(
@@ -500,7 +500,7 @@ func TestCollectReplicaMetrics_ErrorMetrics(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	fakeRecorder := record.NewFakeRecorder(100)
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, fakeRecorder, nil)
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, fakeRecorder, nil)
 
 	// Call the function - should return error
 	_, err = collector.CollectReplicaMetrics(
@@ -625,7 +625,7 @@ func TestCollectReplicaMetrics_ThroughputKeyMerge(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"pod-abc": "va-1"}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"pod-abc": "va-1"}))
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(),
 		"test-model",
@@ -721,7 +721,7 @@ func TestCollectReplicaMetrics_Freshness(t *testing.T) {
 
 	collect := func(src *mockMetricsSource) []domain.ReplicaMetrics {
 		t.Helper()
-		collector := NewReplicaMetricsCollector(src, k8sClient, nil, scalerLocator(map[string]string{"pod-abc": "va-1"}))
+		collector := NewReplicaMetricsCollector(src, k8sClient, nil, nil, scalerLocator(map[string]string{"pod-abc": "va-1"}))
 		results, err := collector.CollectReplicaMetrics(
 			context.Background(), "test-model", "test-ns",
 			make(map[string]scaletarget.ScaleTargetAccessor),
@@ -835,7 +835,7 @@ func TestCollectReplicaMetrics_SGLangCacheConfig(t *testing.T) {
 		},
 	})
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"sglang-pod-0": sglangVariantLabel}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"sglang-pod-0": sglangVariantLabel}))
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(),
 		"test-model",
@@ -910,7 +910,7 @@ func TestCollectReplicaMetrics_SGLangPrefixCacheHitRate(t *testing.T) {
 					}, nil
 				},
 			}
-			collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"sglang-pod-0": sglangVariantLabel}))
+			collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"sglang-pod-0": sglangVariantLabel}))
 			results, err := collector.CollectReplicaMetrics(
 				context.Background(), "test-model", "test-ns",
 				map[string]scaletarget.ScaleTargetAccessor{sglangScaleTargetKey: sglangTarget},
@@ -976,7 +976,7 @@ func TestCollectReplicaMetrics_MixedEngine(t *testing.T) {
 		})
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{
 		mixedVLLMPodName: "va-vllm",
 		"sglang-0":       sglangVariantLabel,
 	}))
@@ -1069,7 +1069,7 @@ func TestCollectReplicaMetrics_UnattributedReadyPodsEvent(t *testing.T) {
 		"default/dep-target": &mockScaleTargetAccessor{readyReplicas: 2},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, fakeRecorder, scalerLocator(map[string]string{"pod-other": "va-other"}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, fakeRecorder, scalerLocator(map[string]string{"pod-other": "va-other"}))
 
 	// First call: metrics present for a different VA → va-target has 0 attributed but 2 ready.
 	vaEventTracker := make(map[string]bool)
@@ -1141,7 +1141,7 @@ func TestCollectReplicaMetrics_ThroughputOrphanSkipped(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{
 		"pod-known":  "va-1",
 		"pod-orphan": "va-1",
 	}))
@@ -1221,7 +1221,7 @@ func TestIsLWSWorker(t *testing.T) {
 				}
 			}
 
-			collector := NewReplicaMetricsCollector(nil, nil, nil, mockLoc)
+			collector := NewReplicaMetricsCollector(nil, nil, nil, nil, mockLoc)
 			got := collector.isLWSWorker(context.Background(), "test-ns", "test-pod")
 
 			if got != tt.want {
@@ -1239,7 +1239,7 @@ func TestIsLWSWorker_EmptyPodName(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(nil, nil, nil, mockLoc)
+	collector := NewReplicaMetricsCollector(nil, nil, nil, nil, mockLoc)
 	got := collector.isLWSWorker(context.Background(), "test-ns", "")
 
 	if got != false {
@@ -1370,7 +1370,7 @@ func TestIsLWSWorker_MetricEmissionPatterns(t *testing.T) {
 				},
 			}
 
-			collector := NewReplicaMetricsCollector(nil, nil, nil, mockLoc)
+			collector := NewReplicaMetricsCollector(nil, nil, nil, nil, mockLoc)
 
 			// Simulate filtering: for each pod that emits metrics,
 			// check if it would be filtered out by isLWSWorker
@@ -1571,7 +1571,7 @@ func TestCollectReplicaMetrics_LWSWorkerPodsFiltered(t *testing.T) {
 		return pod.Labels
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, mockLoc)
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, mockLoc)
 
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(),
@@ -1747,7 +1747,7 @@ func TestCollectReplicaMetrics_DeploymentUnchanged(t *testing.T) {
 		return pod.Labels
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, mockLoc)
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, mockLoc)
 
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(),
@@ -1852,7 +1852,7 @@ func TestCollectReplicaMetrics_NamespaceQueriesSharedAcrossModels(t *testing.T) 
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{
 		"pod-a": "va-a",
 		"pod-b": "va-b",
 	}))
@@ -1905,7 +1905,7 @@ func TestCollectReplicaMetrics_WithoutCycleRefreshesPerCall(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"pod-a": "va-a"}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"pod-a": "va-a"}))
 	for i := 0; i < 2; i++ {
 		_, err := collector.CollectReplicaMetrics(
 			context.Background(), "model-a", "test-ns",
@@ -1944,7 +1944,7 @@ func TestCollectSchedulerQueueMetrics_PicksItsModel(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil)
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil, nil)
 	got := collector.CollectSchedulerQueueMetrics(context.Background(), "model-a")
 
 	require.NotNil(t, got)
@@ -1973,7 +1973,7 @@ func TestCollectModelArrivalRate_TargetModelOnly(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil)
+	collector := NewReplicaMetricsCollector(mockSource, nil, nil, nil, nil)
 	assert.Equal(t, 2.5, collector.CollectModelArrivalRate(context.Background(), "model-a", "test-ns"))
 }
 
@@ -2018,7 +2018,7 @@ func TestCollectReplicaMetrics_ServiceTimePopulated(t *testing.T) {
 		},
 	}
 
-	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, scalerLocator(map[string]string{"pod-known": "va-1"}))
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, nil, nil, scalerLocator(map[string]string{"pod-known": "va-1"}))
 	results, err := collector.CollectReplicaMetrics(
 		context.Background(),
 		"test-model",

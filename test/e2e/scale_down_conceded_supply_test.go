@@ -1,16 +1,78 @@
 package e2e
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 )
+
+// fleetObservation records what the Deployment reported across BOTH windows
+// below, so a failure can say WHEN the fleet left its target instead of only
+// that it is not there now.
+//
+// The two windows check different fields for different reasons: the guard
+// watches Status.Replicas for adoption and is deliberately one-sided, and the
+// assertion watches Spec.Replicas for the regression. A fleet that falls below
+// target DURING the guard therefore trips neither -- the guard ignores a low
+// count by design, and by the time the assertion opens the fall has already
+// happened, so it fails on its first poll with "1 is not >= 2" and no history.
+//
+// That is what made this spec unreadable: measured on a fresh cluster it passed
+// twice at ~370s and failed once at 60s, and the failing run's Consistently
+// gave up after 0.003s. "Scaled down thirty seconds ago" and "was never staged"
+// produce the identical message, and they need opposite fixes.
+type fleetObservation struct {
+	start   time.Time
+	last    string
+	samples []string
+	fellAt  time.Duration
+	fell    bool
+}
+
+// record samples the Deployment. Transitions only: a poll that reports what the
+// last one did adds nothing, and at a 1s interval over a 5-minute window the
+// unfiltered list would be the thing nobody reads.
+func (f *fleetObservation) record(dep *appsv1.Deployment, target int32) {
+	spec := int32(0)
+	if dep.Spec.Replicas != nil {
+		spec = *dep.Spec.Replicas
+	}
+	line := fmt.Sprintf("spec=%d status=%d ready=%d", spec, dep.Status.Replicas, dep.Status.ReadyReplicas)
+	if line != f.last {
+		f.samples = append(f.samples,
+			fmt.Sprintf("t+%s %s", time.Since(f.start).Round(time.Second), line))
+		f.last = line
+	}
+	if !f.fell && spec < target {
+		f.fell = true
+		f.fellAt = time.Since(f.start).Round(time.Second)
+	}
+}
+
+// report is the failure annotation: when the fleet first fell, and everything
+// that changed on the way there.
+func (f *fleetObservation) report(guard time.Duration) string {
+	timeline := strings.Join(f.samples, " | ")
+	if !f.fell {
+		return "the fleet never fell below its target while observed; timeline: " + timeline
+	}
+	when := fmt.Sprintf("spec.replicas first fell below the target at t+%s", f.fellAt)
+	if f.fellAt <= guard {
+		return fmt.Sprintf("%s -- INSIDE the %s adoption guard, so it had already happened before this "+
+			"assertion opened, and the fast failure is the tail of it rather than a fresh scale-down; "+
+			"timeline: %s", when, guard, timeline)
+	}
+	return fmt.Sprintf("%s, after the %s adoption guard; timeline: %s", when, guard, timeline)
+}
 
 // Supply must never describe a fleet larger than the scale target is committed
 // to. When it does, the optimizer is credited with spare capacity that an
@@ -116,7 +178,20 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// NOT fall to it. A floor of 2 would pass whether or not the bug is fixed.
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 			fixtures.WithWVATriggerMetadata(modelID, "30.0"),
-			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))).To(Succeed())
+			// LONG on purpose, and it is what stops this spec being a race.
+			//
+			// The fleet is staged by hand at two replicas while WVA's standing
+			// recommendation is still 1, so a short window starts a timer against
+			// that stale value; if the new recommendation has not propagated when
+			// it expires, KEDA takes the fleet back down and the third replica
+			// stops reporting -- destroying the premise mid-measurement. Measured
+			// at 30s: the fleet fell at t+25s with WVA saying curr:2 tgt:2.
+			//
+			// Long enough to outlast the assertion below, so the fleet holds
+			// still for the whole measurement. The assertion is on what WVA
+			// PUBLISHES, not on the fleet, so holding the fleet still costs no
+			// coverage -- see the Consistently at the end of this spec.
+			fixtures.WithScaledObjectScaleDownStabilizationWindow(600))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })
 	})
 
@@ -152,6 +227,19 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(dep.Status.ReadyReplicas).To(BeNumerically("==", targetReplicas))
+			// TOTAL replicas as well, not just the ready ones. Status.Replicas
+			// counts Pods that are still TERMINATING, and the guard below reads
+			// that same field: scaling down from a larger fleet reaches
+			// ReadyReplicas==2 while the third Pod is still going away, so the
+			// guard sees 3 and reports adoption -- a staging failure for a
+			// condition that is merely mid-scale-down.
+			//
+			// Invisible when this spec runs alone, because the Deployment starts
+			// at one replica and there is nothing to terminate. It only appears
+			// after a spec that left the fleet larger, which is why it failed in
+			// the full suite and passed on its own.
+			g.Expect(dep.Status.Replicas).To(BeNumerically("==", targetReplicas),
+				"a Pod from an earlier scale-down is still terminating, and it counts here")
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 
@@ -191,22 +279,80 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// regression itself, and that belongs to the assertion after this one:
 		// an equality check here would fire first and report a staging problem
 		// for what is actually the bug under test.
+		// Observed across both windows so the assertion below can say when the
+		// fleet left its target. Started here rather than at the assertion,
+		// because the interesting departures happen during this guard.
+		const guardWindow = 30 * time.Second
+		fleet := &fleetObservation{start: time.Now()}
+
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
+			fleet.record(dep, targetReplicas)
 			g.Expect(dep.Status.Replicas).To(BeNumerically("<=", targetReplicas),
 				"the ReplicaSet adopted the extra pod, so this test is not staging the condition it claims")
-		}, 30*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+		}, guardWindow, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Asserting the extra replica's capacity is never treated as removable")
 		// The regression: supply over three reporting replicas yields a full
 		// replica of spare on top of the one the target already conceded, and the
 		// recommendation drops to minReplicaCount.
+		//
+		// ASSERTED ON WHAT WVA PUBLISHES, not on spec.replicas.
+		//
+		// spec.replicas is KEDA's. It follows WVA, but on KEDA's schedule and
+		// through the HPA's stabilisation window, so reading it measures a
+		// pipeline several seconds wide and calls its lag a regression. That is
+		// what made this spec flaky: with the window at 30s, a scale-up staged by
+		// hand starts a timer against WVA's PREVIOUS recommendation of 1, and if
+		// the new one has not propagated when it expires the fleet drops -- while
+		// WVA is saying curr:2 tgt:2 no-change. Measured exactly that, at t+25s.
+		//
+		// The window is long now (see the ScaledObject above), which keeps the
+		// fleet still so the third replica keeps reporting. That deliberately
+		// makes spec.replicas useless as the assertion -- it could no longer fall
+		// during this window even if the clamp were gone -- so the assertion
+		// moves to the number the regression is actually about.
+		//
+		// Prometheus rather than the HPA's CurrentMetrics: KEDA reports the
+		// external metric as an AverageValue, total over current replicas, so a
+		// correct recommendation of 2 across two replicas reads as 1 there. An
+		// earlier attempt waited on that and timed out for five minutes against a
+		// perfectly healthy controller.
+		pc := promClientForCheck()
+		if pc == nil {
+			Skip("no Prometheus client could be built, so WVA's recommendation cannot be read")
+		}
+		desired := fmt.Sprintf("wva_desired_replicas{variant_name=%q,exported_namespace=%q}",
+			variantName, cfg.LLMDNamespace)
+
+		// The series has to EXIST before it can be asserted on. QueryWithRetry
+		// gives up after five attempts, about a second and a half, which is far
+		// shorter than the gap between the fleet being staged and the first
+		// scrape carrying a recommendation for it. Without this the Consistently
+		// fails on its first poll with "timed out waiting for the condition" --
+		// a missing series reported as a scale-down. Two runs in three died that
+		// way, both at ~42s, while the run that got a series passed the whole
+		// window.
+		By("Waiting for WVA's recommendation to be queryable at all")
+		Eventually(func(g Gomega) {
+			_, err := pc.QueryWithRetry(ctx, desired)
+			g.Expect(err).NotTo(HaveOccurred(),
+				"wva_desired_replicas is not queryable for this variant yet; without it the "+
+					"assertion below cannot tell a low recommendation from a missing one")
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(*dep.Spec.Replicas).To(BeNumerically(">=", targetReplicas),
-				"WVA scaled below the target while an unowned replica was reporting: its capacity was counted as spare")
+			fleet.record(dep, targetReplicas)
+
+			v, err := pc.QueryWithRetry(ctx, desired)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v).To(BeNumerically(">=", float64(targetReplicas)),
+				"WVA recommended fewer replicas than the target while an unowned replica was "+
+					"reporting: its capacity was counted as spare. %s", fleet.report(guardWindow))
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})

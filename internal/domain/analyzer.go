@@ -164,6 +164,17 @@ type VariantCapacity struct {
 	// scale-target units as ReplicaCount — so demand / PerReplicaCapacity yields
 	// a replica target directly.
 	// For saturation V2: median(effectiveCapacity) in tokens across ready replicas.
+	//
+	// Measured over the variant's OWN replicas only — never over a bridge. The
+	// linearity invariant above is supply = replicas × P, and ReplicaCount counts
+	// own replicas (the build step clamps it to the scale target, which a warm
+	// pool Pod is not part of). A P blended over bridges would price that count at
+	// a number none of those replicas delivers: the pool runs its engines at a
+	// lower --gpu-memory-utilization than the workload, so less of the GPU is KV
+	// cache and a bridge's memory-bound capacity is genuinely smaller (measured on
+	// pokprod 2026-08-31: pool 0.90, workload 0.95). The error grows as the median
+	// gets shorter — with one own replica and one bridge the median is their
+	// average. See WarmPoolPerReplicaCapacity for the bridge's own reading.
 	PerReplicaCapacity float64
 
 	// Reason is a free-text string set by the analyzer to describe how the
@@ -173,7 +184,42 @@ type VariantCapacity struct {
 	// "T2-pinned", "T2-default", "T2-failed".
 	Reason string
 
-	// TotalDemand is the aggregate demand on this variant.
+	// WarmPoolReplicas is how many BRIDGES are serving this variant: warm pool
+	// Pods lent to it while it is short, counted in the same scale-target units
+	// as ReplicaCount but deliberately NOT part of it.
+	//
+	// Their load is in TotalDemand, because it is this variant's load. Their
+	// capacity is not in supply, because the Pods are borrowed: counting them
+	// would tell the optimizer the fleet is already big enough and suppress the
+	// scale-up the bridge exists to cover, leaving the pool holding the Pod
+	// because the replicas that would release it were never created.
+	WarmPoolReplicas int
+
+	// WarmPoolPerReplicaCapacity is P for a BRIDGE: the representative capacity of
+	// one lent warm pool Pod, measured from the bridges themselves and in the same
+	// units as PerReplicaCapacity.
+	//
+	// A separate reading rather than a reuse of PerReplicaCapacity because the two
+	// are genuinely different numbers -- see PerReplicaCapacity. Zero when no
+	// bridge is serving this variant.
+	//
+	// Analyzer-supplied: it is a measurement, so it is part of the (D, P) signal.
+	WarmPoolPerReplicaCapacity float64
+
+	// WarmPoolCapacity is what those bridges are worth, in the same units as
+	// supply. Carried for the retained-pool switching decision -- where there are
+	// no ordinary replicas coming and the pool IS the capacity, so choosing which
+	// model holds the GPUs needs to compare what each is getting from the pool
+	// against what each is asking for.
+	//
+	// BUILDER-OWNED, not analyzer-supplied: it is WarmPoolReplicas ×
+	// WarmPoolPerReplicaCapacity, and a derived capacity belongs to the
+	// capacity-build step for the same reason supply does. An analyzer that sets
+	// it is overwritten. See steadystate.buildCapacities.
+	WarmPoolCapacity float64
+
+	// TotalDemand is the aggregate demand on this variant. It INCLUDES the
+	// demand carried by any bridge above.
 	TotalDemand float64
 
 	// Utilization is TotalDemand / (ReplicaCount × PerReplicaCapacity), 0.0-1.0.

@@ -2,7 +2,9 @@ package allocation
 
 import (
 	"math"
+	"time"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/decision"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 )
@@ -43,6 +45,22 @@ func applyGPULimitAttribution(
 	limited gpuLimitTracker,
 	constraints []*ResourceConstraints,
 ) {
+	// Published on EVERY pass, including the one where nothing was limited.
+	// An empty snapshot is a real answer -- it says this pass denied nobody --
+	// and publishing only the non-empty ones would leave the last contended
+	// reading standing forever, holding warm pools down long after the burst.
+	contended := map[string]map[string]bool{}
+	// Headroom rides along with contention, from the one place that sees every
+	// constraint provider at once. They answer different questions and the warm
+	// pool needs both: contention says a model replica is being denied RIGHT NOW,
+	// which is a reason to yield ground already held; headroom says the allowance
+	// is spent, which is a reason not to ask for more in the first place.
+	defer func() {
+		now := time.Now()
+		decision.PublishGPUContention(contended, now)
+		decision.PublishHeadroom(namespaceHeadroom(constraints), now)
+	}()
+
 	if len(limited) == 0 {
 		return
 	}
@@ -55,7 +73,60 @@ func applyGPULimitAttribution(
 		d.WasLimited = true
 		d.LimitedBy = bindingProvider(constraints, d.Namespace, d.AcceleratorName)
 		emitter.RecordDecisionsLimitedTotalMetric(d.VariantName, d.Namespace, d.LimitedBy)
+
+		// A warm pool of this accelerator type, in this namespace, should stop
+		// competing for GPUs a model replica is being denied. See
+		// decision.GPUContention.
+		if d.AcceleratorName != "" {
+			if contended[d.Namespace] == nil {
+				contended[d.Namespace] = map[string]bool{}
+			}
+			contended[d.Namespace][d.AcceleratorName] = true
+		}
 	}
+}
+
+// namespaceHeadroom is how many GPUs of each accelerator each namespace may
+// still take, across every provider, tightest bound winning.
+//
+// Only namespaces some provider actually CAPS appear. A namespace nobody bounds
+// is absent rather than present-with-a-large-number, because "unconstrained" and
+// "a lot left" are different answers and a caller has to be able to tell them
+// apart -- a warm pool must grow freely in the first case.
+//
+// Mirrors effectiveAvailable: a negative Limit is the unlimited sentinel and
+// imposes no bound, and an accelerator a namespace's allowlist does not name is
+// a hard deny, which is zero rather than absent.
+func namespaceHeadroom(constraints []*ResourceConstraints) map[string]map[string]int {
+	out := map[string]map[string]int{}
+	for _, c := range constraints {
+		if c == nil {
+			continue
+		}
+		for ns, perType := range c.NamespacePools {
+			free, ok := out[ns]
+			if !ok {
+				free = map[string]int{}
+				out[ns] = free
+			}
+			for accType, rp := range perType {
+				if rp.Limit < 0 {
+					continue // unlimited for this (namespace, type)
+				}
+				avail := rp.Limit - rp.Used
+				if avail < 0 {
+					// Over-committed already. Zero, not negative: the answer a
+					// caller needs is "nothing more", and a negative number
+					// invites arithmetic that accidentally grants some back.
+					avail = 0
+				}
+				if prev, seen := free[accType]; !seen || avail < prev {
+					free[accType] = avail
+				}
+			}
+		}
+	}
+	return out
 }
 
 // bindingProvider names the constraint provider whose pool most tightly bounds
@@ -98,4 +169,21 @@ func bindingProvider(constraints []*ResourceConstraints, namespace, accType stri
 		}
 	}
 	return name
+}
+
+// PublishNamespaceHeadroom records what each namespace may still take, from a
+// caller that built constraints outside an optimization pass.
+//
+// Headroom is normally published as a side effect of attribution, which runs
+// only when there is something to optimize. A namespace whose ONLY WVA
+// consumption is a warm pool has no variants and therefore no optimization pass
+// -- so it never got an answer, and "no answer" means unbounded to the pool,
+// which is the one caller that reads it. Measured: a namespace with a one-GPU
+// quota and no models grew its pool to three Pods.
+//
+// Exported rather than exposing namespaceHeadroom itself, so the mapping from
+// constraints to headroom stays in one place and every publisher agrees about
+// what an absent namespace means.
+func PublishNamespaceHeadroom(constraints []*ResourceConstraints, now time.Time) {
+	decision.PublishHeadroom(namespaceHeadroom(constraints), now)
 }

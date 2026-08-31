@@ -39,11 +39,13 @@ GUIDES_DIR = Path(__file__).resolve().parent.parent / "docs" / "guides"
 # Guides that are deliberately hand-written, with the reason. Everything else must
 # carry a guide.yaml so its commands are generated rather than retyped.
 HAND_WRITTEN = {
-    # FMA's commands are interleaved with long explanatory prose and several are
-    # illustrative rather than runnable (editing a plan file, inspecting a
-    # launcher). Converting it would either lose that or fill the YAML with steps
-    # nobody runs. Revisit if its runnable path is ever separated out.
-    "fma",
+    # The warm pool guide is mostly a decision, not a procedure: whether this
+    # cluster can warm this model at all, how many fit in one Pod, which pools a
+    # namespace needs. Its commands are a few deploy/warmpool.sh calls whose
+    # ARGUMENTS are the answers to those questions, so a rendered linear path
+    # would either invent them or drop the reasoning that produces them. The
+    # runnable part is covered by test/e2e/warm_pool_policy_test.go instead.
+    "warm-pool",
 }
 
 # <!-- guide:some.path start --> ... <!-- guide:some.path end -->

@@ -3,6 +3,7 @@ package registry
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // Trigger metadata keys. These are the whole per-variant configuration surface:
@@ -39,6 +40,60 @@ const (
 	// resolving policy from an InferencePool's selector.
 	ScalingPolicyKey = "scalingPolicy"
 
+	// WarmPoolKey names the warm pool this variant may borrow from, when the
+	// namespace holds more than one. Optional, and deliberately NOT boilerplate:
+	// a namespace with a single pool needs no selection at all, because there is
+	// nothing to disambiguate. Writing a pool name on every ScaledObject would
+	// be ceremony in the case that is by far the most common.
+	//
+	// More than one pool is a real configuration rather than a hypothetical: a
+	// warm copy is only reusable on the accelerator it was loaded on, so a
+	// cluster with two GPU types needs a pool per type, and a tensor-parallel
+	// variant needs Pods holding that many devices.
+	//
+	// When a namespace holds several pools and a variant names none, it gets no
+	// warm copy and WVA says so. Picking one for it would be a guess with a cost:
+	// the wrong pool means a ~35 s load that can never serve.
+	WarmPoolKey = "warmPool"
+
+	// WarmPoolCopiesKey is how many warm copies of this variant the pool should
+	// hold. Optional; a non-negative integer.
+	//
+	// Absent means AUTOMATIC, which is the default and the right answer for
+	// almost everything: the pool decides from parking, popularity and miss
+	// frequency, and holds at most one copy. Setting it takes that judgement
+	// away, and is worth doing in two cases automatic mode cannot express.
+	//
+	//	"0"  never warm this variant -- it opts out of a pool it shares, freeing
+	//	     the slot for models that gain more from it
+	//	"1"  always keep one warm, whatever the pool's own ranking thinks
+	//	"N"  keep N warm, so N scale-ups of this variant can bridge AT ONCE
+	//
+	// The last is the one automatic mode cannot do at all. A single warm copy
+	// bridges a single scale-up, so a variant that scales twice in quick
+	// succession takes a cold start for the second with free Pods sitting
+	// beside it. It is also the only way to weight a shared pool toward one
+	// model, since automatic mode holds one copy of each and no more.
+	//
+	// "1" is not the same as absent. Absent lets a quiet variant lose its slot
+	// to a busier one; "1" pins it, which is what a low-traffic but
+	// latency-critical model needs and what popularity ranking can never give.
+	WarmPoolCopiesKey = "warmPoolCopies"
+
+	// WarmPoolNameKey marks a ScaledObject as scaling a warm POOL rather than a
+	// model, and names which pool it is.
+	//
+	// A pool is scaled the same way every other workload here is -- WVA computes
+	// a size, KEDA writes it -- which is what lets the controller stay read-only.
+	// The alternative was a write permission on the pool Deployment, and
+	// internal/controller/rbac.go is explicit that a licence to resize workloads
+	// is the single permission a cluster admin is most right to refuse.
+	//
+	// Its presence is also what excuses this trigger from carrying a modelID: a
+	// pool serves no model in particular, and every consumer that builds
+	// variants skips these entries rather than inventing one.
+	WarmPoolNameKey = "warmPoolName"
+
 	// ScalerAddressKey is KEDA's own key naming this scaler's address. It is
 	// consumed by KEDA, never by WVA; named here only so it is not mistaken for a
 	// WVA key when reading a trigger.
@@ -60,6 +115,16 @@ type Meta struct {
 	// ScalingPolicy names the reusable policy tier this variant scales under, or
 	// is empty to take the cluster default.
 	ScalingPolicy string
+	// WarmPool names the warm pool this variant may borrow from, or is empty to
+	// take the namespace's only pool.
+	WarmPool string
+	// WarmPoolName is set when this trigger scales a warm POOL rather than a
+	// model. When it is set, nothing else here is meaningful.
+	WarmPoolName string
+	// WarmPoolCopies is how many warm copies to hold, or nil for automatic. A
+	// POINTER because zero is a real setting -- never warm this -- and has to be
+	// distinguishable from "not specified".
+	WarmPoolCopies *int
 }
 
 // ParseMeta validates a trigger's metadata.
@@ -69,9 +134,17 @@ type Meta struct {
 // anywhere on the ScaledObject, so an unhelpful message here is the whole
 // diagnostic.
 func ParseMeta(metadata map[string]string) (Meta, error) {
+	// A pool's trigger names no model because it serves none. Returned early so
+	// the model-shaped validation below does not reject it, and so callers have
+	// one field to test rather than a rule to remember.
+	if poolName := metadata[WarmPoolNameKey]; poolName != "" {
+		return Meta{WarmPoolName: poolName}, nil
+	}
+
 	modelID := metadata[ModelIDKey]
 	if modelID == "" {
-		return Meta{}, fmt.Errorf("trigger metadata %q is required and must not be empty", ModelIDKey)
+		return Meta{}, fmt.Errorf("trigger metadata %q is required and must not be empty; "+
+			"a ScaledObject that scales a warm pool sets %q instead", ModelIDKey, WarmPoolNameKey)
 	}
 
 	cost := metadata[VariantCostKey]
@@ -86,9 +159,190 @@ func ParseMeta(metadata map[string]string) (Meta, error) {
 		return Meta{}, fmt.Errorf("trigger metadata %q must be non-negative, got %v", VariantCostKey, costVal)
 	}
 
+	// Parsed here rather than at the point of use so a bad value is rejected
+	// with the trigger that carried it, where the operator can act on it.
+	var copies *int
+	if raw := metadata[WarmPoolCopiesKey]; raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return Meta{}, fmt.Errorf("trigger metadata %q must be a non-negative whole number, got %q",
+				WarmPoolCopiesKey, raw)
+		}
+		copies = &n
+	}
+
 	return Meta{
-		ModelID:       modelID,
-		VariantCost:   cost,
-		ScalingPolicy: metadata[ScalingPolicyKey],
+		ModelID:        modelID,
+		VariantCost:    cost,
+		ScalingPolicy:  metadata[ScalingPolicyKey],
+		WarmPool:       metadata[WarmPoolKey],
+		WarmPoolCopies: copies,
 	}, nil
+}
+
+// ScalesAWarmPool reports whether a trigger's metadata scales a warm pool rather
+// than a model. Callers that build variants must skip these: a pool has no
+// model, no engine options and nothing to autoscale on demand for.
+func ScalesAWarmPool(metadata map[string]string) bool {
+	return metadata[WarmPoolNameKey] != ""
+}
+
+// Trigger metadata keys that tune a warm POOL. They appear only on a trigger
+// that carries WarmPoolNameKey.
+//
+// The pool's configuration lives with its ScaledObject rather than on the
+// Deployment that supplies its Pods, because a warm pool is a WVA concept that
+// happens to have Pods rather than a workload WVA happens to manage. Nothing
+// outside WVA reads it, nothing outside WVA creates it, and there is no sensible
+// way to operate one except through WVA -- so its declaration belongs with
+// everything else WVA is told, and the invariant stays whole: WVA manages what
+// it is CALLED about, with no exceptions.
+//
+// It also puts the reserve beside the envelope it has to fit inside. The rule
+// that decides whether a pool can warm anything at all -- maxReplicaCount must
+// exceed the reserve -- is now checkable within one object.
+const (
+	// WarmPoolSleepMinSizeKey is the floor on FREE Pods: the reserve kept for
+	// the next spike. Admission draws on free-minus-reserve, so a reserve that
+	// reaches maxReplicaCount leaves a budget of zero forever.
+	WarmPoolSleepMinSizeKey = "warmPoolSleepMinSize"
+	// WarmPoolMaxHoldKey bounds how long a borrowed Pod may serve before it is
+	// returned regardless, so a scale-up that never arrives cannot turn the
+	// reserve into permanent capacity for one variant. A Go duration.
+	WarmPoolMaxHoldKey = "warmPoolMaxHold"
+	// WarmPoolRetainedKey makes the pool the workload's SERVING capacity rather
+	// than a bridge over a scale-up.
+	//
+	// The difference is what happens to a Pod that is lent and still wanted. A
+	// bridge is temporary by design: the ordinary replicas are starting, and the
+	// hold timeout reclaims the Pod if they never arrive. A retained pool has no
+	// ordinary replicas coming -- the model is too large to start on demand, at
+	// 300+ seconds -- so the same timeout would hand the Pod back every
+	// warmPoolMaxHold and take it again on the next pass, paying a drain, a
+	// sleep and a wake each time, with a gap in service around each one.
+	//
+	// Set it and the hold timeout no longer applies: a lent Pod goes back when
+	// the variant stops needing it, and not before.
+	WarmPoolRetainedKey = "warmPoolRetained"
+	// WarmPoolSwitchSpareKey is how little spare capacity a model must have
+	// before a RETAINED pool will switch to it, as a PERCENT of its own supply.
+	//
+	// A percent rather than an absolute, because the pool compares models of
+	// different sizes: ten thousand spare tokens means one thing on a model with
+	// a hundred thousand and another on a model with eleven.
+	//
+	// A candidate below it only wins if the model currently awake is NOT also
+	// below it. Switching between two models that are both short moves the
+	// shortage and pays a drain and a wake to do it. Unset or 0 leaves only the
+	// scale-up rule.
+	WarmPoolSwitchSpareKey = "warmPoolSwitchSpareThreshold"
+	// WarmPoolMinSwitchIntervalKey is the shortest time between two switches of
+	// one retained pool. A Go duration; defaults to 10m.
+	//
+	// A switch drains the outgoing model's in-flight requests, sleeps it, and
+	// wakes the incoming one. Without a floor, two models either side of the
+	// threshold trade the GPUs back and forth and spend most of their time doing
+	// neither's work.
+	WarmPoolMinSwitchIntervalKey = "warmPoolMinSwitchInterval"
+	// WarmPoolPreloadTopKey warms this many of the busiest variants without
+	// waiting for each to miss first.
+	WarmPoolPreloadTopKey = "warmPoolPreloadTop"
+	// WarmPoolGPUMemoryUtilizationKey overrides --gpu-memory-utilization for
+	// warm copies, trading KV cache for warm-set size.
+	WarmPoolGPUMemoryUtilizationKey = "warmPoolGPUMemoryUtilization"
+)
+
+// PoolMeta is a warm pool's tuning, as its trigger declares it. Every field is
+// optional; an absent one leaves the controller's own default in place.
+type PoolMeta struct {
+	Name         string
+	SleepMinSize *int
+	MaxHold      *time.Duration
+	// Retained makes the pool serving capacity rather than a bridge. See
+	// WarmPoolRetainedKey.
+	Retained *bool
+	// SwitchSpareThreshold is the spare-capacity percent below which a retained
+	// pool will switch to a model. See WarmPoolSwitchSpareKey.
+	SwitchSpareThreshold *float64
+	// MinSwitchInterval floors the time between two switches of one retained
+	// pool. See WarmPoolMinSwitchIntervalKey.
+	MinSwitchInterval    *time.Duration
+	PreloadTop           *int
+	GPUMemoryUtilization float64
+}
+
+// ParsePoolMeta reads a pool trigger's tuning.
+//
+// A value that does not parse is REFUSED rather than defaulted, and the whole
+// trigger with it. A pool's knobs decide how many GPUs it holds and whether it
+// can warm anything; silently ignoring one and carrying on would leave an
+// operator looking at a number that is not in force anywhere.
+func ParsePoolMeta(metadata map[string]string) (PoolMeta, error) {
+	name := metadata[WarmPoolNameKey]
+	if name == "" {
+		return PoolMeta{}, fmt.Errorf("trigger metadata %q is required on a warm pool trigger", WarmPoolNameKey)
+	}
+	out := PoolMeta{Name: name}
+
+	if raw := metadata[WarmPoolSleepMinSizeKey]; raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a non-negative whole number, got %q",
+				WarmPoolSleepMinSizeKey, raw)
+		}
+		out.SleepMinSize = &n
+	}
+	if raw := metadata[WarmPoolMaxHoldKey]; raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d <= 0 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a positive duration such as 2m, got %q",
+				WarmPoolMaxHoldKey, raw)
+		}
+		out.MaxHold = &d
+	}
+	if raw := metadata[WarmPoolRetainedKey]; raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be true or false, got %q",
+				WarmPoolRetainedKey, raw)
+		}
+		out.Retained = &v
+	}
+	if raw := metadata[WarmPoolSwitchSpareKey]; raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		// A PERCENT, so 0-100. Rejecting >100 catches the operator who wrote a
+		// fraction: 0.2 meaning "20%" is a valid percent too, and reads as
+		// "switch only when a model is down to its last fifth of a percent" --
+		// which is silently never rather than obviously wrong.
+		if err != nil || v < 0 || v > 100 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a percent between 0 and 100, got %q",
+				WarmPoolSwitchSpareKey, raw)
+		}
+		out.SwitchSpareThreshold = &v
+	}
+	if raw := metadata[WarmPoolMinSwitchIntervalKey]; raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 0 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a non-negative duration such as 10m, got %q",
+				WarmPoolMinSwitchIntervalKey, raw)
+		}
+		out.MinSwitchInterval = &d
+	}
+	if raw := metadata[WarmPoolPreloadTopKey]; raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a non-negative whole number, got %q",
+				WarmPoolPreloadTopKey, raw)
+		}
+		out.PreloadTop = &n
+	}
+	if raw := metadata[WarmPoolGPUMemoryUtilizationKey]; raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v <= 0 || v > 1 {
+			return PoolMeta{}, fmt.Errorf("trigger metadata %q must be a fraction above 0 and at most 1, got %q",
+				WarmPoolGPUMemoryUtilizationKey, raw)
+		}
+		out.GPUMemoryUtilization = v
+	}
+	return out, nil
 }

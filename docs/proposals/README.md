@@ -5,30 +5,31 @@ proposal here is **not** a description of current behaviour — check its status
 header before trusting it, and prefer the guides and reference docs for how the
 system works today.
 
-## Fast Model Actuation and warm capacity
+## Warm capacity
 
-The largest cluster, and the one most likely to be read out of order. Read the
-design first; the others are the reasoning and the measurements behind it.
+Read the review first; the implementation design says what was built.
 
-- **[Warm-pool design](fma-warm-pool-design.md)** — **start here.** A shared pool
-  of GPU-holding Pods so capacity for any model arrives in seconds instead of
-  ~41 s. Configuration, per-step timings with measured provenance, what is reused
-  from FMA, and five measured prerequisites.
-- **[Launcher-owned GPUs (exploration)](fma-launcher-owned-warm-pool.md)** — how
-  that design was arrived at, and why each alternative was rejected on evidence.
-  Its own recommendations were revised repeatedly; the design document wins where
-  they conflict.
-- **[Shared warm pool, policy in WVA](fma-shared-warm-pool.md)** — measured
-  sleeper economics, `--sleeper-limit` as the binding constraint, and why
-  allocation belongs in WVA.
-- **[What the FMA fork must fix](fma-fork-problem-statement.md)** — the defects in
-  today's dual-pods path, with Fix 1 as landed.
-- **[Requests to Fast Model Actuation](fma-upstream-requests.md)** — findings and
-  change requests for the FMA project, with measurements.
-- **[FMA-aware attribution](fma-aware-attribution.md)** — how WVA measures an FMA
-  variant whose engine runs in a Pod no ScaledObject owns.
-- **[Warm pool priced by WVA](fma-warm-pool-wva.md)** — the no-FMA-change pricing
-  design.
+- **[Fast model loading, from first principles](fast-model-loading.md)** —
+  **start here.** Restates the problem commercially before technically: the
+  competitor is a spare replica, not doing nothing, so the pool has exactly one
+  thing to sell — one slot covering many models. Sizes that with a loss model,
+  names the assumption that can end the project (spike correlation), and lists
+  the measurements to take before any code is written.
+- **[Warm pool implementation](fast-model-loading-implementation.md)** — how to
+  build it: objects, the supervisor API, how a woken model joins its
+  InferencePool, the cache policy, the RBAC increase a readiness gate needs, and
+  a three-week breakdown for phase 1.
+- **[Warm pool: open questions](warm-pool-open-questions.md)** — the three
+  things the pool raises that are bigger than a bug fix: the optimizer cannot
+  tell a pool replica from a serving one, the pool's vLLM version belongs to FMA
+  rather than to us, and what either costs to change. Also records what HAS been
+  decided, so it is not re-litigated.
+- **[FMA post-mortem](fma-post-mortem.md)** — Fast Model Actuation was the
+  earlier route to the same goal. This records what was tried, the measurements
+  that killed it, and the four things in this repo that are still FMA and must
+  not be swept up with it — starting with the pool's supervisor, which IS FMA's
+  launcher. It replaces eight documents removed on 2026-08-27; they are in git
+  history.
 
 ## Scaling and actuation
 

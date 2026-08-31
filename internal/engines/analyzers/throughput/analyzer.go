@@ -228,10 +228,29 @@ func (a *ThroughputAnalyzer) Analyze(
 	}
 	a.mu.Unlock()
 
-	// Observe updates internal state (acquires/releases a.mu internally).
-	a.Observe(ctx, now, input.ModelID, input.Namespace, input.ReplicaMetrics)
+	// P IS THIS VARIANT'S OWN REPLICAS. A BRIDGE IS NOT ONE OF THEM.
+	//
+	// A bridge is a warm pool Pod lent to the variant while it is short, and it
+	// reports metrics under the variant it serves -- correctly, because the
+	// traffic IS the variant's. But it is not part of the variant's scale target,
+	// and the capacity-build step counts replicas from that target, so a bridge
+	// left in here would price the fleet with a reading none of the counted
+	// replicas produced (supply = replicas x P). The pool also runs its engines at
+	// a lower --gpu-memory-utilization than the workload, so the bridge's reading
+	// is genuinely different, not merely another sample of the same thing.
+	//
+	// Excluded from Observe as well: the observation window teaches the ITL model
+	// what THIS variant's replicas do, and a differently-configured engine is not
+	// evidence about them.
+	//
+	// Demand is unaffected -- this analyzer takes demand from the model-level
+	// arrival rate, which already includes whatever a bridge is serving.
+	ownMetrics := ownReplicasOnly(input.ReplicaMetrics)
 
-	byVariant := groupByVariant(input.ReplicaMetrics)
+	// Observe updates internal state (acquires/releases a.mu internally).
+	a.Observe(ctx, now, input.ModelID, input.Namespace, ownMetrics)
+
+	byVariant := groupByVariant(ownMetrics)
 
 	// EPP presence is now derived from the model-level arrival rate rather than
 	// per-replica ArrivalRate: a model-level sum(rate(...)) is all-or-nothing
@@ -673,6 +692,23 @@ func computeVariantSupply(metrics []domain.ReplicaMetrics, shape WorkloadShape, 
 }
 
 // groupByVariant partitions a slice of ReplicaMetrics by VariantName.
+// ownReplicasOnly drops the rows that came from a BRIDGE, leaving the variant's
+// own replicas.
+//
+// See the call site for why: P must be measured over the same population the
+// capacity-build step counts, and a lent warm pool Pod is not part of the
+// variant's scale target.
+func ownReplicasOnly(metrics []domain.ReplicaMetrics) []domain.ReplicaMetrics {
+	own := make([]domain.ReplicaMetrics, 0, len(metrics))
+	for _, m := range metrics {
+		if m.FromWarmPool {
+			continue
+		}
+		own = append(own, m)
+	}
+	return own
+}
+
 func groupByVariant(metrics []domain.ReplicaMetrics) map[string][]domain.ReplicaMetrics {
 	groups := make(map[string][]domain.ReplicaMetrics)
 	for _, m := range metrics {

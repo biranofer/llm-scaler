@@ -2,7 +2,9 @@ package fixtures
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
@@ -122,7 +124,67 @@ const (
 	pendingModelIDKey       = "e2e.llm-d.ai/pending-model-id"
 	pendingVariantCostKey   = "e2e.llm-d.ai/pending-variant-cost"
 	pendingScalingPolicyKey = "e2e.llm-d.ai/pending-scaling-policy"
+	pendingWarmPoolKey      = "e2e.llm-d.ai/pending-warm-pool"
+	pendingBorrowPoolKey    = "e2e.llm-d.ai/pending-borrow-pool"
+	pendingWarmCopiesKey    = "e2e.llm-d.ai/pending-warm-copies"
 )
+
+// WithWarmPoolSelection names the pool this MODEL may borrow from.
+//
+// The mirror image of WithWarmPoolTrigger, and easy to confuse with it: that one
+// declares a pool, this one lets a variant use one. A variant without it is never
+// considered for a borrow however many warm Pods sit next to it, so this is the
+// whole difference between a pool that lends and a pool that merely holds
+// accelerators.
+//
+// Composes with WithWVATriggerMetadata rather than replacing it -- a borrowing
+// workload still scales a model, and still needs its modelID.
+//
+// copies is the number of warm copies to hold, and passing it is what makes a
+// spec DETERMINISTIC. Left out, the variant has to earn its place in the warm
+// set through parking, popularity or repeated misses -- all of which depend on
+// what else the suite happens to be running, so a spec relying on them would
+// pass or fail according to its neighbours. Naming a count admits it outright.
+func WithWarmPoolSelection(poolName string, copies ...int) ScaledObjectOption {
+	return func(so *kedav1alpha1.ScaledObject) {
+		if so.Annotations == nil {
+			so.Annotations = make(map[string]string)
+		}
+		so.Annotations[pendingBorrowPoolKey] = poolName
+		if len(copies) > 0 {
+			so.Annotations[pendingWarmCopiesKey] = strconv.Itoa(copies[0])
+		}
+	}
+}
+
+// WithWarmPoolTrigger makes this ScaledObject DECLARE a warm pool rather than
+// scale a model.
+//
+// A pool is declared by its trigger, so this is what brings one into existence
+// as far as WVA is concerned -- a pool Deployment with no such trigger holds
+// accelerators nothing will use. tuning carries the warmPool* keys; nil takes
+// the controller's defaults.
+//
+// Deliberately exclusive with WithWVATriggerMetadata: a trigger names a model or
+// a pool, never both, and ParsePoolMeta would reject the mixture anyway.
+func WithWarmPoolTrigger(poolName string, tuning map[string]string) ScaledObjectOption {
+	return func(so *kedav1alpha1.ScaledObject) {
+		if so.Annotations == nil {
+			so.Annotations = make(map[string]string)
+		}
+		payload := map[string]string{registry.WarmPoolNameKey: poolName}
+		for k, v := range tuning {
+			payload[k] = v
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			// A map[string]string cannot fail to marshal; panicking here would
+			// be noise in a fixture.
+			return
+		}
+		so.Annotations[pendingWarmPoolKey] = string(encoded)
+	}
+}
 
 // applyWVATriggerMetadata moves the stashed WVA configuration into every trigger.
 //
@@ -130,15 +192,38 @@ const (
 // scalerMetadata on every external-scaler call, and that call is what registers
 // the workload. The llm-d.ai/* annotations that used to carry this are gone.
 func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
+	// A POOL trigger first: it carries no modelID, so the model path below
+	// would return early and leave the ScaledObject declaring nothing.
+	if raw, isPool := so.Annotations[pendingWarmPoolKey]; isPool {
+		delete(so.Annotations, pendingWarmPoolKey)
+		payload := map[string]string{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return
+		}
+		for i := range so.Spec.Triggers {
+			if so.Spec.Triggers[i].Metadata == nil {
+				so.Spec.Triggers[i].Metadata = make(map[string]string)
+			}
+			for k, v := range payload {
+				so.Spec.Triggers[i].Metadata[k] = v
+			}
+		}
+		return
+	}
+
 	modelID, ok := so.Annotations[pendingModelIDKey]
 	if !ok {
 		return
 	}
 	cost := so.Annotations[pendingVariantCostKey]
 	policy := so.Annotations[pendingScalingPolicyKey]
+	borrowFrom := so.Annotations[pendingBorrowPoolKey]
+	warmCopies := so.Annotations[pendingWarmCopiesKey]
 	delete(so.Annotations, pendingModelIDKey)
 	delete(so.Annotations, pendingVariantCostKey)
 	delete(so.Annotations, pendingScalingPolicyKey)
+	delete(so.Annotations, pendingBorrowPoolKey)
+	delete(so.Annotations, pendingWarmCopiesKey)
 
 	for i := range so.Spec.Triggers {
 		if so.Spec.Triggers[i].Metadata == nil {
@@ -150,6 +235,12 @@ func applyWVATriggerMetadata(so *kedav1alpha1.ScaledObject) {
 		}
 		if policy != "" {
 			so.Spec.Triggers[i].Metadata[registry.ScalingPolicyKey] = policy
+		}
+		if borrowFrom != "" {
+			so.Spec.Triggers[i].Metadata[registry.WarmPoolKey] = borrowFrom
+		}
+		if warmCopies != "" {
+			so.Spec.Triggers[i].Metadata[registry.WarmPoolCopiesKey] = warmCopies
 		}
 	}
 }
@@ -327,4 +418,16 @@ func buildScaledObject(namespace, name, scaleTargetName, variantName string, min
 	// After the options, so it lands on whatever triggers they left behind.
 	applyWVATriggerMetadata(so)
 	return so
+}
+
+// ScaledObjectNameFor returns the ScaledObject resource name these fixtures
+// create for a base name.
+//
+// Exported because it is a variant's IDENTITY, not a naming detail. WVA keys a
+// variant by the ScaledObject KEDA calls it about, so a spec asserting anything
+// about attribution has to use this name and not the base it passed in --
+// getting that wrong reads as "the bridge was attributed to the wrong variant"
+// when nothing is wrong at all.
+func ScaledObjectNameFor(name string) string {
+	return name + scaledObjectSuffix
 }

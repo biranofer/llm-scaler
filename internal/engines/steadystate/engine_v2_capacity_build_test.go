@@ -428,4 +428,49 @@ var _ = Describe("clampReplicaCountToScaleTarget composition", func() {
 		Expect(clamped.RequiredCapacity).To(BeNumerically(">", 0),
 			"with only two replicas committed, the same demand is a shortfall")
 	})
+
+	// A BRIDGE'S WORTH IS DERIVED HERE, FROM TWO MEASUREMENTS THE ANALYZER MAKES.
+	//
+	// Analyzers emit how many bridges are serving a variant and what one of them
+	// is worth; multiplying those is a derived capacity, and derived capacities
+	// belong to this step for the same reason supply does -- one written inside
+	// an analyzer is absent from the other two.
+	It("derives a variant's bridge capacity from the bridge count and the bridge's own price", func() {
+		r := &allocation.NamedAnalyzerResult{
+			Result: &domain.AnalyzerResult{
+				TotalDemand: 3000,
+				VariantCapacities: []domain.VariantCapacity{{
+					VariantName:                "v1",
+					ReplicaCount:               1,
+					PerReplicaCapacity:         5000,
+					WarmPoolReplicas:           2,
+					WarmPoolPerReplicaCapacity: 3000,
+				}},
+			},
+		}
+		buildCapacities(ctx, r, nil, 1.0, 1.0)
+
+		Expect(r.Result.VariantCapacities[0].WarmPoolCapacity).To(Equal(6000.0)) // 2 × 3000
+
+		// And it stays out of supply. Counting a borrowed Pod would tell the
+		// optimizer the fleet is already big enough and suppress the scale-up the
+		// bridge exists to cover, after which the pool holds the Pod forever --
+		// the replicas that would release it were never created.
+		Expect(r.TotalSupply).To(Equal(5000.0),
+			"supply is the variant's own replicas at their own price, and nothing else")
+		Expect(r.TotalAnticipatedSupply).To(Equal(5000.0))
+	})
+
+	It("prices no bridge capacity for a variant that has none", func() {
+		r := &allocation.NamedAnalyzerResult{
+			Result: &domain.AnalyzerResult{
+				TotalDemand: 1000,
+				VariantCapacities: []domain.VariantCapacity{
+					{VariantName: "v1", ReplicaCount: 1, PerReplicaCapacity: 5000},
+				},
+			},
+		}
+		buildCapacities(ctx, r, nil, 1.0, 1.0)
+		Expect(r.Result.VariantCapacities[0].WarmPoolCapacity).To(Equal(0.0))
+	})
 })
