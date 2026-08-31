@@ -129,6 +129,22 @@ own reading; `throughput` filters them via `ownReplicasOnly`; `external` needs
 nothing, because its `P` is a constant target from config and it never reads
 replica rows.
 
+**Invariant: a variant is warmed by at most one pool.** `FromWarmPool` is a bool
+rather than a pool name, and `decision.WarmPoolSupply` is keyed by variant alone,
+both of which are correct only under that assumption — one pool means one
+`--gpu-memory-utilization`, so a variant's bridges are comparable and a single
+median over them means something.
+
+Different variants of one model *may* sit in different pools, prefill and decode
+included: a variant is named by its ScaledObject, role and all, and every figure
+above is per variant, so they aggregate independently. What the invariant rules
+out is one variant bridged by two pools at once — their bridges would carry
+genuinely different capacities and the median would describe neither.
+
+Nothing enforces this today: a pool enumerates every variant in its namespace and
+its fit check sees only its own Pods. Two pools in one namespace is a
+configuration to avoid rather than one that is refused.
+
 ### Responsibility table
 
 | Field | Written by | Read by |
