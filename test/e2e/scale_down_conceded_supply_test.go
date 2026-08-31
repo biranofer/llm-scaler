@@ -326,6 +326,23 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		desired := fmt.Sprintf("wva_desired_replicas{variant_name=%q,exported_namespace=%q}",
 			variantName, cfg.LLMDNamespace)
 
+		// The series has to EXIST before it can be asserted on. QueryWithRetry
+		// gives up after five attempts, about a second and a half, which is far
+		// shorter than the gap between the fleet being staged and the first
+		// scrape carrying a recommendation for it. Without this the Consistently
+		// fails on its first poll with "timed out waiting for the condition" --
+		// a missing series reported as a scale-down. Two runs in three died that
+		// way, both at ~42s, while the run that got a series passed the whole
+		// window.
+		By("Waiting for WVA's recommendation to be queryable at all")
+		Eventually(func(g Gomega) {
+			_, err := pc.QueryWithRetry(ctx, desired)
+			g.Expect(err).NotTo(HaveOccurred(),
+				"wva_desired_replicas is not queryable for this variant yet; without it the "+
+					"assertion below cannot tell a low recommendation from a missing one")
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
