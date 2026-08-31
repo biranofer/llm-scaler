@@ -137,7 +137,53 @@ being true:
   can look full while warming nothing.
 
 ---
+## 4. Which Pod the pool keeps when it shrinks
 
+Eviction today fires only for a variant that stated an explicit warmCopies
+count. Automatic mode never evicts, deliberately: it has no basis to. The same
+missing basis shows up on the other side, when the pool SHRINKS.
+
+A pool that resizes itself lowers replicas, and the ReplicaSet controller picks
+the victim -- not us. The one lever is the pod-deletion-cost annotation, and the
+pool sets it at exactly two moments: 1000 while a Pod is lent, back to 0 when it
+is returned. So among idle Pods the cost is uniform, and a Pod holding four warm
+models is exactly as cheap to delete as an empty one. The ReplicaSet can, and
+will, remove the richest Pod in the pool.
+
+The obvious rule -- keep the Pods holding the most models, since each cost ~35 s
+to load -- is not obviously right, and the code argues against it today:
+
+> Leaving it expensive would make an elastic pool shrink by removing an EMPTY
+> Pod in preference to this one forever, which is the wrong Pod once this one is
+> idle and still holding models nobody asked for.
+
+That is the whole disagreement: whether a resident model is assumed still
+wanted. If it is, the fullest Pod is the most valuable thing the pool owns; if
+it is not, protecting it shields dead weight and starves the pool of the empty
+Pods admission needs. Neither can be settled without the thing automatic mode
+lacks -- a statement of what a warm copy is still worth, which is the same
+judgement eviction needs.
+
+So it belongs WITH the eviction policy, not before it. Deciding it separately
+would fix the shrink half against one assumption while eviction is still built
+on the other.
+
+When it is taken up, three things go together:
+
+- **What a resident copy is worth** (recency, hit rate, share) -- the basis both
+  eviction and this need.
+- **Admission room as a first-class property.** A Pod is not just free or busy:
+  it has room for another model or it does not, and that is what admission
+  spends. Selection reads it today only as `Resident() < MaxInstancesPerPod`.
+- **Graded deletion cost**, once there is something to grade on.
+
+Already decided and NOT part of this: a borrow takes the emptiest Pod holding
+the model, so serving one model does not make the others in its Pod
+unborrowable. That needed no notion of worth -- the Pod leaves the free set
+either way -- which is why it could be settled on its own.
+
+
+---
 ## What has been decided
 
 For the avoidance of re-litigating:
