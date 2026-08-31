@@ -260,11 +260,21 @@ load_sim_image() {
 #
 # Measured on a fresh cluster: the attribution spec failed after its full 300s
 # with "pods=0 ... the pool never warmed the model, so there was never anything
-# to lend", while the emulator image (402MB) was still being pulled. It had
-# arrived by the time the run finished, so every later spec passed and the
-# failure looked like a code regression rather than an empty image cache. The
-# same suite is green on a cluster that has run before, which is what makes this
-# worth pre-loading rather than waiting longer.
+# to lend", while the emulator image (402MB) was still being pulled.
+#
+# THAT PULL WAS NOT THE CAUSE, and this does not make that spec pass. Re-run on
+# a cluster built from scratch WITH both images pre-loaded, it fails identically:
+# kubelet reports the proxy image "already present on machine", both containers
+# are Created and Started with zero restarts, and then "Readiness probe failed".
+# The pool Pod never goes Ready, the controller cannot read its supervisor on
+# :8001, and a Pod it cannot read is dropped from the observation -- which is
+# what produces pods=0.
+#
+# Kept anyway, on its own merits: a 400MB pull on the critical path of a
+# readiness wait is worth removing whether or not it is the failure of the day,
+# which is the same reason load_sim_image exists. The fresh-cluster failure is
+# still open; the next step is capturing the supervisor container's logs before
+# AfterSuite deletes the Pod.
 #
 # Warnings, never errors: a pool image that cannot be pulled is a slow test, not
 # a broken cluster, and the specs that use it skip on their own.
