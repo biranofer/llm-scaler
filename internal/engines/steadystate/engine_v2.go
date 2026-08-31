@@ -875,6 +875,22 @@ func buildCapacities(ctx context.Context, nr *allocation.NamedAnalyzerResult, me
 			}
 		}
 	}
+	// (1b) What the BRIDGES serving each variant are worth.
+	//
+	// Derived from two measurements the analyzer supplies (how many bridges, and
+	// what one is worth), so it is built here for the same reason supply is: a
+	// derived capacity written inside one analyzer is absent from the others.
+	//
+	// Deliberately NOT added to any supply total below. A bridge is borrowed --
+	// counting it as supply would tell the optimizer the fleet is already big
+	// enough and suppress the scale-up the bridge exists to cover, after which the
+	// pool holds the Pod forever because the replicas that would release it were
+	// never created. The single consumer is the retained-pool switching decision.
+	// Its demand IS counted, in the analyzer's TotalDemand.
+	for i := range result.VariantCapacities {
+		vc := &result.VariantCapacities[i]
+		vc.WarmPoolCapacity = float64(vc.WarmPoolReplicas) * vc.WarmPoolPerReplicaCapacity
+	}
 	// (2) Assemble supply from each variant's (ReplicaCount, per-replica P), and
 	// the model-level utilization from demand vs supply.
 	nr.TotalSupply = aggregation.SumTotalSupply(result.VariantCapacities)

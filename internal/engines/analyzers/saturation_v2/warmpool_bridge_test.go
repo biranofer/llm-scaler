@@ -85,9 +85,13 @@ func TestABridgeIsNotCountedAsSupply(t *testing.T) {
 	if got[0].WarmPoolReplicas != 1 {
 		t.Errorf("WarmPoolReplicas = %d, want 1", got[0].WarmPoolReplicas)
 	}
-	if got[0].WarmPoolCapacity != 1000 {
-		t.Errorf("WarmPoolCapacity = %v, want 1000: measured, and kept out of supply "+
-			"rather than not measured at all", got[0].WarmPoolCapacity)
+	// The bridge's worth is MEASURED and carried, rather than not measured at
+	// all -- as a per-replica reading. What it comes to in total is derived, so
+	// the capacity-build step multiplies it out; see
+	// TestTheAnalyzerLeavesTheDerivedBridgeCapacityToTheBuilder.
+	if got[0].WarmPoolPerReplicaCapacity != 1000 {
+		t.Errorf("WarmPoolPerReplicaCapacity = %v, want 1000: measured, and kept out of "+
+			"supply rather than not measured at all", got[0].WarmPoolPerReplicaCapacity)
 	}
 }
 
@@ -112,9 +116,9 @@ func TestAVariantCarriedEntirelyByThePoolHasNoSupplyOfItsOwn(t *testing.T) {
 		t.Errorf("TotalDemand = %v, want 400: the load is real wherever it is being served",
 			got[0].TotalDemand)
 	}
-	if got[0].WarmPoolReplicas != 1 || got[0].WarmPoolCapacity != 1000 {
-		t.Errorf("bridge supply = %d replicas / %v capacity, want 1 / 1000",
-			got[0].WarmPoolReplicas, got[0].WarmPoolCapacity)
+	if got[0].WarmPoolReplicas != 1 || got[0].WarmPoolPerReplicaCapacity != 1000 {
+		t.Errorf("bridge supply = %d replicas / %v per-replica capacity, want 1 / 1000",
+			got[0].WarmPoolReplicas, got[0].WarmPoolPerReplicaCapacity)
 	}
 }
 
