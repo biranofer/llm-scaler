@@ -63,7 +63,7 @@ func (f *fleetObservation) record(dep *appsv1.Deployment, target int32) {
 func (f *fleetObservation) report(guard time.Duration) string {
 	timeline := strings.Join(f.samples, " | ")
 	if !f.fell {
-		return fmt.Sprintf("the fleet never fell below its target while observed; timeline: %s", timeline)
+		return "the fleet never fell below its target while observed; timeline: " + timeline
 	}
 	when := fmt.Sprintf("spec.replicas first fell below the target at t+%s", f.fellAt)
 	if f.fellAt <= guard {
