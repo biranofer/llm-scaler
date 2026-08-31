@@ -125,3 +125,54 @@ func TestARetainedPoolSaysTheDecisionAgainWhenItChanges(t *testing.T) {
 			"it changed -- deduping repeats must not swallow a new answer", stay)
 	}
 }
+
+// A CONFIGURATION MISTAKE IS SAID ONCE, NOT FOUR TIMES A SECOND.
+//
+// "can never admit a model" reports a pool whose reserve is its whole ceiling.
+// That cannot fix itself, so repeating it says nothing new -- and it is at INFO,
+// the level that actually ships, on a loop whose only floor is MinGap at 250ms.
+// Measured on a cluster: ~1.2 lines a second, 280 in four minutes.
+func TestAnInertPoolIsReportedOnce(t *testing.T) {
+	cfg := testConfig()
+	cfg.SleepMinSize = 2 // a reserve the ceiling below cannot exceed
+
+	spec := PoolSpec{Name: "stuck", Config: cfg, Replicas: 1, MaxReplicas: 1}
+	p := &fakePool{memberships: []pool.Membership{
+		{Pod: podA(), State: pool.Absent, Pool: "stuck"},
+	}}
+	r := New(p, &staticDemand{}, cfg)
+	r.Namespace = poolNamespace
+	r.Pools = fakePools{spec}
+
+	var inert, recovered int
+	sink := funcr.New(func(_, args string) {
+		switch {
+		case strings.Contains(args, "can never admit a model"):
+			inert++
+		case strings.Contains(args, "can admit models again"):
+			recovered++
+		}
+	}, funcr.Options{Verbosity: 10})
+	ctx := log.IntoContext(context.Background(), sink)
+
+	for range 5 {
+		if _, err := r.Once(ctx); err != nil {
+			t.Fatalf("Once: %v", err)
+		}
+	}
+	if inert != 1 {
+		t.Errorf("reported the same inert configuration %d times over 5 passes, want 1", inert)
+	}
+
+	// ...and when the operator fixes it, the silence is broken deliberately:
+	// with the warning deduped, saying nothing would be indistinguishable from
+	// the pass having stopped.
+	r.Pools = fakePools{{Name: "stuck", Config: cfg, Replicas: 1, MaxReplicas: 4}}
+	if _, err := r.Once(ctx); err != nil {
+		t.Fatalf("Once after the fix: %v", err)
+	}
+	if recovered != 1 {
+		t.Errorf("recovery announced %d times, want 1: an operator who raised the ceiling "+
+			"has no other signal that it took", recovered)
+	}
+}

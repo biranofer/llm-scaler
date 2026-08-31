@@ -191,6 +191,10 @@ type Reconciler struct {
 	// pool logs once rather than every Interval. Guarded by passMu, which
 	// already serialises the whole pass.
 	lastSummary map[string]string
+	// lastInert dedupes the "can never admit a model" warning, keyed by pool and
+	// holding the reason so a CHANGED reason is announced again. Empty means the
+	// pool is admitting normally. Guarded by passMu, like the maps around it.
+	lastInert map[string]string
 	// lastStay dedupes the retained pool's "staying on its awake model" line,
 	// keyed by pool. Same reason as lastSummary, and more pressing: that line is
 	// emitted on EVERY pass, and a pass is not the Interval. Passes are
@@ -242,6 +246,7 @@ func New(p pool.Pool, demand DemandSource, cfg policy.Config) *Reconciler {
 		lastSwitchTo:     map[string]string{},
 		lastShort:        map[string]int{},
 		lastSummary:      map[string]string{},
+		lastInert:        map[string]string{},
 		lastStay:         map[string]string{},
 		lastUnassignable: map[string]string{},
 		lastDeclined:     map[declineKey]bool{},
@@ -809,10 +814,27 @@ func (r *Reconciler) report(ctx context.Context, spec PoolSpec, memberships []po
 	// reported whether or not any model has asked for anything yet -- the check
 	// below only fires once there is demand, which is exactly when it is too
 	// late to be useful.
+	// Said when it CHANGES, not on every pass. The condition is a configuration
+	// mistake: it cannot fix itself, so repeating it says nothing new, and a pass
+	// is not the Interval -- passes are trigger-driven with MinGap (250ms) as the
+	// only floor. Measured on a cluster at ~1.2 lines a second, 280 of them in
+	// four minutes, and at INFO, which is the level that actually ships.
+	//
+	// The recovery is announced too. An operator who raises maxReplicaCount wants
+	// to know it took, and with the warning deduped its silence would otherwise
+	// be the only signal -- indistinguishable from the pass having stopped.
 	why, inert := spec.Inert()
-	if inert {
+	switch {
+	case inert && r.lastInert[name] != why:
 		logger.Info("warm pool is configured so that it can never admit a model",
 			"pool", name, "reason", why)
+		if r.lastInert == nil {
+			r.lastInert = map[string]string{}
+		}
+		r.lastInert[name] = why
+	case !inert && r.lastInert[name] != "":
+		logger.Info("warm pool can admit models again", "pool", name)
+		delete(r.lastInert, name)
 	}
 
 	// A pool whose every Pod is reserve can never admit anything: the budget in
