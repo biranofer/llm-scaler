@@ -1050,6 +1050,23 @@ const dpRPCBasePort = 29550
 // Both are derived from the assigned port, which freePort already guarantees is
 // unique within the Pod -- so the messaging ports inherit that uniqueness
 // instead of needing a second allocator to keep in step with the first.
+//
+// MEASURED on pokprod 2026-08-31, which is what closes this: two DP=2 models
+// admitted into ONE 6-GPU pool Pod, both running, reported by the supervisor as
+//
+//	qwen-dp2-decode-wva    dp=2  --port 9001  --data-parallel-rpc-port 29550
+//	qwen-dp2b-decode-wva   dp=2  --port 9002  --data-parallel-rpc-port 29551
+//
+// Unreachable before: on a one-GPU pool the fit check declines a DP=2 model
+// ("needs 2 GPUs, this Pod holds 1"), so the second engine never got far enough
+// to collide and the bug could only bite on a multi-GPU pool.
+//
+// The related worry about the proxy is settled too, and the answer is no
+// problem: a data-parallel engine exposes ONE front-end port for the whole
+// group, not one per rank, and both ranks report through it -- :9001/metrics
+// carried engine="0" and engine="1" series, each with its own
+// kv_cache_usage_perc and cache_config_info. So the proxy forwarding a single
+// port reaches the whole engine, and a lent DP>1 bridge does not read low.
 func withAssignedPorts(base string, port int) string {
 	opts := fmt.Sprintf("%s --port %d", base, port)
 	if dp, err := strconv.Atoi(flagValue(base, "--data-parallel-size")); err == nil && dp > 1 {
