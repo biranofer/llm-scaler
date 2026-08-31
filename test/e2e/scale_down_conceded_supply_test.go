@@ -1,16 +1,78 @@
 package e2e
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
 )
+
+// fleetObservation records what the Deployment reported across BOTH windows
+// below, so a failure can say WHEN the fleet left its target instead of only
+// that it is not there now.
+//
+// The two windows check different fields for different reasons: the guard
+// watches Status.Replicas for adoption and is deliberately one-sided, and the
+// assertion watches Spec.Replicas for the regression. A fleet that falls below
+// target DURING the guard therefore trips neither -- the guard ignores a low
+// count by design, and by the time the assertion opens the fall has already
+// happened, so it fails on its first poll with "1 is not >= 2" and no history.
+//
+// That is what made this spec unreadable: measured on a fresh cluster it passed
+// twice at ~370s and failed once at 60s, and the failing run's Consistently
+// gave up after 0.003s. "Scaled down thirty seconds ago" and "was never staged"
+// produce the identical message, and they need opposite fixes.
+type fleetObservation struct {
+	start   time.Time
+	last    string
+	samples []string
+	fellAt  time.Duration
+	fell    bool
+}
+
+// record samples the Deployment. Transitions only: a poll that reports what the
+// last one did adds nothing, and at a 1s interval over a 5-minute window the
+// unfiltered list would be the thing nobody reads.
+func (f *fleetObservation) record(dep *appsv1.Deployment, target int32) {
+	spec := int32(0)
+	if dep.Spec.Replicas != nil {
+		spec = *dep.Spec.Replicas
+	}
+	line := fmt.Sprintf("spec=%d status=%d ready=%d", spec, dep.Status.Replicas, dep.Status.ReadyReplicas)
+	if line != f.last {
+		f.samples = append(f.samples,
+			fmt.Sprintf("t+%s %s", time.Since(f.start).Round(time.Second), line))
+		f.last = line
+	}
+	if !f.fell && spec < target {
+		f.fell = true
+		f.fellAt = time.Since(f.start).Round(time.Second)
+	}
+}
+
+// report is the failure annotation: when the fleet first fell, and everything
+// that changed on the way there.
+func (f *fleetObservation) report(guard time.Duration) string {
+	timeline := strings.Join(f.samples, " | ")
+	if !f.fell {
+		return fmt.Sprintf("the fleet never fell below its target while observed; timeline: %s", timeline)
+	}
+	when := fmt.Sprintf("spec.replicas first fell below the target at t+%s", f.fellAt)
+	if f.fellAt <= guard {
+		return fmt.Sprintf("%s -- INSIDE the %s adoption guard, so it had already happened before this "+
+			"assertion opened, and the fast failure is the tail of it rather than a fresh scale-down; "+
+			"timeline: %s", when, guard, timeline)
+	}
+	return fmt.Sprintf("%s, after the %s adoption guard; timeline: %s", when, guard, timeline)
+}
 
 // Supply must never describe a fleet larger than the scale target is committed
 // to. When it does, the optimizer is credited with spare capacity that an
@@ -204,12 +266,19 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// regression itself, and that belongs to the assertion after this one:
 		// an equality check here would fire first and report a staging problem
 		// for what is actually the bug under test.
+		// Observed across both windows so the assertion below can say when the
+		// fleet left its target. Started here rather than at the assertion,
+		// because the interesting departures happen during this guard.
+		const guardWindow = 30 * time.Second
+		fleet := &fleetObservation{start: time.Now()}
+
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
+			fleet.record(dep, targetReplicas)
 			g.Expect(dep.Status.Replicas).To(BeNumerically("<=", targetReplicas),
 				"the ReplicaSet adopted the extra pod, so this test is not staging the condition it claims")
-		}, 30*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
+		}, guardWindow, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
 		By("Asserting the extra replica's capacity is never treated as removable")
 		// The regression: supply over three reporting replicas yields a full
@@ -218,8 +287,10 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
+			fleet.record(dep, targetReplicas)
 			g.Expect(*dep.Spec.Replicas).To(BeNumerically(">=", targetReplicas),
-				"WVA scaled below the target while an unowned replica was reporting: its capacity was counted as spare")
+				"WVA scaled below the target while an unowned replica was reporting: its capacity was "+
+					"counted as spare. %s", fleet.report(guardWindow))
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})
