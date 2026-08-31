@@ -173,11 +173,39 @@ var _ = Describe("Warm pool - a bridge is measured as the variant it serves", La
 		// target that is refused at the network, which looks exactly like a Pod
 		// that serves no metrics. Discovered by this spec failing with the engine
 		// answering /metrics perfectly well to a tenant.
+		// THE SHIPPED POLICY TOO, and it is not optional here.
+		//
+		// The comment above describes the shipped policy as though it were in
+		// force. It was not: this spec never applied it, and the scrape rule
+		// below was the ONLY policy selecting the pool Pods. NetworkPolicy is
+		// additive-allow and a policy that selects a Pod denies everything it
+		// does not admit, so the scrape rule -- :8000 from the monitoring
+		// namespace, and nothing else -- locked the CONTROLLER out of :8001.
+		//
+		// The controller then cannot read the supervisor, drops the Pod from its
+		// observation, and the pool reports pods=0, which surfaces as "the pool
+		// never warmed the model, so there was never anything to lend". Nothing
+		// says policy: a dropped packet times out rather than being refused, and
+		// the only trace is one DEBUG line the shipped verbosity does not print.
+		//
+		// Measured on a fresh cluster, supervisor Ready and serving throughout:
+		// a probe from another Pod in the namespace got {} with no policy, and
+		// timed out with the scrape rule alone. Adding the shipped policy back
+		// admits the controller again, because the two rules add up.
+		//
+		// It survived because the sum only has to work out once: three other
+		// warm-pool specs DO apply the shipped policy, so a full-suite run -- or
+		// a cluster where an earlier run left it behind -- admits the controller
+		// and this spec passes. Focused, on a cluster nobody has used, nothing
+		// supplies it.
+		policyName, err := fixtures.ApplyWarmPoolNetworkPolicy(ctx, k8sClient, cfg.LLMDNamespace)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fixtures.EnsureWarmPoolPodMonitor(ctx, crClient, cfg.LLMDNamespace, attrPool)).To(Succeed())
 		Expect(fixtures.EnsureWarmPoolScrapeIngress(ctx, k8sClient, cfg.LLMDNamespace, cfg.MonitoringNS)).To(Succeed())
 		DeferCleanup(func() {
 			_ = fixtures.DeleteWarmPoolPodMonitor(context.Background(), crClient, cfg.LLMDNamespace, attrPool)
 			_ = fixtures.DeleteWarmPoolScrapeIngress(context.Background(), k8sClient, cfg.LLMDNamespace)
+			_ = fixtures.DeleteWarmPoolNetworkPolicy(context.Background(), k8sClient, cfg.LLMDNamespace, policyName)
 		})
 
 		By("Waiting for the pool Pod")
