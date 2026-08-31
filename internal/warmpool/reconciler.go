@@ -191,6 +191,13 @@ type Reconciler struct {
 	// pool logs once rather than every Interval. Guarded by passMu, which
 	// already serialises the whole pass.
 	lastSummary map[string]string
+	// lastStay dedupes the retained pool's "staying on its awake model" line,
+	// keyed by pool. Same reason as lastSummary, and more pressing: that line is
+	// emitted on EVERY pass, and a pass is not the Interval. Passes are
+	// trigger-driven with only MinGap (250ms) as a floor, so a busy trigger runs
+	// the loop about four times a second -- measured at 3.2/s on pokprod, 8527
+	// identical lines in 45 minutes. Guarded by passMu.
+	lastStay map[string]string
 
 	// MinGap is the floor between passes when the TRIGGER is what woke us.
 	//
@@ -235,6 +242,7 @@ func New(p pool.Pool, demand DemandSource, cfg policy.Config) *Reconciler {
 		lastSwitchTo:     map[string]string{},
 		lastShort:        map[string]int{},
 		lastSummary:      map[string]string{},
+		lastStay:         map[string]string{},
 		lastUnassignable: map[string]string{},
 		lastDeclined:     map[declineKey]bool{},
 		lastHeld:         map[string]string{},
@@ -1231,11 +1239,32 @@ func (r *Reconciler) awakeIntent(
 	want, reason, switching := chooseAwake(spec.Switch, variants, awake, last, pressureFor, now)
 	if !switching {
 		// Logged at DEBUG because it is the steady state: most passes decide to
-		// leave a retained pool alone, and saying so every five seconds at
-		// default verbosity would bury everything else.
-		logger.V(logging.DEBUG).Info("retained pool is staying on its awake model",
-			"pool", spec.Name, "awake", awake, "candidate", want,
-			"reason", string(reason), "variants", sortedVariantNames(variants))
+		// leave a retained pool alone, and saying so on every pass at default
+		// verbosity would bury everything else.
+		//
+		// DEDUPED, because "every pass" is not "every Interval". A pass runs on
+		// the 5s tick OR whenever a decision lands, floored only by MinGap
+		// (250ms) -- so a busy trigger drives this about four times a second.
+		// Measured on pokprod: 3.2/s, 8527 identical lines in 45 minutes, which
+		// buried the run they were supposed to explain. The decision is what is
+		// worth reading, so it is printed when it CHANGES; an unchanged decision
+		// on the next pass says nothing new.
+		stay := fmt.Sprintf("awake=%s candidate=%s reason=%s variants=%v",
+			awake, want, reason, sortedVariantNames(variants))
+		r.mu.Lock()
+		changed := r.lastStay[spec.Name] != stay
+		if changed {
+			if r.lastStay == nil {
+				r.lastStay = map[string]string{}
+			}
+			r.lastStay[spec.Name] = stay
+		}
+		r.mu.Unlock()
+		if changed {
+			logger.V(logging.DEBUG).Info("retained pool is staying on its awake model",
+				"pool", spec.Name, "awake", awake, "candidate", want,
+				"reason", string(reason), "variants", sortedVariantNames(variants))
+		}
 		return ""
 	}
 	// RESTATING the standing intent is not a new switch.
