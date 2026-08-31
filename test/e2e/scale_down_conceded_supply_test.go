@@ -178,7 +178,20 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// NOT fall to it. A floor of 2 would pass whether or not the bug is fixed.
 		Expect(fixtures.EnsureScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName, modelDecodeDeployment, variantName, 1, 10, cfg.MonitoringNS,
 			fixtures.WithWVATriggerMetadata(modelID, "30.0"),
-			fixtures.WithScaledObjectScaleDownStabilizationWindow(30))).To(Succeed())
+			// LONG on purpose, and it is what stops this spec being a race.
+			//
+			// The fleet is staged by hand at two replicas while WVA's standing
+			// recommendation is still 1, so a short window starts a timer against
+			// that stale value; if the new recommendation has not propagated when
+			// it expires, KEDA takes the fleet back down and the third replica
+			// stops reporting -- destroying the premise mid-measurement. Measured
+			// at 30s: the fleet fell at t+25s with WVA saying curr:2 tgt:2.
+			//
+			// Long enough to outlast the assertion below, so the fleet holds
+			// still for the whole measurement. The assertion is on what WVA
+			// PUBLISHES, not on the fleet, so holding the fleet still costs no
+			// coverage -- see the Consistently at the end of this spec.
+			fixtures.WithScaledObjectScaleDownStabilizationWindow(600))).To(Succeed())
 		DeferCleanup(func() { _ = fixtures.DeleteScaledObject(ctx, crClient, cfg.LLMDNamespace, scalerBaseName) })
 	})
 
@@ -284,13 +297,45 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// The regression: supply over three reporting replicas yields a full
 		// replica of spare on top of the one the target already conceded, and the
 		// recommendation drops to minReplicaCount.
+		//
+		// ASSERTED ON WHAT WVA PUBLISHES, not on spec.replicas.
+		//
+		// spec.replicas is KEDA's. It follows WVA, but on KEDA's schedule and
+		// through the HPA's stabilisation window, so reading it measures a
+		// pipeline several seconds wide and calls its lag a regression. That is
+		// what made this spec flaky: with the window at 30s, a scale-up staged by
+		// hand starts a timer against WVA's PREVIOUS recommendation of 1, and if
+		// the new one has not propagated when it expires the fleet drops -- while
+		// WVA is saying curr:2 tgt:2 no-change. Measured exactly that, at t+25s.
+		//
+		// The window is long now (see the ScaledObject above), which keeps the
+		// fleet still so the third replica keeps reporting. That deliberately
+		// makes spec.replicas useless as the assertion -- it could no longer fall
+		// during this window even if the clamp were gone -- so the assertion
+		// moves to the number the regression is actually about.
+		//
+		// Prometheus rather than the HPA's CurrentMetrics: KEDA reports the
+		// external metric as an AverageValue, total over current replicas, so a
+		// correct recommendation of 2 across two replicas reads as 1 there. An
+		// earlier attempt waited on that and timed out for five minutes against a
+		// perfectly healthy controller.
+		pc := promClientForCheck()
+		if pc == nil {
+			Skip("no Prometheus client could be built, so WVA's recommendation cannot be read")
+		}
+		desired := fmt.Sprintf("wva_desired_replicas{variant_name=%q,exported_namespace=%q}",
+			variantName, cfg.LLMDNamespace)
+
 		Consistently(func(g Gomega) {
 			dep, err := k8sClient.AppsV1().Deployments(cfg.LLMDNamespace).Get(ctx, modelDecodeDeployment, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
 			fleet.record(dep, targetReplicas)
-			g.Expect(*dep.Spec.Replicas).To(BeNumerically(">=", targetReplicas),
-				"WVA scaled below the target while an unowned replica was reporting: its capacity was "+
-					"counted as spare. %s", fleet.report(guardWindow))
+
+			v, err := pc.QueryWithRetry(ctx, desired)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v).To(BeNumerically(">=", float64(targetReplicas)),
+				"WVA recommended fewer replicas than the target while an unowned replica was "+
+					"reporting: its capacity was counted as spare. %s", fleet.report(guardWindow))
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 	})
