@@ -30,8 +30,8 @@ var _ = Describe("gpuUsageViews", func() {
 	managedRequest := func(namespace, accelerator string, replicas int) allocation.ModelScalingRequest {
 		return allocation.ModelScalingRequest{
 			Namespace: namespace,
-			AnalyzerResults: []allocation.NamedAnalyzerResult{
-				{Name: domain.SaturationAnalyzerName, Result: &domain.AnalyzerResult{}},
+			CompositeSignal: allocation.NamedAnalyzerResult{
+				Name: domain.SaturationAnalyzerName, Result: &domain.AnalyzerResult{},
 			},
 			Variants: []domain.VariantMetadata{
 				{VariantName: "v", AcceleratorName: accelerator},

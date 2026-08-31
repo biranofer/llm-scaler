@@ -107,11 +107,9 @@ var _ = Describe("buildVariantRecords", func() {
 		Expect(buildVariantRecords(ModelScalingRequest{}, nil)).To(BeNil())
 	})
 
-	It("recordsForRequest returns nil when the model has no saturation entry", func() {
+	It("recordsForRequest returns nil when the model has no composite result", func() {
 		req := ModelScalingRequest{
-			AnalyzerResults: []NamedAnalyzerResult{
-				{Name: "throughput", Result: &domain.AnalyzerResult{}},
-			},
+			CompositeSignal: NamedAnalyzerResult{Name: "throughput", Result: nil},
 		}
 		Expect(recordsForRequest(req)).To(BeNil())
 	})

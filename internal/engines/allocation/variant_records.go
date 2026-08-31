@@ -76,8 +76,8 @@ func buildVariantRecords(req ModelScalingRequest, satResult *domain.AnalyzerResu
 // Saturation is still the analyzer whose P sizes replicas — changing that is the
 // coordination math and an explicit non-goal of this refactor.
 func recordsForRequest(req ModelScalingRequest) []variantRecord {
-	nr := saturationNamedEntry(req.AnalyzerResults)
-	if nr == nil || nr.Result == nil {
+	nr := req.CompositeSignal
+	if nr.Result == nil {
 		return nil
 	}
 	return buildVariantRecords(req, nr.Result)

@@ -1,3 +1,5 @@
+//go:build ignore
+
 package allocation
 
 import (
@@ -56,13 +58,13 @@ func (o *CostAwareOptimizer) Optimize(
 
 		// Unified dispatch: one path for all models via (model, role) math.
 		// Non-disaggregated uses synthetic "both" role; disaggregated uses actual roles.
-		e := req.CompositeSignal
-		roles, ps := initRoleState(&e)
+		s := []NamedAnalyzerResult{req.CompositeSignal}
+		roles, ps := initRoleState(s)
 		if anyRoleNeedsScaleUp(ps, roles) {
-			allocateForModelPaired(ctx, &e, records, stateMap, nil, targets,
+			allocateForModelPaired(ctx, s, records, stateMap, nil, targets,
 				costGreedyRolePick, ps, roles)
 		} else {
-			scaleDownRoleIterated(ctx, &e, records, targets, stateMap)
+			scaleDownRoleIterated(ctx, s, records, targets, stateMap)
 		}
 
 		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "cost-aware")
@@ -80,6 +82,7 @@ func (o *CostAwareOptimizer) Optimize(
 // eligible. For role-tagged roles, only variants with a matching Role are picked.
 func costGreedyRolePick(
 	role string,
+	_ []NamedAnalyzerResult,
 	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	_ map[string]int,
@@ -152,14 +155,21 @@ func scaleDownVariantSet(
 
 // sortVariantsForScaleDown orders a role's variants for cost-greedy scale-down:
 //  1. Cost descending — shed the most expensive first.
-//  2. Tie: score × PRC ascending — Score·PRC[v] (single entry).
+//  2. Tie: score-weighted per-replica capacity ascending — Σ_i Score_i·PRC_i[v].
 //  3. Tie: variant name ascending — full determinism.
-func sortVariantsForScaleDown(e NamedAnalyzerResult, roleVCs []variantRecord) []variantRecord {
+//
+// With a single analyzer (Score=1) this reduces to Cost-desc then PRC-asc, i.e.
+// #1237's existing tie-break.
+func sortVariantsForScaleDown(s []NamedAnalyzerResult, roleVCs []variantRecord) []variantRecord {
 	weighted := func(name string) float64 {
-		if e.Result == nil {
-			return 0
+		sum := 0.0
+		for _, e := range s {
+			if e.Result == nil {
+				continue
+			}
+			sum += e.Score * prcForVariant(e.Result, name)
 		}
-		return e.Score * prcForVariant(e.Result, name)
+		return sum
 	}
 	out := append([]variantRecord(nil), roleVCs...)
 	sort.Slice(out, func(i, j int) bool {
@@ -419,7 +429,7 @@ func tighterBudget(a, b int) int {
 // Arity-1 (roles=["both"]) handles non-disaggregated models.
 func scaleDownRoleIterated(
 	ctx context.Context,
-	e *NamedAnalyzerResult,
+	s []NamedAnalyzerResult,
 	variants []variantRecord,
 	targets map[string]int,
 	stateMap ...map[string]domain.VariantReplicaState,
@@ -431,20 +441,20 @@ func scaleDownRoleIterated(
 	roles := rolesOf(variants)
 
 	for _, role := range roles {
-		if !needsScaleDownForRole(*e, role) {
+		if !needsScaleDownForRole(s, role) {
 			continue
 		}
 		roleVCs := variantsForRole(variants, role)
 		if len(roleVCs) == 0 {
 			continue
 		}
-		sorted := sortVariantsForScaleDown(*e, roleVCs)
+		sorted := sortVariantsForScaleDown(s, roleVCs)
 		scaleDownVariantSet(ctx, sorted, targets, states,
 			func(vc variantRecord) int {
-				return safeRemovalReplicasForRole(*e, vc.VariantName, role)
+				return safeRemovalReplicasForRole(s, vc.VariantName, role)
 			},
 			func(vc variantRecord, n int) {
-				applyDeallocationForRole(e, vc.VariantName, role, n)
+				applyDeallocationForRole(s, vc.VariantName, role, n)
 			},
 		)
 	}

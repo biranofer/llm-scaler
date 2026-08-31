@@ -1,3 +1,5 @@
+//go:build ignore
+
 package allocation
 
 import (
@@ -63,22 +65,24 @@ func ResultIsInformative(nr NamedAnalyzerResult) bool {
 }
 
 // applyAllocation subtracts the capacity provided by n replicas of variant v
-// from the entry's Remaining counter. Clamps to 0. Result.RequiredCapacity is
-// never mutated.
+// from each analyzer's Remaining counter. Clamps to 0. The slice is the working
+// allocation state; Result.RequiredCapacity is never mutated.
 //
 // Contract: Remaining/Spare are engine-calibrated on entry (via the universal
 // threshold post-step). Helpers do not read or mutate PendingReplicas.
-func applyAllocation(e *NamedAnalyzerResult, v string, n int) {
-	if e.Result == nil {
-		return
-	}
-	prc := prcForVariant(e.Result, v)
-	if prc <= 0 {
-		return
-	}
-	e.Remaining -= float64(n) * prc
-	if e.Remaining < 0 {
-		e.Remaining = 0
+func applyAllocation(s []NamedAnalyzerResult, v string, n int) {
+	for i := range s {
+		if s[i].Result == nil {
+			continue
+		}
+		prc := prcForVariant(s[i].Result, v)
+		if prc <= 0 {
+			continue
+		}
+		s[i].Remaining -= float64(n) * prc
+		if s[i].Remaining < 0 {
+			s[i].Remaining = 0
+		}
 	}
 }
 
@@ -101,7 +105,7 @@ func prcForVariant(r *domain.AnalyzerResult, v string) float64 {
 // It unifies disaggregated and non-disaggregated models into one (model, role) view:
 //
 //   - Disaggregated (RoleCapacities != nil): roles = sorted keys of RoleCapacities;
-//     per-role RC → pickerState[role]; per-role SC → e.RoleSpare[role].
+//     per-role RC → pickerState[i][role]; per-role SC → s[i].RoleSpare[role].
 //   - Non-disaggregated (RoleCapacities == nil): one synthetic role "both" using
 //     the engine-calibrated model-level RC/SC (via the Remaining/Spare working
 //     copies). No re-aggregation — the engine already summed all variants into
@@ -110,56 +114,34 @@ func prcForVariant(r *domain.AnalyzerResult, v string) float64 {
 // Returns the list of active roles and the picker-local RolePairedState.
 // Remaining/Spare scalars on NamedAnalyzerResult are read-only after this call;
 // all dynamic bookkeeping moves to pickerState (scale-up) and RoleSpare (scale-down).
-//
-// # Role-visibility contract
-//
-// Roles are derived exclusively from the composite result's own RoleCapacities map keys.
-// A role that exists in discovery but has no analyzer-attributed capacity entry is
-// permanently invisible to scale-up until the analyzer starts emitting demand for it.
-//
-// This is NOT a complete gap: for disaggregated models, saturation's
-// estimateSchedulerQueueDemand (internal/engines/analyzers/saturation_v2/analyzer.go)
-// provides a purpose-built demand estimate for zero-replica roles from EPP queue-depth
-// signals, producing a real nonzero RequiredCapacity that does trigger scale-up for that
-// role before any replica of it exists — covering the ordinary cold-start case.
-//
-// The remaining, narrower gap has two cases:
-//   (a) No EPP queue signal (SchedulerQueue == nil or empty): the estimator returns
-//       all-zeros, and scale-up for the missing role cannot be triggered.
-//   (b) The role is absent from VariantStates/VariantCapacities entirely (discovery-side
-//       omission): neither the capacity store nor the queue estimator can help, since both
-//       are iterated from the same variant list that is already missing the entry.
-//
-// Mixed-P/D+"both" models (disaggregated roles AND a "both" role simultaneously) are not
-// supported today: initRoleState assigns a model to exactly one of the two branches above.
-// This is a shallow implementation choice — no deep type constraint prevents lifting it —
-// and is explicitly deferred as a future requirement.
-
-func initRoleState(e *NamedAnalyzerResult) (roles []string, pickerState RolePairedState) {
-	pickerState = make(RolePairedState)
+func initRoleState(s []NamedAnalyzerResult) (roles []string, pickerState RolePairedState) {
+	pickerState = make(RolePairedState, len(s))
 	roleSet := make(map[string]struct{})
 
-	if e.Result == nil {
-		return nil, pickerState
-	}
-	if e.RoleCapacities != nil {
-		// Disaggregated: per-role RC/SC from engine-calibrated RoleCapacities.
-		if e.RoleSpare == nil {
-			e.RoleSpare = make(map[string]float64, len(e.RoleCapacities))
+	for i, e := range s {
+		pickerState[i] = make(map[string]float64)
+		if e.Result == nil {
+			continue
 		}
-		for role, rc := range e.RoleCapacities {
-			pickerState[role] = rc.RequiredCapacity
-			e.RoleSpare[role] = rc.SpareCapacity
-			roleSet[role] = struct{}{}
+		if e.RoleCapacities != nil {
+			// Disaggregated: per-role RC/SC from engine-calibrated RoleCapacities.
+			if s[i].RoleSpare == nil {
+				s[i].RoleSpare = make(map[string]float64, len(e.RoleCapacities))
+			}
+			for role, rc := range e.RoleCapacities {
+				pickerState[i][role] = rc.RequiredCapacity
+				s[i].RoleSpare[role] = rc.SpareCapacity
+				roleSet[role] = struct{}{}
+			}
+		} else {
+			// Non-disaggregated: synthesize a single "both" role from model-level scalars.
+			pickerState[i][domain.RoleBoth] = e.Remaining
+			if s[i].RoleSpare == nil {
+				s[i].RoleSpare = make(map[string]float64, 1)
+			}
+			s[i].RoleSpare[domain.RoleBoth] = e.Spare
+			roleSet[domain.RoleBoth] = struct{}{}
 		}
-	} else {
-		// Non-disaggregated: synthesize a single "both" role from model-level scalars.
-		pickerState[domain.RoleBoth] = e.Remaining
-		if e.RoleSpare == nil {
-			e.RoleSpare = make(map[string]float64, 1)
-		}
-		e.RoleSpare[domain.RoleBoth] = e.Spare
-		roleSet[domain.RoleBoth] = struct{}{}
 	}
 
 	roles = make([]string, 0, len(roleSet))
@@ -179,36 +161,51 @@ func initRoleState(e *NamedAnalyzerResult) (roles []string, pickerState RolePair
 // The joint-commit step bounds by the min-util role (the coupling constraint).
 //
 // RolePairedState holds picker-local per-role demand tracked during one
-// model's allocation pass. Maps role → remaining demand (in that role's own
-// capacity units). Initialized from RoleCapacities[role].RC; decremented per
-// joint commit. Lives only inside the allocation loop — not stored on
-// NamedAnalyzerResult (per design A10).
-type RolePairedState map[string]float64
+// model's allocation pass. Indexed as [analyzer-index][role] → remaining demand
+// (in that role's own capacity units). Initialized from RoleCapacities[role].RC;
+// decremented per joint commit. Lives only inside the allocation loop — not
+// stored on NamedAnalyzerResult (per design A10).
+type RolePairedState []map[string]float64
 
-// roleBottleneckReplicas returns ceil(state[role] / PRC[v]) for the single
-// entry. Returns 0 if the entry has no result or PRC ≤ 0.
-func roleBottleneckReplicas(e NamedAnalyzerResult, state RolePairedState, role, v string) int {
-	if e.Result == nil {
-		return 0
+// roleBottleneckReplicas computes the cross-analyzer bottleneck replica count
+// for variant v in a specific role. Returns max_i ceil(state[i][role] / PRC_i[v]).
+func roleBottleneckReplicas(s []NamedAnalyzerResult, state RolePairedState, role, v string) int {
+	max := 0
+	for i, e := range s {
+		if e.Result == nil {
+			continue
+		}
+		prc := prcForVariant(e.Result, v)
+		if prc <= 0 {
+			continue
+		}
+		n := int(math.Ceil(state[i][role] / prc))
+		if n > max {
+			max = n
+		}
 	}
-	prc := prcForVariant(e.Result, v)
-	if prc <= 0 {
-		return 0
-	}
-	return int(math.Ceil(state[role] / prc))
+	return max
 }
 
-// roleAggRemaining returns the remaining demand for role from the picker state.
-func roleAggRemaining(state RolePairedState, role string) float64 {
-	return state[role]
+// roleAggRemaining returns max cross-analyzer remaining demand for role.
+func roleAggRemaining(s []NamedAnalyzerResult, state RolePairedState, role string) float64 {
+	max := 0.0
+	for i := range s {
+		if d := state[i][role]; d > max {
+			max = d
+		}
+	}
+	return max
 }
 
 // anyRoleNeedsScaleUp is the per-role scale-up gate for the unified dispatcher.
-// Returns true when any role has remaining demand > 0.
+// Returns true when any role has aggregate remaining demand > 0.
 func anyRoleNeedsScaleUp(state RolePairedState, roles []string) bool {
 	for _, role := range roles {
-		if state[role] > 0 {
-			return true
+		for _, m := range state {
+			if m[role] > 0 {
+				return true
+			}
 		}
 	}
 	return false
@@ -231,55 +228,78 @@ func variantsForRole(vcs []variantRecord, role string) []variantRecord {
 }
 
 // safeRemovalReplicasForRole returns the number of replicas of variant v that
-// can safely be removed — floor(RoleSpare[role] / PRC[v]) for the entry if it
-// is live, has a Result and RoleSpare, and PRC > 0. Returns 0 if the entry is
-// not live, has no Result/RoleSpare, PRC ≤ 0, or RoleSpare[role] < 0.
-func safeRemovalReplicasForRole(e NamedAnalyzerResult, v, role string) int {
-	if !e.Live {
-		return 0 // non-live: no current basis to constrain removal
+// can safely be removed — the minimum of floor(RoleSpare[role]_i / PRC_i[v])
+// across live analyzers that have variant v and a non-zero PRC. Non-live
+// analyzers (no metrics, error state, never analyzed, or stale) are skipped
+// and do not constrain the minimum. Returns 0 if any contributing analyzer
+// has RoleSpare[role] ≤ 0 or RoleSpare is nil.
+func safeRemovalReplicasForRole(s []NamedAnalyzerResult, v, role string) int {
+	smallest := math.MaxInt
+	found := false
+	for _, e := range s {
+		if !e.Live {
+			continue // non-live analyzers do not constrain the safe-removal minimum
+		}
+		if e.Result == nil || e.RoleSpare == nil {
+			continue
+		}
+		prc := prcForVariant(e.Result, v)
+		if prc <= 0 {
+			continue
+		}
+		n := int(math.Floor(e.RoleSpare[role] / prc))
+		if n < smallest {
+			smallest = n
+		}
+		found = true
 	}
-	if e.Result == nil || e.RoleSpare == nil {
+	if !found || smallest < 0 {
 		return 0
 	}
-	prc := prcForVariant(e.Result, v)
-	if prc <= 0 {
-		return 0
-	}
-	n := int(math.Floor(e.RoleSpare[role] / prc))
-	if n < 0 {
-		return 0
-	}
-	return n
+	return smallest
 }
 
-// applyDeallocationForRole decrements the entry's RoleSpare[role] by
-// n × PRC[v]. Clamps to 0. Never mutates Result.
-func applyDeallocationForRole(e *NamedAnalyzerResult, v, role string, n int) {
-	if e.Result == nil || e.RoleSpare == nil {
-		return
-	}
-	prc := prcForVariant(e.Result, v)
-	if prc <= 0 {
-		return
-	}
-	e.RoleSpare[role] -= float64(n) * prc
-	if e.RoleSpare[role] < 0 {
-		e.RoleSpare[role] = 0
+// applyDeallocationForRole decrements each analyzer's RoleSpare[role] by
+// n × PRC_i[v]. Clamps to 0. Never mutates Result.
+// Intentionally not Live-gated: non-live entries are already excluded from
+// the veto (needsScaleDownForRole) and the safe-removal minimum
+// (safeRemovalReplicasForRole), so mutating their RoleSpare here is harmless
+// — nothing reads it back.
+func applyDeallocationForRole(s []NamedAnalyzerResult, v, role string, n int) {
+	for i := range s {
+		if s[i].Result == nil || s[i].RoleSpare == nil {
+			continue
+		}
+		prc := prcForVariant(s[i].Result, v)
+		if prc <= 0 {
+			continue
+		}
+		s[i].RoleSpare[role] -= float64(n) * prc
+		if s[i].RoleSpare[role] < 0 {
+			s[i].RoleSpare[role] = 0
+		}
 	}
 }
 
-// needsScaleDownForRole reports whether the single live entry agrees this role
-// has spare capacity. Returns false if the entry is not live, has no
-// Result/RoleSpare, or RoleSpare[role] ≤ 0. Safety floor: a non-live entry
-// means no current basis to scale down.
-func needsScaleDownForRole(e NamedAnalyzerResult, role string) bool {
-	if !e.Live {
-		return false // non-live: no current basis to scale down
+// needsScaleDownForRole reports whether every live analyzer agrees this role
+// has spare capacity (all-down gate, scoped to one role). Non-live analyzers
+// (no metrics, error state, never analyzed, or stale) do not veto — this
+// applies uniformly, including saturation's token-capacity result; there is
+// no name-based exemption. Returns false if any live analyzer's
+// RoleSpare[role] ≤ 0 or RoleSpare is nil. Safety floor: if no live analyzer
+// remains, there is no current basis to scale down, so this returns false.
+func needsScaleDownForRole(s []NamedAnalyzerResult, role string) bool {
+	liveCount := 0
+	for _, e := range s {
+		if !e.Live {
+			continue // non-live analyzers do not veto (no metrics / error / never analyzed)
+		}
+		if e.Result == nil || e.RoleSpare == nil || e.RoleSpare[role] <= 0 {
+			return false
+		}
+		liveCount++
 	}
-	if e.Result == nil || e.RoleSpare == nil || e.RoleSpare[role] <= 0 {
-		return false
-	}
-	return true
+	return liveCount > 0
 }
 
 // RolePickFn is the role-generic optimizer variant selector for the unified
@@ -288,6 +308,7 @@ func needsScaleDownForRole(e NamedAnalyzerResult, role string) bool {
 // is available for this role.
 type RolePickFn func(
 	role string,
+	s []NamedAnalyzerResult,
 	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	available map[string]int,
@@ -301,7 +322,7 @@ type RolePickFn func(
 // Arity-1 (roles = ["both"]) reduces to plain per-variant allocation.
 func allocateForModelPaired(
 	ctx context.Context,
-	e *NamedAnalyzerResult,
+	s []NamedAnalyzerResult,
 	variants []variantRecord,
 	stateMap map[string]domain.VariantReplicaState,
 	available map[string]int,
@@ -317,7 +338,7 @@ func allocateForModelPaired(
 		prcByRole := make(map[string]float64, len(roles))
 		allPicked := true
 		for _, role := range roles {
-			v, capN := pick(role, variants, stateMap, available, targets)
+			v, capN := pick(role, s, variants, stateMap, available, targets)
 			if v == "" {
 				allPicked = false
 				break
@@ -334,9 +355,9 @@ func allocateForModelPaired(
 		utilByRole := make(map[string]float64, len(roles))
 		for _, role := range roles {
 			prc := prcByRole[role]
-			n := min(roleBottleneckReplicas(*e, pickerState, role, variantByRole[role]), capByRole[role])
+			n := min(roleBottleneckReplicas(s, pickerState, role, variantByRole[role]), capByRole[role])
 			nByRole[role] = n
-			demand := roleAggRemaining(pickerState, role)
+			demand := roleAggRemaining(s, pickerState, role)
 			if demand <= 0 {
 				utilByRole[role] = 1.0
 			} else {
@@ -357,7 +378,7 @@ func allocateForModelPaired(
 		kByRole := make(map[string]int, len(roles))
 		anyPositive := false
 		for _, role := range roles {
-			demand := roleAggRemaining(pickerState, role)
+			demand := roleAggRemaining(s, pickerState, role)
 			prc := prcByRole[role]
 			n := nByRole[role]
 			k := 0
@@ -378,7 +399,9 @@ func allocateForModelPaired(
 			k := kByRole[role]
 			prc := prcByRole[role]
 			targets[v] += k
-			pickerState[role] = math.Max(0, pickerState[role]-float64(k)*prc)
+			for i := range pickerState {
+				pickerState[i][role] = math.Max(0, pickerState[i][role]-float64(k)*prc)
+			}
 			if available != nil {
 				available[accFromVCs(variants, v)] -= k * gpusPerReplicaFromState(stateMap, v)
 			}
@@ -388,7 +411,7 @@ func allocateForModelPaired(
 		// single role; for P/D prefer "prefill".
 		for _, anchor := range []string{"prefill", domain.RoleBoth} {
 			if v, ok := variantByRole[anchor]; ok {
-				applyAllocation(e, v, kByRole[anchor])
+				applyAllocation(s, v, kByRole[anchor])
 				break
 			}
 		}

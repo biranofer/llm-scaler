@@ -42,52 +42,38 @@ func (o *GreedyByScoreOptimizer) Name() string {
 // modelWork tracks per-model allocation state during fair-share iteration.
 type modelWork struct {
 	req       ModelScalingRequest
-	s         []NamedAnalyzerResult // working slice; Remaining/Spare decremented in place
-	records   []variantRecord       // engine-built per-variant view (discovery identity + analyzer P)
-	ps        RolePairedState       // picker-local per-role demand (from initRoleState)
-	roles     []string              // active roles for this model
-	remaining float64               // fair-share priority metric (negative = fully satisfied)
-	targets   map[string]int        // variant name → target replicas (ALL variants)
-	limited   gpuLimitTracker       // variants the GPU budget cut short (see applyGPULimitAttribution)
+	e         *NamedAnalyzerResult // working entry; Remaining/Spare decremented in place
+	records   []variantRecord      // engine-built per-variant view (discovery identity + analyzer P)
+	ps        RolePairedState      // picker-local per-role demand (from initRoleState)
+	roles     []string             // active roles for this model
+	remaining float64              // fair-share priority metric (negative = fully satisfied)
+	targets   map[string]int       // variant name → target replicas (ALL variants)
+	limited   gpuLimitTracker      // variants the GPU budget cut short (see applyGPULimitAttribution)
 }
 
 // fairShareValue computes the fair-share priority metric for one model.
-// Phase 3: reads picker-local role-remaining (sum over roles × analyzer Score)
+// Phase 3: reads picker-local role-remaining (Score × Σ_role pickerState[role])
 // so the metric reflects actual per-role demand remaining rather than the
 // P-anchor model-level scalar.
 //
-//	fsv = priority × Σᵢ Score_i × Σ_role pickerState[i][role]
+//	fsv = priority × Score × Σ_role pickerState[role]
 //
 // Falls back to max remaining demand when the weighted result is zero.
-func fairShareValue(priority float64, s []NamedAnalyzerResult, ps RolePairedState, roles []string) float64 {
-	weighted := 0.0
-	for i, e := range s {
-		if e.Result == nil {
-			continue
-		}
+func fairShareValue(priority float64, e NamedAnalyzerResult, ps RolePairedState, roles []string) float64 {
+	if e.Result != nil {
 		roleSum := 0.0
 		for _, role := range roles {
-			if i < len(ps) {
-				roleSum += ps[i][role]
-			}
+			roleSum += ps[role]
 		}
-		weighted += roleSum * e.Score
-	}
-	if fsv := priority * weighted; fsv > 0 {
-		return fsv
+		if fsv := priority * roleSum * e.Score; fsv > 0 {
+			return fsv
+		}
 	}
 	// Fallback: max remaining demand across roles when Score=0 or priority=0.
 	maxDemand := 0.0
-	for i, e := range s {
-		if e.Result == nil {
-			continue
-		}
-		if i < len(ps) {
-			for _, role := range roles {
-				if ps[i][role] > maxDemand {
-					maxDemand = ps[i][role]
-				}
-			}
+	for _, role := range roles {
+		if d := ps[role]; d > maxDemand {
+			maxDemand = d
 		}
 	}
 	return maxDemand
@@ -128,11 +114,11 @@ func (o *GreedyByScoreOptimizer) Optimize(
 			continue
 		}
 
-		s := req.AnalyzerResults
-		roles, ps := initRoleState(s)
-		fsv := fairShareValue(req.Priority, s, ps, roles)
+		e := req.CompositeSignal
+		roles, ps := initRoleState(&e)
+		fsv := fairShareValue(req.Priority, e, ps, roles)
 		if anyRoleNeedsScaleUp(ps, roles) || fsv > 0 {
-			w := o.buildScaleUpWork(req, records, s, ps, roles, fsv)
+			w := o.buildScaleUpWork(req, records, &e, ps, roles, fsv)
 			if w != nil {
 				scaleUpWork = append(scaleUpWork, w)
 			}
@@ -167,9 +153,9 @@ func (o *GreedyByScoreOptimizer) Optimize(
 		targets := initTargets(req.VariantStates)
 
 		// Unified scale-down path via scaleDownRoleIterated.
-		s := req.AnalyzerResults
-		_, _ = initRoleState(s) // populates RoleSpare for all roles
-		scaleDownRoleIterated(ctx, s, records, targets, stateMap)
+		e := req.CompositeSignal
+		_, _ = initRoleState(&e) // populates RoleSpare for all roles
+		scaleDownRoleIterated(ctx, &e, records, targets, stateMap)
 
 		decisions := buildDecisionsWithOptimizer(req, stateMap, vcMap, targets, "greedy-by-score")
 		logger.V(logging.DEBUG).Info("Greedy-by-score optimizer decisions (other)",
@@ -183,13 +169,13 @@ func (o *GreedyByScoreOptimizer) Optimize(
 }
 
 // buildScaleUpWork creates a single work unit for a scale-up request.
-func (o *GreedyByScoreOptimizer) buildScaleUpWork(req ModelScalingRequest, records []variantRecord, s []NamedAnalyzerResult, ps RolePairedState, roles []string, fsv float64) *modelWork {
+func (o *GreedyByScoreOptimizer) buildScaleUpWork(req ModelScalingRequest, records []variantRecord, e *NamedAnalyzerResult, ps RolePairedState, roles []string, fsv float64) *modelWork {
 	if fsv <= 0 {
 		return nil
 	}
 	return &modelWork{
 		req:       req,
-		s:         s,
+		e:         e,
 		records:   records,
 		ps:        ps,
 		roles:     roles,
@@ -279,15 +265,13 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 	stateMap := buildStateMap(w.req.VariantStates)
 	oldRemaining := w.remaining
 
-	// Re-initialize picker-state from current s[i].Remaining each call so
+	// Re-initialize picker-state from current e.Remaining each call so
 	// multi-iteration fair-sharing sees the correct post-allocation demand.
 	// Cap at target so the loop exits when the fair-share budget is exhausted.
-	_, ps := initRoleState(w.s)
-	for i := range ps {
-		for _, role := range w.roles {
-			if ps[i][role] > target {
-				ps[i][role] = target
-			}
+	_, ps := initRoleState(w.e)
+	for _, role := range w.roles {
+		if ps[role] > target {
+			ps[role] = target
 		}
 	}
 
@@ -308,8 +292,8 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 
 	// Unified path: fairShareRolePick behind the RolePickFn interface.
 	// α logic removed in commit 3.
-	pick := fairShareRolePick(target, w.s, w.roles, w.limited)
-	allocateForModelPaired(ctx, w.s, w.records, stateMap, effAvail,
+	pick := fairShareRolePick(target, w.roles, w.limited)
+	allocateForModelPaired(ctx, w.e, w.records, stateMap, effAvail,
 		w.targets, pick, ps, w.roles)
 
 	// Reconcile: apply what was consumed (before − after) to the cluster-wide
@@ -342,13 +326,13 @@ func (o *GreedyByScoreOptimizer) allocateForModel(
 
 	// Recompute w.remaining for fair-share ordering.
 	// For "both" (non-disag): use fresh ps so applyAllocation-decremented
-	// s[i].Remaining is read (budget-capped ps is already 0).
+	// e.Remaining is read (budget-capped ps is already 0).
 	// For P/D: use local capped ps which correctly reaches 0 when both roles served.
 	if len(w.roles) == 1 && w.roles[0] == domain.RoleBoth {
-		_, freshPs := initRoleState(w.s)
-		w.remaining = fairShareValue(w.req.Priority, w.s, freshPs, w.roles)
+		_, freshPs := initRoleState(w.e)
+		w.remaining = fairShareValue(w.req.Priority, *w.e, freshPs, w.roles)
 	} else {
-		w.remaining = fairShareValue(w.req.Priority, w.s, ps, w.roles)
+		w.remaining = fairShareValue(w.req.Priority, *w.e, ps, w.roles)
 	}
 	return w.remaining < oldRemaining
 }
@@ -400,12 +384,10 @@ func effectiveAvailable(available, nsBudget map[string]int) map[string]int {
 // limited collects the variants the GPU budget cut short, so the decisions built
 // afterwards can carry WasLimited / LimitedBy. A variant stopped by its own
 // MaxReplicas ceiling is never recorded: that is user intent, not scarcity.
-func fairShareRolePick(target float64, s []NamedAnalyzerResult, roles []string, limited gpuLimitTracker) RolePickFn {
-	_ = s     // slice available for future multi-analyzer demand inspection
+func fairShareRolePick(target float64, roles []string, limited gpuLimitTracker) RolePickFn {
 	_ = roles // roles available for future per-role budget splitting
 	return func(
 		role string,
-		_ []NamedAnalyzerResult,
 		variants []variantRecord,
 		stateMap map[string]domain.VariantReplicaState,
 		available map[string]int,
