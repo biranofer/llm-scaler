@@ -255,6 +255,32 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 
+		// Prometheus is needed from here on -- by the premise guard below as well
+		// as by the assertion -- so a missing client is settled before anything
+		// is staged rather than after.
+		pc := promClientForCheck()
+		if pc == nil {
+			Skip("no Prometheus client could be built, so WVA's recommendation cannot be read")
+		}
+		demandQuery := fmt.Sprintf(
+			"max(wva_analyzer_demand{analyzer_name=\"saturation\",model_name=%q,exported_namespace=%q})",
+			modelID, cfg.LLMDNamespace)
+
+		By("Sampling the demand the owned replicas alone produce")
+		// The baseline the premise guard is measured against. Taken here, while
+		// only the ReplicaSet's Pods report, so any rise it later sees belongs to
+		// the unowned Pod and to nothing else.
+		var baselineDemand float64
+		Eventually(func(g Gomega) {
+			v, err := pc.QueryWithRetry(ctx, demandQuery)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v).To(BeNumerically(">", 0),
+				"the owned replicas are not reporting demand yet, so there is no baseline to "+
+					"measure the third replica against")
+			baselineDemand = v
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
 		By("Adding a serving replica the Deployment does not own")
 		createUnownedReplica(cfg.LLMDNamespace, modelDecodeDeployment, extraPodName)
 		DeferCleanup(func() {
@@ -293,6 +319,33 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 				"the ReplicaSet adopted the extra pod, so this test is not staging the condition it claims")
 		}, guardWindow, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
+		By("Confirming WVA actually counts the unowned replica")
+		// Running is not reporting. The Pod has to be scraped, and the collector
+		// has to attribute it to this variant, before any of its capacity reaches
+		// the optimizer -- and nothing above checks that. The adoption guard is
+		// one-sided and reads Status.Replicas, which does not count an unowned
+		// Pod in either direction, so it cannot catch this either.
+		//
+		// Measured on the CI run that produced this guard: the analyzer logged
+		// replica-capacity-decision for the two OWNED Pods only, demand came in
+		// at 4 rather than ~6, spare capacity was 12 - 4/0.7 = 6.29 -- just over
+		// one replica -- and WVA correctly recommended 1. The assertion below
+		// then reported a clamp regression for a premise that was never staged.
+		//
+		// Relative rather than a constant: demand is replicas x kv-cache-usage x
+		// P, so a third reporting replica raises it by half. A 1.25x floor sits
+		// clear of both the two-replica level and of sampling noise, and does not
+		// hard-code P, which the simulator derives.
+		Eventually(func(g Gomega) {
+			v, err := pc.QueryWithRetry(ctx, demandQuery)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v).To(BeNumerically(">=", baselineDemand*1.25),
+				"the unowned replica is Running but WVA is not counting it: demand is %v against a "+
+					"baseline of %v from the owned replicas alone. The premise of this spec is not "+
+					"staged, and the assertion below would blame the clamp for it", v, baselineDemand)
+		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
 		By("Asserting the extra replica's capacity is never treated as removable")
 		// The regression: supply over three reporting replicas yields a full
 		// replica of spare on top of the one the target already conceded, and the
@@ -319,10 +372,6 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		// correct recommendation of 2 across two replicas reads as 1 there. An
 		// earlier attempt waited on that and timed out for five minutes against a
 		// perfectly healthy controller.
-		pc := promClientForCheck()
-		if pc == nil {
-			Skip("no Prometheus client could be built, so WVA's recommendation cannot be read")
-		}
 		desired := fmt.Sprintf("wva_desired_replicas{variant_name=%q,exported_namespace=%q}",
 			variantName, cfg.LLMDNamespace)
 
