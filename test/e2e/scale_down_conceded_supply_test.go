@@ -262,25 +262,6 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		if pc == nil {
 			Skip("no Prometheus client could be built, so WVA's recommendation cannot be read")
 		}
-		demandQuery := fmt.Sprintf(
-			"max(wva_analyzer_demand{analyzer_name=\"saturation\",model_name=%q,exported_namespace=%q})",
-			modelID, cfg.LLMDNamespace)
-
-		By("Sampling the demand the owned replicas alone produce")
-		// The baseline the premise guard is measured against. Taken here, while
-		// only the ReplicaSet's Pods report, so any rise it later sees belongs to
-		// the unowned Pod and to nothing else.
-		var baselineDemand float64
-		Eventually(func(g Gomega) {
-			v, err := pc.QueryWithRetry(ctx, demandQuery)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(v).To(BeNumerically(">", 0),
-				"the owned replicas are not reporting demand yet, so there is no baseline to "+
-					"measure the third replica against")
-			baselineDemand = v
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
-
 		By("Adding a serving replica the Deployment does not own")
 		createUnownedReplica(cfg.LLMDNamespace, modelDecodeDeployment, extraPodName)
 		DeferCleanup(func() {
@@ -319,32 +300,28 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 				"the ReplicaSet adopted the extra pod, so this test is not staging the condition it claims")
 		}, guardWindow, time.Duration(cfg.PollIntervalSec)*time.Second).Should(Succeed())
 
-		By("Confirming WVA actually counts the unowned replica")
-		// Running is not reporting. The Pod has to be scraped, and the collector
-		// has to attribute it to this variant, before any of its capacity reaches
-		// the optimizer -- and nothing above checks that. The adoption guard is
-		// one-sided and reads Status.Replicas, which does not count an unowned
-		// Pod in either direction, so it cannot catch this either.
+		// NO PREMISE GUARD HERE, DELIBERATELY -- and the reason is worth keeping.
 		//
-		// Measured on the CI run that produced this guard: the analyzer logged
-		// replica-capacity-decision for the two OWNED Pods only, demand came in
-		// at 4 rather than ~6, spare capacity was 12 - 4/0.7 = 6.29 -- just over
-		// one replica -- and WVA correctly recommended 1. The assertion below
-		// then reported a clamp regression for a premise that was never staged.
+		// A guard did live here: it sampled wva_analyzer_demand before the unowned
+		// Pod existed and required a 1.25x rise afterwards, on the reasoning that a
+		// third reporting replica raises demand by half. That is wrong, and it
+		// failed a run in which the product behaved correctly.
 		//
-		// Relative rather than a constant: demand is replicas x kv-cache-usage x
-		// P, so a third reporting replica raises it by half. A 1.25x floor sits
-		// clear of both the two-replica level and of sampling noise, and does not
-		// hard-code P, which the simulator derives.
-		Eventually(func(g Gomega) {
-			v, err := pc.QueryWithRetry(ctx, demandQuery)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(v).To(BeNumerically(">=", baselineDemand*1.25),
-				"the unowned replica is Running but WVA is not counting it: demand is %v against a "+
-					"baseline of %v from the owned replicas alone. The premise of this spec is not "+
-					"staged, and the assertion below would blame the clamp for it", v, baselineDemand)
-		}, time.Duration(cfg.EventuallyExtendedSec)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
-			Should(Succeed())
+		// Demand is not proportional to replicas. It is the greater of measured
+		// occupancy and the arrival-demand floor, and the floor moves on its own:
+		// it is unavailable whenever there is no arrival rate ("EPP absent and no
+		// completions"). In the failing run the baseline was sampled at 7 while the
+		// floor was active, and by the time the third Pod reported the floor had
+		// gone, so demand read 6 -- three Pods x 2 tokens, exactly right, and lower
+		// than the two-Pod baseline. The guard demanded >= 8.75 and failed a spec
+		// whose own assertion then showed curr:2 tgt:2 no-change.
+		//
+		// The premise this spec needs is "the unowned Pod is scraped and attributed
+		// to this variant". Demand is a poor proxy for it and a monotonic one does
+		// not obviously exist among the metrics WVA publishes: supply is CLAMPED to
+		// the owned count by the very code under test, so it cannot witness the
+		// third Pod either. Until a signal is found that measures the premise
+		// directly, no guard beats a wrong guard.
 
 		By("Asserting the extra replica's capacity is never treated as removable")
 		// The regression: supply over three reporting replicas yields a full
