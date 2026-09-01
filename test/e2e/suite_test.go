@@ -218,8 +218,49 @@ var _ = BeforeSuite(func() {
 	GinkgoWriter.Println("BeforeSuite completed successfully - infrastructure ready")
 })
 
-// ReportAfterEach dumps controller logs and managed scaler state after a failed test.
-// This makes E2E failures self-contained and easier to debug (why scaling happened / didn't happen).
+// dumpFailureDiagnostics records the cluster state a failed spec was about.
+//
+// The controller log shows WVA's view of the LAST link in the demand chain, and
+// "no pending requests" there is equally consistent with every earlier link
+// having broken. The other three dumps record the earlier links.
+func dumpFailureDiagnostics(specText string) {
+	GinkgoWriter.Printf("\n=== Failure diagnostics: %s ===\n", specText)
+	utils.DumpControllerLogs(context.Background(), k8sClient, cfg.WVANamespace, GinkgoWriter)
+	utils.DumpManagedScalers(context.Background(), k8sClient, dynamicClient, GinkgoWriter)
+	utils.DumpScaledObjects(context.Background(), dynamicClient, GinkgoWriter)
+	utils.DumpDemandEvidence(context.Background(), k8sClient, cfg.LLMDNamespace, GinkgoWriter)
+}
+
+// diagnosticsDumpedFor names the spec the snapshot below already ran for, so the
+// ReportAfterEach fallback does not dump the same failure twice.
+var diagnosticsDumpedFor string
+
+// JustAfterEach, NOT ReportAfterEach: Ginkgo runs ReportAfterEach AFTER the
+// spec's AfterEach and DeferCleanup callbacks, so this dump used to read a
+// cluster that had already been torn down. It reported "(none in any
+// namespace)" for ScaledObjects seconds after the controller log proved one was
+// being served, and "No trigger Job found" for a Job cleanup had just swept --
+// then pointed the reader at "the ScaledObject conditions below", which were not
+// there. Three separate investigations were sent after that phantom before the
+// hook itself became the suspect.
+//
+// JustAfterEach runs immediately after the It body and before any cleanup, so
+// what it prints is the state the assertion actually failed against.
+var _ = JustAfterEach(func() {
+	if !CurrentSpecReport().Failed() {
+		return
+	}
+	if k8sClient == nil || crClient == nil {
+		return
+	}
+	dumpFailureDiagnostics(CurrentSpecReport().FullText())
+	diagnosticsDumpedFor = CurrentSpecReport().FullText()
+})
+
+// ReportAfterEach is the fallback for a failure the snapshot above cannot see:
+// one raised by AfterEach or DeferCleanup, which both run after it. The cluster
+// is partly torn down by then and the dump says less, but a teardown failure
+// with no diagnostics at all is worse.
 var _ = ReportAfterEach(func(report SpecReport) {
 	if !report.Failed() {
 		return
@@ -227,15 +268,11 @@ var _ = ReportAfterEach(func(report SpecReport) {
 	if k8sClient == nil || crClient == nil {
 		return
 	}
-
-	GinkgoWriter.Printf("\n=== Failure diagnostics: %s ===\n", report.FullText())
-	utils.DumpControllerLogs(context.Background(), k8sClient, cfg.WVANamespace, GinkgoWriter)
-	utils.DumpManagedScalers(context.Background(), k8sClient, dynamicClient, GinkgoWriter)
-	utils.DumpScaledObjects(context.Background(), dynamicClient, GinkgoWriter)
-	// The controller log shows WVA's view of the LAST link in the demand chain, and
-	// "no pending requests" there is equally consistent with every earlier link
-	// having broken. This records the earlier links — see DumpDemandEvidence.
-	utils.DumpDemandEvidence(context.Background(), k8sClient, cfg.LLMDNamespace, GinkgoWriter)
+	if report.FullText() == diagnosticsDumpedFor {
+		return
+	}
+	GinkgoWriter.Printf("\n(failure surfaced during cleanup; the cluster is already partly torn down)\n")
+	dumpFailureDiagnostics(report.FullText())
 })
 
 var _ = AfterSuite(func() {

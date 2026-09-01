@@ -16,6 +16,15 @@ import (
 // not depend on the controller's internal packages.
 const defaultEntryKey = "default"
 
+// The label a multi-namespace controller selects ConfigMaps by. It mirrors the
+// selector built in cmd/main.go, restated here for the same reason as
+// defaultEntryKey above: the fixtures package does not depend on the
+// controller's internal packages.
+const (
+	wvaConfigMapLabelKey   = "app.kubernetes.io/name"
+	wvaConfigMapLabelValue = "workload-variant-autoscaler"
+)
+
 // SetNamespaceQuota declares a namespace-scoped GPU quota and returns a restore
 // func.
 //
@@ -84,17 +93,49 @@ func SetNamespaceQuota(
 	}
 	data[defaultEntryKey] = string(merged)
 
-	desired := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: configNamespace},
-		Data:       data,
-	}
+	// Carry the WHOLE ObjectMeta forward rather than rebuilding it from name and
+	// namespace. A multi-namespace controller caches ConfigMaps behind a label
+	// selector, so an Update whose ObjectMeta omits that label strips it and
+	// drops the object out of the controller's cache: the reconciler never sees
+	// the quota, the limiter stays "none", and the pool grows past an allowance
+	// nobody is enforcing while the spec waits for a refusal that can no longer
+	// be logged.
+	//
+	// The tell is in the failing run's own log -- no "Updated global scaling
+	// policy from ConfigMap" line between this write and cleanup, and one the
+	// instant the restore below puts the original back, labels and all.
 	if existed {
-		desired.ResourceVersion = existing.ResourceVersion
+		desired := existing.DeepCopy()
+		desired.Data = data
+		// SET the label, do not merely preserve it. Preserving is not enough:
+		// the controller's cache only LISTS labelled ConfigMaps at startup, and
+		// this write can land before that initial list. If the label is missing
+		// at that moment -- because an earlier run stripped it, or because this
+		// write raced the controller coming up -- the object is not in the list
+		// at all, so no event ever follows and the quota is never read.
+		if desired.Labels == nil {
+			desired.Labels = map[string]string{}
+		}
+		desired.Labels[wvaConfigMapLabelKey] = wvaConfigMapLabelValue
 		if _, err := cms.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
 			return nil, fmt.Errorf("update %s: %w", configName, err)
 		}
-	} else if _, err := cms.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
-		return nil, fmt.Errorf("create %s: %w", configName, err)
+	} else {
+		desired := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      configName,
+				Namespace: configNamespace,
+				// Same reason: a ConfigMap created without this label is
+				// invisible to the controller in multi-namespace mode.
+				Labels: map[string]string{
+					wvaConfigMapLabelKey: wvaConfigMapLabelValue,
+				},
+			},
+			Data: data,
+		}
+		if _, err := cms.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+			return nil, fmt.Errorf("create %s: %w", configName, err)
+		}
 	}
 
 	return func(ctx context.Context) error {

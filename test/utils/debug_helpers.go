@@ -75,6 +75,48 @@ func DumpManagedScalers(ctx context.Context, k8sClient *kubernetes.Clientset,
 		_, _ = fmt.Fprintf(w, "  Annotations: %v\n", hpa.Annotations)
 		_, _ = fmt.Fprintf(w, "  DesiredReplicas: %d\n", hpa.Status.DesiredReplicas)
 		_, _ = fmt.Fprintf(w, "  CurrentMetrics: %v\n", hpa.Status.CurrentMetrics)
+
+		// The CONDITIONS are where a stalled HPA says WHY, and without them the two
+		// fields above are unreadable: DesiredReplicas 0 with a nil CurrentMetrics
+		// entry looks identical whether the metrics API is unavailable, the
+		// external scaler returned an error, or the metric name does not resolve.
+		// ScalingActive=False carries the reason -- FailedGetExternalMetric -- and
+		// the message underneath it, which is the only place that distinction
+		// appears. A smoke failure was diagnosed as "KEDA infrastructure" for
+		// hours on the strength of those two fields alone; the cause was an error
+		// returned by our own external scaler.
+		if len(hpa.Status.Conditions) == 0 {
+			_, _ = fmt.Fprintf(w, "  Conditions: (none -- the HPA controller has not evaluated this object yet)\n")
+		}
+		for _, c := range hpa.Status.Conditions {
+			_, _ = fmt.Fprintf(w, "  Condition: %s=%s reason=%s: %s\n", c.Type, c.Status, c.Reason, c.Message)
+		}
+		dumpHPAEvents(ctx, k8sClient, hpa.Namespace, hpa.Name, w)
+	}
+}
+
+// dumpHPAEvents prints the events the HPA controller recorded against one HPA.
+//
+// Separate from the conditions above because the two carry different things: a
+// condition holds the CURRENT state, while FailedGetExternalMetric arrives as a
+// repeating event that keeps the verbatim error text from the metrics API --
+// including which metric could not be served. When the condition has since
+// settled back, the event is the only remaining trace.
+func dumpHPAEvents(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name string, w io.Writer) {
+	events, err := k8sClient.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + name + ",involvedObject.kind=HorizontalPodAutoscaler",
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "  Events: failed to list: %v\n", err)
+		return
+	}
+	if len(events.Items) == 0 {
+		_, _ = fmt.Fprintf(w, "  Events: (none)\n")
+		return
+	}
+	for i := range events.Items {
+		e := &events.Items[i]
+		_, _ = fmt.Fprintf(w, "  Event: %s %s x%d: %s\n", e.Type, e.Reason, e.Count, e.Message)
 	}
 }
 
