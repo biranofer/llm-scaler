@@ -222,6 +222,18 @@ var _ = Describe("Saturation V2 engine", Label("smoke", "full"), Ordered, func()
 	// wva_desired_replicas=2, KEDA reads the metric and drives the Deployment
 	// to 2 ready replicas.
 	It("should scale up via KEDA when token utilization crosses scaleUpThreshold", func() {
+		By("Confirming KEDA has wired its external metric onto the HPA")
+		// Before the assertion below, not as part of it. A Deployment that never
+		// grows is equally consistent with WVA recommending nothing and with KEDA
+		// never wiring the metric that carries the recommendation -- and the
+		// second reads as the first for the whole timeout. Measured at 20-35s on
+		// kind, so 120s is generous; failing here is a different diagnosis, not a
+		// slower one.
+		Eventually(func(g Gomega) {
+			expectKEDAExternalMetricWired(g, cfg.LLMDNamespace, modelDecodeDeployment)
+		}, 120*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
+			Should(Succeed())
+
 		By("Asserting KEDA actuates scale-up to ≥ 2 replicas")
 		// Chain: WVA (15 s interval) → wva_desired_replicas=2 → KEDA (5 s poll) →
 		// HPA → Deployment. Uses ScaleUpTimeout (600 s) to accommodate pod scheduling.
