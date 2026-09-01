@@ -12,7 +12,7 @@ What shipped, and where:
 | a group missing a Ready Pod is absent | `pool/adapter.go` `readyGroupMembers` |
 | a group serves one layout, permanently | `policy/policy.go` `doesNotFit`, `pool/shape.go` `nodeCount` |
 | creating one | `deploy/warmpool.sh create --group-size N` |
-| operating one | [the guide](../guides/warm-pool/README.md#when-the-engine-spans-machines-pools-of-groups) |
+| operating one | [the guide](../guides/warm-pool/groups.md#when-the-engine-spans-machines-pools-of-groups) |
 
 Unit tests cover each rule and its inverse (`pool/group_test.go`,
 `policy/policy_test.go`). **Not yet run on a cluster**: no e2e exercises a group

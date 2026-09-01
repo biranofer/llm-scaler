@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	promoperator "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -533,6 +534,55 @@ func cleanupResource(ctx context.Context, resourceType, _ /* namespace */, name 
 // KEDA HPA surface exposes the consumed value but not reliably enough to gate a
 // ">= N" assertion here; callers that need magnitude must query Prometheus
 // directly. The caller wraps this in Eventually.
+// expectKEDAExternalMetricWired asserts KEDA has replaced the HPA's default
+// metric with its own external one.
+//
+// A KEDA-created HPA does not start out carrying that metric. KEDA creates the
+// HPA with an empty spec.metrics, Kubernetes DEFAULTS the empty list to
+// Resource/cpu at 80% utilization, and KEDA patches the external metric in
+// afterwards -- measured at 20 to 35 seconds on a kind cluster, not instantly.
+//
+// Until that patch lands the HPA is scaling on CPU, and on a cluster with no
+// metrics-server it cannot scale at all:
+//
+//	ScalingActive=False FailedGetResourceMetric ... (get pods.metrics.k8s.io)
+//	FailedComputeMetricsReplicas: invalid metrics (1 invalid out of 1)
+//
+// A spec that waits on Deployment replicas without checking this spends its
+// entire timeout blaming the Deployment for a metric KEDA never wired. That is
+// exactly how a 600-second smoke failure read: WVA publishing a fresh target
+// every cycle, the HPA parked at DesiredReplicas 0, and nothing in the failure
+// naming the cause.
+//
+// Reads spec.Metrics, NOT status.CurrentMetrics. The spec says KEDA WIRED the
+// metric; the status says a value was READ from it.
+// expectWVADesiredReplicasConsumed covers the second. Keeping them apart is the
+// point: "never wired" and "wired but unreadable" look identical from the
+// Deployment and need opposite fixes.
+func expectKEDAExternalMetricWired(g Gomega, namespace, scaleTargetDeployment string) {
+	hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	var found bool
+	var carried []string
+	for i := range hpaList.Items {
+		hpa := &hpaList.Items[i]
+		if hpa.Spec.ScaleTargetRef.Name != scaleTargetDeployment {
+			continue
+		}
+		for _, m := range hpa.Spec.Metrics {
+			carried = append(carried, string(m.Type))
+			if m.Type == autoscalingv2.ExternalMetricSourceType {
+				found = true
+			}
+		}
+	}
+	g.Expect(found).To(BeTrue(),
+		"KEDA has not wired its external metric onto the HPA for %s; spec.metrics carries %v. "+
+			"While that is so the HPA scales on the Kubernetes-defaulted CPU metric, which needs a "+
+			"metrics-server this cluster may not have -- so the target cannot move whatever WVA recommends",
+		scaleTargetDeployment, carried)
+}
+
 func expectWVADesiredReplicasConsumed(g Gomega, namespace, scaleTargetDeployment string) {
 	hpaList, err := k8sClient.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
 	g.Expect(err).NotTo(HaveOccurred())

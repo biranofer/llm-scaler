@@ -1,10 +1,11 @@
 # Warm pool: what is decided, and what is not
 
-**Status: open questions, deliberately unbuilt.** Three things the warm pool
+**Status: open questions, deliberately unbuilt.** Four things the warm pool
 raises that are bigger than a bug fix. Each is written down because leaving them
 implicit is how they get half-answered by whoever touches the code next.
 
-Two are about how WVA *reasons* about a pool. One is about what the pool *runs*.
+Two are about how WVA *reasons* about a pool (1, 4). Two are about what the pool
+*runs*, and whether a copy it holds is still usable (2, 3).
 
 ---
 
