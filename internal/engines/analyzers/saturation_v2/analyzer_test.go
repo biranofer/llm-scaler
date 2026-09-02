@@ -87,6 +87,28 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// k1 = 12800, k2 = 4000 (observed), effective = 4000
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(4000)))
 		})
+
+		It("should discard an observed k2 that exceeds k1 as implausible", func() {
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					// Queue saturated, but tokensInUse (20000) exceeds k1
+					// (12800) -- physically impossible for real KV
+					// occupancy, so P1-obs must not win.
+					makeReplicaMetrics("pod-1", "variant-a",
+						20000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// No history and no derivable engine params, so it falls all the
+			// way through to Priority 4 (k1 fallback) rather than using the
+			// implausible 20000 observation.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
 	})
 
 	Describe("k2 history", func() {
@@ -109,6 +131,25 @@ var _ = Describe("SaturationAnalyzer", func() {
 			ra, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeTrue())
 			Expect(ra.Average()).To(Equal(float64(8000)))
+		})
+
+		It("should not store an implausible (> k1) observation in history", func() {
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						20000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			_, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			histKey := "test-model|H100|1|short"
+			_, ok := analyzer.computeCapacityHistory[histKey]
+			Expect(ok).To(BeFalse())
 		})
 
 		It("should use historical k2 when queue drops below threshold", func() {

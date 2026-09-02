@@ -347,23 +347,42 @@ func (a *SaturationAnalyzer) computeK2(
 	historyKey := fmt.Sprintf("%s|%s|%d|%s", modelID, accelerator, gpuCount, outputBucket)
 
 	// Priority 1: Observed (queue saturated)
+	//
+	// tokensInUse cannot legitimately exceed k1: k1 is the KV cache's own
+	// memory ceiling, so a reading above it is a scrape artifact (e.g. a
+	// mid-cycle admission/eviction race between the metrics snapshot and the
+	// cache accounting), not real demand. Accepting it as P1-obs would both
+	// report an impossible effective capacity this cycle and seed the
+	// rolling average with a value every subsequent P2-hist cycle inherits
+	// long after the artifact itself is gone. Falls through to Priority 2
+	// instead of returning k1 directly, so a real historical/derived signal
+	// still wins over an untimely fallback-to-k1.
 	if queueLen >= int(queueThreshold) && tokensInUse > 0 {
 		k2Observed := tokensInUse
-		a.mu.Lock()
-		ra, ok := a.computeCapacityHistory[historyKey]
-		if !ok {
-			ra = newRollingAverage(RollingAverageWindowSize)
-			a.computeCapacityHistory[historyKey] = ra
+		if k2Observed > k1 {
+			logger.V(logging.DEFAULT).Info("k2-decision",
+				"modelID", modelID, "namespace", namespace, "variant", variantName,
+				"priority", "P1-obs-invalid", "historyKey", historyKey,
+				"queueLength", queueLen, "queueThreshold", queueThreshold,
+				"reason", "observed tokensInUse exceeds k1 (memory-bound ceiling); discarding as implausible",
+				"k2Observed", k2Observed, "k1", k1)
+		} else {
+			a.mu.Lock()
+			ra, ok := a.computeCapacityHistory[historyKey]
+			if !ok {
+				ra = newRollingAverage(RollingAverageWindowSize)
+				a.computeCapacityHistory[historyKey] = ra
+			}
+			ra.Add(float64(k2Observed))
+			historyLen := ra.Len()
+			a.mu.Unlock()
+			logger.V(logging.DEFAULT).Info("k2-decision",
+				"modelID", modelID, "namespace", namespace, "variant", variantName,
+				"priority", k2Labels[k2SrcObserved], "historyKey", historyKey,
+				"queueLength", queueLen, "queueThreshold", queueThreshold,
+				"k2", k2Observed, "historyWindowLen", historyLen)
+			return k2Observed, k2SrcObserved
 		}
-		ra.Add(float64(k2Observed))
-		historyLen := ra.Len()
-		a.mu.Unlock()
-		logger.V(logging.DEFAULT).Info("k2-decision",
-			"modelID", modelID, "namespace", namespace, "variant", variantName,
-			"priority", k2Labels[k2SrcObserved], "historyKey", historyKey,
-			"queueLength", queueLen, "queueThreshold", queueThreshold,
-			"k2", k2Observed, "historyWindowLen", historyLen)
-		return k2Observed, k2SrcObserved
 	}
 
 	// Priority 2: Historical — lock must cover Average() since Add() mutates
