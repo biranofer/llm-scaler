@@ -9,7 +9,7 @@ import (
 // NamedAnalyzerResult pairs an analyzer's name with its result, the engine-owned
 // capacity aggregates derived from that result, and mutable working counters for
 // the optimizer's allocation loop.
-// It is the per-entry type of ModelScalingRequest.AnalyzerResults and is
+// It is the type of ModelScalingRequest.CompositeSignal and is
 // only used inside the engine→optimizer contract; it is not a general-purpose
 // interfaces type.
 //
@@ -72,7 +72,7 @@ type NamedAnalyzerResult struct {
 type ModelScalingRequest struct {
 	ModelID         string
 	Namespace       string
-	AnalyzerResults []NamedAnalyzerResult // per-analyzer slice; saturation entry is always first
+	CompositeSignal NamedAnalyzerResult // the one composed signal the engine hands the optimizer, already reduced to a single entry
 	VariantStates   []domain.VariantReplicaState
 	// Variants is the authoritative per-variant metadata (identity, cost,
 	// accelerator, replica state) from the discovery step. When populated it is

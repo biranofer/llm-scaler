@@ -11,7 +11,7 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 )
 
-// withSatEntry adds a single-saturation AnalyzerResults to req, initialised from r,
+// withSatEntry sets req's single-saturation CompositeSignal, initialised from r,
 // and — unless the caller set them explicitly — the discovery metadata the engine
 // would have threaded alongside it.
 //
@@ -22,7 +22,7 @@ import (
 // moves it to where the optimizer now looks.
 func withSatEntry(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 	if r != nil {
-		req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+		req.CompositeSignal = r.named()
 		if req.Variants == nil {
 			req.Variants = deriveVariants(r)
 		}
@@ -744,7 +744,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				req.CompositeSignal = r.named()
 				if req.Variants == nil {
 					req.Variants = deriveVariants(r)
 				}
@@ -834,7 +834,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				req.CompositeSignal = r.named()
 				if req.Variants == nil {
 					req.Variants = deriveVariants(r)
 				}
@@ -880,7 +880,7 @@ var _ = Describe("CostAwareOptimizer", func() {
 		withSatEntryPD := func(r *satEntryFixture, req ModelScalingRequest) ModelScalingRequest {
 			if r != nil {
 				req.Disaggregated = true
-				req.AnalyzerResults = []NamedAnalyzerResult{r.named("")}
+				req.CompositeSignal = r.named()
 				if req.Variants == nil {
 					req.Variants = deriveVariants(r)
 				}

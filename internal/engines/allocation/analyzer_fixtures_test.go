@@ -116,8 +116,8 @@ func rec(name, role string, cost, prc float64) variantRecord {
 
 // withScore sets the fair-share weight the engine would have resolved from
 // AnalyzerScoreConfig. Returns a copy so it chains off named().
-func (n NamedAnalyzerResult) withScore(s float64) NamedAnalyzerResult {
-	n.Score = s
+func (n NamedAnalyzerResult) withScore() NamedAnalyzerResult {
+	n.Score = 1.0
 	return n
 }
 
@@ -140,15 +140,9 @@ func (f *satEntryFixture) result() *domain.AnalyzerResult {
 // named builds the optimizer-facing entry the way the engine does: the
 // analyzer's result under Result, the engine-owned aggregates alongside it, and
 // the mutable Remaining/Spare counters seeded from RC/SC.
-//
-// name defaults to the saturation analyzer when empty, since that is the entry
-// the optimizer's per-variant metadata helpers look for.
-func (f *satEntryFixture) named(name string) NamedAnalyzerResult {
-	if name == "" {
-		name = domain.SaturationAnalyzerName
-	}
+func (f *satEntryFixture) named() NamedAnalyzerResult {
 	return NamedAnalyzerResult{
-		Name:                   name,
+		Name:                   domain.SaturationAnalyzerName,
 		Result:                 f.result(),
 		TotalSupply:            f.TotalSupply,
 		TotalAnticipatedSupply: f.TotalAnticipatedSupply,

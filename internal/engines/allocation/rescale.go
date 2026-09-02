@@ -341,7 +341,10 @@ func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 	targetGPUs int,
 	freeThisCycle *int,
 ) []domain.VariantDecision {
-	satNamed := saturationNamedEntry(req.AnalyzerResults)
+	satNamed := req.CompositeSignal
+	if satNamed.Result == nil {
+		return nil
+	}
 	records := buildVariantRecords(req, satNamed.Result)
 	stateMap := buildStateMap(req.VariantStates)
 	vcMap := buildCapacityMap(records)
@@ -366,7 +369,7 @@ func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 		rt, rc := tgtByRole[role], curByRole[role]
 		switch {
 		case rt < rc:
-			reclaimRole(ctx, req.AnalyzerResults, records, role, stateMap, targets, rc-rt)
+			reclaimRole(ctx, req.CompositeSignal, records, role, stateMap, targets, rc-rt)
 		case rt > rc:
 			want := rt - rc
 			// The role's rescale target needs more GPUs than this cycle can
@@ -398,7 +401,7 @@ func (o *GreedyByScoreOptimizer) rescaleModelDecisions(
 // respecting minReplicas and the cheapest-at-1 protection, via scaleDownVariantSet.
 func reclaimRole(
 	ctx context.Context,
-	s []NamedAnalyzerResult,
+	e NamedAnalyzerResult,
 	variants []variantRecord,
 	role string,
 	stateMap map[string]domain.VariantReplicaState,
@@ -406,7 +409,7 @@ func reclaimRole(
 	deltaGPUs int,
 ) {
 	remaining := deltaGPUs
-	sorted := sortVariantsForScaleDown(s, variantsForRole(variants, role))
+	sorted := sortVariantsForScaleDown(e, variantsForRole(variants, role))
 	scaleDownVariantSet(ctx, sorted, targets, stateMap,
 		func(vc variantRecord) int {
 			g := gpusPerReplicaFromState(stateMap, vc.VariantName)
@@ -522,8 +525,8 @@ func rescaleInputsForGroup(reqs []ModelScalingRequest, accType string, budget in
 	inputs := make([]rescaleInput, 0, len(reqs))
 	sumDemandGPUs := 0
 	for _, req := range reqs {
-		satNamed := saturationNamedEntry(req.AnalyzerResults)
-		if satNamed == nil || satNamed.Result == nil {
+		satNamed := req.CompositeSignal
+		if satNamed.Result == nil {
 			continue
 		}
 		records := buildVariantRecords(req, satNamed.Result)
@@ -569,7 +572,7 @@ func rescaleInputsForGroup(reqs []ModelScalingRequest, accType string, budget in
 
 // modelDemandGPUs is the model's demand-in-GPUs summed across its roles on accType
 // (a P/D model needs GPUs for both prefill and decode).
-func modelDemandGPUs(satNamed *NamedAnalyzerResult, records []variantRecord, stateMap map[string]domain.VariantReplicaState, accType string) int {
+func modelDemandGPUs(satNamed NamedAnalyzerResult, records []variantRecord, stateMap map[string]domain.VariantReplicaState, accType string) int {
 	total := 0
 	for _, role := range modelRolesOnType(records, accType) {
 		total += roleDemandGPUs(satNamed, records, stateMap, accType, role)
@@ -580,7 +583,7 @@ func modelDemandGPUs(satNamed *NamedAnalyzerResult, records []variantRecord, sta
 // roleDemandGPUs converts a role's token demand to a GPU count via the role's most
 // cost-efficient variant's per-replica capacity. The synthetic "both" role uses the
 // model-level TotalDemand; a P/D role uses its RoleCapacities demand.
-func roleDemandGPUs(satNamed *NamedAnalyzerResult, records []variantRecord, stateMap map[string]domain.VariantReplicaState, accType, role string) int {
+func roleDemandGPUs(satNamed NamedAnalyzerResult, records []variantRecord, stateMap map[string]domain.VariantReplicaState, accType, role string) int {
 	demand := satNamed.Result.TotalDemand
 	if role != domain.RoleBoth {
 		if rc, ok := satNamed.RoleCapacities[role]; ok {

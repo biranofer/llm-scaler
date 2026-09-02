@@ -88,16 +88,17 @@ func (e *Engine) runV2AnalysisOnly(
 // TODO: make configurable if needed.
 const analyzerLivenessStaleCycles = 3
 
-// runAnalyzersAndScore runs the V2 saturation analyzer, applies the universal
-// threshold post-step to every analyzer's result (using per-analyzer config
-// overrides where set), and computes the weighted composite score from
-// saturation's signal and the model's priority.
+// runAnalyzersAndScore runs the V2 saturation analyzer plus every other
+// registered, enabled analyzer, builds a NamedAnalyzerResult for each, runs
+// liveness tracking and metrics for all, then returns the full slice.
+// collectV2ModelRequest picks namedResults[0] (saturation, always first) as
+// the single CompositeSignal handed to the optimizer.
 //
-// The engine applies applyUniversalThreshold to every analyzer (saturation and
-// all registered non-saturation analyzers) and collects the calibrated results
-// into a per-analyzer slice returned to the optimizer. Saturation is always the
-// first entry; it is the keeper of per-variant metadata (Cost, AcceleratorName,
-// Role) until a future pre-analysis-extraction PR separates that concern.
+// Saturation always runs; every other registered analyzer runs only if
+// config.AnalyzerEnabled. The capacity-build step (buildNamedResult) runs
+// once per analyzer. Saturation is the keeper of per-variant metadata
+// (Cost, AcceleratorName, Role) until a future pre-analysis-extraction PR
+// separates that concern.
 func (e *Engine) runAnalyzersAndScore(
 	ctx context.Context,
 	modelID, namespace string,
@@ -123,7 +124,6 @@ func (e *Engine) runAnalyzersAndScore(
 	if err != nil {
 		return nil, err
 	}
-
 	satUp, satDown := config.AnalyzerThresholds(domain.SaturationAnalyzerName)
 
 	// Build AnalyzerInput once; shared by all non-saturation analyzers.
@@ -143,12 +143,9 @@ func (e *Engine) runAnalyzersAndScore(
 		ArrivalRate:    arrivalRate,
 	}
 
-	// Collect per-analyzer results. Saturation is first; each non-saturation
-	// analyzer is run, calibrated with its resolved thresholds, and appended.
-	//
-	// The capacity-build step writes the engine-owned aggregates onto the named
-	// entry, so each entry is constructed *before* the build and its mutable
-	// Remaining/Spare counters are seeded from the built RC/SC afterwards.
+	// Run every analyzer and build its NamedAnalyzerResult. Saturation is
+	// first and always runs; each non-saturation analyzer is run only if
+	// registered and enabled.
 	namedResults := []allocation.NamedAnalyzerResult{
 		buildNamedResult(ctx, domain.SaturationAnalyzerName, baseResult, config, metaByVariant, satUp, satDown),
 	}
@@ -174,9 +171,9 @@ func (e *Engine) runAnalyzersAndScore(
 			continue
 		}
 		up, down := config.AnalyzerThresholds(entry.name)
-		namedResults = append(namedResults,
-			buildNamedResult(ctx, entry.name, result, config, metaByVariant, up, down))
+		namedResults = append(namedResults, buildNamedResult(ctx, entry.name, result, config, metaByVariant, up, down))
 	}
+
 	e.updateLivenessAndSetLive(ctx, namespace, modelID, namedResults)
 	e.recordAnalyzerMetrics(namespace, modelID, namedResults)
 
@@ -722,12 +719,7 @@ func computeCurrentGPUUsageByNamespace(requests []allocation.ModelScalingRequest
 // result. A request without one was not measured this cycle, so its replica
 // counts are not evidence of anything and must not be charged to a quota.
 func hasSaturationResult(req allocation.ModelScalingRequest) bool {
-	for _, e := range req.AnalyzerResults {
-		if e.Name == domain.SaturationAnalyzerName {
-			return e.Result != nil
-		}
-	}
-	return false
+	return req.CompositeSignal.Name == domain.SaturationAnalyzerName && req.CompositeSignal.Result != nil
 }
 
 // reportUnattributedGPUs surfaces usage that could not be charged to any
@@ -796,10 +788,13 @@ func (e *Engine) collectV2ModelRequest(
 		}
 	}
 
+	// namedResults[0] is always the saturation entry — it is built first and
+	// unconditionally. The optimizer only needs sat's signal; all other entries
+	// are engine-internal (liveness, metrics) and not forwarded.
 	return &allocation.ModelScalingRequest{
 		ModelID:         modelID,
 		Namespace:       namespace,
-		AnalyzerResults: namedResults,
+		CompositeSignal: namedResults[0],
 		VariantStates:   variantStates,
 		Variants:        variantMetadata,
 		Priority:        config.Priority,
