@@ -52,6 +52,72 @@ var _ = Describe("ParseVLLMArgs", func() {
 			Expect(params.GpuMemoryUtilization).To(Equal(0.85))
 			Expect(params.MaxNumSeqs).To(Equal(int64(128)))
 		})
+
+		It("should parse a multi-line, backslash-continued shell command", func() {
+			// Matches the shape this repo's own scenarios (and, in practice,
+			// most real vLLM deployments) actually write: a long `vllm
+			// serve ...` invocation split across many lines, each ending in
+			// `\`. Every flag here is on its own physical line -- exactly
+			// the pattern that glued a stray "\\\n" onto every flag after
+			// the first one, defeating the "--" prefix check silently.
+			script := "vllm serve /model-cache/model \\\n" +
+				"--host 0.0.0.0 \\\n" +
+				"--block-size 128 \\\n" +
+				"--max-num-seq 256 \\\n" +
+				"--max-num-batched-tokens 65536 \\\n" +
+				"--tensor-parallel-size 1 \\\n" +
+				"--gpu-memory-utilization 0.9 \\\n" +
+				"--no-enable-prefix-caching"
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:    "vllm",
+									Command: []string{"/bin/bash", "-c"},
+									Args:    []string{script},
+								},
+							},
+						},
+					},
+				},
+			}
+			params := ParseVLLMArgs(scaletarget.NewDeploymentAccessor(deploy))
+			Expect(params.BlockSize).To(Equal(int64(128)))
+			Expect(params.MaxNumSeqs).To(Equal(int64(256)))
+			Expect(params.MaxNumBatchedTokens).To(Equal(int64(65536)))
+			Expect(params.EffectiveMaxBatchedTokens).To(Equal(int64(65536)))
+			Expect(params.TensorParallelSize).To(Equal(1))
+			Expect(params.GpuMemoryUtilization).To(Equal(0.9))
+		})
+
+		It("should parse preamble lines with no trailing backslash before the flags", func() {
+			// The bare-newline case: this repo's customCommand blocks start
+			// with a couple of plain statements (env sourcing, an
+			// accelerator preamble) that end in a plain newline, not `\`.
+			script := "export FOO=bar\n" +
+				". /shared-config/env.sh\n" +
+				"vllm serve /model-cache/model \\\n" +
+				"--max-num-batched-tokens 8192"
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:    "vllm",
+									Command: []string{"/bin/sh", "-c"},
+									Args:    []string{script},
+								},
+							},
+						},
+					},
+				},
+			}
+			params := ParseVLLMArgs(scaletarget.NewDeploymentAccessor(deploy))
+			Expect(params.MaxNumBatchedTokens).To(Equal(int64(8192)))
+		})
 	})
 
 	Describe("Default values", func() {

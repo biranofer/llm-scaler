@@ -133,9 +133,22 @@ func collectArgs(command, args []string) []string {
 }
 
 // splitShellString performs basic shell-like splitting on a command string.
-// It handles simple single/double quoting but is not a full shell parser:
-// escape sequences (\"), variable expansion ($VAR), and command substitution
-// are not supported. This is sufficient for typical vLLM deployment commands.
+// It handles simple single/double quoting, and shell line-continuation
+// (a backslash immediately followed by a newline, the idiomatic way to write
+// a long `vllm serve ...` invocation across multiple lines -- used by every
+// scenario in this repo and, in practice, by real deployments generally). It
+// is not a full shell parser: escape sequences (\"), variable expansion
+// ($VAR), and command substitution are not supported.
+//
+// Line continuation matters more than it looks: left unhandled, the
+// backslash and newline at the end of one line get glued onto the front of
+// the next line's first token (e.g. "\\\n--max-num-batched-tokens" instead
+// of "--max-num-batched-tokens"). That fails the "--" prefix check in
+// parseArgsWith, so every flag after the first physical line of a multi-line
+// command was silently skipped -- not a rare edge case, but the normal shape
+// of a customCommand block. A bare newline (no preceding backslash, as
+// between this function's non-flag preamble lines) is treated the same as a
+// space: it ends a token, but isn't itself content.
 func splitShellString(s string) []string {
 	var tokens []string
 	var current strings.Builder
@@ -145,6 +158,17 @@ func splitShellString(s string) []string {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		switch {
+		case ch == '\\' && !inSingleQuote && !inDoubleQuote && i+1 < len(s) && s[i+1] == '\n':
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			i++ // also consume the newline
+		case ch == '\n' && !inSingleQuote && !inDoubleQuote:
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
 		case ch == '\'' && !inDoubleQuote:
 			inSingleQuote = !inSingleQuote
 		case ch == '"' && !inSingleQuote:
@@ -236,7 +260,13 @@ func applyParam(key, value string, params *EngineParams) {
 		if v, err := strconv.ParseInt(value, 10, 64); err == nil {
 			params.MaxNumBatchedTokens = v
 		}
-	case "max_num_seqs":
+	case "max_num_seq", "max_num_seqs":
+		// vLLM accepts both --max-num-seq and --max-num-seqs (confirmed live:
+		// this repo's own scenarios invoke the singular form, and vLLM starts
+		// normally with it), but only the plural form was recognized here --
+		// the singular one fell through to the same "unrecognized flag" path
+		// as an actually-unknown flag, silently leaving MaxNumSeqs at its
+		// struct default.
 		if v, err := strconv.ParseInt(value, 10, 64); err == nil {
 			params.MaxNumSeqs = v
 		}
