@@ -127,7 +127,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify k2 was stored in history
-			histKey := "test-model|H100|1|short"
+			histKey := "test-model|H100|1|both|short"
 			ra, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeTrue())
 			Expect(ra.Average()).To(Equal(float64(8000)))
@@ -147,7 +147,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			_, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 
-			histKey := "test-model|H100|1|short"
+			histKey := "test-model|H100|1|both|short"
 			_, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeFalse())
 		})
@@ -214,6 +214,42 @@ var _ = Describe("SaturationAnalyzer", func() {
 		})
 	})
 
+	Describe("Role-scoped history", func() {
+		It("should not let one role's P1-obs seed another role's history bucket", func() {
+			// Both variants land in the same "short" output bucket (avgOutput=50
+			// for both), which is exactly the collision this fix targets: a
+			// prefill variant (permanently ~0 avgOutput in real traffic) and a
+			// decode variant that happens to be at "short" too (e.g. a cold
+			// replica before it's served real traffic).
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-p", "variant-p", 8000, 16000, 6, 100, 50),
+					makeReplicaMetrics("pod-d", "variant-d", 3000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-p", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill},
+					{VariantName: "variant-d", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RoleDecode},
+				},
+			)
+
+			_, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			prefillHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|prefill|short"]
+			Expect(ok).To(BeTrue())
+			Expect(prefillHist.Average()).To(Equal(float64(8000)))
+
+			decodeHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|decode|short"]
+			Expect(ok).To(BeTrue())
+			Expect(decodeHist.Average()).To(Equal(float64(3000)))
+
+			// Pre-fix, both observations landed in the single shared
+			// "test-model|H100|1|short" key and averaged together.
+			_, ok = analyzer.computeCapacityHistory["test-model|H100|1|short"]
+			Expect(ok).To(BeFalse())
+		})
+	})
+
 	Describe("k2 derivation from deployment params", func() {
 		It("should derive k2 from chunked prefill params", func() {
 			// Pre-populate store with deployment params for this variant
@@ -263,6 +299,72 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 			// k2 derivation needs avgOutput > 0, falls back to k1
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
+
+		It("should use the derived k2 for a decode-role variant when it is below k1", func() {
+			store.Update("test-ns", "test-model", "variant-d", CapacityRecord{
+				GpuCount: 1,
+				EngineParams: &EngineParams{
+					EffectiveMaxBatchedTokens: 2048,
+					MaxNumSeqs:                10,
+					ChunkedPrefillEnabled:     true,
+				},
+				LearnedFrom: "deployment",
+			})
+
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					// Queue below threshold, no history → uses derived k2.
+					makeReplicaMetrics("pod-1", "variant-d",
+						100, 16000, 0, 100, 1000), // I=100, O=1000
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-d", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RoleDecode},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// B=2048, S=10, I=100, O=1000
+			// N_steady = min(2048*1000/1100, 10) = 10
+			// k2 = 10 * (100 + 1000/2) = 10 * 600 = 6000
+			// k1 = 12800, effective = min(12800, 6000) = 6000 (compute-bound)
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(6000)))
+		})
+
+		It("should skip the derived formula for a prefill-role variant and fall back to k1", func() {
+			// Identical EngineParams/inputs to the decode case above -- the
+			// only difference is Role. A prefill vLLM instance reports
+			// avgOutput~0-1 in real traffic (it hands off to decode before
+			// generating anything); avgOutput=1000 here stands in for
+			// whatever this replica happens to report, to isolate that the
+			// skip is driven by role, not by the input shape.
+			store.Update("test-ns", "test-model", "variant-p", CapacityRecord{
+				GpuCount: 1,
+				EngineParams: &EngineParams{
+					EffectiveMaxBatchedTokens: 2048,
+					MaxNumSeqs:                10,
+					ChunkedPrefillEnabled:     true,
+				},
+				LearnedFrom: "deployment",
+			})
+
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-p",
+						100, 16000, 0, 100, 1000),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-p", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// Priority 3 skipped for prefill -> Priority 4 (k1 fallback),
+			// not the 6000 a decode-role variant would get from the same
+			// EngineParams/inputs.
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
 		})
 	})
