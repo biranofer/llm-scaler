@@ -157,7 +157,11 @@ def _thanos_fallback(namespace, model_id, start, stop):
         f'wva_desired_replicas{{exported_namespace="{namespace}"}}', start_ts, end_ts,
     ):
         variant = series.get("metric", {}).get("variant_name", "")
-        tag = "v2" if variant.endswith("-v2") else "primary"
+        # "prefill" buckets as "v2": a P/D run has no cost-tier sibling, so
+        # its second role is deliberately mapped onto the same slot rather
+        # than adding a real third variant kind. Legend/labels downstream
+        # still read "primary"/"v2"; only the underlying data differs.
+        tag = "v2" if variant.endswith("-v2") or "prefill" in variant else "primary"
         for ts, v in series.get("values", []):
             bucket(ts)[tag] = int(float(v))
 
@@ -215,17 +219,27 @@ def main():
     start = parse_iso(meta["harness_start"])
     stop = parse_iso(meta["harness_stop"])
 
-    # Pull WVA logs covering the run window. We query "since" relative to now
-    # plus a small buffer to ensure we capture the harness-start tick.
-    now = datetime.now(timezone.utc)
-    since_seconds = int((now - start).total_seconds()) + 90
-
-    logs = subprocess.run(
-        ["kubectl", "logs", "-n", args.namespace,
-         "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
-         f"--since={since_seconds}s", "--tail=200000"],
-        capture_output=True, text=True,
-    ).stdout
+    # Prefer a captured tail file (written by `make benchmark-run` via
+    # tail_wva_logs.sh from the moment the run started) over a live
+    # `kubectl logs` call: the controller's own log buffer is bounded by
+    # kubelet's fixed per-container rotation size, not by run length, so
+    # anything past the first few minutes is commonly gone by the time this
+    # runs after the fact. The captured file has no such limit.
+    captured = rd / "wva_controller.log"
+    if captured.is_file() and captured.read_text().strip():
+        print(f"Using captured log tail: {captured}", file=sys.stderr)
+        logs = captured.read_text()
+    else:
+        # Pull WVA logs covering the run window. We query "since" relative to
+        # now plus a small buffer to ensure we capture the harness-start tick.
+        now = datetime.now(timezone.utc)
+        since_seconds = int((now - start).total_seconds()) + 90
+        logs = subprocess.run(
+            ["kubectl", "logs", "-n", args.namespace,
+             "-l", "app.kubernetes.io/name=workload-variant-autoscaler",
+             f"--since={since_seconds}s", "--tail=200000"],
+            capture_output=True, text=True,
+        ).stdout
 
     samples_by_ts = {}
 
@@ -249,7 +263,11 @@ def main():
             target = d.get("target")
             if target is None:
                 continue
-            tag = "v2" if variant.endswith("-v2") else "primary"
+            # "prefill" buckets as "v2": a P/D run has no cost-tier sibling, so
+            # its second role is deliberately mapped onto the same slot rather
+            # than adding a real third variant kind. Legend/labels downstream
+            # still read "primary"/"v2"; only the underlying data differs.
+            tag = "v2" if variant.endswith("-v2") or "prefill" in variant else "primary"
             bucket(ts_dt)[tag] = int(target)
             continue
 
