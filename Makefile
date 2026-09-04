@@ -186,6 +186,12 @@ BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID
 # free. Size the card for serving; tune when a replica counts as full in the
 # scaling policy.
 GPU_MEM_UTIL         ?= 0.90
+# Memory limit for the benchmark harness pod (inference-perf/guidellm), patched
+# into the llm-d-benchmark clone by benchmark-patch (hack/benchmark/patch_harness.sh
+# fix 6). The clone's stock value, 32Gi, OOMKilled a 60-minute/33k-request
+# inference-perf run with per_request logging disabled -- summary/per_stage
+# percentile bookkeeping alone was enough to exceed it.
+HARNESS_MEMORY       ?= 64Gi
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
@@ -1123,7 +1129,7 @@ benchmark-patch: ## Reapply our fixes to the llm-d-benchmark clone (idempotent; 
 	@# from the checked-out tree, by design ("so a run can use a new/updated
 	@# harness with an older benchmark image").
 	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
-		GPU_MEM_UTIL=$(GPU_MEM_UTIL) bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
+		GPU_MEM_UTIL=$(GPU_MEM_UTIL) HARNESS_MEMORY=$(HARNESS_MEMORY) bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
 	else \
 		echo "benchmark-patch: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
 	fi
@@ -1797,6 +1803,8 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
 	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
 	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
+	@rm -f /tmp/wva_controller_tail.log /tmp/wva_controller_tail.log.pid /tmp/wva_controller_tail.log.stderr
+	@bash hack/benchmark/tail_wva_logs.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
@@ -1808,11 +1816,16 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# post-processing step still produced measurements worth reading, and every
 	@# FMA run so far has ended that way.
 	@bash hack/benchmark/sample_replicas.sh stop /tmp/wva_replica_samples.json || true
+	@bash hack/benchmark/tail_wva_logs.sh stop $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	@LATEST=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
 	if [ -n "$$LATEST" ] && [ -s /tmp/wva_replica_samples.json ]; then \
 		mkdir -p "$$LATEST/metrics/processed"; \
 		cp /tmp/wva_replica_samples.json "$$LATEST/metrics/processed/wva_replica_samples.json"; \
 		echo "Replica samples filed in $$LATEST/metrics/processed/wva_replica_samples.json"; \
+	fi; \
+	if [ -n "$$LATEST" ] && [ -s /tmp/wva_controller_tail.log ]; then \
+		cp /tmp/wva_controller_tail.log "$$LATEST/wva_controller.log"; \
+		echo "WVA controller log tail filed in $$LATEST/wva_controller.log"; \
 	fi
 	@echo ""
 	@echo "========================================="
@@ -1929,7 +1942,6 @@ BENCHMARK_WAIT_TIMEOUT ?= 7200
 # stack up, and spending two hours on a single stuck rollout would look exactly
 # like a slow model load. A replica reloading its weights takes minutes.
 BENCHMARK_DRAIN_ROLLOUT_TIMEOUT ?= 900
-BENCHMARK_HARNESS_MEMORY ?= 40Gi
 
 .PHONY: benchmark-run-bursty
 benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi-stage rates (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
@@ -1937,19 +1949,11 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-run-bursty BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
-	@# Same reason benchmark-run does it: the clone is gitignored and
-	@# benchmark-install re-checks it out, so a re-run can otherwise drive an
-	@# unpatched harness. This target skipped it, which is worse here than on
-	@# benchmark-run -- a bursty profile is the long one, so a whole hour is
-	@# spent before the missing fixes show up as a FAILED run with no report.
 	@$(MAKE) --no-print-directory benchmark-patch
 	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" ]; then \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" \
 		   "$(BENCHMARK_REPO_DIR)/workload/profiles/inference-perf/$(BURSTY_WORKLOAD).in"; \
 	fi
-	@echo "Patching harness memory to $(BENCHMARK_HARNESS_MEMORY)..."
-	@sed -i.bak 's/memory: 32Gi/memory: $(BENCHMARK_HARNESS_MEMORY)/' \
-		$(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l inference-perf \
@@ -1957,11 +1961,7 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		-U $(BENCHMARK_GATEWAY_URL) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,) \
-		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT); \
-	rc=$$?; \
-	mv $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml.bak \
-	   $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml; \
-	exit $$rc
+		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT)
 
 .PHONY: benchmark-run-all
 benchmark-run-all: ## Run all scenarios: teardown → standup → run per scenario (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
