@@ -511,7 +511,18 @@ scenario:
                 mountPath: /shared-config
 
         parallelism:
-          tensor: 2
+          # TP=1, not 2: this ratio was inherited from the upstream llm-d guide's
+          # reference workload (gpt-oss-120b, decode TP=4 there), where TP is
+          # doing real memory sharding for a ~120B-parameter model. Qwen3-0.6B
+          # needs ~1.4GB of weights -- nothing on an H100 needs sharding -- so
+          # TP=2 bought no compute or memory benefit, only a cross-GPU
+          # all-reduce on every decode step and, more importantly, a replica
+          # that costs 2 GPUs instead of 1. That directly compounded the GPU
+          # scarcity this cluster hit under real load (8000-token RPS=10:
+          # 14 nodes reporting "Insufficient nvidia.com/gpu"): TP=1 lets WVA
+          # get 2x the decode replicas from the same GPU budget, and scale in
+          # 1-GPU increments instead of 2.
+          tensor: 1
           data: 1
           dataLocal: 1
           workers: 1
