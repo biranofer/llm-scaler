@@ -27,6 +27,7 @@ except ImportError:
 try:
     import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
     from matplotlib.transforms import blended_transform_factory
 except ImportError:
     print("Skipping the two-variant plot: matplotlib is not installed "
@@ -116,7 +117,7 @@ def collect(raw_dir: Path):
             ed = parse_epp_log(f)
             if ed:
                 epp_series.append((ts, ed))
-        elif "decode" in pod:
+        elif "decode" in pod or "prefill" in pod:
             md = parse_pod_log(f)
             if md is None:
                 continue
@@ -125,7 +126,21 @@ def collect(raw_dir: Path):
 
 
 def is_v2(pod_name: str) -> bool:
-    return "-decode-v2-" in pod_name
+    # "-decode-v2-": the cost-tier decode sibling from two-variant-wva.
+    # "prefill": P/D disaggregation's second role. Bucketed into the same
+    # "v2" slot deliberately, rather than adding a real third variant kind --
+    # labels_for() below picks the right display text either way, so the
+    # data is correctly split regardless of which convention produced it.
+    return "-decode-v2-" in pod_name or "prefill" in pod_name
+
+
+def labels_for(decode_series) -> tuple[str, str]:
+    """(primary_label, secondary_label) for this run's legends/titles.
+    ("decode", "prefill") when the "v2" bucket was populated by the P/D role
+    marker rather than a real cost-tier "-v2-" sibling, else the literal
+    ("primary", "v2") this file's data model was originally built around."""
+    is_pd = any("prefill" in pod for pods in decode_series.values() for pod, _ in pods)
+    return ("decode", "prefill") if is_pd else ("primary", "v2")
 
 
 def aggregate_decode(decode_series):
@@ -181,7 +196,8 @@ def replica_timeseries(results_dir: Path):
         ts = int(datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00")).timestamp())
         prim = v2 = 0
         for c in s["controllers"]:
-            if c["name"].endswith("-v2"):
+            # Same "prefill buckets as v2" simplification as is_v2() above.
+            if c["name"].endswith("-v2") or "prefill" in c["name"]:
                 v2 = c["ready_replicas"]
             else:
                 prim = c["ready_replicas"]
@@ -287,12 +303,23 @@ def _load_experiment_metadata(results_dir: Path):
     workload = {}
     workload_name = run_meta.get("harness_workload")
     if workload_name:
-        wp = results_dir / workload_name
-        if wp.is_file():
-            try:
-                workload = yaml.safe_load(wp.read_text()) or {}
-            except Exception:
-                workload = {}
+        # guidellm doesn't copy its rendered profile into
+        # results/<treatment>_<i>/ (only inference-perf does) -- it stays at
+        # <run_dir>/workload/profiles/<harness>/<name>, three levels above
+        # results_dir. Try both rather than assuming one harness's layout.
+        candidates = [results_dir / workload_name]
+        harness_name = run_meta.get("harness_name")
+        if harness_name:
+            candidates.append(
+                results_dir.parent.parent / "workload" / "profiles" / harness_name / workload_name
+            )
+        for wp in candidates:
+            if wp.is_file():
+                try:
+                    workload = yaml.safe_load(wp.read_text()) or {}
+                except Exception:
+                    workload = {}
+                break
 
     stages = []
     input_tokens = output_tokens = None
@@ -305,16 +332,49 @@ def _load_experiment_metadata(results_dir: Path):
         output_tokens = dout.get("mean", dout.get("max"))
     elif "spec" in workload:  # guidellm shape
         spec = workload["spec"]
-        rate = (spec.get("profile") or {}).get("rate")
-        duration = None
-        for c in spec.get("constraints") or []:
-            if c.get("kind") == "max_duration":
-                duration = c.get("seconds")
-        for r in (rate if isinstance(rate, list) else [rate]):
-            stages.append((r, duration))
-        data0 = (spec.get("data") or [{}])[0]
-        input_tokens = data0.get("prompt_tokens")
-        output_tokens = data0.get("output_tokens")
+        profile = spec.get("profile") or {}
+        if profile.get("kind") == "replay":
+            # Trace-replay workloads (hack/benchmark/gen_shape_trace.py):
+            # spec.profile carries no rate and spec.data[0] only names the
+            # trace file, so neither token shape nor the per-phase schedule
+            # is in this rendered profile at all -- the trace generator's own
+            # *.params.yaml has both. Located by convention (same basename as
+            # the trace file, in test/benchmark/scenarios/) rather than a
+            # path recorded anywhere in the run, since the rendered profile
+            # doesn't carry one.
+            data0 = (spec.get("data") or [{}])[0]
+            stem = Path(data0.get("path", "")).stem
+            params_path = (
+                Path(__file__).resolve().parents[2]
+                / "test" / "benchmark" / "scenarios" / f"{stem}.params.yaml"
+            )
+            phases = []
+            if stem and params_path.is_file():
+                try:
+                    params = yaml.safe_load(params_path.read_text()) or {}
+                    for p in params.get("phases") or []:
+                        phases.append({
+                            "rate": p.get("rate_rps"),
+                            "duration": p.get("duration_s"),
+                            "input_tokens": (p.get("input_tokens") or {}).get("mean"),
+                            "output_tokens": (p.get("output_tokens") or {}).get("mean"),
+                        })
+                except Exception:
+                    phases = []
+            meta["shape_phases"] = phases
+            for p in phases:
+                stages.append((p.get("rate"), p.get("duration")))
+        else:
+            rate = profile.get("rate")
+            duration = None
+            for c in spec.get("constraints") or []:
+                if c.get("kind") == "max_duration":
+                    duration = c.get("seconds")
+            for r in (rate if isinstance(rate, list) else [rate]):
+                stages.append((r, duration))
+            data0 = (spec.get("data") or [{}])[0]
+            input_tokens = data0.get("prompt_tokens")
+            output_tokens = data0.get("output_tokens")
 
     meta["stages"] = stages
     meta["input_tokens"] = input_tokens
@@ -357,6 +417,28 @@ def _load_keda_policy(namespace, model_id):
 
 def _format_workload_line(meta):
     parts = []
+    phases = meta.get("shape_phases")
+    if phases:
+        # Trace-replay shape-swap run: the schedule's real content is the
+        # token-shape change, not rate (constant across every phase in every
+        # such run so far) -- lead with the shape, and only spell out RPS
+        # per-phase if it actually varies.
+        shape_str = " → ".join(
+            f"{p['input_tokens']:g}/{p['output_tokens']:g}"
+            for p in phases if p.get("input_tokens") is not None
+        )
+        if shape_str:
+            parts.append(f"{shape_str} in/out tokens")
+        durations = {p["duration"] for p in phases if p.get("duration")}
+        if len(durations) == 1:
+            d = durations.pop()
+            parts.append(f"{d / 60:g}m/phase" if d >= 60 else f"{d:g}s/phase")
+        rates = {p["rate"] for p in phases if p.get("rate") is not None}
+        if len(rates) == 1:
+            parts.append(f"RPS {rates.pop():g} throughout")
+        elif rates:
+            parts.append("RPS " + " → ".join(f"{p.get('rate'):g}" for p in phases))
+        return "   |   ".join(parts) if parts else None
     if meta.get("input_tokens") is not None and meta.get("output_tokens") is not None:
         parts.append(f"{meta['input_tokens']:g}/{meta['output_tokens']:g} in/out tokens")
     stages = meta.get("stages")
@@ -385,18 +467,29 @@ def _format_keda_line(behavior):
 
 
 def _stage_boundaries(meta):
-    """Absolute epoch timestamps (and the new rate) at each load-schedule
-    transition, for vertical markers. Excludes the run's own start — stage 0
-    needs no marker, it's the left edge of the plot."""
+    """Absolute epoch timestamps (and a short label for the new stage) at
+    each load-schedule transition, for vertical markers. Excludes the run's
+    own start — stage 0 needs no marker, it's the left edge of the plot.
+
+    Labels with the new token shape for trace-replay runs (shape_phases
+    present): that is the schedule's real content there, and RPS constant
+    across phases would repeat the same uninformative number at every
+    marker. Otherwise labels with the new rate, as before.
+    """
     start = meta.get("harness_start_epoch")
     stages = meta.get("stages") or []
+    phases = meta.get("shape_phases") or []
     if start is None:
         return []
     boundaries = []
     t = start
     for i, (rate, duration) in enumerate(stages):
         if i > 0:
-            boundaries.append((t, rate))
+            if i < len(phases) and phases[i].get("input_tokens") is not None:
+                label = f"{phases[i]['input_tokens']:g}/{phases[i]['output_tokens']:g} tok"
+            else:
+                label = f"{rate:g} RPS"
+            boundaries.append((t, label))
         if not duration:
             break
         t += duration
@@ -411,6 +504,7 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     # line -- worth omitting rather than cluttering every legend with an
     # entry that never carries information.
     has_v2 = any(is_v2(pod) for pods in decode_series.values() for pod, _ in pods)
+    PRIM, SEC = labels_for(decode_series)
     drows = aggregate_decode(decode_series)
     erows = epp_panels(epp_series)
     repls = replica_timeseries(results_dir)
@@ -450,19 +544,20 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     ax.set_title(title, pad=8)
     if repls:
         x = [to_dt(r[0]) for r in repls]
-        ax.step(x, [r[1] for r in repls], where="post", color=PRIMARY_COLOR, label="primary (ready)", linewidth=2)
+        ax.step(x, [r[1] for r in repls], where="post", color=PRIMARY_COLOR, label=f"{PRIM} (ready)", linewidth=2)
         if has_v2:
-            ax.step(x, [r[2] for r in repls], where="post", color=V2_COLOR, label="v2 (ready)", linewidth=2)
+            ax.step(x, [r[2] for r in repls], where="post", color=V2_COLOR, label=f"{SEC} (ready)", linewidth=2)
     if wva_targets:
         xt = [to_dt(t[0]) for t in wva_targets]
         prim_t = [t[1] for t in wva_targets]
         ax.step(xt, prim_t, where="post", color=PRIMARY_COLOR, linestyle="--", linewidth=1.4,
-                label="primary (WVA target)", alpha=0.8)
+                label=f"{PRIM} (WVA target)", alpha=0.8)
         if has_v2:
             v2_t = [t[2] for t in wva_targets]
             ax.step(xt, v2_t, where="post", color=V2_COLOR, linestyle="--", linewidth=1.4,
-                    label="v2 (WVA target)", alpha=0.8)
+                    label=f"{SEC} (WVA target)", alpha=0.8)
     ax.set_ylabel("Replicas")
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.legend(loc="best", fontsize=7)
     ax.grid(alpha=0.3)
 
@@ -527,9 +622,9 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     ax.set_title("KV Cache Utilization (avg per variant)")
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
-        ax.plot(x, [r["kv_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
+        ax.plot(x, [r["kv_primary"] for r in drows], color=PRIMARY_COLOR, label=PRIM)
         if has_v2:
-            ax.plot(x, [r["kv_v2"] for r in drows], color=V2_COLOR, label="v2")
+            ax.plot(x, [r["kv_v2"] for r in drows], color=V2_COLOR, label=SEC)
     ax.set_ylabel("KV %")
     ax.set_ylim(0, 100)
     ax.legend(loc="upper right", fontsize=8)
@@ -540,9 +635,9 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     ax.set_title("Requests Running (sum per variant)")
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
-        ax.plot(x, [r["run_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
+        ax.plot(x, [r["run_primary"] for r in drows], color=PRIMARY_COLOR, label=PRIM)
         if has_v2:
-            ax.plot(x, [r["run_v2"] for r in drows], color=V2_COLOR, label="v2")
+            ax.plot(x, [r["run_v2"] for r in drows], color=V2_COLOR, label=SEC)
     ax.set_ylabel("Running")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.3)
@@ -552,9 +647,9 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     ax.set_title("vLLM Requests Waiting (sum per variant)")
     if drows:
         x = [to_dt(r["ts"]) for r in drows]
-        ax.plot(x, [r["wait_primary"] for r in drows], color=PRIMARY_COLOR, label="primary")
+        ax.plot(x, [r["wait_primary"] for r in drows], color=PRIMARY_COLOR, label=PRIM)
         if has_v2:
-            ax.plot(x, [r["wait_v2"] for r in drows], color=V2_COLOR, label="v2")
+            ax.plot(x, [r["wait_v2"] for r in drows], color=V2_COLOR, label=SEC)
     ax.set_ylabel("Waiting")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.3)
@@ -566,9 +661,9 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         x = [to_dt(r["ts"]) for r in erows]
         ax.plot(x, [r["fc_queue"] for r in erows], color="black", label="flow_control_queue (gateway)")
         ax.plot(x, [r["pool_avg"] for r in erows], color="orange", label="pool_average_queue", alpha=0.8)
-        ax.plot(x, [r["per_pod_primary"] for r in erows], color=PRIMARY_COLOR, linestyle="--", label="per pod sum: primary")
+        ax.plot(x, [r["per_pod_primary"] for r in erows], color=PRIMARY_COLOR, linestyle="--", label=f"per pod sum: {PRIM}")
         if has_v2:
-            ax.plot(x, [r["per_pod_v2"] for r in erows], color=V2_COLOR, linestyle="--", label="per pod sum: v2")
+            ax.plot(x, [r["per_pod_v2"] for r in erows], color=V2_COLOR, linestyle="--", label=f"per pod sum: {SEC}")
         ax.set_ylabel("Requests in queue")
         ax.legend(loc="best", fontsize=7)
         ax.grid(alpha=0.3)
@@ -600,10 +695,10 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         ax.set_title(
             "WVA Saturation Utilization  (per variant, analyzer-internal)")
         sat_pri = [s.get("primary", {}).get("wva_saturation_utilization") for s in wva_full]
-        ax.plot(x_wva, sat_pri, color=PRIMARY_COLOR, label="primary", linewidth=2)
+        ax.plot(x_wva, sat_pri, color=PRIMARY_COLOR, label=PRIM, linewidth=2)
         if has_v2:
             sat_v2 = [s.get("v2", {}).get("wva_saturation_utilization") for s in wva_full]
-            ax.plot(x_wva, sat_v2, color=V2_COLOR, label="v2", linewidth=2)
+            ax.plot(x_wva, sat_v2, color=V2_COLOR, label=SEC, linewidth=2)
         # Reference lines from the saturation config: 0.85 scale-up, 0.70 scale-down
         ax.axhline(0.85, color="black", linestyle=":", linewidth=0.8, alpha=0.6)
         ax.axhline(0.70, color="black", linestyle=":", linewidth=0.8, alpha=0.6)
@@ -622,14 +717,14 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
         ax.set_title("WVA KV Tokens In Use vs Capacity  (per variant)")
         used_pri = [s.get("primary", {}).get("wva_kv_cache_tokens_used") for s in wva_full]
         cap_pri  = [s.get("primary", {}).get("wva_kv_cache_tokens_capacity") for s in wva_full]
-        ax.plot(x_wva, used_pri, color=PRIMARY_COLOR, label="primary used",     linewidth=2)
-        ax.plot(x_wva, cap_pri,  color=PRIMARY_COLOR, label="primary capacity",
+        ax.plot(x_wva, used_pri, color=PRIMARY_COLOR, label=f"{PRIM} used",     linewidth=2)
+        ax.plot(x_wva, cap_pri,  color=PRIMARY_COLOR, label=f"{PRIM} capacity",
                 linewidth=1.2, linestyle="--", alpha=0.7)
         if has_v2:
             used_v2 = [s.get("v2", {}).get("wva_kv_cache_tokens_used") for s in wva_full]
             cap_v2  = [s.get("v2", {}).get("wva_kv_cache_tokens_capacity") for s in wva_full]
-            ax.plot(x_wva, used_v2, color=V2_COLOR, label="v2 used", linewidth=2)
-            ax.plot(x_wva, cap_v2,  color=V2_COLOR, label="v2 capacity",
+            ax.plot(x_wva, used_v2, color=V2_COLOR, label=f"{SEC} used", linewidth=2)
+            ax.plot(x_wva, cap_v2,  color=V2_COLOR, label=f"{SEC} capacity",
                     linewidth=1.2, linestyle="--", alpha=0.7)
         ax.set_ylabel("tokens")
         ax.legend(loc="upper left", fontsize=7, ncol=2)
@@ -657,16 +752,27 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     axes[-1].set_xlabel("Time (UTC)")
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=timezone.utc))
 
-    final_prim = repls[-1][1] if repls else 0
-    final_v2 = repls[-1][2] if repls else 0
+    # "cost-aware" used to be printed unconditionally, which was simply wrong
+    # for a run where nothing pointed a ScaledObject at WVA at all. wva_targets
+    # is derived (dump_wva_target_timeseries.py) from actual per-variant WVA
+    # decisions in the controller log, so its absence is a real signal that
+    # WVA never drove this run -- not just that its dump step was skipped.
+    scaling_mode = "cost-aware" if wva_targets else "KEDA well-lit path (no WVA)"
     title_lines = [
         f"Two-Variant V2 — FULL PIPELINE {title_suffix}",
-        f"primary={final_prim}, v2={final_v2}  cost-aware",
+        scaling_mode,
     ]
     wl_line = _format_workload_line(exp_meta)
     if wl_line:
         title_lines.append(wl_line)
-    keda_line = _format_keda_line(keda_behavior)
+    # _load_keda_policy queries the LIVE cluster, not a per-run snapshot, so
+    # it is only trustworthy right after a run -- once the ScaledObject that
+    # drove it is gone (e.g. a temporary KEDA-only arm, restored to WVA
+    # afterward), it silently shows whatever is live NOW mislabeled as this
+    # run's behavior. Gate it on the same wva_targets signal as the title's
+    # scaling_mode: no WVA decisions in THIS run's log means we cannot vouch
+    # for the live ScaledObject still being the one that drove it either.
+    keda_line = _format_keda_line(keda_behavior) if wva_targets else None
     if keda_line:
         title_lines.append(keda_line)
     fig.suptitle("\n".join(title_lines), fontsize=9)
@@ -703,11 +809,11 @@ def plot(results_dir: Path, out_path: Path, title_suffix: str):
     # repeating it 8x.
     if stage_boundaries:
         trans = blended_transform_factory(axes[0].transData, fig.transFigure)
-        for b_ts, b_rate in stage_boundaries:
+        for b_ts, b_label in stage_boundaries:
             b_dt = to_dt(b_ts)
             for ax in axes:
                 ax.axvline(b_dt, color="gray", linestyle=":", linewidth=1.2, alpha=0.7, zorder=0)
-            axes[0].text(b_dt, label_y, f"{b_rate:g} RPS", transform=trans,
+            axes[0].text(b_dt, label_y, b_label, transform=trans,
                          fontsize=7, ha="center", va="top", color="gray")
 
     fig.savefig(out_path, dpi=120)
