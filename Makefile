@@ -1851,15 +1851,19 @@ benchmark-report: ## Generate a markdown table from the latest benchmark results
 	fi; \
 	echo "Results directory: $$LATEST_DIR"; \
 	echo ""; \
+	mkdir -p "$$LATEST_DIR/metrics"; \
+	REPORT_MD="$$LATEST_DIR/metrics/report.md"; \
 	if [ -n "$(BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX)" ]; then \
 		python3 $(CURDIR)/hack/benchmark/postprocess.py \
 			--secondary-suffix $(BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX) \
 			--scenario-yaml $(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml \
 			--variant-config $(VARIANT_CONFIG) \
-			$$LATEST_DIR; \
+			$$LATEST_DIR | tee "$$REPORT_MD"; \
 	else \
-		python3 $(CURDIR)/hack/benchmark/postprocess.py $$LATEST_DIR; \
-	fi
+		python3 $(CURDIR)/hack/benchmark/postprocess.py $$LATEST_DIR | tee "$$REPORT_MD"; \
+	fi; \
+	echo ""; \
+	echo "Report saved: $$REPORT_MD"
 
 BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX ?= v2
 
@@ -1870,9 +1874,7 @@ benchmark-plot-two-variant: ## Plot two-variant replica/latency/throughput graph
 		echo "No benchmark results found, skipping two-variant plot"; \
 		exit 0; \
 	fi; \
-	python3 $(CURDIR)/hack/benchmark/plot_two_variant_pipeline.py \
-		$$LATEST_DIR && \
-	echo "Two-variant plot: $$LATEST_DIR/metrics/graphs/two_variant_v2_full_pipeline.png"
+	bash $(CURDIR)/hack/benchmark/post_run_analyze.sh $$LATEST_DIR $(BENCHMARK_NAMESPACE)
 
 VARIANT_CONFIG ?= $(CURDIR)/hack/benchmark/scenarios/guides/variants/v2-tp1-cheaper.yaml
 WVA_V2_SATURATION_CONFIGMAP ?= $(CURDIR)/hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml
