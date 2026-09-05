@@ -133,7 +133,32 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(ra.Average()).To(Equal(float64(8000)))
 		})
 
-		It("should not store an implausible (> k1) observation in history", func() {
+		It("should keep an observation between k1 and the physical KV ceiling", func() {
+			// k1 is 0.80 x 16000 = 12800, so 14000 tokens in use is a replica at
+			// 87.5% occupancy -- legitimate, and with the queue saturated it is the
+			// most informative reading available. Only a value above the physical
+			// ceiling (16000) is a scrape artifact.
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						14000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			ra, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short"]
+			Expect(ok).To(BeTrue(), "a legitimate high-occupancy reading must seed history")
+			Expect(ra.Average()).To(Equal(float64(14000)))
+			// k1 still bounds what the analyzer reports this cycle.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
+
+		It("should not store an observation above the physical KV ceiling in history", func() {
 			input := makeAnalyzerInput(
 				[]domain.ReplicaMetrics{
 					makeReplicaMetrics("pod-1", "variant-a",
@@ -333,7 +358,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(6000)))
 		})
 
-		It("should skip the derived formula for a prefill-role variant and fall back to k1", func() {
+		It("should size a prefill-role variant by its batch-token budget, not the KV ceiling", func() {
 			// Identical EngineParams/inputs to the decode case above -- the
 			// only difference is Role. A prefill vLLM instance reports
 			// avgOutput~0-1 in real traffic (it hands off to decode before
@@ -362,10 +387,13 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			// Priority 3 skipped for prefill -> Priority 4 (k1 fallback),
-			// not the 6000 a decode-role variant would get from the same
-			// EngineParams/inputs.
-			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+			// The decode formula is skipped for prefill, but the fallback is the
+			// per-step batch-token budget (2048), NOT k1 (12800): prefill holds a
+			// request only until the first token, so the KV ceiling does not bound
+			// it. The gap between the two is the whole point -- 6.25x here, one to
+			// two orders of magnitude on production KV caches -- and it is in the
+			// over-stating direction, which under-scales prefill and costs TTFT.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(2048)))
 		})
 	})
 

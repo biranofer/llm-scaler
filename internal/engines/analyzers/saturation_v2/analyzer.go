@@ -186,6 +186,7 @@ func (a *SaturationAnalyzer) computeReplicaCapacity(
 		config.QueueLengthThreshold,
 		engineParams,
 		k1,
+		rm.TotalKvCapacityTokens,
 		role,
 		logger,
 	)
@@ -342,6 +343,7 @@ func (a *SaturationAnalyzer) computeK2(
 	queueThreshold float64,
 	engineParams *EngineParams,
 	k1 int64,
+	kvCeiling int64,
 	role string,
 	logger logr.Logger,
 ) (int64, k2Source) {
@@ -357,24 +359,32 @@ func (a *SaturationAnalyzer) computeK2(
 
 	// Priority 1: Observed (queue saturated)
 	//
-	// tokensInUse cannot legitimately exceed k1: k1 is the KV cache's own
-	// memory ceiling, so a reading above it is a scrape artifact (e.g. a
-	// mid-cycle admission/eviction race between the metrics snapshot and the
-	// cache accounting), not real demand. Accepting it as P1-obs would both
-	// report an impossible effective capacity this cycle and seed the
-	// rolling average with a value every subsequent P2-hist cycle inherits
-	// long after the artifact itself is gone. Falls through to Priority 2
-	// instead of returning k1 directly, so a real historical/derived signal
-	// still wins over an untimely fallback-to-k1.
+	// A reading above the KV cache's PHYSICAL ceiling is a scrape artifact
+	// (e.g. a mid-cycle admission/eviction race between the metrics snapshot
+	// and the cache accounting), not real demand: accepting it would seed the
+	// rolling average with a value every subsequent P2-hist cycle inherits,
+	// long after the artifact itself is gone.
+	//
+	// The bound is kvCeiling, NOT k1. k1 is TotalKvCapacityTokens x
+	// KvCacheThreshold (0.80 by default), so occupancy between k1 and the
+	// ceiling is entirely legitimate -- and with the queue saturated it is the
+	// most informative reading there is. Discarding that band would throw away
+	// exactly the observations P1-obs exists to capture, and leave the analyzer
+	// reporting a capacity ABOVE what the replica is demonstrably holding.
+	// Such a reading cannot inflate this cycle either: effectiveCapacity is
+	// min(k1, k2), so k1 still bounds it.
+	//
+	// Falls through to Priority 2 rather than returning k1 directly, so a real
+	// historical/derived signal still wins over an untimely fallback-to-k1.
 	if queueLen >= int(queueThreshold) && tokensInUse > 0 {
 		k2Observed := tokensInUse
-		if k2Observed > k1 {
+		if kvCeiling > 0 && k2Observed > kvCeiling {
 			logger.V(logging.DEFAULT).Info("k2-decision",
 				"modelID", modelID, "namespace", namespace, "variant", variantName,
-				"priority", "P1-obs-invalid", "historyKey", historyKey,
+				"priority", k2ReasonObsImplausible, "historyKey", historyKey,
 				"queueLength", queueLen, "queueThreshold", queueThreshold,
-				"reason", "observed tokensInUse exceeds k1 (memory-bound ceiling); discarding as implausible",
-				"k2Observed", k2Observed, "k1", k1)
+				"reason", "observed tokensInUse exceeds the KV cache's physical ceiling; discarding as implausible",
+				"k2Observed", k2Observed, "k1", k1, "kvCeiling", kvCeiling)
 		} else {
 			a.mu.Lock()
 			ra, ok := a.computeCapacityHistory[historyKey]
@@ -423,8 +433,25 @@ func (a *SaturationAnalyzer) computeK2(
 	// real per-replica behavior -- not a derived signal at all, just the
 	// batch-token budget echoed back. Skip straight to the k1 fallback for
 	// prefill rather than report a number that looks derived but isn't.
+	// A prefill replica is bounded by its per-step batch-token budget, not by
+	// the KV cache: it holds a request only long enough to produce the first
+	// token, then hands off. Reporting the memory ceiling instead would
+	// over-state prefill capacity by the ratio between the two -- commonly one
+	// to two orders of magnitude, since B is 8-32k tokens and k1 runs to
+	// hundreds of thousands -- and an over-stated capacity under-scales the
+	// role, which costs TTFT. Under-stating it only costs money.
 	isPrefill := canonicalRole(role) == domain.RolePrefill
-	if !isPrefill {
+	if isPrefill {
+		if engineParams != nil && engineParams.EffectiveMaxBatchedTokens > 0 {
+			k2Prefill := engineParams.EffectiveMaxBatchedTokens
+			logger.V(logging.DEFAULT).Info("k2-decision",
+				"modelID", modelID, "namespace", namespace, "variant", variantName,
+				"priority", k2Labels[k2SrcPrefillBudget], "historyKey", historyKey,
+				"reason", "prefill role: bounded by the per-step batch-token budget",
+				"engineParams", engineParams, "k2", k2Prefill)
+			return k2Prefill, k2SrcPrefillBudget
+		}
+	} else {
 		if k2Derived := estimateCapacityFromParams(engineParams, avgInput, avgOutput); k2Derived > 0 {
 			logger.V(logging.DEFAULT).Info("k2-decision",
 				"modelID", modelID, "namespace", namespace, "variant", variantName,
@@ -438,7 +465,7 @@ func (a *SaturationAnalyzer) computeK2(
 	// Priority 4: Fallback to k1
 	reason := "no observed/historical/derived k2; capacity is memory-bound only"
 	if isPrefill {
-		reason = "prefill role: derived-from-args formula assumes decode-style output length; skipped"
+		reason = "prefill role: no batch-token budget parsed from deployment args; capacity is memory-bound only"
 	}
 	logger.V(logging.DEFAULT).Info("k2-decision",
 		"modelID", modelID, "namespace", namespace, "variant", variantName,
