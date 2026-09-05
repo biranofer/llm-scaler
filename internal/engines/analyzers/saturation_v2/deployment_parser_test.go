@@ -118,6 +118,62 @@ var _ = Describe("ParseVLLMArgs", func() {
 			params := ParseVLLMArgs(scaletarget.NewDeploymentAccessor(deploy))
 			Expect(params.MaxNumBatchedTokens).To(Equal(int64(8192)))
 		})
+
+		It("should parse an indented continuation, where the next line starts with a tab", func() {
+			// The same failure as an unhandled backslash-newline, reached a
+			// different way: whitespace that is not a space, left glued to the
+			// front of the next token, makes it fail the "--" prefix check and
+			// the flag is skipped in silence. A YAML block scalar is indented
+			// by definition, so this is the normal shape, not an edge case.
+			script := "vllm serve /model-cache/model \\\n" +
+				"\t--max-num-batched-tokens 4096 \\\n" +
+				"\t--max-num-seqs 32"
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:    "vllm",
+									Command: []string{"/bin/sh", "-c"},
+									Args:    []string{script},
+								},
+							},
+						},
+					},
+				},
+			}
+			params := ParseVLLMArgs(scaletarget.NewDeploymentAccessor(deploy))
+			Expect(params.MaxNumBatchedTokens).To(Equal(int64(4096)))
+			Expect(params.MaxNumSeqs).To(Equal(int64(32)))
+		})
+
+		It("should parse a command whose line endings are CRLF", func() {
+			// A manifest authored on Windows carries \r\n, so the continuation
+			// is backslash-CR-LF. Without handling it, both the backslash and
+			// the carriage return survive into the token stream.
+			script := "vllm serve /model-cache/model \\\r\n" +
+				"--max-num-batched-tokens 2048 \\\r\n" +
+				"--max-num-seqs 16"
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:    "vllm",
+									Command: []string{"/bin/sh", "-c"},
+									Args:    []string{script},
+								},
+							},
+						},
+					},
+				},
+			}
+			params := ParseVLLMArgs(scaletarget.NewDeploymentAccessor(deploy))
+			Expect(params.MaxNumBatchedTokens).To(Equal(int64(2048)))
+			Expect(params.MaxNumSeqs).To(Equal(int64(16)))
+		})
 	})
 
 	Describe("Default values", func() {

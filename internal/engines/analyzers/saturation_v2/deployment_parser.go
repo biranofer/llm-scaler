@@ -158,22 +158,20 @@ func splitShellString(s string) []string {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		switch {
-		case ch == '\\' && !inSingleQuote && !inDoubleQuote && i+1 < len(s) && s[i+1] == '\n':
+		case ch == '\\' && !inSingleQuote && !inDoubleQuote && isLineBreakAt(s, i+1):
 			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
 				current.Reset()
 			}
-			i++ // also consume the newline
-		case ch == '\n' && !inSingleQuote && !inDoubleQuote:
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+			if s[i+1] == '\r' {
+				i++ // CRLF: consume the carriage return too
 			}
+			i++ // consume the newline
 		case ch == '\'' && !inDoubleQuote:
 			inSingleQuote = !inSingleQuote
 		case ch == '"' && !inSingleQuote:
 			inDoubleQuote = !inDoubleQuote
-		case ch == ' ' && !inSingleQuote && !inDoubleQuote:
+		case isSpace(ch) && !inSingleQuote && !inDoubleQuote:
 			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
 				current.Reset()
@@ -186,6 +184,24 @@ func splitShellString(s string) []string {
 		tokens = append(tokens, current.String())
 	}
 	return tokens
+}
+
+// isSpace reports whether ch separates tokens. Tabs and carriage returns
+// count: a YAML block scalar indented with tabs, or a manifest authored on
+// Windows, otherwise glues the whitespace onto the next token, which then
+// fails the "--" prefix check in parseArgsWith and is silently skipped --
+// the same failure mode as an unhandled line continuation.
+func isSpace(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+// isLineBreakAt reports whether position i begins a newline, LF or CRLF, so a
+// trailing backslash is recognised as a line continuation in both.
+func isLineBreakAt(s string, i int) bool {
+	if i >= len(s) {
+		return false
+	}
+	return s[i] == '\n' || (s[i] == '\r' && i+1 < len(s) && s[i+1] == '\n')
 }
 
 // normalizeKey replaces hyphens with underscores and strips the leading
