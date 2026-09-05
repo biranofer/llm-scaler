@@ -98,7 +98,15 @@ the saturation V2 analyzer sets one of these values:
 | `P1-obs` | k2 came from **observed** tokens-in-use (queue was saturated) |
 | `P2-hist` | k2 came from the **historical** rolling average |
 | `P3-k2` | k2 was **derived** from deployment parameters (vLLM model args) |
+| `P3-prefill` | a **prefill** variant, sized by its per-step batch-token budget. Prefill holds a request only until the first token, so the KV ceiling does not bound it and the decode formula (which assumes a real output length) does not apply |
 | `P4-k1` | k2 was unavailable; **fell back** to k1 (memory-bound capacity) |
+
+One further value appears in the `k2-decision` line's `priority` field but never
+as a variant's `reason`, because no capacity comes from it:
+
+| value | meaning |
+| --- | --- |
+| `P1-obs-invalid` | an observation was discarded for exceeding the KV cache's **physical** ceiling, i.e. a scrape artifact. Note the bound is the ceiling, not k1: k1 is the ceiling times `kvCacheThreshold` (0.80 by default), so occupancy between the two is legitimate and is kept. The analyzer falls through to the next priority |
 | `no-data` | no ready replicas, no stored record, no compatible variant — capacity is 0 this cycle (normal for newly deployed variants) |
 | `error` | K2 priority not in known set — indicates an unlabelled code path; should not occur in normal operation |
 

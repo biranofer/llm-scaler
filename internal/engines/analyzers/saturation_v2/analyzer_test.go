@@ -87,6 +87,28 @@ var _ = Describe("SaturationAnalyzer", func() {
 			// k1 = 12800, k2 = 4000 (observed), effective = 4000
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(4000)))
 		})
+
+		It("should discard an observed k2 that exceeds k1 as implausible", func() {
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					// Queue saturated, but tokensInUse (20000) exceeds k1
+					// (12800) -- physically impossible for real KV
+					// occupancy, so P1-obs must not win.
+					makeReplicaMetrics("pod-1", "variant-a",
+						20000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// No history and no derivable engine params, so it falls all the
+			// way through to Priority 4 (k1 fallback) rather than using the
+			// implausible 20000 observation.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
 	})
 
 	Describe("k2 history", func() {
@@ -105,10 +127,54 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify k2 was stored in history
-			histKey := "test-model|H100|1|short"
+			histKey := "test-model|H100|1|both|short"
 			ra, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeTrue())
 			Expect(ra.Average()).To(Equal(float64(8000)))
+		})
+
+		It("should keep an observation between k1 and the physical KV ceiling", func() {
+			// k1 is 0.80 x 16000 = 12800, so 14000 tokens in use is a replica at
+			// 87.5% occupancy -- legitimate, and with the queue saturated it is the
+			// most informative reading available. Only a value above the physical
+			// ceiling (16000) is a scrape artifact.
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						14000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			ra, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short"]
+			Expect(ok).To(BeTrue(), "a legitimate high-occupancy reading must seed history")
+			Expect(ra.Average()).To(Equal(float64(14000)))
+			// k1 still bounds what the analyzer reports this cycle.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
+
+		It("should not store an observation above the physical KV ceiling in history", func() {
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						20000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+
+			_, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			histKey := "test-model|H100|1|both|short"
+			_, ok := analyzer.computeCapacityHistory[histKey]
+			Expect(ok).To(BeFalse())
 		})
 
 		It("should use historical k2 when queue drops below threshold", func() {
@@ -173,6 +239,42 @@ var _ = Describe("SaturationAnalyzer", func() {
 		})
 	})
 
+	Describe("Role-scoped history", func() {
+		It("should not let one role's P1-obs seed another role's history bucket", func() {
+			// Both variants land in the same "short" output bucket (avgOutput=50
+			// for both), which is exactly the collision this fix targets: a
+			// prefill variant (permanently ~0 avgOutput in real traffic) and a
+			// decode variant that happens to be at "short" too (e.g. a cold
+			// replica before it's served real traffic).
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-p", "variant-p", 8000, 16000, 6, 100, 50),
+					makeReplicaMetrics("pod-d", "variant-d", 3000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-p", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill},
+					{VariantName: "variant-d", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RoleDecode},
+				},
+			)
+
+			_, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+
+			prefillHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|prefill|short"]
+			Expect(ok).To(BeTrue())
+			Expect(prefillHist.Average()).To(Equal(float64(8000)))
+
+			decodeHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|decode|short"]
+			Expect(ok).To(BeTrue())
+			Expect(decodeHist.Average()).To(Equal(float64(3000)))
+
+			// Pre-fix, both observations landed in the single shared
+			// "test-model|H100|1|short" key and averaged together.
+			_, ok = analyzer.computeCapacityHistory["test-model|H100|1|short"]
+			Expect(ok).To(BeFalse())
+		})
+	})
+
 	Describe("k2 derivation from deployment params", func() {
 		It("should derive k2 from chunked prefill params", func() {
 			// Pre-populate store with deployment params for this variant
@@ -223,6 +325,75 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// k2 derivation needs avgOutput > 0, falls back to k1
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
+		})
+
+		It("should use the derived k2 for a decode-role variant when it is below k1", func() {
+			store.Update("test-ns", "test-model", "variant-d", CapacityRecord{
+				GpuCount: 1,
+				EngineParams: &EngineParams{
+					EffectiveMaxBatchedTokens: 2048,
+					MaxNumSeqs:                10,
+					ChunkedPrefillEnabled:     true,
+				},
+				LearnedFrom: "deployment",
+			})
+
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					// Queue below threshold, no history → uses derived k2.
+					makeReplicaMetrics("pod-1", "variant-d",
+						100, 16000, 0, 100, 1000), // I=100, O=1000
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-d", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RoleDecode},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// B=2048, S=10, I=100, O=1000
+			// N_steady = min(2048*1000/1100, 10) = 10
+			// k2 = 10 * (100 + 1000/2) = 10 * 600 = 6000
+			// k1 = 12800, effective = min(12800, 6000) = 6000 (compute-bound)
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(6000)))
+		})
+
+		It("should size a prefill-role variant by its batch-token budget, not the KV ceiling", func() {
+			// Identical EngineParams/inputs to the decode case above -- the
+			// only difference is Role. A prefill vLLM instance reports
+			// avgOutput~0-1 in real traffic (it hands off to decode before
+			// generating anything); avgOutput=1000 here stands in for
+			// whatever this replica happens to report, to isolate that the
+			// skip is driven by role, not by the input shape.
+			store.Update("test-ns", "test-model", "variant-p", CapacityRecord{
+				GpuCount: 1,
+				EngineParams: &EngineParams{
+					EffectiveMaxBatchedTokens: 2048,
+					MaxNumSeqs:                10,
+					ChunkedPrefillEnabled:     true,
+				},
+				LearnedFrom: "deployment",
+			})
+
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-p",
+						100, 16000, 0, 100, 1000),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-p", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1, Role: domain.RolePrefill},
+				},
+			)
+
+			result, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			// The decode formula is skipped for prefill, but the fallback is the
+			// per-step batch-token budget (2048), NOT k1 (12800): prefill holds a
+			// request only until the first token, so the KV ceiling does not bound
+			// it. The gap between the two is the whole point -- 6.25x here, one to
+			// two orders of magnitude on production KV caches -- and it is in the
+			// over-stating direction, which under-scales prefill and costs TTFT.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(2048)))
 		})
 	})
 
