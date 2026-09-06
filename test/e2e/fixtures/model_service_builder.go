@@ -3,6 +3,7 @@ package fixtures
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 )
 
@@ -42,12 +44,67 @@ func WithRole(role string) ModelServiceOption {
 // productName is the node's `nvidia.com/gpu.product` value, e.g.
 // "NVIDIA-A100-PCIE-80GB".
 func WithAcceleratorNodeSelector(productName string) ModelServiceOption {
+	return WithAcceleratorNodeSelectorKV("nvidia.com/gpu.product", productName)
+}
+
+// WithAcceleratorNodeSelectorKV pins on a given product LABEL KEY, because the
+// key is vendor-specific: an emulated cluster may label its nodes
+// amd.com/gpu.product or habana.ai/gaudi.product, and a selector on
+// nvidia.com/gpu.product matches nothing there -- the pods stay Pending and the
+// spec times out somewhere unrelated. Pair with DiscoverAcceleratorProduct.
+func WithAcceleratorNodeSelectorKV(key, productName string) ModelServiceOption {
 	return func(d *appsv1.Deployment) {
 		if d.Spec.Template.Spec.NodeSelector == nil {
 			d.Spec.Template.Spec.NodeSelector = map[string]string{}
 		}
-		d.Spec.Template.Spec.NodeSelector["nvidia.com/gpu.product"] = productName
+		d.Spec.Template.Spec.NodeSelector[key] = productName
 	}
+}
+
+// DiscoverAcceleratorProduct returns a GPU product label present on a schedulable
+// node, so a spec can pin its workload to ONE accelerator.
+//
+// Why a spec should: a workload that constrains no accelerator has its type
+// observed from the nodes its pods landed on, and that observation requires
+// agreement -- two pods on two products report "no single answer" and the variant
+// reads unresolved. On a heterogeneous emulator (this suite's kind cluster labels
+// one node NVIDIA-H100-SXM5-80GB and another NVIDIA-A100-PCIE-80GB) a scale-up is
+// therefore enough to un-resolve the accelerator, which is not the condition most
+// specs mean to test and which produced a self-sustaining 1<->2 oscillation.
+//
+// Nodes carrying NoSchedule taints are skipped: kind taints its control-plane,
+// and pinning to a product that only exists there parks every replica in Pending.
+// Sorted for determinism, so a rerun pins the same way. Returns ok=false on a
+// cluster with no product labels at all, where the caller should simply not pin.
+func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clientset) (key, product string, ok bool) {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", "", false
+	}
+	items := make([]corev1.Node, len(nodes.Items))
+	copy(items, nodes.Items)
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+
+	productKeys := accelerator.GetProductKeys()
+	for i := range items {
+		node := &items[i]
+		schedulable := true
+		for _, t := range node.Spec.Taints {
+			if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+				schedulable = false
+				break
+			}
+		}
+		if !schedulable {
+			continue
+		}
+		for _, k := range productKeys {
+			if v, found := node.Labels[k]; found && v != "" {
+				return k, v, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 // WithGPURequest sets the pod's GPU resource request/limit, which is how WVA
@@ -88,8 +145,11 @@ func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 // the container to crash-loop if passed to the wrong runtime. Tests that use
 // simulator-only flags should gate their suite on `cfg.UseSimulator` and Skip
 // otherwise.
-func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string) error {
+func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string, opts ...ModelServiceOption) error {
 	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, extraArgs)
+	for _, opt := range opts {
+		opt(deployment)
+	}
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
 }
