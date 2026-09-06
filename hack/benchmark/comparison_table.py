@@ -59,16 +59,17 @@ METRICS = [
 ]
 
 
-def _extract_latency_stats(results_dir):
+def _extract_latency_stats_inference_perf(results_dir):
     """Avg/P50/P95/P99 TTFT and TPOT (=inter_token_latency), in ms.
 
     inference-perf's own summary; present whether or not per-request logging
     is enabled. TPOT here is inter_token_latency, matching postprocess.py's
     ITL mapping -- NOT time_per_output_token, which folds the first token in.
+    Values there are in seconds; this table's columns are in ms.
     """
     path = os.path.join(results_dir, "summary_lifecycle_metrics.json")
     if not os.path.isfile(path):
-        return {}
+        return None
 
     with open(path) as f:
         data = json.load(f)
@@ -87,6 +88,53 @@ def _extract_latency_stats(results_dir):
         out[f"P95 {label} (ms)" if label == "TTFT" else f"P95 {label} (ms/token)"] = _get(section_key, "p95")
         out[f"P99 {label} (ms)" if label == "TTFT" else f"P99 {label} (ms/token)"] = _get(section_key, "p99")
     return out
+
+
+def _extract_latency_stats_guidellm(results_dir):
+    """Avg/P50/P95/P99 TTFT and TPOT (=inter_token_latency), in ms.
+
+    guidellm's own results.json -- see postprocess.py's
+    _extract_latency_guidellm for the P95/P99 half of this same read.
+    mean/median sit as siblings of "percentiles" under the same "successful"
+    section, already in ms (unlike inference-perf's seconds), so no scaling
+    here.
+    """
+    path = os.path.join(results_dir, "results.json")
+    if not os.path.isfile(path):
+        return None
+
+    with open(path) as f:
+        data = json.load(f)
+
+    try:
+        metrics = data["benchmarks"][0]["metrics"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+    def _get(section_key, stat):
+        section = metrics.get(section_key, {}).get("successful", {})
+        if stat in ("p95", "p99"):
+            pcts = section.get("percentiles", {})
+            if isinstance(pcts, list):
+                pcts = {p["percentile"]: p["value"] for p in pcts}
+            return pcts[stat] if stat in pcts else section.get("max")
+        return section.get(stat)
+
+    out = {}
+    for label, section_key in (("TTFT", "time_to_first_token_ms"), ("TPOT", "inter_token_latency_ms")):
+        out[f"Avg {label} (ms)" if label == "TTFT" else f"Avg {label} (ms/token)"] = _get(section_key, "mean")
+        out[f"P50 {label} (ms)" if label == "TTFT" else f"P50 {label} (ms/token)"] = _get(section_key, "median")
+        out[f"P95 {label} (ms)" if label == "TTFT" else f"P95 {label} (ms/token)"] = _get(section_key, "p95")
+        out[f"P99 {label} (ms)" if label == "TTFT" else f"P99 {label} (ms/token)"] = _get(section_key, "p99")
+    return out
+
+
+def _extract_latency_stats(results_dir):
+    """Avg/P50/P95/P99 TTFT and TPOT, from whichever harness produced this
+    run -- see postprocess.py's _extract_latency for the same dispatch."""
+    return (_extract_latency_stats_guidellm(results_dir)
+            or _extract_latency_stats_inference_perf(results_dir)
+            or {})
 
 
 def _replica_window_minutes(results_dir):
