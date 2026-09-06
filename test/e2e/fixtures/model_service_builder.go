@@ -61,6 +61,56 @@ func WithAcceleratorNodeSelectorKV(key, productName string) ModelServiceOption {
 	}
 }
 
+// NoAcceleratorPinAnnotation opts a workload OUT of the default pin below.
+//
+// For the few specs whose subject IS the unresolved path -- a workload that
+// constrains no accelerator, whose GPUs are charged to no pool. Nothing sets it
+// today; it exists so such a spec does not have to fight the default.
+const NoAcceleratorPinAnnotation = "e2e.llm-d.ai/no-accelerator-pin"
+
+// WithoutAcceleratorPin leaves the workload unpinned, so its accelerator resolves
+// the way an unconstrained production workload's does.
+func WithoutAcceleratorPin() ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		if d.Annotations == nil {
+			d.Annotations = map[string]string{}
+		}
+		d.Annotations[NoAcceleratorPinAnnotation] = "true"
+	}
+}
+
+// pinToDiscoveredAccelerator gives a pod spec a GPU product nodeSelector unless it
+// already has one, and reports what it pinned to.
+//
+// Applied by default to every model service and warm pool this package creates,
+// because the alternative turned out to be a source of failures rather than a
+// neutral default. A workload that constrains nothing has its accelerator observed
+// from the nodes its pods landed on, and that observation requires agreement: on a
+// heterogeneous cluster -- which this suite's kind emulator is -- a scale-up puts
+// the second replica on another product, the variant reads unresolved, its k2
+// history key moves, capacity jumps, and it scales back down. Pinning is also what
+// a real deployment does; WVA's own AcceleratorNotResolved warning asks for it.
+//
+// Pools are pinned for the matching reason: a pool Pod's accelerator is a property
+// of its node, and a borrow requires the pool and the workload to agree. Leaving
+// pools to the scheduler while workloads are pinned would break every borrow spec
+// on a heterogeneous cluster.
+func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clientset, podSpec *corev1.PodSpec) {
+	for _, k := range accelerator.GetProductKeys() {
+		if _, already := podSpec.NodeSelector[k]; already {
+			return
+		}
+	}
+	key, product, ok := DiscoverAcceleratorProduct(ctx, k8sClient)
+	if !ok {
+		return
+	}
+	if podSpec.NodeSelector == nil {
+		podSpec.NodeSelector = map[string]string{}
+	}
+	podSpec.NodeSelector[key] = product
+}
+
 // DiscoverAcceleratorProduct returns a GPU product label present on a schedulable
 // node, so a spec can pin its workload to ONE accelerator.
 //
@@ -150,8 +200,19 @@ func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.
 	for _, opt := range opts {
 		opt(deployment)
 	}
+	applyAcceleratorPin(ctx, k8sClient, deployment)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
+}
+
+// applyAcceleratorPin pins the Deployment unless it opted out, and removes the
+// marker so it does not travel to the cluster as a stray annotation.
+func applyAcceleratorPin(ctx context.Context, k8sClient *kubernetes.Clientset, d *appsv1.Deployment) {
+	if d.Annotations[NoAcceleratorPinAnnotation] == "true" {
+		delete(d.Annotations, NoAcceleratorPinAnnotation)
+		return
+	}
+	pinToDiscoveredAccelerator(ctx, k8sClient, &d.Spec.Template.Spec)
 }
 
 // DeleteModelService deletes the model service deployment. Idempotent; ignores NotFound.
@@ -175,6 +236,7 @@ func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 	for _, opt := range opts {
 		opt(desiredDeployment)
 	}
+	applyAcceleratorPin(ctx, k8sClient, desiredDeployment)
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {

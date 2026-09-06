@@ -252,35 +252,10 @@ var _ = Describe("Saturation-driven scaling through the KEDA external scaler", L
 			Expect(err).NotTo(HaveOccurred(), "failed reading existing saturation configmap")
 		}
 
-		// Pin the workload to ONE accelerator.
-		//
-		// Without it the workload constrains nothing, so WVA observes its
-		// accelerator from the nodes its pods landed on -- and that observation
-		// requires agreement, so two replicas on two GPU products report "no single
-		// answer" and the variant reads unresolved. This suite's kind cluster is
-		// heterogeneous (NVIDIA-H100-SXM5-80GB on one node, NVIDIA-A100-PCIE-80GB on
-		// another), so a scale-up alone was enough to un-resolve it. That is not the
-		// condition this spec means to test, and it drove a self-sustaining 1<->2
-		// oscillation: the scale-up moved the k2 history key, capacity jumped, the
-		// variant scaled back down, placement became single-type again, repeat.
-		//
-		// Discovered rather than hardcoded: the product label KEY is vendor-specific
-		// (an emulator labelling amd.com/gpu.product matches no nvidia selector), and
-		// a spec that pins to a product this cluster does not have parks its pods in
-		// Pending and fails somewhere unrelated. A cluster with no product labels at
-		// all pins nothing and behaves as before.
-		var pinOpts []fixtures.ModelServiceOption
-		if key, product, ok := fixtures.DiscoverAcceleratorProduct(ctx, k8sClient); ok {
-			pinOpts = append(pinOpts, fixtures.WithAcceleratorNodeSelectorKV(key, product))
-			GinkgoWriter.Printf("pinning the workload to %s=%s so its accelerator stays resolved\n", key, product)
-		} else {
-			GinkgoWriter.Printf("no GPU product label on any schedulable node; not pinning\n")
-		}
-
 		By("Creating model service + service + ServiceMonitor for saturation path test")
 		_ = fixtures.DeleteModelService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName)
 		err = fixtures.CreateModelServiceWithExtraArgs(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, poolName, modelID,
-			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", fakeMetricsJSON}, pinOpts...)
+			cfg.UseSimulator, cfg.MaxNumSeqs, []string{"--fake-metrics", fakeMetricsJSON})
 
 		Expect(err).NotTo(HaveOccurred())
 		err = fixtures.EnsureService(ctx, k8sClient, cfg.LLMDNamespace, modelSvcName, modelDecodeDeployment, 8000)

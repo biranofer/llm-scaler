@@ -402,6 +402,15 @@ func CreateWarmPool(ctx context.Context, clientset *kubernetes.Clientset, spec W
 		},
 	}
 
+	// A borrow requires the pool Pod and the workload to be on the same
+	// accelerator, and a pool Pod's accelerator is a property of its node. Model
+	// services are pinned to a discovered product by default, so a pool left to
+	// the scheduler would land on another one on a heterogeneous cluster and no
+	// borrow would ever match. A spec that chose a node itself keeps it.
+	if spec.NodeName == "" {
+		pinToDiscoveredAccelerator(ctx, clientset, &deployment.Spec.Template.Spec)
+	}
+
 	_, err := clientset.AppsV1().Deployments(spec.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("create warm pool deployment %s: %w", spec.Name, err)
