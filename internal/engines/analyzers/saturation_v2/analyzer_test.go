@@ -127,7 +127,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify k2 was stored in history
-			histKey := "test-model|H100|1|both|short"
+			histKey := "test-model|H100|1|both|short|q5"
 			ra, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeTrue())
 			Expect(ra.Average()).To(Equal(float64(8000)))
@@ -151,7 +151,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 
-			ra, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short"]
+			ra, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short|q5"]
 			Expect(ok).To(BeTrue(), "a legitimate high-occupancy reading must seed history")
 			Expect(ra.Average()).To(Equal(float64(14000)))
 			// k1 still bounds what the analyzer reports this cycle.
@@ -172,7 +172,7 @@ var _ = Describe("SaturationAnalyzer", func() {
 			_, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 
-			histKey := "test-model|H100|1|both|short"
+			histKey := "test-model|H100|1|both|short|q5"
 			_, ok := analyzer.computeCapacityHistory[histKey]
 			Expect(ok).To(BeFalse())
 		})
@@ -239,6 +239,88 @@ var _ = Describe("SaturationAnalyzer", func() {
 		})
 	})
 
+	Describe("History key stability", func() {
+		It("keeps using a variant's history when the accelerator stops resolving", func() {
+			// Accelerator discovery is intermittent for a workload that pins no GPU
+			// product: the type is deduced on a single-accelerator cluster and the
+			// deduction does not hold every cycle. The accelerator is part of the
+			// history key, so a blip must not move the variant to a fresh bucket --
+			// that loses k2, falls back to k1, and (measured on kind) flips capacity
+			// 2 <-> 8 on alternating cycles while the fleet oscillates 1 <-> 2.
+			resolved := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a", 8000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			_, err := analyzer.Analyze(ctx, resolved)
+			Expect(err).NotTo(HaveOccurred())
+			ra, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short|q5"]
+			Expect(ok).To(BeTrue())
+			Expect(ra.Average()).To(Equal(float64(8000)))
+
+			// Same variant, same everything -- except discovery could not name the
+			// accelerator this cycle.
+			unresolved := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a", 9000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "unknown", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			_, err = analyzer.Analyze(ctx, unresolved)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, spurious := analyzer.computeCapacityHistory["test-model|unknown|1|both|short|q5"]
+			Expect(spurious).To(BeFalse(),
+				"an unresolved accelerator opened a second history bucket; this is the oscillation")
+			Expect(ra.Average()).To(Equal(float64(8500)),
+				"the unresolved cycle must land in the variant's existing bucket")
+		})
+
+		It("does not reuse k2 learned under a different queue threshold", func() {
+			// P1 records k2 as the occupancy seen WHEN THE QUEUE WAS SATURATED, so
+			// the reading only means anything relative to the threshold that
+			// defined saturation. Nothing else invalidates history: EvictStaleHistory
+			// is age-based. Measured: a k2 of 2 learned under a low threshold held a
+			// variant at utilization 1.0 under a threshold of 100, where P1 could
+			// not fire at all, and the variant scaled up every other cycle.
+			seed := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a", 2000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			_, err := analyzer.Analyze(ctx, seed)
+			Expect(err).NotTo(HaveOccurred())
+			_, ok := analyzer.computeCapacityHistory["test-model|H100|1|both|short|q5"]
+			Expect(ok).To(BeTrue())
+
+			// The operator retunes the threshold. The old observation is not a
+			// capacity estimate under the new one.
+			retuned := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a", 2000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			retuned.Config.(*config.ScalingPolicy).QueueLengthThreshold = 100
+
+			result, err := analyzer.Analyze(ctx, retuned)
+			Expect(err).NotTo(HaveOccurred())
+			// k1 = 0.8 x 16000 = 12800. Reusing the old k2 would report 2000.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)),
+				"k2 recorded under threshold 5 was reused under threshold 100")
+		})
+	})
+
 	Describe("Role-scoped history", func() {
 		It("should not let one role's P1-obs seed another role's history bucket", func() {
 			// Both variants land in the same "short" output bucket (avgOutput=50
@@ -260,17 +342,17 @@ var _ = Describe("SaturationAnalyzer", func() {
 			_, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
 
-			prefillHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|prefill|short"]
+			prefillHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|prefill|short|q5"]
 			Expect(ok).To(BeTrue())
 			Expect(prefillHist.Average()).To(Equal(float64(8000)))
 
-			decodeHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|decode|short"]
+			decodeHist, ok := analyzer.computeCapacityHistory["test-model|H100|1|decode|short|q5"]
 			Expect(ok).To(BeTrue())
 			Expect(decodeHist.Average()).To(Equal(float64(3000)))
 
 			// Pre-fix, both observations landed in the single shared
-			// "test-model|H100|1|short" key and averaged together.
-			_, ok = analyzer.computeCapacityHistory["test-model|H100|1|short"]
+			// "test-model|H100|1|short|q5" key and averaged together.
+			_, ok = analyzer.computeCapacityHistory["test-model|H100|1|short|q5"]
 			Expect(ok).To(BeFalse())
 		})
 	})
