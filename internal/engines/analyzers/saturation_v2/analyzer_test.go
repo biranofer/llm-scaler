@@ -1,6 +1,8 @@
 package saturation_v2
 
 import (
+	"time"
+
 	"context"
 	"math"
 
@@ -279,6 +281,34 @@ var _ = Describe("SaturationAnalyzer", func() {
 				"an unresolved accelerator opened a second history bucket; this is the oscillation")
 			Expect(ra.Average()).To(Equal(float64(8500)),
 				"the unresolved cycle must land in the variant's existing bucket")
+		})
+
+		It("ages the accelerator memo out with the history it keys", func() {
+			// The memo is per-variant state with no other owner, so without this it
+			// outlives every variant that ever existed -- the unbounded-map failure
+			// EvictStaleHistory exists to prevent for the history beside it.
+			input := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a", 8000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			_, err := analyzer.Analyze(ctx, input)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(analyzer.lastAccelerator).To(HaveLen(1))
+
+			// A live variant keeps its memo.
+			analyzer.EvictStaleHistory(time.Hour)
+			Expect(analyzer.lastAccelerator).To(HaveLen(1),
+				"a memo younger than the timeout was evicted")
+
+			// One that has gone quiet loses it, on the same sweep as its history.
+			analyzer.EvictStaleHistory(0)
+			Expect(analyzer.lastAccelerator).To(BeEmpty(),
+				"the memo outlived the history it keys, so nothing ever frees it")
+			Expect(analyzer.computeCapacityHistory).To(BeEmpty())
 		})
 
 		It("does not reuse k2 learned under a different queue threshold", func() {

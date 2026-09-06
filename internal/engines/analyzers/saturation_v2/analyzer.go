@@ -56,8 +56,16 @@ type SaturationAnalyzer struct {
 	// fleet averages observations from two hardware types under one key, which is
 	// coarse -- and still strictly better than alternating between a real estimate
 	// and k1 every time a replica lands elsewhere.
-	lastAccelerator map[string]string
+	lastAccelerator map[string]acceleratorMemo
 	capacityStore   *CapacityKnowledgeStore
+}
+
+// acceleratorMemo is the last accelerator that resolved for a variant, with the
+// time it was last used -- so it can age out on the same timeout as the k2
+// history it keys.
+type acceleratorMemo struct {
+	name     string
+	lastUsed time.Time
 }
 
 // NewSaturationAnalyzer creates a new V2 saturation analyzer backed by the
@@ -65,7 +73,7 @@ type SaturationAnalyzer struct {
 func NewSaturationAnalyzer(store *CapacityKnowledgeStore) *SaturationAnalyzer {
 	return &SaturationAnalyzer{
 		computeCapacityHistory: make(map[string]*rollingAverage),
-		lastAccelerator:        make(map[string]string),
+		lastAccelerator:        make(map[string]acceleratorMemo),
 		capacityStore:          store,
 	}
 }
@@ -80,6 +88,12 @@ func (a *SaturationAnalyzer) Name() string {
 // EvictStaleHistory removes k2 history entries that have not been updated
 // within the given timeout. This prevents unbounded memory growth from
 // deleted models or workload buckets that are no longer active.
+//
+// It prunes the accelerator memo on the same timeout, and here rather than in a
+// second sweep so the two cannot drift: both are per-variant state that exists
+// only to key or stabilise capacity, and a variant that has gone quiet for the
+// timeout has no use for either. The returned count remains the number of
+// HISTORY entries evicted, which is what its callers report.
 func (a *SaturationAnalyzer) EvictStaleHistory(timeout time.Duration) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -88,6 +102,11 @@ func (a *SaturationAnalyzer) EvictStaleHistory(timeout time.Duration) int {
 		if time.Since(ra.lastUpdated) > timeout {
 			delete(a.computeCapacityHistory, key)
 			evicted++
+		}
+	}
+	for key, memo := range a.lastAccelerator {
+		if time.Since(memo.lastUsed) > timeout {
+			delete(a.lastAccelerator, key)
 		}
 	}
 	return evicted
@@ -948,11 +967,18 @@ func (a *SaturationAnalyzer) stableAccelerator(namespace, variantName, accelerat
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if constants.IsAcceleratorResolved(accelerator) {
-		a.lastAccelerator[key] = accelerator
+		a.lastAccelerator[key] = acceleratorMemo{name: accelerator, lastUsed: time.Now()}
 		return accelerator
 	}
 	if last, ok := a.lastAccelerator[key]; ok {
-		return last
+		// Touched on READ as well as on write: the memo should live as long as the
+		// variant is being analysed, not as long as its accelerator keeps
+		// resolving -- a variant that stops resolving is exactly the one this
+		// exists for. A variant that stops being analysed goes quiet on both, and
+		// EvictStaleHistory then ages it out with the k2 history beside it.
+		last.lastUsed = time.Now()
+		a.lastAccelerator[key] = last
+		return last.name
 	}
 	return accelerator
 }

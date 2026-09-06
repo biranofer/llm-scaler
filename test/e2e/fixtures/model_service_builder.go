@@ -17,6 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 )
 
@@ -135,7 +136,17 @@ func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clien
 	copy(items, nodes.Items)
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 
-	productKeys := accelerator.GetProductKeys()
+	// Chosen by CAPACITY, not by name order. Every workload and pool this package
+	// creates lands on the product picked here, so the choice sets the suite's
+	// whole GPU budget: taking the first node alphabetically put everything on a
+	// 4-GPU control-plane while an equally labelled 4-GPU worker sat unused, which
+	// is an arbitrary ceiling rather than a decision. Ties break on the label
+	// string so a rerun pins identically.
+	type candidate struct {
+		key, product string
+		gpus         int64
+	}
+	totals := map[string]*candidate{}
 	for i := range items {
 		node := &items[i]
 		schedulable := true
@@ -148,13 +159,39 @@ func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clien
 		if !schedulable {
 			continue
 		}
-		for _, k := range productKeys {
-			if v, found := node.Labels[k]; found && v != "" {
-				return k, v, true
+		for _, vendor := range constants.VendorResources {
+			labels := append([]string{vendor.ProductLabel}, vendor.ProductLabelAliases...)
+			for _, k := range labels {
+				v, found := node.Labels[k]
+				if !found || v == "" {
+					continue
+				}
+				id := k + "=" + v
+				if totals[id] == nil {
+					totals[id] = &candidate{key: k, product: v}
+				}
+				if q, ok := node.Status.Allocatable[corev1.ResourceName(vendor.ResourceName)]; ok {
+					totals[id].gpus += q.Value()
+				}
+				break
 			}
 		}
 	}
-	return "", "", false
+
+	best := ""
+	for id, c := range totals {
+		if best == "" {
+			best = id
+			continue
+		}
+		if c.gpus > totals[best].gpus || (c.gpus == totals[best].gpus && id < best) {
+			best = id
+		}
+	}
+	if best == "" {
+		return "", "", false
+	}
+	return totals[best].key, totals[best].product, true
 }
 
 // WithGPURequest sets the pod's GPU resource request/limit, which is how WVA
