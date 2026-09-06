@@ -15,7 +15,12 @@ WARMPOOL_PROXY_IMG ?= $(IMAGE_TAG_BASE)/llm-scaler/warmpool-proxy:$(IMG_TAG)
 KIND_ARGS ?= -t mix -n 3 -g 2   # Default: 3 nodes, 2 GPUs per node, mixed vendors
 CLUSTER_GPU_TYPE ?= nvidia-mix
 CLUSTER_NODES ?= 3
-CLUSTER_GPUS ?= 4
+# 16 because the e2e's simulator pods now REQUEST a GPU each
+# (buildModelServiceResources), so fake GPUs are consumed rather than merely
+# advertised, and every workload is pinned to one product. Memory binds first at
+# roughly 15 replicas per node, so this keeps GPUs from being the tighter limit.
+# They cost nothing: the emulator patches node status, no device exists.
+CLUSTER_GPUS ?= 16
 KUBECONFIG ?= $(HOME)/.kube/config
 K8S_VERSION ?= v1.32.0
 

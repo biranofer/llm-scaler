@@ -66,9 +66,15 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 
 	var triggerJobName string
 
-	// gpusPerNode is what the kind emulator allocates per labelled node. The
-	// occupier claims all of them so the pool has nothing left.
-	const gpusPerNode = 4
+	// gpusPerNode is what the cluster actually advertises on the node this
+	// suite fills, READ from the node rather than assumed.
+	//
+	// It was a const 4, matching the Makefile's CLUSTER_GPUS at the time. That
+	// couples the spec to a build flag: raise the emulator's GPU count and the
+	// occupier no longer fills the node, so the refusal this suite asserts is
+	// never staged and the spec passes or fails for a reason unrelated to
+	// placement. Discovered, it holds whatever the cluster was built with.
+	var gpusPerNode int64
 
 	var (
 		cmOriginal      *corev1.ConfigMap
@@ -79,6 +85,11 @@ var _ = Describe("Scale-From-Zero placement against GPU capacity", Serial, Label
 		if !cfg.ScaleToZeroEnabled {
 			Skip("This suite requires EPP flow-control queuing: set SCALE_TO_ZERO_ENABLED=true")
 		}
+
+		gpusPerNode = int64(fixtures.AllocatableGPUsForProduct(ctx, k8sClient, fullAccelerator))
+		Expect(gpusPerNode).To(BeNumerically(">", 0),
+			"no schedulable node advertises %s, so this suite cannot fill one", fullAccelerator)
+		GinkgoWriter.Printf("filling %s, which advertises %d GPUs per node\n", fullAccelerator, gpusPerNode)
 		if ok, why := eppFlowControlAvailable(ctx, crClient,
 			cfg.WVANamespace, cfg.LLMDNamespace); !ok {
 			Skip("EPP flow control is not available, so there is no wake signal to test: " + why)

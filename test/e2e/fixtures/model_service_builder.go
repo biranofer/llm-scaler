@@ -62,6 +62,53 @@ func WithAcceleratorNodeSelectorKV(key, productName string) ModelServiceOption {
 	}
 }
 
+// AllocatableGPUsForProduct reports how many GPUs a single schedulable node
+// carrying the given product advertises, or 0 if no such node exists.
+//
+// For a spec that fills an accelerator: the number has to come from the cluster,
+// not from a constant that happens to match today's CLUSTER_GPUS. Reads the
+// largest single node rather than a sum, because filling is per-node -- a pod
+// cannot straddle two.
+func AllocatableGPUsForProduct(ctx context.Context, k8sClient *kubernetes.Clientset, product string) int {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0
+	}
+	best := 0
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		schedulable := true
+		for _, t := range node.Spec.Taints {
+			if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+				schedulable = false
+				break
+			}
+		}
+		if !schedulable {
+			continue
+		}
+		for _, vendor := range constants.VendorResources {
+			labels := append([]string{vendor.ProductLabel}, vendor.ProductLabelAliases...)
+			matched := false
+			for _, k := range labels {
+				if node.Labels[k] == product {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if q, ok := node.Status.Allocatable[corev1.ResourceName(vendor.ResourceName)]; ok {
+				if n := int(q.Value()); n > best {
+					best = n
+				}
+			}
+		}
+	}
+	return best
+}
+
 // NoAcceleratorPinAnnotation opts a workload OUT of the default pin below.
 //
 // For the few specs whose subject IS the unresolved path -- a workload that
@@ -416,17 +463,32 @@ func resourcePtr(s string) *resource.Quantity {
 
 // buildModelServiceResources returns resource requirements appropriate for the
 // deployment mode. Real vLLM requires a GPU to detect the device type at startup;
-// the simulator runs on CPU only.
+// the simulator runs on CPU, but still CLAIMS a GPU.
+//
+// It claims one because WVA's physical usage picture is summed from pod GPU
+// REQUESTS (gpunodes.getPodGPURequests, feeding gpuusage.Refresher, whose whole
+// point is "every GPU held on a GPU node, whoever holds it"). A simulator pod
+// that asks for nothing leaves that picture empty however many replicas are
+// running, so on the emulated cluster -- which advertises fake GPUs precisely so
+// they can be occupied -- the placement checks and the inventory limiter were
+// being exercised against a cluster that always looked idle. The managed view
+// (replicas x GPUs-per-replica, from the scaler's metadata) did see them, which
+// is why the two never disagreed loudly enough to notice.
+//
+// One GPU per replica matches what the metadata declares for these fixtures. A
+// spec that needs a different number sets WithGPURequest.
 func buildModelServiceResources(useSimulator bool) corev1.ResourceRequirements {
 	if useSimulator {
 		return corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("1"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
+				"nvidia.com/gpu":      resource.MustParse("1"),
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
 				corev1.ResourceMemory: resource.MustParse("4Gi"),
+				"nvidia.com/gpu":      resource.MustParse("1"),
 			},
 		}
 	}
