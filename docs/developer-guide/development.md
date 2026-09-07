@@ -322,7 +322,7 @@ kubectl logs -n workload-variant-autoscaler-system \
 
 ### Modifying Optimization Logic
 
-1. Update code in `internal/engines/allocation/` or `internal/queueing/analyzer/`
+1. Update code in `internal/engines/allocation/` or `internal/engines/analyzers/`
 2. Add/update unit tests
 3. Run `make test`
 4. Update design documentation if algorithm changes
@@ -333,9 +333,10 @@ kubectl logs -n workload-variant-autoscaler-system \
 
 After code changes, update relevant docs in:
 
-- `docs/user-guide/` - User-facing changes
-- `docs/design/` - Architecture/design changes
-- `docs/integrations/` - Integration guide updates
+- `docs/guides/` - the step-by-step paths a reader follows
+- `docs/reference/` - configuration, operations, metrics, troubleshooting
+- `docs/concepts/` - how the engine models capacity and decides
+- `docs/well-lit-paths/` - what a scenario buys, and the evidence it works
 
 **Note**: Documentation updates are partially automated via the [Update Docs workflow](../../.github/workflows/update-docs.md). The workflow analyzes code changes and creates draft PRs with documentation updates.
 
