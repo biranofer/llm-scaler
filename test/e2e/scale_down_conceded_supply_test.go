@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/test/e2e/fixtures"
@@ -273,7 +274,13 @@ var _ = Describe("Scale-down with supply beyond the scale target", Label("full")
 		Eventually(func(g Gomega) {
 			pod, err := k8sClient.CoreV1().Pods(cfg.LLMDNamespace).Get(ctx, extraPodName, metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning))
+			// WHY it is not running, not just that it is not. A Pending pod
+			// reported as "Pending to equal Running" says nothing about whether
+			// the image is pulling, the node is full or the scheduler refused it
+			// outright -- and the failure diagnostics dump the controller, the
+			// HPAs and the ScaledObjects, none of which know either. The
+			// scheduler puts its own answer on the pod.
+			g.Expect(pod.Status.Phase).To(Equal(corev1.PodRunning), unschedulableReason(pod))
 		}, time.Duration(cfg.PodReadyTimeout)*time.Second, time.Duration(cfg.PollIntervalSec)*time.Second).
 			Should(Succeed())
 
@@ -492,6 +499,37 @@ func scaleDeployment(namespace, name string, replicas int32) {
 //
 // Owning it by the Deployment satisfies all three, and garbage-collects the pod
 // with the fixture so a failed run cannot strand a simulator pod holding a GPU.
+// unschedulableReason reports what the scheduler said about a pod that is not
+// running, for use as a Gomega failure description.
+//
+// PodScheduled=False carries the whole answer in one line -- "0/3 nodes are
+// available: 1 node(s) had untolerated taint, 2 Insufficient cpu" -- and it is
+// the line nobody had when this spec timed out in CI. Falls back to the
+// container states, which is where an ImagePullBackOff or a crash loop shows up
+// instead.
+func unschedulableReason(pod *corev1.Pod) string {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodScheduled && cond.Status != corev1.ConditionTrue {
+			return fmt.Sprintf("pod %s is unscheduled (%s): %s", pod.Name, cond.Reason, cond.Message)
+		}
+	}
+	var states []string
+	for _, cs := range pod.Status.ContainerStatuses {
+		switch {
+		case cs.State.Waiting != nil:
+			states = append(states, fmt.Sprintf("%s waiting (%s): %s",
+				cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message))
+		case cs.State.Terminated != nil:
+			states = append(states, fmt.Sprintf("%s terminated (%s)", cs.Name, cs.State.Terminated.Reason))
+		}
+	}
+	if len(states) > 0 {
+		return fmt.Sprintf("pod %s is scheduled but not running: %s", pod.Name, strings.Join(states, "; "))
+	}
+	return fmt.Sprintf("pod %s is %s, and neither the scheduler nor any container said why",
+		pod.Name, pod.Status.Phase)
+}
+
 func createUnownedReplica(namespace, deploymentName, podName string) {
 	GinkgoHelper()
 	dep, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
@@ -514,6 +552,37 @@ func createUnownedReplica(namespace, deploymentName, podName string) {
 		},
 		Spec: *dep.Spec.Template.Spec.DeepCopy(),
 	}
+
+	// The COPY is staging, not a replica anyone sized. It exists to be scraped
+	// and to report the same fake metrics as the fleet, and the CPU and memory a
+	// real replica reserves have nothing to do with either -- so this asks for a
+	// fraction of them.
+	//
+	// Copying the template wholesale made this spec the one that runs out of
+	// room. Each simulator replica requests 1 CPU and 2Gi, the fleet is already
+	// at its target when the copy is added, and by the time this spec runs late
+	// in the full suite the two schedulable kind nodes are carrying everything
+	// else the run has left behind. The pod then sits Pending until the spec
+	// times out at 300s and reports "Pending to equal Running" -- a scheduling
+	// shortage wearing a scaling bug's clothes. Seen on PR #39, where 90 of 91
+	// specs passed and this was the only failure.
+	//
+	// A GPU request, if the template carries one, is deliberately NOT reduced:
+	// WVA's physical usage view is summed from pod GPU requests, and an unowned
+	// replica holding a device is part of what this spec is about.
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+			delete(c.Resources.Requests, name)
+			delete(c.Resources.Limits, name)
+		}
+		if c.Resources.Requests == nil {
+			c.Resources.Requests = corev1.ResourceList{}
+		}
+		c.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("50m")
+		c.Resources.Requests[corev1.ResourceMemory] = resource.MustParse("256Mi")
+	}
+
 	_, err = k8sClient.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if errors.IsAlreadyExists(err) {
 		return
