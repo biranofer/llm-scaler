@@ -86,6 +86,35 @@ func AcceleratorRequiredBy(spec *corev1.PodSpec) string {
 	return ""
 }
 
+// gpusDeclaredBy reports how many devices a container asks for, and whether it
+// asks for any, whichever vendor's resource names them.
+//
+// Reading nvidia.com/gpu alone -- which capacityOf did -- makes a pool on any
+// other hardware read as holding nothing. A Pod with eight MI300Xs asks for
+// amd.com/gpu, so no container looked like the one running engines: the fit
+// check floored the Pod at a single device, and the pool's GPUs never reached
+// the inventory the optimizer spends. Wrong in both directions, and silent on
+// exactly the clusters where a warm pool is worth the most.
+//
+// Limits before requests, as a device-plugin resource is not overcommittable:
+// the limit is what the Pod holds, and a container that sets only requests gets
+// that number anyway.
+//
+// Vendors are walked in REVERSE order, the order AcceleratorOf walks them, so a
+// Pod naming two vendors' resources resolves the same way its node does.
+func gpusDeclaredBy(c *corev1.Container) (int64, bool) {
+	for i := len(constants.VendorResources) - 1; i >= 0; i-- {
+		name := corev1.ResourceName(constants.VendorResources[i].ResourceName)
+		if q, ok := c.Resources.Limits[name]; ok {
+			return q.Value(), true
+		}
+		if q, ok := c.Resources.Requests[name]; ok {
+			return q.Value(), true
+		}
+	}
+	return 0, false
+}
+
 // acceleratorLabelKeys is every node label key that names a GPU model.
 func acceleratorLabelKeys() []string {
 	var keys []string

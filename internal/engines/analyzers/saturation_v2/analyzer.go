@@ -12,6 +12,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/config"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/domain"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/aggregation"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/allocation"
@@ -25,10 +26,46 @@ type SaturationAnalyzer struct {
 	// mu protects computeCapacityHistory from concurrent access.
 	mu sync.Mutex
 	// computeCapacityHistory stores rolling averages of observed k2 values,
-	// keyed by "modelID|accelerator|gpuCount|outputBucket".
+	// keyed by "modelID|accelerator|gpuCount|role|outputBucket|queueThreshold".
 	// TODO: check if we need to use other model parameters as key in the future.
 	computeCapacityHistory map[string]*rollingAverage
-	capacityStore          *CapacityKnowledgeStore
+	// lastAccelerator remembers, per variant, the last accelerator that actually
+	// RESOLVED.
+	//
+	// A workload that pins no GPU product has its accelerator observed from the
+	// nodes its pods landed on (variantmeta.observeAcceleratorFromNodes), and that
+	// observation REQUIRES AGREEMENT: pods on two different products report "no
+	// single answer" and the variant reads unresolved. That is the right
+	// accounting answer -- charging a spread fleet to one pool is the bug the
+	// removed acceleratorName label used to cause -- but it makes the value change
+	// with pod PLACEMENT, and the accelerator is part of the k2 history key.
+	//
+	// On a heterogeneous cluster the result is a self-sustaining oscillation, and
+	// this is measured rather than theorised. A kind cluster labelled
+	// NVIDIA-H100-SXM5-80GB on one node and NVIDIA-A100-PCIE-80GB on another: at
+	// one replica the fleet is single-type and resolves, so k2 comes from history;
+	// the scale-up puts the second replica on the other product, resolution
+	// reports no single answer, the key moves to an empty bucket, k2 falls back to
+	// k1 and capacity jumps 2 -> 8; the variant then scales back DOWN, which
+	// restores single-type placement and the cycle repeats. Scaling up is what
+	// destroys the deduction; losing the deduction is what causes the scale-down.
+	//
+	// Keying history on the last resolved accelerator breaks that loop without
+	// touching the accounting: this is a cache key for a capacity estimate, not a
+	// statement about which pool owns the GPUs. The cost is that a genuinely mixed
+	// fleet averages observations from two hardware types under one key, which is
+	// coarse -- and still strictly better than alternating between a real estimate
+	// and k1 every time a replica lands elsewhere.
+	lastAccelerator map[string]acceleratorMemo
+	capacityStore   *CapacityKnowledgeStore
+}
+
+// acceleratorMemo is the last accelerator that resolved for a variant, with the
+// time it was last used -- so it can age out on the same timeout as the k2
+// history it keys.
+type acceleratorMemo struct {
+	name     string
+	lastUsed time.Time
 }
 
 // NewSaturationAnalyzer creates a new V2 saturation analyzer backed by the
@@ -36,6 +73,7 @@ type SaturationAnalyzer struct {
 func NewSaturationAnalyzer(store *CapacityKnowledgeStore) *SaturationAnalyzer {
 	return &SaturationAnalyzer{
 		computeCapacityHistory: make(map[string]*rollingAverage),
+		lastAccelerator:        make(map[string]acceleratorMemo),
 		capacityStore:          store,
 	}
 }
@@ -50,6 +88,12 @@ func (a *SaturationAnalyzer) Name() string {
 // EvictStaleHistory removes k2 history entries that have not been updated
 // within the given timeout. This prevents unbounded memory growth from
 // deleted models or workload buckets that are no longer active.
+//
+// It prunes the accelerator memo on the same timeout, and here rather than in a
+// second sweep so the two cannot drift: both are per-variant state that exists
+// only to key or stabilise capacity, and a variant that has gone quiet for the
+// timeout has no use for either. The returned count remains the number of
+// HISTORY entries evicted, which is what its callers report.
 func (a *SaturationAnalyzer) EvictStaleHistory(timeout time.Duration) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -58,6 +102,11 @@ func (a *SaturationAnalyzer) EvictStaleHistory(timeout time.Duration) int {
 		if time.Since(ra.lastUpdated) > timeout {
 			delete(a.computeCapacityHistory, key)
 			evicted++
+		}
+	}
+	for key, memo := range a.lastAccelerator {
+		if time.Since(memo.lastUsed) > timeout {
+			delete(a.lastAccelerator, key)
 		}
 	}
 	return evicted
@@ -412,7 +461,19 @@ func (a *SaturationAnalyzer) computeK2(
 	// real traffic. Without the role in the key, one role's P1-obs seeds
 	// history the other role then reads back via P2-hist, silently reusing
 	// an unrelated role's occupancy reading as its own capacity estimate.
-	historyKey := fmt.Sprintf("%s|%s|%d|%s|%s", modelID, accelerator, gpuCount, canonicalRole(role), outputBucket)
+	//
+	// The queue threshold is in the key because it DEFINES what a P1 observation
+	// means: k2 is recorded as the occupancy seen when the queue was considered
+	// saturated, so a reading taken at threshold 2 is not a capacity estimate at
+	// threshold 100. Nothing else invalidates history -- EvictStaleHistory is
+	// age-based and knows nothing about policy -- so without this an operator
+	// retuning queueLengthThreshold keeps being sized by observations recorded
+	// under the old one. Measured: a k2 of 2 learned under a low threshold kept
+	// a variant at utilization 1.0 under a threshold of 100, where P1 could not
+	// fire at all.
+	historyKey := fmt.Sprintf("%s|%s|%d|%s|%s|q%g",
+		modelID, a.stableAccelerator(namespace, variantName, accelerator),
+		gpuCount, canonicalRole(role), outputBucket, queueThreshold)
 
 	// Priority 1: Observed (queue saturated)
 	//
@@ -892,6 +953,36 @@ func computeModelWorkloadAverages(replicaMetrics []domain.ReplicaMetrics) (avgIn
 
 // canonicalRole normalizes an empty variant role to domain.RoleBoth, matching
 // aggregation.AggregateByRole.
+// stableAccelerator returns the accelerator to key history under, preferring the
+// last one that resolved for this variant over an unresolved reading.
+//
+// Capacity is a property of the hardware, so it belongs in the key; but "the pods
+// currently disagree about it" is not a different accelerator, and treating it as
+// one is what makes the fleet oscillate. A resolved reading always wins and is
+// remembered; an unresolved one falls back to what was remembered, and only when
+// nothing was ever resolved does the unresolved value itself get used, which
+// keeps a never-resolvable variant behaving exactly as it does today.
+func (a *SaturationAnalyzer) stableAccelerator(namespace, variantName, accelerator string) string {
+	key := namespace + "/" + variantName
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if constants.IsAcceleratorResolved(accelerator) {
+		a.lastAccelerator[key] = acceleratorMemo{name: accelerator, lastUsed: time.Now()}
+		return accelerator
+	}
+	if last, ok := a.lastAccelerator[key]; ok {
+		// Touched on READ as well as on write: the memo should live as long as the
+		// variant is being analysed, not as long as its accelerator keeps
+		// resolving -- a variant that stops resolving is exactly the one this
+		// exists for. A variant that stops being analysed goes quiet on both, and
+		// EvictStaleHistory then ages it out with the k2 history beside it.
+		last.lastUsed = time.Now()
+		a.lastAccelerator[key] = last
+		return last.name
+	}
+	return accelerator
+}
+
 func canonicalRole(role string) string {
 	if role == "" {
 		return domain.RoleBoth

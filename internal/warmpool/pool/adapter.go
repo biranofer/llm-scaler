@@ -35,9 +35,6 @@ const (
 	PoolLabel = "llm-d.ai/warm-pool"
 	// NameLabel is the other half of the pool Deployment's own selector.
 	NameLabel = "app.kubernetes.io/name"
-	// gpuResource is what a pool Pod asks for, and what identifies the
-	// container running engines among the Pod's containers.
-	gpuResource = "nvidia.com/gpu"
 	// ControlPlaneLabel is how the pool's NetworkPolicy recognises the
 	// controller, and therefore who may reach the supervisor and the engines.
 	// It is guarded for that reason rather than for ownership -- see
@@ -792,17 +789,17 @@ func capacityOf(p *corev1.Pod) PodCapacity {
 	capacity.PodsPerGroup = groupSizeOf(p)
 	for i := range p.Spec.Containers {
 		c := &p.Spec.Containers[i]
-		gpus, hasGPUs := c.Resources.Limits[gpuResource]
-		if !hasGPUs {
-			gpus, hasGPUs = c.Resources.Requests[gpuResource]
-		}
+		// Whichever vendor's resource it names: the container running engines
+		// is the one holding devices, and on AMD or Intel hardware those are
+		// not NVIDIA's.
+		gpus, hasGPUs := gpusDeclaredBy(c)
 		if !hasGPUs {
 			continue // not the container running engines
 		}
 		// GPUs is what the WARM UNIT holds, which for a group is every Pod in
 		// it. The leader's own spec describes one Pod; a model spanning the
 		// group is sized against all of them.
-		capacity.GPUs = int(gpus.Value()) * capacity.PodsPerGroup
+		capacity.GPUs = int(gpus) * capacity.PodsPerGroup
 		if limit, ok := c.Resources.Limits[corev1.ResourceMemory]; ok {
 			// Memory stays PER POD. A level-1 sleeper's weights are charged to
 			// each member's own cgroup, so the budget that bounds the warm set

@@ -3,6 +3,7 @@ package fixtures
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/accelerator"
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/engines/variantmeta"
 )
 
@@ -42,12 +45,246 @@ func WithRole(role string) ModelServiceOption {
 // productName is the node's `nvidia.com/gpu.product` value, e.g.
 // "NVIDIA-A100-PCIE-80GB".
 func WithAcceleratorNodeSelector(productName string) ModelServiceOption {
+	return WithAcceleratorNodeSelectorKV("nvidia.com/gpu.product", productName)
+}
+
+// WithAcceleratorNodeSelectorKV pins on a given product LABEL KEY, because the
+// key is vendor-specific: an emulated cluster may label its nodes
+// amd.com/gpu.product or habana.ai/gaudi.product, and a selector on
+// nvidia.com/gpu.product matches nothing there -- the pods stay Pending and the
+// spec times out somewhere unrelated. Pair with DiscoverAcceleratorProduct.
+func WithAcceleratorNodeSelectorKV(key, productName string) ModelServiceOption {
 	return func(d *appsv1.Deployment) {
 		if d.Spec.Template.Spec.NodeSelector == nil {
 			d.Spec.Template.Spec.NodeSelector = map[string]string{}
 		}
-		d.Spec.Template.Spec.NodeSelector["nvidia.com/gpu.product"] = productName
+		d.Spec.Template.Spec.NodeSelector[key] = productName
 	}
+}
+
+// AllocatableGPUsForProduct reports how many GPUs a single schedulable node
+// carrying the given product advertises, or 0 if no such node exists.
+//
+// For a spec that fills an accelerator: the number has to come from the cluster,
+// not from a constant that happens to match today's CLUSTER_GPUS. Reads the
+// largest single node rather than a sum, because filling is per-node -- a pod
+// cannot straddle two.
+func AllocatableGPUsForProduct(ctx context.Context, k8sClient *kubernetes.Clientset, product string) int {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0
+	}
+	best := 0
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		schedulable := true
+		for _, t := range node.Spec.Taints {
+			if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+				schedulable = false
+				break
+			}
+		}
+		if !schedulable {
+			continue
+		}
+		for _, vendor := range constants.VendorResources {
+			labels := append([]string{vendor.ProductLabel}, vendor.ProductLabelAliases...)
+			matched := false
+			for _, k := range labels {
+				if node.Labels[k] == product {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if q, ok := node.Status.Allocatable[corev1.ResourceName(vendor.ResourceName)]; ok {
+				if n := int(q.Value()); n > best {
+					best = n
+				}
+			}
+		}
+	}
+	return best
+}
+
+// NoAcceleratorPinAnnotation opts a workload OUT of the default pin below.
+//
+// For the few specs whose subject IS the unresolved path -- a workload that
+// constrains no accelerator, whose GPUs are charged to no pool. Nothing sets it
+// today; it exists so such a spec does not have to fight the default.
+const NoAcceleratorPinAnnotation = "e2e.llm-d.ai/no-accelerator-pin"
+
+// WithoutAcceleratorPin leaves the workload unpinned, so its accelerator resolves
+// the way an unconstrained production workload's does.
+func WithoutAcceleratorPin() ModelServiceOption {
+	return func(d *appsv1.Deployment) {
+		if d.Annotations == nil {
+			d.Annotations = map[string]string{}
+		}
+		d.Annotations[NoAcceleratorPinAnnotation] = "true"
+	}
+}
+
+// pinToDiscoveredAccelerator gives a pod spec a GPU product nodeSelector unless it
+// already has one, and reports what it pinned to.
+//
+// Applied by default to every model service and warm pool this package creates,
+// because the alternative turned out to be a source of failures rather than a
+// neutral default. A workload that constrains nothing has its accelerator observed
+// from the nodes its pods landed on, and that observation requires agreement: on a
+// heterogeneous cluster -- which this suite's kind emulator is -- a scale-up puts
+// the second replica on another product, the variant reads unresolved, its k2
+// history key moves, capacity jumps, and it scales back down. Pinning is also what
+// a real deployment does; WVA's own AcceleratorNotResolved warning asks for it.
+//
+// Pools are pinned for the matching reason: a pool Pod's accelerator is a property
+// of its node, and a borrow requires the pool and the workload to agree. Leaving
+// pools to the scheduler while workloads are pinned would break every borrow spec
+// on a heterogeneous cluster.
+func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clientset, podSpec *corev1.PodSpec) {
+	for _, k := range accelerator.GetProductKeys() {
+		if _, already := podSpec.NodeSelector[k]; already {
+			return
+		}
+	}
+	key, product, resourceName, ok := discoverAccelerator(ctx, k8sClient)
+	if !ok {
+		return
+	}
+	if podSpec.NodeSelector == nil {
+		podSpec.NodeSelector = map[string]string{}
+	}
+	podSpec.NodeSelector[key] = product
+
+	// And claim one of that vendor's GPUs, unless the caller already asked for
+	// some. WVA's physical usage picture is summed from pod GPU REQUESTS
+	// (gpunodes.getPodGPURequests, feeding gpuusage.Refresher, whose whole point
+	// is "every GPU held on a GPU node, whoever holds it"), so a simulator pod
+	// that asks for nothing leaves that picture empty however many replicas run --
+	// the placement checks and the inventory limiter were being exercised against
+	// a cluster that always looked idle. The managed view (replicas x
+	// GPUs-per-replica, from the scaler's metadata) did see them, which is why the
+	// two never disagreed loudly enough to notice.
+	//
+	// The resource comes from the SAME discovery as the nodeSelector for a reason
+	// that is not theoretical: they must name one vendor. A spec needing a
+	// different count sets WithGPURequest, which is why an existing claim wins.
+	res := corev1.ResourceName(resourceName)
+	for i := range podSpec.Containers {
+		c := &podSpec.Containers[i]
+		if _, already := c.Resources.Requests[res]; already {
+			continue
+		}
+		// A LIMIT is a claim too, and pool containers state their devices as one:
+		// the count there is the pool spec's, and capacityOf reads it as the warm
+		// unit's size. Overwriting it with this default's single device would
+		// quietly resize every group the suite builds.
+		if _, already := c.Resources.Limits[res]; already {
+			continue
+		}
+		if c.Resources.Requests == nil {
+			c.Resources.Requests = corev1.ResourceList{}
+		}
+		if c.Resources.Limits == nil {
+			c.Resources.Limits = corev1.ResourceList{}
+		}
+		one := *resource.NewQuantity(1, resource.DecimalSI)
+		c.Resources.Requests[res] = one
+		c.Resources.Limits[res] = one
+	}
+}
+
+// DiscoverAcceleratorProduct returns a GPU product label present on a schedulable
+// node, so a spec can pin its workload to ONE accelerator.
+//
+// Why a spec should: a workload that constrains no accelerator has its type
+// observed from the nodes its pods landed on, and that observation requires
+// agreement -- two pods on two products report "no single answer" and the variant
+// reads unresolved. On a heterogeneous emulator (this suite's kind cluster labels
+// one node NVIDIA-H100-SXM5-80GB and another NVIDIA-A100-PCIE-80GB) a scale-up is
+// therefore enough to un-resolve the accelerator, which is not the condition most
+// specs mean to test and which produced a self-sustaining 1<->2 oscillation.
+//
+// Nodes carrying NoSchedule taints are skipped: kind taints its control-plane,
+// and pinning to a product that only exists there parks every replica in Pending.
+// Sorted for determinism, so a rerun pins the same way. Returns ok=false on a
+// cluster with no product labels at all, where the caller should simply not pin.
+func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clientset) (key, product string, ok bool) {
+	key, product, _, ok = discoverAccelerator(ctx, k8sClient)
+	return key, product, ok
+}
+
+// discoverAccelerator also reports the vendor's RESOURCE name, which a caller
+// needs to ask for one of these GPUs: the product label and the resource are a
+// pair (amd.com/gpu.product-name goes with amd.com/gpu), and mixing them across
+// vendors yields a Pod that can never be scheduled.
+func discoverAccelerator(ctx context.Context, k8sClient *kubernetes.Clientset) (key, product, resourceName string, ok bool) {
+	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", "", "", false
+	}
+	items := make([]corev1.Node, len(nodes.Items))
+	copy(items, nodes.Items)
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+
+	// Chosen by CAPACITY, not by name order. Every workload and pool this package
+	// creates lands on the product picked here, so the choice sets the suite's
+	// whole GPU budget: taking the first node alphabetically put everything on a
+	// 4-GPU control-plane while an equally labelled 4-GPU worker sat unused, which
+	// is an arbitrary ceiling rather than a decision. Ties break on the label
+	// string so a rerun pins identically.
+	type candidate struct {
+		key, product, resource string
+		gpus                   int64
+	}
+	totals := map[string]*candidate{}
+	for i := range items {
+		node := &items[i]
+		schedulable := true
+		for _, t := range node.Spec.Taints {
+			if t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute {
+				schedulable = false
+				break
+			}
+		}
+		if !schedulable {
+			continue
+		}
+		for _, vendor := range constants.VendorResources {
+			labels := append([]string{vendor.ProductLabel}, vendor.ProductLabelAliases...)
+			for _, k := range labels {
+				v, found := node.Labels[k]
+				if !found || v == "" {
+					continue
+				}
+				id := k + "=" + v
+				if totals[id] == nil {
+					totals[id] = &candidate{key: k, product: v, resource: vendor.ResourceName}
+				}
+				if q, ok := node.Status.Allocatable[corev1.ResourceName(vendor.ResourceName)]; ok {
+					totals[id].gpus += q.Value()
+				}
+				break
+			}
+		}
+	}
+
+	best := ""
+	for id, c := range totals {
+		if best == "" {
+			best = id
+			continue
+		}
+		if c.gpus > totals[best].gpus || (c.gpus == totals[best].gpus && id < best) {
+			best = id
+		}
+	}
+	if best == "" {
+		return "", "", "", false
+	}
+	return totals[best].key, totals[best].product, totals[best].resource, true
 }
 
 // WithGPURequest sets the pod's GPU resource request/limit, which is how WVA
@@ -88,10 +325,24 @@ func CreateModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 // the container to crash-loop if passed to the wrong runtime. Tests that use
 // simulator-only flags should gate their suite on `cfg.UseSimulator` and Skip
 // otherwise.
-func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string) error {
+func CreateModelServiceWithExtraArgs(ctx context.Context, k8sClient *kubernetes.Clientset, namespace, name, poolName, modelID string, useSimulator bool, maxNumSeqs int, extraArgs []string, opts ...ModelServiceOption) error {
 	deployment := buildModelServiceDeployment(namespace, name, poolName, modelID, useSimulator, maxNumSeqs, extraArgs)
+	for _, opt := range opts {
+		opt(deployment)
+	}
+	applyAcceleratorPin(ctx, k8sClient, deployment)
 	_, err := k8sClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	return err
+}
+
+// applyAcceleratorPin pins the Deployment unless it opted out, and removes the
+// marker so it does not travel to the cluster as a stray annotation.
+func applyAcceleratorPin(ctx context.Context, k8sClient *kubernetes.Clientset, d *appsv1.Deployment) {
+	if d.Annotations[NoAcceleratorPinAnnotation] == "true" {
+		delete(d.Annotations, NoAcceleratorPinAnnotation)
+		return
+	}
+	pinToDiscoveredAccelerator(ctx, k8sClient, &d.Spec.Template.Spec)
 }
 
 // DeleteModelService deletes the model service deployment. Idempotent; ignores NotFound.
@@ -115,6 +366,7 @@ func EnsureModelService(ctx context.Context, k8sClient *kubernetes.Clientset, na
 	for _, opt := range opts {
 		opt(desiredDeployment)
 	}
+	applyAcceleratorPin(ctx, k8sClient, desiredDeployment)
 
 	existingDeployment, err := k8sClient.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
@@ -257,7 +509,16 @@ func resourcePtr(s string) *resource.Quantity {
 
 // buildModelServiceResources returns resource requirements appropriate for the
 // deployment mode. Real vLLM requires a GPU to detect the device type at startup;
-// the simulator runs on CPU only.
+// the simulator runs on CPU.
+//
+// The simulator's GPU claim is NOT here, deliberately: which resource to ask for
+// depends on the vendor of the node the workload is pinned to, and this function
+// cannot know that. It is added by pinToDiscoveredAccelerator, alongside the
+// nodeSelector, from the same discovery -- see the note there for why the claim
+// exists at all. Naming nvidia.com/gpu here instead cost a CI run: on a mixed
+// cluster the pin chose the AMD node and every pod asked it for an NVIDIA
+// resource it does not advertise, so nothing scheduled and five suites failed in
+// BeforeAll waiting for pods that could never start.
 func buildModelServiceResources(useSimulator bool) corev1.ResourceRequirements {
 	if useSimulator {
 		return corev1.ResourceRequirements{

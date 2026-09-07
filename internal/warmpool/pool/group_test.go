@@ -12,7 +12,62 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 )
+
+// gpuResource is one vendor's device resource, which is all a test needs to
+// build a Pod that holds devices. Production names no vendor at all: it reads
+// whichever one a container asks for, which is what
+// TestAPoolOnAnotherVendorsHardwareHoldsItsDevices is about.
+const gpuResource = "nvidia.com/gpu"
+
+// A pool on hardware that is not NVIDIA's still reports the devices it holds.
+//
+// capacityOf read nvidia.com/gpu and nothing else, so a Pod holding eight
+// MI300Xs read as holding NONE: no container looked like the one running
+// engines, the fit check floored the Pod at a single device and refused every
+// model wanting more, and the pool's GPUs never reached the inventory the
+// optimizer spends. Every vendor in the list is checked, so adding one to
+// constants.VendorResources cannot quietly reintroduce this.
+func TestAPoolOnAnotherVendorsHardwareHoldsItsDevices(t *testing.T) {
+	for _, vendor := range constants.VendorResources {
+		t.Run(vendor.Vendor+" "+vendor.ResourceName, func(t *testing.T) {
+			p := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pool-abc", Namespace: "ns"},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name: "engine",
+					Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{
+						corev1.ResourceName(vendor.ResourceName): *resource.NewQuantity(8, resource.DecimalSI),
+					}},
+				}}},
+			}
+
+			if got := capacityOf(&p).GPUs; got != 8 {
+				t.Errorf("a Pod holding eight %s reads as %d GPUs, want 8",
+					vendor.ResourceName, got)
+			}
+		})
+	}
+}
+
+// A container that states its devices as a REQUEST is read too, whatever the
+// vendor: a pool Pod without limits is one the kubelet may evict, not one
+// holding nothing.
+func TestDevicesStatedAsARequestAreRead(t *testing.T) {
+	vendor := constants.VendorResources[len(constants.VendorResources)-1]
+	p := corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceName(vendor.ResourceName): *resource.NewQuantity(2, resource.DecimalSI),
+			}},
+		}}},
+	}
+
+	if got := capacityOf(&p).GPUs; got != 2 {
+		t.Errorf("a Pod requesting two %s reads as %d GPUs, want 2", vendor.ResourceName, got)
+	}
+}
 
 // groupPodPtr is groupPod as an addressable Pod with an address, which is what
 // the client and the fan-out both need.

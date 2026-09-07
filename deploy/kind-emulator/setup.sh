@@ -7,7 +7,11 @@ set -euo pipefail
 # --------------------------------------------------------------------
 DEFAULT_CLUSTER_NAME="kind-wva-gpu-cluster"
 DEFAULT_NODES=3
-DEFAULT_GPUS_PER_NODE=2
+# Matches the Makefile CLUSTER_GPUS default. They disagreed -- 2 here, 4 there --
+# so a cluster built by running this script directly had half the GPUs of one
+# built by make, and the specs that fill an accelerator behaved differently
+# depending on which way the cluster was created.
+DEFAULT_GPUS_PER_NODE=16
 DEFAULT_GPU_TYPE="mix"
 DEFAULT_GPU_MODEL="NVIDIA-A100-PCIE-80GB"
 DEFAULT_GPU_MEMORY=81920

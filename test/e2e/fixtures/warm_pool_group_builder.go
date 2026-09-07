@@ -66,13 +66,19 @@ func CreateWarmPoolGroup(
 		replicas = 1
 	}
 
+	// The vendor whose product this pool's Pods will be pinned to, or whose
+	// devices the node the spec chose advertises. A group asking NVIDIA for a
+	// device on the AMD node it was pinned to never schedules, and the whole
+	// spec then times out in BeforeAll saying nothing about why.
+	gpuRes := poolGPUResource(ctx, clientset, spec.NodeName)
+
 	supervisor := warmPoolSupervisorContainer()
 	if spec.GPUs > 0 {
 		// PER POD. The controller multiplies by the group size to get the unit's
 		// devices, so writing the group total here would count them twice.
 		supervisor.Resources = corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				gpuResourceName: *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
+				gpuRes: *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
 			},
 		}
 	}
@@ -110,7 +116,7 @@ func CreateWarmPoolGroup(
 	if spec.GPUs > 0 {
 		workerContainer.Resources = corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				gpuResourceName: *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
+				gpuRes: *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
 			},
 		}
 	}
@@ -134,6 +140,23 @@ func CreateWarmPoolGroup(
 			}},
 			Containers: []corev1.Container{workerContainer},
 		},
+	}
+
+	// Pinned for the same reason a Deployment pool is, and it was missed here:
+	// a borrow requires the pool Pod and the workload to be on the same
+	// accelerator, model services are pinned to a discovered product by default,
+	// and a group left to the scheduler landed on another one. On CI's
+	// nvidia-mix cluster that is exactly what happened -- the group formed on an
+	// A100 node while the model it was asked to hold wanted the MI300X every
+	// model service is pinned to, and the controller declined it forever:
+	// "needs AMD-MI300X-192G, this Pod is on NVIDIA-A100-PCIE-80GB".
+	//
+	// BOTH templates: a group's accelerator is the leader's, but a worker on
+	// another product is a rank of the engine running on hardware the model was
+	// never loaded for. A spec that chose a node itself keeps it.
+	if spec.NodeName == "" {
+		pinToDiscoveredAccelerator(ctx, clientset, &leader.Spec)
+		pinToDiscoveredAccelerator(ctx, clientset, &worker.Spec)
 	}
 
 	size := int32(spec.GroupSize)

@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+
+	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/constants"
 )
 
 // A warm-pool Pod, without a GPU.
@@ -55,7 +57,9 @@ const (
 	// WarmPoolNameLabel names the pool a Pod belongs to, matching the label the
 	// controller groups by.
 	WarmPoolNameLabel = "llm-d.ai/warm-pool"
-	// gpuResourceName is what a pool Pod asks for when a spec gives it GPUs.
+	// gpuResourceName is the resource a pool Pod asks for when nothing on the
+	// cluster says which vendor it should name -- see poolGPUResource, which is
+	// what a pool actually claims.
 	gpuResourceName = "nvidia.com/gpu"
 	// WarmPoolBasePort is the first port an emulated engine listens on, and the
 	// floor the proxy enforces on an upstream.
@@ -337,6 +341,39 @@ type WarmPoolSpec struct {
 // whether an httpGet probe reaches a restricted port is a property of the CNI
 // rather than of the manifest. Running the check inside the container is what
 // removes that dependency, and only a real kubelet can confirm it.
+// poolGPUResource is the GPU resource a pool Pod should ask for.
+//
+// Not a constant, for the reason that made a pinned workload ask the wrong
+// vendor for a device: the product label and the resource name are a pair. A
+// pool left to the scheduler lands on the product pinToDiscoveredAccelerator
+// picks, so it must claim THAT vendor's resource; a pool the spec placed itself
+// lands on a node whose vendor is whatever that node advertises. Naming
+// NVIDIA's resource in either case leaves the Pod Pending forever on a cluster
+// whose chosen node is AMD's -- which CI's nvidia-mix cluster has.
+//
+// Allocatable, not labels, decides: LabelNodeAccelerator rewrites every
+// vendor's PRODUCT label onto one node so a spec can assert on the accelerator
+// it names, and the devices that node really advertises are untouched by that.
+func poolGPUResource(ctx context.Context, clientset *kubernetes.Clientset, nodeName string) corev1.ResourceName {
+	if nodeName == "" {
+		if _, _, resourceName, ok := discoverAccelerator(ctx, clientset); ok {
+			return corev1.ResourceName(resourceName)
+		}
+		return gpuResourceName
+	}
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return gpuResourceName
+	}
+	for _, vendor := range constants.VendorResources {
+		name := corev1.ResourceName(vendor.ResourceName)
+		if q, ok := node.Status.Allocatable[name]; ok && q.Value() > 0 {
+			return name
+		}
+	}
+	return gpuResourceName
+}
+
 func CreateWarmPool(ctx context.Context, clientset *kubernetes.Clientset, spec WarmPoolSpec) error {
 	if err := createWarmPoolScript(ctx, clientset, spec); err != nil {
 		return err
@@ -360,7 +397,7 @@ func CreateWarmPool(ctx context.Context, clientset *kubernetes.Clientset, spec W
 		// sidecar's own limits have nothing to do with how many models fit.
 		supervisor.Resources = corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
-				gpuResourceName: *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
+				poolGPUResource(ctx, clientset, spec.NodeName): *resource.NewQuantity(int64(spec.GPUs), resource.DecimalSI),
 			},
 		}
 	}
@@ -400,6 +437,15 @@ func CreateWarmPool(ctx context.Context, clientset *kubernetes.Clientset, spec W
 				},
 			},
 		},
+	}
+
+	// A borrow requires the pool Pod and the workload to be on the same
+	// accelerator, and a pool Pod's accelerator is a property of its node. Model
+	// services are pinned to a discovered product by default, so a pool left to
+	// the scheduler would land on another one on a heterogeneous cluster and no
+	// borrow would ever match. A spec that chose a node itself keeps it.
+	if spec.NodeName == "" {
+		pinToDiscoveredAccelerator(ctx, clientset, &deployment.Spec.Template.Spec)
 	}
 
 	_, err := clientset.AppsV1().Deployments(spec.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
