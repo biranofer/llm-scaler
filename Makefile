@@ -1045,23 +1045,32 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@# `pip install -e .` produces the same thing install.sh would, in $HOME, with
 	@# no admin rights. install.sh stays as the fallback for whatever else it does
 	@# on a machine that has not got this far.
+	@# The venv branch below installs TWO packages. The CLI imports `planner`,
+	@# which is a separate package install.sh pulls from a git URL -- `pip install
+	@# -e .` alone produces a venv whose llmdbenchmark dies on
+	@# `ModuleNotFoundError: No module named planner`. The pin is read out of
+	@# their install.sh, the same way this file already reads the helm-diff and
+	@# helmfile versions, so it cannot drift from the version the standup was
+	@# tested against.
+	@#
+	@# uv is tried FIRST: a box without python3-venv (no ensurepip) fails
+	@# `python3 -m venv` with "You may need to use sudo with that command" --
+	@# the very thing being avoided. uv brings its own Python and needs no
+	@# admin rights.
+	@#
+	@# These explanations live HERE, not inside the recipe, because a shell
+	@# comment cannot survive a backslash-joined make recipe: without a trailing
+	@# backslash make ends the command at the comment and the shell gets an
+	@# unterminated if/else ("syntax error: unexpected end of file"), and with
+	@# one the shell joins the comment to the next line and swallows the command.
 	@if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
 		echo "llmdbenchmark present at $(LLMDBENCHMARK) — skipping install.sh."; \
 		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
 	else \
 		echo "Building the llmdbenchmark venv without sudo..."; \
-		# The CLI imports `planner`, which is a SEPARATE package install.sh pulls
-		# from a git URL -- `pip install -e .` alone produces a venv whose
-		# llmdbenchmark dies on `ModuleNotFoundError: No module named planner`.
-		# The pin is read out of their install.sh, the same way this file already
-		# reads the helm-diff and helmfile versions, so it cannot drift from the
-		# version the standup was tested against.
 		planner=$$(sed -n "s|^PLANNER_GIT=\"\(git+[^\"]*\)\"|\1|p" \
 			"$(BENCHMARK_REPO_DIR)/install.sh" 2>/dev/null | head -1); \
 		planner=$${planner:-git+https://github.com/llm-d-incubation/llm-d-planner.git@v0.1.0}; \
-		# uv FIRST: this box has no python3-venv (no ensurepip), so `python3 -m venv`
-		# fails with "You may need to use sudo with that command" -- the very thing
-		# being avoided. uv brings its own Python and needs no admin rights.
 		if command -v uv >/dev/null 2>&1; then \
 			(cd $(BENCHMARK_REPO_DIR) && uv venv "$(BENCHMARK_VENV)" >/tmp/llmdbench-venv.log 2>&1 \
 			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q -e . >>/tmp/llmdbench-venv.log 2>&1 \
