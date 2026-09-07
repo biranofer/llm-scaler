@@ -89,9 +89,13 @@ patch](../../reference/workload-preparation.md#writing-the-patch-make-workload-p
 
 <!-- guide:deploy.register start -->
 ```bash
-make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+# SCOPE=cluster here too. Without it the scan covers only the controller's
+# OWN namespace, finds nothing, and says "Deploy them first" about model
+# servers that are deployed -- in the namespaces a cluster-wide controller
+# exists to manage.
+make scaledobjects-plan SCOPE=cluster WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 # edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
-make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+make scaledobjects-apply SCOPE=cluster WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 ```
 <!-- guide:deploy.register end -->
 
