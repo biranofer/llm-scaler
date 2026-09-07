@@ -494,6 +494,18 @@ func (a *SaturationAnalyzer) computeK2(
 	//
 	// Falls through to Priority 2 rather than returning k1 directly, so a real
 	// historical/derived signal still wins over an untimely fallback-to-k1.
+	//
+	// The value returned is the rolling average AFTER folding this observation
+	// in, not the raw sample: tokensInUse under a saturated queue reflects
+	// whatever happens to be admitted this instant, which churns with
+	// admission/eviction independently of the backlog it's meant to size for
+	// (a replica can shed most of its resident batch while its wait-list stays
+	// pinned). Returning it raw lets one noisy cycle single-handedly swing
+	// capacity -- and everything downstream that divides by it -- long before
+	// the next cycle can correct it. Blending it into the same window P2-hist
+	// already reads gives a lone outlier 1/RollingAverageWindowSize weight
+	// instead of 100%, while a real, sustained shift still dominates the
+	// average within a few cycles.
 	if queueLen >= int(queueThreshold) && tokensInUse > 0 {
 		k2Observed := tokensInUse
 		if kvCeiling > 0 && k2Observed > kvCeiling {
@@ -511,14 +523,15 @@ func (a *SaturationAnalyzer) computeK2(
 				a.computeCapacityHistory[historyKey] = ra
 			}
 			ra.Add(float64(k2Observed))
+			k2Smoothed := int64(ra.Average())
 			historyLen := ra.Len()
 			a.mu.Unlock()
 			logger.V(logging.DEFAULT).Info("k2-decision",
 				"modelID", modelID, "namespace", namespace, "variant", variantName,
 				"priority", k2Labels[k2SrcObserved], "historyKey", historyKey,
 				"queueLength", queueLen, "queueThreshold", queueThreshold,
-				"k2", k2Observed, "historyWindowLen", historyLen)
-			return k2Observed, k2SrcObserved
+				"k2Observed", k2Observed, "k2", k2Smoothed, "historyWindowLen", historyLen)
+			return k2Smoothed, k2SrcObserved
 		}
 	}
 

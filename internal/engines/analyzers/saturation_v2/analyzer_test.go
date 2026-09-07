@@ -135,6 +135,41 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(ra.Average()).To(Equal(float64(8000)))
 		})
 
+		It("should dilute a single outlier observation to 1/N of the rolling average", func() {
+			// Nine steady observations at 8000, then one outlier at 3000 (e.g. a
+			// pod's admitted batch shrinking for a cycle while its wait queue
+			// stays saturated -- the exact churn that motivated returning the
+			// blended average instead of the raw sample). The window size is 10,
+			// so this fills it exactly with no eviction.
+			for i := 0; i < 9; i++ {
+				input := makeAnalyzerInput(
+					[]domain.ReplicaMetrics{
+						makeReplicaMetrics("pod-1", "variant-a",
+							8000, 16000, 6, 100, 50),
+					},
+					[]domain.VariantReplicaState{
+						{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+					},
+				)
+				_, err := analyzer.Analyze(ctx, input)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			outlierInput := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						3000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			result, err := analyzer.Analyze(ctx, outlierInput)
+			Expect(err).NotTo(HaveOccurred())
+			// (9*8000 + 3000) / 10 = 7500, not the raw 3000 observation.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(7500)))
+		})
+
 		It("should keep an observation between k1 and the physical KV ceiling", func() {
 			// k1 is 0.80 x 16000 = 12800, so 14000 tokens in use is a replica at
 			// 87.5% occupancy -- legitimate, and with the queue saturated it is the
