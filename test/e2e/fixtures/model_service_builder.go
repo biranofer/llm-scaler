@@ -177,6 +177,13 @@ func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clien
 		if _, already := c.Resources.Requests[res]; already {
 			continue
 		}
+		// A LIMIT is a claim too, and pool containers state their devices as one:
+		// the count there is the pool spec's, and capacityOf reads it as the warm
+		// unit's size. Overwriting it with this default's single device would
+		// quietly resize every group the suite builds.
+		if _, already := c.Resources.Limits[res]; already {
+			continue
+		}
 		if c.Resources.Requests == nil {
 			c.Resources.Requests = corev1.ResourceList{}
 		}
