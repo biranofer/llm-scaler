@@ -502,8 +502,7 @@ arrivalDecodeDemand = AnalyzerInput.ArrivalRate × avgOL
 (`QuerySchedulerDispatchRate`), it cannot partially mis-attribute: it either matches the model
 filter (correct) or returns zero (filter/EPP absent). No witness metric is needed.
 
-`ReplicaMetrics.ArrivalRate` (per-pod) is **retained** — `queueingmodel` and
-`internal/utils/allocation` still depend on it — but no longer drives TA's `TotalDemand`. The
+`ReplicaMetrics.ArrivalRate` (per-pod) is **retained** — `internal/utils/allocation.go` still depends on it — but no longer drives TA's `TotalDemand`. The
 per-instance EPP↔vLLM key merge that previously fed it into TA's demand (and could orphan and
 drop it when ports differed) is no longer on TA's critical path.
 

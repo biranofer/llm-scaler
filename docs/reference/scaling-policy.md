@@ -224,7 +224,7 @@ default: |
 
 The saturation scaling configuration is stored in a ConfigMap named `wva-scaling-policy-config` in the Workload Variant Autoscaler controller's namespace.
 
-**Location:** `deploy/configmap-saturation-scaling.yaml`
+**Location:** `deploy/configmap-scaling-policy.yaml`
 
 ### Parameters
 
@@ -505,7 +505,7 @@ The **End Point Picker (EPP)** is an intelligent request routing component in th
 **EPP Deployment Model**: Each model has a **1-to-1 relationship** with its EPP instance. Every model served by the inference infrastructure has a dedicated EPP component that routes requests specifically to that model's replicas.
 
 **Example deployment pattern:**
-- Model: `Qwen/Qwen3-0.6B` in namespace `llm-d-autoscaler` → Dedicated EPP instance `gaie-workload-autoscaler-epp`
+- Model: `Qwen/Qwen3-0.6B` in namespace `<your-namespace>` → Dedicated EPP instance `gaie-workload-autoscaler-epp`
 - Model: `ibm/granite-13b` in namespace `production` → Dedicated EPP instance `gaie-production-epp`
 - Each model deployment has its own EPP instance (naming follows namespace/workload convention)
 
@@ -606,7 +606,7 @@ Changes take effect **immediately** (WVA watches ConfigMap and auto-reloads).
 1. Identify the EPP instance for your target model:
    ```bash
    # Example: Find EPP deployment for a specific model in namespace
-   kubectl get deployments -n llm-d-autoscaler | grep epp
+   kubectl get deployments -n <your-namespace> | grep epp
    ```
 
 2. Update the EPP instance's environment variables or configuration file for that specific model
@@ -672,12 +672,12 @@ explicit and reviewable.
 
 If the ConfigMap is missing, the system will log a warning:
 ```text
-WARN Saturation scaling ConfigMap not found
+INFO No cluster policy ConfigMap in the policy namespace
 ```
 
 ### 2. Customizing Global Defaults
 
-Edit `deploy/configmap-saturation-scaling.yaml`. Keeping the `analyzers:` section
+Edit `deploy/configmap-scaling-policy.yaml`. Keeping the `analyzers:` section
 is recommended: it states the analyzer and its score explicitly, and it makes the
 entry V2-shaped so the scaling band is defaulted on the entry itself (see
 [Analyzer Selection](#analyzer-selection)):
@@ -701,7 +701,7 @@ data:
 
 Apply the ConfigMap:
 ```bash
-kubectl apply -f deploy/configmap-saturation-scaling.yaml
+kubectl apply -f deploy/configmap-scaling-policy.yaml
 ```
 
 **Note:** Changes take effect immediately! The controller watches the ConfigMap and automatically:
@@ -944,12 +944,12 @@ The `ConfigMapReconciler` watches the `wva-scaling-policy-config` ConfigMap for 
 
 **Symptom:** Warning log message
 ```text
-WARN Saturation scaling ConfigMap not found, using hardcoded defaults configmap=wva-scaling-policy-config namespace=<workload-variant-autoscaler-namespace>
+INFO No cluster policy ConfigMap in the policy namespace: no limiters or quotas are in force
 ```
 
 **Solution:** Deploy the ConfigMap:
 ```bash
-kubectl apply -f deploy/configmap-saturation-scaling.yaml
+kubectl apply -f deploy/configmap-scaling-policy.yaml
 ```
 
 ### Invalid Configuration Entry
@@ -1016,23 +1016,23 @@ data:
 
 2. **Check controller logs for reload confirmation:**
    ```bash
-   kubectl logs -n <workload-variant-autoscaler-namespace> deployment/wva-controller | grep "Saturation scaling"
+   kubectl logs -n <workload-variant-autoscaler-namespace> deploy/wva-controller-manager | grep -E "scaling policy|saturation config"
    ```
 
    Expected logs:
    ```text
-   INFO  Saturation scaling ConfigMap changed, reloading cache
-   INFO  Saturation scaling config cache updated entries=2 has_default=true
+   INFO  Updated global scaling policy from ConfigMap  entries=2
+   INFO  Effective scaling policy  namespace=... modelID=... scalingPolicy="(default entry)"
    INFO  Triggering reconciliation for all VariantAutoscaling resources
    ```
 
 3. **If no logs appear, verify watch is working:**
    - Check controller pod is running: `kubectl get pods -n <workload-variant-autoscaler-namespace>`
-   - Check for errors: `kubectl logs -n <workload-variant-autoscaler-namespace> deployment/wva-controller --tail=100`
+   - Check for errors: `kubectl logs -n <workload-variant-autoscaler-namespace> deploy/wva-controller-manager --tail=100`
 
 4. **Manual restart (last resort):**
    ```bash
-   kubectl rollout restart deployment/wva-controller -n <workload-variant-autoscaler-namespace>
+   kubectl rollout restart deploy/wva-controller-manager -n <workload-variant-autoscaler-namespace>
    ```
 
 ### Cache Initialization Failed
@@ -1046,19 +1046,19 @@ WARN Failed to load initial saturation scaling config, will use defaults
 
 1. Deploy the ConfigMap:
    ```bash
-   kubectl apply -f deploy/configmap-saturation-scaling.yaml
+   kubectl apply -f deploy/configmap-scaling-policy.yaml
    ```
 
 2. The watch mechanism will automatically reload the cache once ConfigMap is available
 
 3. Verify cache loaded:
    ```bash
-   kubectl logs -n <workload-variant-autoscaler-namespace> deployment/wva-controller | grep "Saturation scaling configuration loaded"
+   kubectl logs -n <workload-variant-autoscaler-namespace> deploy/wva-controller-manager | grep "Updated global scaling policy from ConfigMap"
    ```
 
 ## Example: Production Setup
 
-**deploy/configmap-saturation-scaling.yaml:**
+**deploy/configmap-scaling-policy.yaml:**
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -1096,7 +1096,7 @@ data:
 
 Apply the configuration:
 ```bash
-kubectl apply -f deploy/configmap-saturation-scaling.yaml
+kubectl apply -f deploy/configmap-scaling-policy.yaml
 ```
 
 Verify deployment:
