@@ -149,7 +149,7 @@ func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clien
 			return
 		}
 	}
-	key, product, ok := DiscoverAcceleratorProduct(ctx, k8sClient)
+	key, product, resourceName, ok := discoverAccelerator(ctx, k8sClient)
 	if !ok {
 		return
 	}
@@ -157,6 +157,36 @@ func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clien
 		podSpec.NodeSelector = map[string]string{}
 	}
 	podSpec.NodeSelector[key] = product
+
+	// And claim one of that vendor's GPUs, unless the caller already asked for
+	// some. WVA's physical usage picture is summed from pod GPU REQUESTS
+	// (gpunodes.getPodGPURequests, feeding gpuusage.Refresher, whose whole point
+	// is "every GPU held on a GPU node, whoever holds it"), so a simulator pod
+	// that asks for nothing leaves that picture empty however many replicas run --
+	// the placement checks and the inventory limiter were being exercised against
+	// a cluster that always looked idle. The managed view (replicas x
+	// GPUs-per-replica, from the scaler's metadata) did see them, which is why the
+	// two never disagreed loudly enough to notice.
+	//
+	// The resource comes from the SAME discovery as the nodeSelector for a reason
+	// that is not theoretical: they must name one vendor. A spec needing a
+	// different count sets WithGPURequest, which is why an existing claim wins.
+	res := corev1.ResourceName(resourceName)
+	for i := range podSpec.Containers {
+		c := &podSpec.Containers[i]
+		if _, already := c.Resources.Requests[res]; already {
+			continue
+		}
+		if c.Resources.Requests == nil {
+			c.Resources.Requests = corev1.ResourceList{}
+		}
+		if c.Resources.Limits == nil {
+			c.Resources.Limits = corev1.ResourceList{}
+		}
+		one := *resource.NewQuantity(1, resource.DecimalSI)
+		c.Resources.Requests[res] = one
+		c.Resources.Limits[res] = one
+	}
 }
 
 // DiscoverAcceleratorProduct returns a GPU product label present on a schedulable
@@ -175,9 +205,18 @@ func pinToDiscoveredAccelerator(ctx context.Context, k8sClient *kubernetes.Clien
 // Sorted for determinism, so a rerun pins the same way. Returns ok=false on a
 // cluster with no product labels at all, where the caller should simply not pin.
 func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clientset) (key, product string, ok bool) {
+	key, product, _, ok = discoverAccelerator(ctx, k8sClient)
+	return key, product, ok
+}
+
+// discoverAccelerator also reports the vendor's RESOURCE name, which a caller
+// needs to ask for one of these GPUs: the product label and the resource are a
+// pair (amd.com/gpu.product-name goes with amd.com/gpu), and mixing them across
+// vendors yields a Pod that can never be scheduled.
+func discoverAccelerator(ctx context.Context, k8sClient *kubernetes.Clientset) (key, product, resourceName string, ok bool) {
 	nodes, err := k8sClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	items := make([]corev1.Node, len(nodes.Items))
 	copy(items, nodes.Items)
@@ -190,8 +229,8 @@ func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clien
 	// is an arbitrary ceiling rather than a decision. Ties break on the label
 	// string so a rerun pins identically.
 	type candidate struct {
-		key, product string
-		gpus         int64
+		key, product, resource string
+		gpus                   int64
 	}
 	totals := map[string]*candidate{}
 	for i := range items {
@@ -215,7 +254,7 @@ func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clien
 				}
 				id := k + "=" + v
 				if totals[id] == nil {
-					totals[id] = &candidate{key: k, product: v}
+					totals[id] = &candidate{key: k, product: v, resource: vendor.ResourceName}
 				}
 				if q, ok := node.Status.Allocatable[corev1.ResourceName(vendor.ResourceName)]; ok {
 					totals[id].gpus += q.Value()
@@ -236,9 +275,9 @@ func DiscoverAcceleratorProduct(ctx context.Context, k8sClient *kubernetes.Clien
 		}
 	}
 	if best == "" {
-		return "", "", false
+		return "", "", "", false
 	}
-	return totals[best].key, totals[best].product, true
+	return totals[best].key, totals[best].product, totals[best].resource, true
 }
 
 // WithGPURequest sets the pod's GPU resource request/limit, which is how WVA
@@ -463,32 +502,26 @@ func resourcePtr(s string) *resource.Quantity {
 
 // buildModelServiceResources returns resource requirements appropriate for the
 // deployment mode. Real vLLM requires a GPU to detect the device type at startup;
-// the simulator runs on CPU, but still CLAIMS a GPU.
+// the simulator runs on CPU.
 //
-// It claims one because WVA's physical usage picture is summed from pod GPU
-// REQUESTS (gpunodes.getPodGPURequests, feeding gpuusage.Refresher, whose whole
-// point is "every GPU held on a GPU node, whoever holds it"). A simulator pod
-// that asks for nothing leaves that picture empty however many replicas are
-// running, so on the emulated cluster -- which advertises fake GPUs precisely so
-// they can be occupied -- the placement checks and the inventory limiter were
-// being exercised against a cluster that always looked idle. The managed view
-// (replicas x GPUs-per-replica, from the scaler's metadata) did see them, which
-// is why the two never disagreed loudly enough to notice.
-//
-// One GPU per replica matches what the metadata declares for these fixtures. A
-// spec that needs a different number sets WithGPURequest.
+// The simulator's GPU claim is NOT here, deliberately: which resource to ask for
+// depends on the vendor of the node the workload is pinned to, and this function
+// cannot know that. It is added by pinToDiscoveredAccelerator, alongside the
+// nodeSelector, from the same discovery -- see the note there for why the claim
+// exists at all. Naming nvidia.com/gpu here instead cost a CI run: on a mixed
+// cluster the pin chose the AMD node and every pod asked it for an NVIDIA
+// resource it does not advertise, so nothing scheduled and five suites failed in
+// BeforeAll waiting for pods that could never start.
 func buildModelServiceResources(useSimulator bool) corev1.ResourceRequirements {
 	if useSimulator {
 		return corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("1"),
 				corev1.ResourceMemory: resource.MustParse("2Gi"),
-				"nvidia.com/gpu":      resource.MustParse("1"),
 			},
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("2"),
 				corev1.ResourceMemory: resource.MustParse("4Gi"),
-				"nvidia.com/gpu":      resource.MustParse("1"),
 			},
 		}
 	}

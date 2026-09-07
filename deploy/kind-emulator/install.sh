@@ -54,7 +54,10 @@ PROMETHEUS_SECRET_NAME="prometheus-web-tls"
 # KIND cluster configuration
 CLUSTER_NAME=${CLUSTER_NAME:-"kind-wva-gpu-cluster"}
 CLUSTER_NODES=${CLUSTER_NODES:-"3"}
-CLUSTER_GPUS=${CLUSTER_GPUS:-"4"}
+# 16, matching the Makefile and setup.sh. This is the value CI actually gets --
+# the Makefile does not export CLUSTER_GPUS to this script -- so leaving it at 4
+# meant the e2e ran against a quarter of what a make-built cluster advertises.
+CLUSTER_GPUS=${CLUSTER_GPUS:-"16"}
 CLUSTER_GPU_TYPE=${CLUSTER_GPU_TYPE:-"mix"}
 
 # Flags for deployment steps
