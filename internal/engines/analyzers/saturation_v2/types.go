@@ -10,18 +10,28 @@ const learnedFromLive = "live"
 type k2Source int
 
 const (
-	k2SrcObserved   k2Source = iota + 1 // queue saturated: tokensInUse
-	k2SrcHistorical                     // rolling average from prior observations
-	k2SrcDerived                        // estimated from deployment args
-	k2SrcFallback                       // fallback to k1 (memory-bound)
+	k2SrcObserved      k2Source = iota + 1 // queue saturated: tokensInUse
+	k2SrcHistorical                        // rolling average from prior observations
+	k2SrcDerived                           // estimated from deployment args
+	k2SrcFallback                          // fallback to k1 (memory-bound)
+	k2SrcPrefillBudget                     // prefill: the per-step batch-token budget
 )
 
 var k2Labels = map[k2Source]string{
-	k2SrcObserved:   "P1-obs",
-	k2SrcHistorical: "P2-hist",
-	k2SrcDerived:    "P3-k2",
-	k2SrcFallback:   "P4-k1",
+	k2SrcObserved:      "P1-obs",
+	k2SrcHistorical:    "P2-hist",
+	k2SrcDerived:       "P3-k2",
+	k2SrcFallback:      "P4-k1",
+	k2SrcPrefillBudget: "P3-prefill",
 }
+
+// k2ReasonObsImplausible labels the diagnostic emitted when an observation is
+// discarded for exceeding the KV cache's physical ceiling. It is deliberately
+// not a k2Source: no capacity comes from it -- the analyzer falls through to
+// the next priority -- so it must not appear where a k2Source label is
+// expected. It shares the P-prefix vocabulary because it is read from the same
+// k2-decision log line.
+const k2ReasonObsImplausible = "P1-obs-invalid"
 
 const (
 	satReasonP0Store = "P0-store" // capacity from store or compatible-variant record; no live replicas
