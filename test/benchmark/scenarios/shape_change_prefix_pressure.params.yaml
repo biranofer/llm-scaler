@@ -4,8 +4,8 @@
 # output_length) by concatenating phases, each with its own request rate and
 # token-length shape. Both RPS *and* shape live in the resulting trace file --
 # GuideLLM's `--profile kind=replay` schedules purely from these timestamps
-# (see docs/guides/trace_replay.md), so there is no separate --rate flag to
-# set; this file IS the schedule.
+# (see hack/benchmark/gen_shape_trace.py, which consumes this file), so there
+# is no separate --rate flag to set; this file IS the schedule.
 #
 # Applies to every phase (one setting for the whole file, not per-phase):
 #
