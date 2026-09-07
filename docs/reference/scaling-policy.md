@@ -636,10 +636,10 @@ kubectl get cm wva-scaling-policy-config -n <workload-variant-autoscaler-namespa
 **EPP verification (per-model instance):**
 ```bash
 # Check specific model's EPP pod logs for loaded configuration
-kubectl logs -n <namespace> deployment/gaie-<model-name>-epp | grep -i "saturation\|threshold"
+kubectl logs -n <namespace> deployment/gaie-<model-name>-epp --all-containers | grep -i "saturation\|threshold"
 
 # Example: Verify EPP configuration for granite-13b model in production
-kubectl logs -n production deployment/gaie-granite-13b-epp | grep -i "saturation\|threshold"
+kubectl logs -n production deployment/gaie-granite-13b-epp --all-containers | grep -i "saturation\|threshold"
 ```
 
 ### Alignment Best Practices

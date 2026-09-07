@@ -36,7 +36,13 @@ Then the wake signal, which is the precondition worth checking before any other:
 # Ask the EPP process what it PARSED, not what the ConfigMap says: EPP reads
 # --config-file once at startup, so enabling the gate does not reach a pod
 # that is already running.
-kubectl logs -n <llmd-namespace> deploy/<epp-deployment> | grep -m1 -i featuregates
+# --all-containers, because the EPP is often a SIDECAR: llm-d's standalone
+# router topology runs envoy-proxy alongside it, envoy is containers[0], and
+# a bare `kubectl logs deploy/...` reads that one and prints nothing. Which
+# reads as "flow control is off" on a cluster where it is on -- the worst
+# possible answer from the check that exists to stop you parking a model you
+# cannot wake.
+kubectl logs -n <llmd-namespace> deploy/<epp-deployment> --all-containers | grep -m1 -i featuregates
 # want: featureGates:["flowControl"]   — if absent, or the pod predates the
 # ConfigMap edit, restart it:
 #   kubectl rollout restart -n <llmd-namespace> deploy/<epp-deployment>
