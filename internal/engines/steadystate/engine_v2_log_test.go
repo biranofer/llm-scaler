@@ -97,6 +97,74 @@ func TestLogAnalyzerResult_DefaultRoleRendersAsBoth(t *testing.T) {
 	assert.Contains(t, string(b), `"role":"both"`, "unset role must render as the canonical %q", domain.RoleBoth)
 }
 
+// The model-level rc/sc net to a blend of both roles and can read 0 even
+// while one role's own RequiredCapacity is still positive -- exactly the
+// case that made a variant pinned at MaxReplicas for many cycles
+// undiagnosable from this line alone (see engine_v2.go's roleRC/roleSC
+// comment). roleRC/roleSC must expose each role's own figure so that case is
+// visible in the log directly.
+func TestLogAnalyzerResult_EmitsPerRoleRequiredAndSpareCapacity(t *testing.T) {
+	ctx, logs := zapObserverCtx(t)
+
+	nr := allocation.NamedAnalyzerResult{
+		Name: "saturation",
+		Result: &domain.AnalyzerResult{
+			TotalDemand: 140000,
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "decode", PerReplicaCapacity: 447563, Role: domain.RoleDecode},
+				{VariantName: "prefill", PerReplicaCapacity: 468446, Role: domain.RolePrefill},
+			},
+		},
+		RequiredCapacity: 0, // model-level nets to 0
+		SpareCapacity:    6149145,
+		RoleCapacities: map[string]domain.RoleCapacity{
+			domain.RoleDecode:  {Role: domain.RoleDecode, RequiredCapacity: 1200, SpareCapacity: 0},
+			domain.RolePrefill: {Role: domain.RolePrefill, RequiredCapacity: 0, SpareCapacity: 468446},
+		},
+	}
+
+	logAnalyzerResult(ctx, "mymodel", "ns", nr)
+
+	require.Equal(t, 1, logs.Len())
+	fields := logs.All()[0].ContextMap()
+	require.Contains(t, fields, "roleRC")
+	require.Contains(t, fields, "roleSC")
+
+	roleRC, ok := fields["roleRC"].(map[string]float64)
+	require.True(t, ok, "roleRC must be a map[string]float64, got %T", fields["roleRC"])
+	assert.Equal(t, 1200.0, roleRC[domain.RoleDecode], "decode's own RC must be visible despite model-level rc reading 0")
+	assert.Equal(t, 0.0, roleRC[domain.RolePrefill])
+
+	roleSC, ok := fields["roleSC"].(map[string]float64)
+	require.True(t, ok, "roleSC must be a map[string]float64, got %T", fields["roleSC"])
+	assert.Equal(t, 0.0, roleSC[domain.RoleDecode])
+	assert.Equal(t, 468446.0, roleSC[domain.RolePrefill])
+}
+
+// A non-disaggregated model has no RoleCapacities at all; roleRC/roleSC must
+// stay absent rather than render as an empty map, so the line still
+// distinguishes "not a P/D model" from "P/D model, both roles read zero".
+func TestLogAnalyzerResult_NoRoleCapacitiesOmitsPerRoleFields(t *testing.T) {
+	ctx, logs := zapObserverCtx(t)
+
+	logAnalyzerResult(ctx, "mymodel", "ns", allocation.NamedAnalyzerResult{
+		Name: "saturation",
+		Result: &domain.AnalyzerResult{
+			VariantCapacities: []domain.VariantCapacity{
+				{VariantName: "primary", PerReplicaCapacity: 50000, Role: domain.RoleBoth},
+			},
+		},
+	})
+
+	require.Equal(t, 1, logs.Len())
+	fields := logs.All()[0].ContextMap()
+	// NotContains, not Nil: a map lookup returns nil both for an absent key and
+	// for a key present with a nil value, so assert.Nil passes either way and
+	// cannot fail for the reason this test names.
+	assert.NotContains(t, fields, "roleRC")
+	assert.NotContains(t, fields, "roleSC")
+}
+
 func TestLogAnalyzerResult_NilResultSkipped(t *testing.T) {
 	ctx, logs := zapObserverCtx(t)
 
