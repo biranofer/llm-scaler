@@ -946,6 +946,25 @@ func (e *Engine) selectV2Optimizer(
 			continue
 		}
 		constraints = append(constraints, constraint)
+
+		// What the limiter decided this cycle, as numbers.
+		//
+		// Nothing reported this, and the gap is expensive: a quota that fails to
+		// bind and a quota that was never declared look identical from outside,
+		// and the three things that could be wrong -- the cap, the usage charged
+		// against it, and whether the namespace was materialized at all -- are
+		// each invisible. Chasing one cost a day of fifteen-minute cluster runs
+		// that this line would have answered on the first.
+		logger.V(logging.DEBUG).Info("GPU constraints computed",
+			"provider", cp.Name(),
+			"basis", allocation.UsageBasisOf(cp).String(),
+			"usageByType", usageByType,
+			"usageByNamespace", usageByNS,
+			"pools", constraint.Pools,
+			"namespacePools", constraint.NamespacePools,
+			"totalLimit", constraint.TotalLimit,
+			"totalUsed", constraint.TotalUsed,
+			"totalAvail", constraint.TotalAvail)
 	}
 
 	// GreedyByScore treats absent constraints as zero available capacity
