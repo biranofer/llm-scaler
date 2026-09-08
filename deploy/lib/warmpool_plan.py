@@ -256,8 +256,8 @@ def emit_plan_block(rows):
                 print("  # %s." % why)
                 print("  #")
                 print("  # To warm them, give the model servers a nodeSelector on")
-                print("  # nvidia.com/gpu.product, or add an entry here by hand with the")
-                print("  # accelerator filled in.")
+                print("  # one of %s," % ", ".join(accelerator_labels.PRODUCT_KEYS[:3]))
+                print("  # or add an entry here by hand with the accelerator filled in.")
                 continue
             # One product on the whole cluster: the model names none because
             # there is none to choose. Suggest it, and say where it came from --
@@ -290,9 +290,9 @@ def emit_plan_block(rows):
         field("name: %s" % suggested_name(accelerator, gpus),
               "the pool's name; a model selects it with warmPool: <name>")
         field("accelerator: %s" % accelerator,
-              "nvidia.com/gpu.product these Pods must land on. A pool",
-              "named for one GPU that schedules on another is the",
-              "silent mismatch this whole design exists to avoid.")
+              "GPU product these Pods must land on, as this cluster",
+              "labels it. A pool named for one GPU that schedules on",
+              "another is the silent mismatch this design exists to avoid.")
         field("gpus: %d" % gpus,
               "GPUs per Pod. Must match what one replica takes, or",
               "the model cannot start in a pool Pod at all.")

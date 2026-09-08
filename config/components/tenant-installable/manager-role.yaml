@@ -17,8 +17,15 @@
 # Everything else — pods, services, configmaps, deployments, replicasets,
 # statefulsets, deployments/scale, inferencepools, scaledobjects,
 # leaderworkersets, servicemonitors, events — is namespaced and works identically
-# through a Role. The grant is read-only apart from Events; WVA never writes to
-# the cluster, because KEDA performs the actuation.
+# through a Role. The grant is read-only apart from Events and Pods: KEDA
+# performs the scaling actuation, so WVA writes nothing to reach a replica
+# count, but lending a warm Pod is WVA's own action and needs patch on pods.
+#
+# This file is maintained BY HAND while manager-clusterrole.yaml is GENERATED
+# from kubebuilder markers, so it does not move when the controller gains a
+# permission. It already failed to: pods gained patch for the warm pool and this
+# copy did not, which disabled the pool on every namespace-scoped install.
+# hack/check-tenant-role.py now fails when the two diverge.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -28,11 +35,24 @@ rules:
   - ""
   resources:
   - configmaps
-  - pods
   - services
   verbs:
   - get
   - list
+  - watch
+# Pods are the one exception to the read-only grant above, and the exception is
+# the warm pool: lending a Pod means patching it into a model's InferencePool
+# and taking it back out. Without `patch` the controller starts, sees it could
+# never complete a borrow, and disables the pool -- correctly, but after the
+# pool has been created and is already holding its accelerators.
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - ""
