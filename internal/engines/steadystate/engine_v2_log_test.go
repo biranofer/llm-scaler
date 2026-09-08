@@ -158,8 +158,11 @@ func TestLogAnalyzerResult_NoRoleCapacitiesOmitsPerRoleFields(t *testing.T) {
 
 	require.Equal(t, 1, logs.Len())
 	fields := logs.All()[0].ContextMap()
-	assert.Nil(t, fields["roleRC"])
-	assert.Nil(t, fields["roleSC"])
+	// NotContains, not Nil: a map lookup returns nil both for an absent key and
+	// for a key present with a nil value, so assert.Nil passes either way and
+	// cannot fail for the reason this test names.
+	assert.NotContains(t, fields, "roleRC")
+	assert.NotContains(t, fields, "roleSC")
 }
 
 func TestLogAnalyzerResult_NilResultSkipped(t *testing.T) {

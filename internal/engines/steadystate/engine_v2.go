@@ -1081,6 +1081,17 @@ func logAnalyzerResult(ctx context.Context, modelID, namespace string, nr alloca
 		})
 	}
 
+	kv := []any{
+		"modelID", modelID,
+		"namespace", namespace,
+		"analyzer", nr.Name,
+		"supply", nr.TotalSupply,
+		"demand", nr.Result.TotalDemand,
+		"util", nr.Utilization,
+		"rc", nr.RequiredCapacity,
+		"sc", nr.SpareCapacity,
+	}
+
 	// roleRC/roleSC surface the per-role RC/SC the optimizer's
 	// anyRoleNeedsScaleUp actually branches on (cost_aware_optimizer.go),
 	// which the model-level rc/sc above cannot: applyUniversalThreshold
@@ -1092,31 +1103,27 @@ func logAnalyzerResult(ctx context.Context, modelID, namespace string, nr alloca
 	// pinned at max for many cycles despite trivial model-level demand, until
 	// a single cycle's per-role RC dipped to 0 and every replica but the
 	// MinReplicas floor got shed in one shot.
-	var roleRC, roleSC map[string]float64
+	//
+	// Appended only when the model has roles at all: a non-disaggregated model
+	// would otherwise carry two null fields on every line, and null does not
+	// read as "this model has no roles" -- it reads as a bug in the producer.
 	if len(nr.RoleCapacities) > 0 {
-		roleRC = make(map[string]float64, len(nr.RoleCapacities))
-		roleSC = make(map[string]float64, len(nr.RoleCapacities))
+		roleRC := make(map[string]float64, len(nr.RoleCapacities))
+		roleSC := make(map[string]float64, len(nr.RoleCapacities))
 		for role, rc := range nr.RoleCapacities {
 			roleRC[role] = rc.RequiredCapacity
 			roleSC[role] = rc.SpareCapacity
 		}
+		kv = append(kv, "roleRC", roleRC, "roleSC", roleSC)
 	}
 
-	logger.Info("analyzer-result",
-		"modelID", modelID,
-		"namespace", namespace,
-		"analyzer", nr.Name,
-		"supply", nr.TotalSupply,
-		"demand", nr.Result.TotalDemand,
-		"util", nr.Utilization,
-		"rc", nr.RequiredCapacity,
-		"sc", nr.SpareCapacity,
-		"roleRC", roleRC,
-		"roleSC", roleSC,
+	kv = append(kv,
 		"scaleUpThreshold", nr.ScaleUpThreshold,
 		"scaleDownBoundary", nr.ScaleDownBoundary,
 		"variants", variants,
 	)
+
+	logger.Info("analyzer-result", kv...)
 }
 
 // logScalingDecisions emits one INFO "scaling-decision" line per model after
