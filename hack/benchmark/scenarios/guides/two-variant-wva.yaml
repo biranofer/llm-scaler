@@ -92,6 +92,46 @@ shared:
   # --------------------------------------------------------------------------
   modelservice:
     enabled: true
+    # EPP PLUGIN CONFIG — the flowControl feature gate, which is what gives WVA
+    # its queue-depth signal.
+    #
+    # It has to live HERE, under modelservice.router.epp, because that is where
+    # the chart reads it. It used to sit at a top-level `inferenceExtension:`
+    # key, which the chart neither reads nor rejects: the block was silently
+    # dropped, the EPP came up on the chart's own default-plugins.yaml with no
+    # featureGates block at all, and `make deploy-wva` then refused to install --
+    #
+    #   Refusing to continue — fix the EPP above, or SKIP_CHECKS=true
+    #
+    # which reads as a misconfigured cluster rather than as a scenario whose EPP
+    # config never arrived. workload-autoscaling.yaml always had it in the right
+    # place; this file was the odd one out, so the difference was invisible
+    # until both were run.
+    #
+    # The apiVersion is llm-d.ai/v1alpha1 — the one the working scenario uses
+    # and the one the deployed EPP reports.
+    router:
+      epp:
+        pluginsConfigFile: "wva-plugins.yaml"
+        pluginsCustomConfig:
+          wva-plugins.yaml: |
+            apiVersion: llm-d.ai/v1alpha1
+            kind: EndpointPickerConfig
+            featureGates:
+              - flowControl
+            plugins:
+              - type: queue-scorer
+              - type: kv-cache-utilization-scorer
+              - type: prefix-cache-scorer
+            schedulingProfiles:
+              - name: default
+                plugins:
+                  - pluginRef: queue-scorer
+                    weight: 2
+                  - pluginRef: kv-cache-utilization-scorer
+                    weight: 2
+                  - pluginRef: prefix-cache-scorer
+                    weight: 3
   standalone:
     enabled: false
 
@@ -122,32 +162,6 @@ shared:
     vllmOpenai:
       repository: docker.io/vllm/vllm-openai
       tag: v0.14.0
-
-  # --------------------------------------------------------------------------
-  # EPP PLUGIN CONFIG — flowControl feature gate required for WVA queue-depth
-  # driven scaling signal.
-  # --------------------------------------------------------------------------
-  inferenceExtension:
-    pluginsConfigFile: "wva-plugins.yaml"
-    pluginsCustomConfig:
-      wva-plugins.yaml: |
-        apiVersion: inference.networking.x-k8s.io/v1alpha1
-        kind: EndpointPickerConfig
-        featureGates:
-          - flowControl
-        plugins:
-          - type: queue-scorer
-          - type: kv-cache-utilization-scorer
-          - type: prefix-cache-scorer
-        schedulingProfiles:
-          - name: default
-            plugins:
-              - pluginRef: queue-scorer
-                weight: 2
-              - pluginRef: kv-cache-utilization-scorer
-                weight: 2
-              - pluginRef: prefix-cache-scorer
-                weight: 3
 
   # --------------------------------------------------------------------------
   # VLLM COMMON
