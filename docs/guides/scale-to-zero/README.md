@@ -36,7 +36,13 @@ Then the wake signal, which is the precondition worth checking before any other:
 # Ask the EPP process what it PARSED, not what the ConfigMap says: EPP reads
 # --config-file once at startup, so enabling the gate does not reach a pod
 # that is already running.
-kubectl logs -n <llmd-namespace> deploy/<epp-deployment> | grep -m1 -i featuregates
+# --all-containers, because the EPP is often a SIDECAR: llm-d's standalone
+# router topology runs envoy-proxy alongside it, envoy is containers[0], and
+# a bare `kubectl logs deploy/...` reads that one and prints nothing. Which
+# reads as "flow control is off" on a cluster where it is on -- the worst
+# possible answer from the check that exists to stop you parking a model you
+# cannot wake.
+kubectl logs -n <llmd-namespace> deploy/<epp-deployment> --all-containers | grep -m1 -i featuregates
 # want: featureGates:["flowControl"]   — if absent, or the pod predates the
 # ConfigMap edit, restart it:
 #   kubectl rollout restart -n <llmd-namespace> deploy/<epp-deployment>
@@ -56,6 +62,20 @@ carries no `checksum/config` annotation to restart it.
 # vllm:request_success_total or sglang:num_requests_total — and WVA asks for
 # the one matching the engine it detects. A model running BOTH would need both
 # counters summed, so it is refused rather than measured with half its traffic.
+# 
+# A COUNTER THAT DOES NOT EXIST YET IS NOT ZERO. A model that has never served
+# a request has never emitted the counter, so there is nothing to read and WVA
+# keeps the fleet where it is rather than guessing:
+# 
+#   ERROR Failed to get request count, keeping current decisions
+#     {"error": "no values in request count result for model <id>
+#       (metrics may not be scraped yet)"}
+# 
+# Measured: a freshly deployed model sat at one replica for five minutes with
+# retentionPeriod at three, logging that line every cycle; ONE request through
+# it made the counter exist and it parked. So send a request before concluding
+# that parking is broken — and expect the same on any model you deploy and
+# leave untouched.
 kubectl get deploy -n <llmd-namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
 ```
 <!-- guide:prerequisites.engine end -->

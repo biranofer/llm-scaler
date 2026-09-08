@@ -347,6 +347,13 @@ print_summary() {
     echo "  Scope:        $(wva_install_scope)-scoped"
     if [ "$(wva_install_scope)" = "cluster" ]; then
         echo "  Manages:      every namespace"
+    elif [ -n "${WVA_WATCH_NS:-}" ] && [ "$WVA_WATCH_NS" != "$WVA_NS" ]; then
+        # The admin-owned install: the controller RUNS in one namespace and
+        # WATCHES another, which is the whole point of that configuration and the
+        # one line an admin checks to confirm it. Printing $WVA_NS here said
+        # "Manages: wva-team-a only" about a controller managing team-a --
+        # naming the namespace it can see nothing in.
+        echo "  Manages:      $WVA_WATCH_NS only (it runs in $WVA_NS; its cache is restricted to $WVA_WATCH_NS)"
     else
         echo "  Manages:      $WVA_NS only (its cache is restricted to it)"
     fi

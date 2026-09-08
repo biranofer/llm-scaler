@@ -191,6 +191,12 @@ BENCHMARK_MODEL_ID   ?= $(if $(filter command line environment,$(origin MODEL_ID
 # free. Size the card for serving; tune when a replica counts as full in the
 # scaling policy.
 GPU_MEM_UTIL         ?= 0.90
+# Memory limit for the benchmark harness pod (inference-perf/guidellm), patched
+# into the llm-d-benchmark clone by benchmark-patch (hack/benchmark/patch_harness.sh
+# fix 6). The clone's stock value, 32Gi, OOMKilled a 60-minute/33k-request
+# inference-perf run with per_request logging disabled -- summary/per_stage
+# percentile bookkeeping alone was enough to exceed it.
+HARNESS_MEMORY       ?= 64Gi
 BENCHMARK_DECODE_REPLICAS ?= 1
 BENCHMARK_KEDA_MIN_REPLICAS ?= 1
 BENCHMARK_KEDA_MAX_REPLICAS ?= 10
@@ -1045,23 +1051,32 @@ benchmark-install: ## Clone llm-d-benchmark at BENCHMARK_REPO_REF (default v0.7.
 	@# `pip install -e .` produces the same thing install.sh would, in $HOME, with
 	@# no admin rights. install.sh stays as the fallback for whatever else it does
 	@# on a machine that has not got this far.
+	@# The venv branch below installs TWO packages. The CLI imports `planner`,
+	@# which is a separate package install.sh pulls from a git URL -- `pip install
+	@# -e .` alone produces a venv whose llmdbenchmark dies on
+	@# `ModuleNotFoundError: No module named planner`. The pin is read out of
+	@# their install.sh, the same way this file already reads the helm-diff and
+	@# helmfile versions, so it cannot drift from the version the standup was
+	@# tested against.
+	@#
+	@# uv is tried FIRST: a box without python3-venv (no ensurepip) fails
+	@# `python3 -m venv` with "You may need to use sudo with that command" --
+	@# the very thing being avoided. uv brings its own Python and needs no
+	@# admin rights.
+	@#
+	@# These explanations live HERE, not inside the recipe, because a shell
+	@# comment cannot survive a backslash-joined make recipe: without a trailing
+	@# backslash make ends the command at the comment and the shell gets an
+	@# unterminated if/else ("syntax error: unexpected end of file"), and with
+	@# one the shell joins the comment to the next line and swallows the command.
 	@if [ -x "$(LLMDBENCHMARK)" ] && "$(LLMDBENCHMARK)" --version >/dev/null 2>&1; then \
 		echo "llmdbenchmark present at $(LLMDBENCHMARK) — skipping install.sh."; \
 		echo "Force a reinstall with: rm -rf $(BENCHMARK_VENV)"; \
 	else \
 		echo "Building the llmdbenchmark venv without sudo..."; \
-		# The CLI imports `planner`, which is a SEPARATE package install.sh pulls
-		# from a git URL -- `pip install -e .` alone produces a venv whose
-		# llmdbenchmark dies on `ModuleNotFoundError: No module named planner`.
-		# The pin is read out of their install.sh, the same way this file already
-		# reads the helm-diff and helmfile versions, so it cannot drift from the
-		# version the standup was tested against.
 		planner=$$(sed -n "s|^PLANNER_GIT=\"\(git+[^\"]*\)\"|\1|p" \
 			"$(BENCHMARK_REPO_DIR)/install.sh" 2>/dev/null | head -1); \
 		planner=$${planner:-git+https://github.com/llm-d-incubation/llm-d-planner.git@v0.1.0}; \
-		# uv FIRST: this box has no python3-venv (no ensurepip), so `python3 -m venv`
-		# fails with "You may need to use sudo with that command" -- the very thing
-		# being avoided. uv brings its own Python and needs no admin rights.
 		if command -v uv >/dev/null 2>&1; then \
 			(cd $(BENCHMARK_REPO_DIR) && uv venv "$(BENCHMARK_VENV)" >/tmp/llmdbench-venv.log 2>&1 \
 			 && VIRTUAL_ENV="$(BENCHMARK_VENV)" uv pip install -q -e . >>/tmp/llmdbench-venv.log 2>&1 \
@@ -1128,7 +1143,7 @@ benchmark-patch: ## Reapply our fixes to the llm-d-benchmark clone (idempotent; 
 	@# from the checked-out tree, by design ("so a run can use a new/updated
 	@# harness with an older benchmark image").
 	@if [ -d "$(BENCHMARK_REPO_DIR)" ]; then \
-		GPU_MEM_UTIL=$(GPU_MEM_UTIL) bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
+		GPU_MEM_UTIL=$(GPU_MEM_UTIL) HARNESS_MEMORY=$(HARNESS_MEMORY) bash "$(CURDIR)/hack/benchmark/patch_harness.sh" "$(BENCHMARK_REPO_DIR)"; \
 	else \
 		echo "benchmark-patch: no clone at $(BENCHMARK_REPO_DIR); run 'make benchmark-install' first"; \
 	fi
@@ -1696,7 +1711,7 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		rm -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).bak"; \
 	fi
 	@# Fetch workload from inference-perf catalog if not found locally and harness is inference-perf
-	@if [ "$(BENCHMARK_HARNESS)" = "inference-perf" ] && [ ! -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD)" ] && [ ! -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" ]; then \
+	@if [ "$(BENCHMARK_HARNESS)" = "inference-perf" ] && [ ! -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD)" ] && [ ! -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).in" ] && [ ! -f "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD).yaml.in" ]; then \
 		echo "Fetching $(BENCHMARK_WORKLOAD) from inference-perf workload-catalog..."; \
 		if curl -sfL "https://raw.githubusercontent.com/kubernetes-sigs/inference-perf/main/workload-catalog/$(BENCHMARK_WORKLOAD)/inference-perf.yaml" \
 			-o "$(BENCHMARK_SCENARIOS_DIR)/$(BENCHMARK_WORKLOAD)"; then \
@@ -1802,6 +1817,8 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 		"$(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml"
 	@rm -f /tmp/wva_replica_samples.json /tmp/wva_replica_samples.json.pid
 	@bash hack/benchmark/sample_replicas.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_replica_samples.json || true
+	@rm -f /tmp/wva_controller_tail.log /tmp/wva_controller_tail.log.pid /tmp/wva_controller_tail.log.stderr
+	@bash hack/benchmark/tail_wva_logs.sh start $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	-$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l $(BENCHMARK_HARNESS) \
@@ -1813,11 +1830,16 @@ benchmark-run: ## Run a single benchmark workload (set BENCHMARK_NAMESPACE=<name
 	@# post-processing step still produced measurements worth reading, and every
 	@# FMA run so far has ended that way.
 	@bash hack/benchmark/sample_replicas.sh stop /tmp/wva_replica_samples.json || true
+	@bash hack/benchmark/tail_wva_logs.sh stop $(BENCHMARK_NAMESPACE) /tmp/wva_controller_tail.log || true
 	@LATEST=$$(ls -td $(BENCHMARK_WORKSPACE)/$${USER}-*/results/$(BENCHMARK_HARNESS)-*_* 2>/dev/null | head -1); \
 	if [ -n "$$LATEST" ] && [ -s /tmp/wva_replica_samples.json ]; then \
 		mkdir -p "$$LATEST/metrics/processed"; \
 		cp /tmp/wva_replica_samples.json "$$LATEST/metrics/processed/wva_replica_samples.json"; \
 		echo "Replica samples filed in $$LATEST/metrics/processed/wva_replica_samples.json"; \
+	fi; \
+	if [ -n "$$LATEST" ] && [ -s /tmp/wva_controller_tail.log ]; then \
+		cp /tmp/wva_controller_tail.log "$$LATEST/wva_controller.log"; \
+		echo "WVA controller log tail filed in $$LATEST/wva_controller.log"; \
 	fi
 	@echo ""
 	@echo "========================================="
@@ -1843,15 +1865,19 @@ benchmark-report: ## Generate a markdown table from the latest benchmark results
 	fi; \
 	echo "Results directory: $$LATEST_DIR"; \
 	echo ""; \
+	mkdir -p "$$LATEST_DIR/metrics"; \
+	REPORT_MD="$$LATEST_DIR/metrics/report.md"; \
 	if [ -n "$(BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX)" ]; then \
 		python3 $(CURDIR)/hack/benchmark/postprocess.py \
 			--secondary-suffix $(BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX) \
 			--scenario-yaml $(CURDIR)/hack/benchmark/scenarios/$(BENCHMARK_SPEC).yaml \
 			--variant-config $(VARIANT_CONFIG) \
-			$$LATEST_DIR; \
+			$$LATEST_DIR | tee "$$REPORT_MD"; \
 	else \
-		python3 $(CURDIR)/hack/benchmark/postprocess.py $$LATEST_DIR; \
-	fi
+		python3 $(CURDIR)/hack/benchmark/postprocess.py $$LATEST_DIR | tee "$$REPORT_MD"; \
+	fi; \
+	echo ""; \
+	echo "Report saved: $$REPORT_MD"
 
 BENCHMARK_TWO_VARIANT_SECONDARY_SUFFIX ?= v2
 
@@ -1862,9 +1888,7 @@ benchmark-plot-two-variant: ## Plot two-variant replica/latency/throughput graph
 		echo "No benchmark results found, skipping two-variant plot"; \
 		exit 0; \
 	fi; \
-	python3 $(CURDIR)/hack/benchmark/plot_two_variant_pipeline.py \
-		$$LATEST_DIR && \
-	echo "Two-variant plot: $$LATEST_DIR/metrics/graphs/two_variant_v2_full_pipeline.png"
+	bash $(CURDIR)/hack/benchmark/post_run_analyze.sh $$LATEST_DIR $(BENCHMARK_NAMESPACE)
 
 VARIANT_CONFIG ?= $(CURDIR)/hack/benchmark/scenarios/guides/variants/v2-tp1-cheaper.yaml
 WVA_V2_SATURATION_CONFIGMAP ?= $(CURDIR)/hack/benchmark/scenarios/wva_threshold/wva_saturation_v2_config.yaml
@@ -1934,7 +1958,6 @@ BENCHMARK_WAIT_TIMEOUT ?= 7200
 # stack up, and spending two hours on a single stuck rollout would look exactly
 # like a slow model load. A replica reloading its weights takes minutes.
 BENCHMARK_DRAIN_ROLLOUT_TIMEOUT ?= 900
-BENCHMARK_HARNESS_MEMORY ?= 40Gi
 
 .PHONY: benchmark-run-bursty
 benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi-stage rates (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)
@@ -1942,19 +1965,11 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		echo "ERROR: BENCHMARK_NAMESPACE is required. Usage: make benchmark-run-bursty BENCHMARK_NAMESPACE=<namespace>"; \
 		exit 1; \
 	fi
-	@# Same reason benchmark-run does it: the clone is gitignored and
-	@# benchmark-install re-checks it out, so a re-run can otherwise drive an
-	@# unpatched harness. This target skipped it, which is worse here than on
-	@# benchmark-run -- a bursty profile is the long one, so a whole hour is
-	@# spent before the missing fixes show up as a FAILED run with no report.
 	@$(MAKE) --no-print-directory benchmark-patch
 	@if [ -f "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" ]; then \
 		cp "$(BENCHMARK_SCENARIOS_DIR)/$(BURSTY_WORKLOAD).in" \
 		   "$(BENCHMARK_REPO_DIR)/workload/profiles/inference-perf/$(BURSTY_WORKLOAD).in"; \
 	fi
-	@echo "Patching harness memory to $(BENCHMARK_HARNESS_MEMORY)..."
-	@sed -i.bak 's/memory: 32Gi/memory: $(BENCHMARK_HARNESS_MEMORY)/' \
-		$(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml
 	$(LLMDBENCHMARK) $(BENCHMARK_CLI_FLAGS) run \
 		-p $(BENCHMARK_NAMESPACE) \
 		-l inference-perf \
@@ -1962,11 +1977,7 @@ benchmark-run-bursty: ## Run bursty traffic benchmark using inference-perf multi
 		-U $(BENCHMARK_GATEWAY_URL) \
 		$(if $(BENCHMARK_MODEL_ID),-m $(BENCHMARK_MODEL_ID),) \
 		$(if $(filter true,$(BENCHMARK_MONITORING)),--monitoring,) \
-		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT); \
-	rc=$$?; \
-	mv $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml.bak \
-	   $(BENCHMARK_REPO_DIR)/config/templates/values/defaults.yaml; \
-	exit $$rc
+		--wait-timeout $(BENCHMARK_WAIT_TIMEOUT)
 
 .PHONY: benchmark-run-all
 benchmark-run-all: ## Run all scenarios: teardown → standup → run per scenario (set BENCHMARK_NAMESPACE=<namespace>, MODEL_ID=<model>)

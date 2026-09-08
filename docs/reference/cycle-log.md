@@ -97,9 +97,8 @@ the saturation V2 analyzer sets one of these values:
 | `P0-store` | capacity came from the **capacity store** (no live replicas) |
 | `P1-obs` | k2 came from **observed** tokens-in-use (queue was saturated), blended into the same rolling average `P2-hist` reads -- a single noisy cycle gets 1/N weight rather than taking over outright |
 | `P2-hist` | k2 came from the **historical** rolling average |
-| `P3-k2` | k2 was **derived** from deployment parameters (vLLM model args) |
-| `P3-prefill` | a **prefill** variant, sized by its per-step batch-token budget. Prefill holds a request only until the first token, so the KV ceiling does not bound it and the decode formula (which assumes a real output length) does not apply |
-| `P4-k1` | k2 was unavailable; **fell back** to k1 (memory-bound capacity) |
+| `P3-k2` | k2 was **derived** from deployment parameters (vLLM model args). Never fires for a **prefill** variant: the formula assumes a real per-request output length, which prefill's own avgOutput (~0-1, it hands off before generating anything) collapses to just the batch-token budget echoed back -- not a derived signal |
+| `P4-k1` | k2 was unavailable; **fell back** to k1 (memory-bound capacity). For prefill this is the common case, not a degraded one -- see `P3-k2` above |
 
 One further value appears in the `k2-decision` line's `priority` field but never
 as a variant's `reason`, because no capacity comes from it:

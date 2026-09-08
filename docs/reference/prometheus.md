@@ -931,7 +931,7 @@ histogram_quantile(0.95, rate(wva_optimization_duration_seconds_bucket[5m]))
 wva_saturation_utilization
 
 # KV cache utilization percentage
-(wva_kv_cache_tokens_used / wva_kv_cache_tokens_total) * 100
+(wva_kv_cache_tokens_used / wva_kv_cache_tokens_capacity) * 100
 
 # Variants requiring scale-up (token deficit)
 wva_required_capacity{unit="continuous"} > 0

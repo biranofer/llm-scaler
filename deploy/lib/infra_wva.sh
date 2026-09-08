@@ -118,6 +118,70 @@ EOF
     log_success "  Role/$role and RoleBinding/$binding in $WVA_WATCH_NS"
 }
 
+# wva_resolve_prometheus_url settles which Prometheus this install points at.
+#
+# Idempotent, and separated from the writing of it because the ANSWER is needed
+# before the overlay is applied while the WRITE has to happen after — see
+# wva_render_manager_config_patch.
+wva_resolve_prometheus_url() {
+    [ -z "${PROMETHEUS_URL_EXPLICIT:-}" ] || return 0
+    [ -z "${WVA_PROMETHEUS_URL_RESOLVED:-}" ] || return 0
+    local detected
+    detected="$(wva_detect_prometheus_url)"
+    if [ -n "$detected" ] && [ "$detected" != "${PROMETHEUS_URL:-}" ]; then
+        log_info "Using the Prometheus already on this cluster: $detected"
+        log_info "  (the default names the one this installer would deploy; pass PROMETHEUS_URL=<url> to override)"
+        PROMETHEUS_URL="$detected"
+    fi
+    WVA_PROMETHEUS_URL_RESOLVED=1
+}
+
+# wva_render_manager_config_patch puts this install's Prometheus URL into the
+# ConfigMap the FIRST apply creates.
+#
+# Without it the controller starts on the shipped default -- a kube-prometheus-
+# stack address in a namespace most clusters do not have -- exits 2 on it
+# ("CRITICAL: Failed to connect to Prometheus"), and is only then corrected by
+# the patch below, recovering on the restart. The install converges, so this read
+# as cosmetic; it is not. The installer prints "You do not need to pass
+# PROMETHEUS_URL" and the guide's next step is `kubectl logs -f`, which shows a
+# stack trace and RESTARTS=1 on a healthy install. Measured on CoreWeave waldorf.
+#
+# It also closes a window on every UPGRADE: `kubectl apply -k` re-applies the
+# shipped ConfigMap, so the default was briefly live again each time, and a
+# controller that happened to restart in that window died on it.
+#
+# The content is generated from the shipped file, never a second copy of it: yq
+# reads data["config.yaml"] and assigns into it, so comments and every other
+# setting survive, and a new key in the shipped ConfigMap needs no change here.
+wva_render_manager_config_patch() {
+    local tmp_overlay="$1" src rendered
+    src="$WVA_PROJECT/config/base/manager/manager-configmap.yaml"
+    [ -f "$src" ] || return 0
+    [ -n "${PROMETHEUS_URL:-}" ] || return 0
+
+    rendered="$(yq '.data."config.yaml"' "$src" \
+        | yq ".PROMETHEUS_BASE_URL = \"$PROMETHEUS_URL\"")" || return 0
+    [ -n "$rendered" ] || return 0
+
+    {
+        printf 'apiVersion: v1\n'
+        printf 'kind: ConfigMap\n'
+        printf 'metadata:\n'
+        printf '  name: wva-manager-config\n'
+        printf 'data:\n'
+        printf '  config.yaml: |\n'
+        printf '%s\n' "$rendered" | sed 's/^/    /'
+    } > "$tmp_overlay/manager-config-patch.yaml"
+
+    cat >> "$tmp_overlay/kustomization.yaml" <<EOF
+- path: manager-config-patch.yaml
+  target:
+    kind: ConfigMap
+    name: wva-manager-config
+EOF
+}
+
 deploy_wva_controller() {
     log_info "Deploying Workload-Variant-Autoscaler..."
     log_info "Using image: $WVA_IMAGE_REPO:$WVA_IMAGE_TAG"
@@ -228,6 +292,12 @@ EOF
     kind: Deployment
     labelSelector: control-plane=controller-manager
 EOF
+
+    # And the Prometheus URL, so the Deployment this apply creates never sees the
+    # shipped default. Appended after the `patches:` key exists, for the same
+    # reason the pull-policy patch is.
+    wva_resolve_prometheus_url
+    wva_render_manager_config_patch "$tmp_overlay"
 
     # Prune on INSTALL as well as uninstall. Waiting for an uninstall would leave
     # the grant in place on every cluster that already has it, since upgrading is
@@ -450,15 +520,13 @@ wva_reconcile_prometheus_scheme() {
     # has its own, that is wrong, and WVA exits on a Prometheus it cannot reach —
     # arriving as CrashLoopBackOff, which reads like a broken image rather than a
     # setting nobody was asked for. So look before falling back to it.
-    if [ -z "${PROMETHEUS_URL_EXPLICIT:-}" ]; then
-        local detected
-        detected="$(wva_detect_prometheus_url)"
-        if [ -n "$detected" ] && [ "$detected" != "${PROMETHEUS_URL:-}" ]; then
-            log_info "Using the Prometheus already on this cluster: $detected"
-            log_info "  (the default names the one this installer would deploy; pass PROMETHEUS_URL=<url> to override)"
-            PROMETHEUS_URL="$detected"
-        fi
-    fi
+    #
+    # Resolved BEFORE the overlay was applied, not here -- see
+    # wva_resolve_prometheus_url, called from the overlay build above. This is
+    # kept as the write path: the value is already rendered into the ConfigMap the
+    # apply created, and re-applying it here is what fixes an install whose
+    # ConfigMap predates that rendering.
+    wva_resolve_prometheus_url
 
     if [ -n "${PROMETHEUS_URL:-}" ]; then
         log_info "Pointing WVA at Prometheus: $PROMETHEUS_URL"

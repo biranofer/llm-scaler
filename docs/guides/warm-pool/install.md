@@ -12,7 +12,24 @@ The pool needs, in its namespace:
 - Accelerators free for the pool Pods themselves, on the same GPU model as the
   workloads it will warm.
 - A shared model cache the pool Pods can read, so a warm copy loads from local
-  storage rather than a download.
+  storage rather than a download. **This one is not optional and `create` does
+  not check it**: every pool Pod mounts a claim named `model-pvc` unless
+  `--cache-claim NAME` says otherwise. Without it `create` still reports
+  SUCCESS, and the Pods sit `Pending` on
+
+  ```
+  0/3 nodes are available: persistentvolumeclaim "model-pvc" not found
+  ```
+
+  while the pool reports itself empty. Create one first, in the pool's
+  namespace, with an RWX class:
+
+  ```bash
+  make model-cache NAMESPACE=<namespace> WVA_MODEL_PVC_SIZE=<size> WVA_MODEL_PVC_CLASS=<rwx-class>
+  ```
+
+  Run it with neither size nor class and it lists the RWX classes this cluster
+  already serves from.
 - RBAC allowing WVA to `patch` Pods. The shipped ClusterRole has this. If yours
   was scoped by hand, WVA refuses to start the pool and says so — it will not
   hold accelerators to warm models it could never lend.

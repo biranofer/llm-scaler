@@ -49,7 +49,7 @@ kubectl get nodes -o custom-columns=NODE:.metadata.name,GPU:.status.allocatable.
 # Deploys the model server, its EPP and the InferencePool -- and NOTHING else.
 # BENCHMARK_WVA_DEPLOY=false is what keeps the autoscaler out of it: this guide
 # gets you a model to scale, and installing WVA is the next guide's job.
-make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID}         BENCHMARK_WVA_DEPLOY=false ENVIRONMENT=openshift
+make benchmark-standup BENCHMARK_NAMESPACE=${NAMESPACE} MODEL_ID=${MODEL_ID}         BENCHMARK_WVA_DEPLOY=false
 ```
 <!-- guide:deploy.standup end -->
 

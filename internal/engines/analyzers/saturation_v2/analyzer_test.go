@@ -603,13 +603,28 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(6000)))
 		})
 
-		It("should size a prefill-role variant by its batch-token budget, not the KV ceiling", func() {
+		It("should skip the derived formula for a prefill-role variant and fall back to k1", func() {
 			// Identical EngineParams/inputs to the decode case above -- the
 			// only difference is Role. A prefill vLLM instance reports
 			// avgOutput~0-1 in real traffic (it hands off to decode before
 			// generating anything); avgOutput=1000 here stands in for
 			// whatever this replica happens to report, to isolate that the
 			// skip is driven by role, not by the input shape.
+			//
+			// Priority 3 is skipped for prefill entirely rather than given
+			// its own derivation: the batch-token budget alone (tried in an
+			// earlier revision, reported directly as its own priority tier)
+			// is not comparable to demand -- every other capacity figure in
+			// this chain is a product scaled to demand's order of magnitude
+			// (k1 is capacity x threshold, decode's own P3 is concurrency x
+			// footprint), while the raw per-step budget has no such scaling.
+			// It disagreed with this replica's own directly observed
+			// behavior on a real benchmark: at EffectiveMaxBatchedTokens=
+			// 65536, vllm:num_requests_waiting read 0 across an entire run,
+			// yet the budget-only figure read as 5-10x under water against
+			// demand snapshots in the hundreds of thousands. k1 over-states
+			// capacity in the other direction, but at least it bounds
+			// something real (the KV cache this replica actually has).
 			store.Update("test-ns", "test-model", "variant-p", CapacityRecord{
 				GpuCount: 1,
 				EngineParams: &EngineParams{
@@ -632,13 +647,10 @@ var _ = Describe("SaturationAnalyzer", func() {
 
 			result, err := analyzer.Analyze(ctx, input)
 			Expect(err).NotTo(HaveOccurred())
-			// The decode formula is skipped for prefill, but the fallback is the
-			// per-step batch-token budget (2048), NOT k1 (12800): prefill holds a
-			// request only until the first token, so the KV ceiling does not bound
-			// it. The gap between the two is the whole point -- 6.25x here, one to
-			// two orders of magnitude on production KV caches -- and it is in the
-			// over-stating direction, which under-scales prefill and costs TTFT.
-			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(2048)))
+			// Priority 3 skipped for prefill -> Priority 4 (k1 fallback),
+			// not the 6000 a decode-role variant would get from the same
+			// EngineParams/inputs.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(12800)))
 		})
 	})
 

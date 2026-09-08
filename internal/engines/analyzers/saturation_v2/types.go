@@ -10,19 +10,17 @@ const learnedFromLive = "live"
 type k2Source int
 
 const (
-	k2SrcObserved      k2Source = iota + 1 // queue saturated: tokensInUse
-	k2SrcHistorical                        // rolling average from prior observations
-	k2SrcDerived                           // estimated from deployment args
-	k2SrcFallback                          // fallback to k1 (memory-bound)
-	k2SrcPrefillBudget                     // prefill: the per-step batch-token budget
+	k2SrcObserved   k2Source = iota + 1 // queue saturated: tokensInUse
+	k2SrcHistorical                     // rolling average from prior observations
+	k2SrcDerived                        // estimated from deployment args
+	k2SrcFallback                       // fallback to k1 (memory-bound)
 )
 
 var k2Labels = map[k2Source]string{
-	k2SrcObserved:      "P1-obs",
-	k2SrcHistorical:    "P2-hist",
-	k2SrcDerived:       "P3-k2",
-	k2SrcFallback:      "P4-k1",
-	k2SrcPrefillBudget: "P3-prefill",
+	k2SrcObserved:   "P1-obs",
+	k2SrcHistorical: "P2-hist",
+	k2SrcDerived:    "P3-k2",
+	k2SrcFallback:   "P4-k1",
 }
 
 // k2ReasonObsImplausible labels the diagnostic emitted when an observation is

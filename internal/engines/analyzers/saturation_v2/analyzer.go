@@ -580,25 +580,23 @@ func (a *SaturationAnalyzer) computeK2(
 	// real per-replica behavior -- not a derived signal at all, just the
 	// batch-token budget echoed back. Skip straight to the k1 fallback for
 	// prefill rather than report a number that looks derived but isn't.
-	// A prefill replica is bounded by its per-step batch-token budget, not by
-	// the KV cache: it holds a request only long enough to produce the first
-	// token, then hands off. Reporting the memory ceiling instead would
-	// over-state prefill capacity by the ratio between the two -- commonly one
-	// to two orders of magnitude, since B is 8-32k tokens and k1 runs to
-	// hundreds of thousands -- and an over-stated capacity under-scales the
-	// role, which costs TTFT. Under-stating it only costs money.
+	//
+	// The batch-token budget alone (a prior revision reported it directly as
+	// P3-prefill) isn't a substitute: every other capacity figure in this
+	// chain is a product -- k1 is capacity x threshold, decode's own P3 is
+	// concurrency x per-request footprint -- scaled to the same order of
+	// magnitude as demand. The raw per-step budget has no such scaling and
+	// disagreed with this replica's own directly observed behavior: at
+	// EffectiveMaxBatchedTokens=65536, vllm:num_requests_waiting read 0 across
+	// every sample of a full benchmark run, yet P3-prefill's ~65536 read as
+	// 5-10x under water against demand snapshots in the hundreds of thousands
+	// -- capacity that looked starved while the replica was never once
+	// observed to queue. k1 over-states capacity by the same 1-2 orders of
+	// magnitude in the other direction, but at least it bounds something real
+	// (the KV cache this replica actually has) rather than a per-step figure
+	// compared against an accumulated one.
 	isPrefill := canonicalRole(role) == domain.RolePrefill
-	if isPrefill {
-		if engineParams != nil && engineParams.EffectiveMaxBatchedTokens > 0 {
-			k2Prefill := engineParams.EffectiveMaxBatchedTokens
-			logger.V(logging.DEFAULT).Info("k2-decision",
-				"modelID", modelID, "namespace", namespace, "variant", variantName,
-				"priority", k2Labels[k2SrcPrefillBudget], "historyKey", historyKey,
-				"reason", "prefill role: bounded by the per-step batch-token budget",
-				"engineParams", engineParams, "k2", k2Prefill)
-			return k2Prefill, k2SrcPrefillBudget
-		}
-	} else {
+	if !isPrefill {
 		if k2Derived := estimateCapacityFromParams(engineParams, avgInput, avgOutput); k2Derived > 0 {
 			logger.V(logging.DEFAULT).Info("k2-decision",
 				"modelID", modelID, "namespace", namespace, "variant", variantName,
@@ -612,7 +610,7 @@ func (a *SaturationAnalyzer) computeK2(
 	// Priority 4: Fallback to k1
 	reason := "no observed/historical/derived k2; capacity is memory-bound only"
 	if isPrefill {
-		reason = "prefill role: no batch-token budget parsed from deployment args; capacity is memory-bound only"
+		reason = "prefill role: derived-from-args formula assumes decode-style output length; skipped"
 	}
 	logger.V(logging.DEFAULT).Info("k2-decision",
 		"modelID", modelID, "namespace", namespace, "variant", variantName,

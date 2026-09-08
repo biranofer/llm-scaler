@@ -14,12 +14,24 @@ deploy:
     run: make deploy-e2e-infra SCALER_BACKEND=keda USE_SIMULATOR=true SCALE_TO_ZERO_ENABLED=true
   workload:
     run: kubectl apply -k config/samples/simulator/nodeSelector/decode/
+  repoint:
+    note: |
+      The sample names the DEFAULT controller namespace in its scalerAddress, and
+      the stack above installs into llm-d-sim, so the two do not meet. The symptom
+      is quiet -- KEDA cannot fetch a metric spec, falls back to a CPU metric, and
+      the ScaledObject sits READY False with the HPA reading `cpu: <unknown>/80%`
+      while WVA scales nothing. This finds whichever install is running and
+      repoints the sample at it, editing nothing else.
+    run: make scaledobjects-repoint
 
 verify:
   chain:
+    note: |
+      Both commands name llm-d-sim: `deploy-e2e-infra` installs the controller
+      beside the workload, not in the default namespace.
     run: |
       kubectl get scaledobject,hpa -n llm-d-sim
-      kubectl logs -n workload-variant-autoscaler-system deploy/wva-controller-manager | grep scaling-decision
+      kubectl logs -n llm-d-sim deploy/wva-controller-manager | grep scaling-decision
   suite:
     run: make test-e2e-smoke
 
