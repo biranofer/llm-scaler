@@ -2137,6 +2137,14 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# started, saw it could never complete a borrow, and disabled the pool --
 	@# after it had been created and was holding accelerators.
 	@python3 hack/check-tenant-role.py
+	@echo "Checking the secondary variant gets scraped..."
+	@# add_variant.py clones the primary's PodMonitor onto the secondary, because
+	@# the chart's selects on a label the secondary deliberately lacks. Every way
+	@# this can go wrong is silent: an unscraped variant reports the PRIMARY's
+	@# per-replica capacity as its own, so the two read identically and the
+	@# comparison the scenario exists for cannot happen. A cluster run only ever
+	@# exercises the happy path, so the rules are asserted offline.
+	@python3 hack/check-add-variant.py
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,

@@ -479,8 +479,17 @@ def make_secondary_scaledobject(primary_so, sec_dep_name, cfg, namespace):
 # Main
 # ---------------------------------------------------------------------------
 
-def find_primary_podmonitor(namespace, deployment_name):
-    """The PodMonitor scraping the primary, or None if nothing scrapes it."""
+def find_primary_podmonitor(namespace, deployment_name, model_hash=None):
+    """The PodMonitor scraping the primary, or None if nothing scrapes it.
+
+    A PodMonitor this script wrote for an EARLIER variant is never returned. Its
+    name also starts with the Deployment's, and cloning it would produce a
+    doubly-suffixed PodMonitor selecting on two variant labels at once -- which
+    matches no pod, so the new variant would go unscraped in precisely the way
+    this function exists to prevent. Today the chart's own name sorts first and
+    hides that; sorting is not a guarantee, so the variant label is excluded
+    explicitly.
+    """
     out = kubectl("get", "podmonitor", "-n", namespace, "-o", "json", check=False)
     if not out:
         return None
@@ -488,11 +497,23 @@ def find_primary_podmonitor(namespace, deployment_name):
         items = json.loads(out).get("items", [])
     except ValueError:
         return None
-    # The chart names it after the Deployment. Fall back to any PodMonitor whose
-    # selector names the same model, so a renamed one is still found.
-    for pm in items:
+
+    def _is_variant_copy(pm):
+        sel = ((pm.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+        return "wva.llmd.ai/variant" in sel
+
+    candidates = [pm for pm in items if not _is_variant_copy(pm)]
+
+    # The chart names it after the Deployment.
+    for pm in candidates:
         if pm["metadata"]["name"].startswith(deployment_name):
             return pm
+    # Renamed, or written by hand: take one whose selector names this model.
+    if model_hash:
+        for pm in candidates:
+            sel = ((pm.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+            if sel.get("llm-d.ai/model") == model_hash:
+                return pm
     return None
 
 
@@ -641,7 +662,7 @@ def main():
 
     # Scraping. Without it the secondary is invisible to WVA and reports the
     # PRIMARY's capacity back as its own -- see make_secondary_podmonitor.
-    primary_pm = find_primary_podmonitor(ns, dep_name)
+    primary_pm = find_primary_podmonitor(ns, dep_name, model_hash)
     if primary_pm is None:
         print("  WARNING: nothing scrapes the primary, so there is no PodMonitor to "
               "clone. The secondary will emit no metrics WVA can see, and the "
