@@ -322,6 +322,15 @@ cmd_create() {
     log_warning "Sizing needs BOTH --models and --model-size (got --models '${MODELS:-}' --model-size '${MODEL_SIZE:-}'); defaulting memory to ${memory}. That limit IS the warm-set budget: it decides how many models a Pod can hold, and changing it later rolls the pool and reloads every resident model."
   fi
 
+  # Checked against the workloads rather than against the API: a claim that
+  # EXISTS is not the test, because the wrong one usually exists too.
+  local claims
+  claims="$(workload_cache_claims)"
+  if [ -n "$claims" ] && ! printf '%s\n' "$claims" | grep -qx "$CACHE_CLAIM"; then
+    log_warning "No GPU workload in ${NAMESPACE} mounts ${CACHE_CLAIM}; they mount: $(printf '%s ' $claims)"
+    log_warning "  A pool on a claim the models do not use has nothing to load: the engine gets a --model path that is not in the Pod, never answers, and the controller waits out its whole admission timeout before reporting only that the port did not respond. Pass --cache-claim with one of the above unless this pool is for models that are not deployed yet."
+  fi
+
   if [ -z "$ACCELERATOR" ]; then
     log_warning "No --accelerator given, so these Pods may schedule on ANY GPU node. A warm copy is only reusable on the GPU it was loaded on: WVA will decline every model whose accelerator it can prove differs, and this pool will hold devices while warming nothing."
   else
@@ -948,6 +957,38 @@ accelerator_label_key() {
       | [.items[].metadata.labels // {}] as $labels
       | first($keys[] | select(. as $k | any($labels[]; .[$k] == $v))) // empty
     ' 2>/dev/null | head -1
+}
+
+# workload_cache_claims lists the PVCs the namespace's GPU workloads mount.
+#
+# A pool loads a warm copy from the same storage the model servers use, so it
+# must mount the same CLAIM. Getting this wrong is quiet and expensive: the
+# engine is created with a --model path that does not exist in the Pod, never
+# answers, and the controller waits its full admission timeout before saying
+#
+#   never served: engine at http://<ip>:9001 did not answer: context deadline
+#   exceeded
+#
+# which names a port rather than a missing file. Ten minutes, once per attempt.
+#
+# The names invite it. A cluster where the claim is `model-pvc` and the mount
+# path is `/model-cache` also tends to have a `model-cache` claim for the
+# Hugging Face cache, and picking that one produces a Pod that mounts something
+# real, at the right path, containing no models.
+# Pools are excluded from the survey. A pool Deployment holds GPUs and mounts a
+# cache like any model server, so counting them lets a pool vouch for its own
+# claim -- and the second pool created with the same wrong claim then agrees
+# with the first.
+workload_cache_claims() {
+  kubectl get deployments -n "$NAMESPACE" -o json 2>/dev/null |
+    jq -r '
+      .items[]
+      | select((.metadata.labels["app.kubernetes.io/component"] // "") != "warm-pool")
+      | .spec.template.spec as $pod
+      | select(any($pod.containers[]?; .resources.limits["nvidia.com/gpu"] // empty))
+      | $pod.volumes[]?
+      | .persistentVolumeClaim.claimName // empty
+    ' 2>/dev/null | sort -u
 }
 
 workload_runtime_classes() {
