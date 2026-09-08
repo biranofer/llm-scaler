@@ -54,8 +54,10 @@ The sample includes its own ScaledObject, which is the registration.
 
 <!-- guide:verify.chain start -->
 ```bash
+# Both commands name llm-d-sim: `deploy-e2e-infra` installs the controller
+# beside the workload, not in the default namespace.
 kubectl get scaledobject,hpa -n llm-d-sim
-kubectl logs -n workload-variant-autoscaler-system deploy/wva-controller-manager | grep scaling-decision
+kubectl logs -n llm-d-sim deploy/wva-controller-manager | grep scaling-decision
 ```
 <!-- guide:verify.chain end -->
 

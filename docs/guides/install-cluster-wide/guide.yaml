@@ -8,10 +8,15 @@ deploy:
   all:
     run: make deploy-wva SCOPE=cluster
   register:
+    note: |
+      SCOPE=cluster here too. Without it the scan covers only the controller's
+      OWN namespace, finds nothing, and says "Deploy them first" about model
+      servers that are deployed -- in the namespaces a cluster-wide controller
+      exists to manage.
     run: |
-      make scaledobjects-plan WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+      make scaledobjects-plan SCOPE=cluster WVA_DEFAULT_SO_PLAN=wva-plan.yaml
       # edit wva-plan.yaml: apply: yes|no|adopt, the modelID, the replica bounds
-      make scaledobjects-apply WVA_DEFAULT_SO_PLAN=wva-plan.yaml
+      make scaledobjects-apply SCOPE=cluster WVA_DEFAULT_SO_PLAN=wva-plan.yaml
 
 verify:
   objects:
