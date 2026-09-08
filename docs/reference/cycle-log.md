@@ -95,7 +95,7 @@ the saturation V2 analyzer sets one of these values:
 | Reason | Meaning |
 |---|---|
 | `P0-store` | capacity came from the **capacity store** (no live replicas) |
-| `P1-obs` | k2 came from **observed** tokens-in-use (queue was saturated) |
+| `P1-obs` | k2 came from **observed** tokens-in-use (queue was saturated), blended into the same rolling average `P2-hist` reads -- a single noisy cycle gets 1/N weight rather than taking over outright |
 | `P2-hist` | k2 came from the **historical** rolling average |
 | `P3-k2` | k2 was **derived** from deployment parameters (vLLM model args). Never fires for a **prefill** variant: the formula assumes a real per-request output length, which prefill's own avgOutput (~0-1, it hands off before generating anything) collapses to just the batch-token budget echoed back -- not a derived signal |
 | `P4-k1` | k2 was unavailable; **fell back** to k1 (memory-bound capacity). For prefill this is the common case, not a degraded one -- see `P3-k2` above |
