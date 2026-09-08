@@ -18,8 +18,12 @@ the part to distrust first when a prediction disagrees with reality.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import accelerator_labels  # noqa: E402  (path set above; these run standalone)
 
 # MUST MATCH internal/warmpool/pool/shape.go. The controller is what admits a
 # model; a tool that is more optimistic than the admission logic sizes a Pod the
@@ -116,14 +120,14 @@ def nodes_from_cluster(selector):
         # nvidia.com/gpu" for a 4-GPU pod. Real availability needs the Pods.
         free = alloc.get("nvidia.com/gpu") or alloc.get("amd.com/gpu") or "0"
         labels = n["metadata"].get("labels") or {}
-        per_gpu_mib = labels.get("nvidia.com/gpu.memory")
+        mib = accelerator_labels.per_gpu_mib(labels)
         nodes.append({
             "name": n["metadata"]["name"],
             "gpus": int(gpus),
             "free": int(free),
             "requested": 0,  # filled in below when the Pod list is readable
-            "per_gpu_gib": (float(per_gpu_mib) / 1024.0) if per_gpu_mib else None,
-            "product": labels.get("nvidia.com/gpu.product", "unknown"),
+            "per_gpu_gib": (mib / 1024.0) if mib else None,
+            "product": accelerator_labels.product_of(labels),
             "ram_gib": _quantity_gib(cap.get("memory", "0")),
             "disk_gib": _quantity_gib(cap.get("ephemeral-storage", "0")),
         })
@@ -148,8 +152,10 @@ def recommend(node, params_b, dtype, kv_headroom, shared_bw, local_bw, ram_frac)
     node_gpu_gib = (node["per_gpu_gib"] or 0) * node["gpus"]
     if node_gpu_gib <= 0:
         raise SystemExit(
-            "node %s does not publish nvidia.com/gpu.memory, so its capacity cannot be "
-            "read. Pass --gpu-mem-gib to state it." % node["name"])
+            "node %s publishes its GPU memory under none of %s, so its capacity "
+            "cannot be read. Pass --gpu-mem-gib to state it." % (
+                node["name"],
+                ", ".join(k for k, _ in accelerator_labels.MEMORY_KEYS_TO_MIB)))
 
     need_gib = weights_gb * (1.0 + kv_headroom) / 1.073741824
     nodes_needed = max(1, -(-int(need_gib * 1000) // int(node_gpu_gib * 1000)))

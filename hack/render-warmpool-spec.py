@@ -102,9 +102,48 @@ def pod_spec(role):
     return spec
 
 
+class _BlockDumper(yaml.SafeDumper):
+    """Dumps every multi-line string as a literal block scalar."""
+
+
+def _literal_str(dumper, value):
+    # Multi-line values go out as `|`, not as the quoted scalar PyYAML picks by
+    # default. In a quoted scalar an embedded newline is written as a BLANK
+    # LINE, and the shell that carries this spec deletes blank lines -- so each
+    # newline folded into a space and the launcher was invoked as
+    #
+    #   exec python3 /app/launcher.py \ --host 0.0.0.0 \ --log-level info ...
+    #
+    # where every `\ ` is an escaped space rather than a line continuation. The
+    # engine container died on argv it printed as unrecognised while its own
+    # usage line listed those exact flags. A block scalar carries the newlines
+    # structurally, so nothing downstream has to preserve blank lines.
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_BlockDumper.add_representer(str, _literal_str)
+
+
 def as_yaml(role):
     """One role's Pod spec as YAML, escaped for the shell that will carry it."""
-    text = yaml.dump(pod_spec(role), default_flow_style=False, sort_keys=False)
+    text = yaml.dump(
+        pod_spec(role), Dumper=_BlockDumper, default_flow_style=False, sort_keys=False
+    )
+
+    # A blank line here does not survive the trip, so it must never be emitted.
+    # pool_pod_spec strips blank lines to drop the ones an unset nodeSelector or
+    # RuntimeClass leaves behind, and it cannot tell those from a blank line
+    # that carries meaning. Refused rather than escaped: the value that produced
+    # one belongs in a block scalar, and a silent fold is what this whole
+    # function exists to have stopped happening twice.
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            raise SystemExit(
+                "the %s Pod spec dumps a blank line at line %d, which the shell "
+                "carrying it deletes.\nThe value it came from must dump as a "
+                "block scalar; see _literal_str." % (role, number)
+            )
 
     # EVERY backslash doubled, because the heredoc that carries this is unquoted.
     #
@@ -179,10 +218,15 @@ def render():
         "",
         "  # Conditional: an accelerator nobody named adds no key, rather than an",
         '  # empty one, which would pin the Pod to a GPU product called "".',
+        "  #",
+        "  # The KEY is whatever cmd_create resolved against this cluster, because",
+        "  # nvidia.com/gpu.product is only the GPU Feature Discovery spelling and",
+        "  # managed providers use their own. The fallback keeps that spelling, so",
+        "  # a GFD cluster -- and an offline --dry-run -- renders as it always did.",
         '  local WP_NODE_SELECTOR=""',
         '  if [ -n "$ACCELERATOR" ]; then',
         '    WP_NODE_SELECTOR="nodeSelector:',
-        "  nvidia.com/gpu.product: ${ACCELERATOR}\"",
+        "  ${ACCELERATOR_LABEL:-nvidia.com/gpu.product}: ${ACCELERATOR}\"",
         "  fi",
         "",
         "  # Conditional for the same reason and with more at stake: naming a",
@@ -212,8 +256,12 @@ def render():
         "    )",
         "  fi",
         "",
-        "  # Blank lines go: an unset nodeSelector leaves one, and a stray blank",
-        "  # line inside a Pod spec is harmless but reads as a mistake.",
+        "  # Blank lines go: an unset nodeSelector or RuntimeClass leaves one,",
+        "  # and there is no way here to tell those from a blank line that means",
+        "  # something. It is safe only because the generator refuses to emit a",
+        "  # meaningful one -- a blank line inside a quoted scalar IS a newline,",
+        "  # and stripping it once folded the launcher command onto a single line",
+        "  # of escaped spaces. See _literal_str in hack/render-warmpool-spec.py.",
         '  printf \'%s\\n\' "$out" | grep -v \'^[[:space:]]*$\' | sed "s/^/${indent}/"',
         "}",
         END,

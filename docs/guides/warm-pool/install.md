@@ -12,10 +12,22 @@ The pool needs, in its namespace:
 - Accelerators free for the pool Pods themselves, on the same GPU model as the
   workloads it will warm.
 - A shared model cache the pool Pods can read, so a warm copy loads from local
-  storage rather than a download. **This one is not optional and `create` does
-  not check it**: every pool Pod mounts a claim named `model-pvc` unless
-  `--cache-claim NAME` says otherwise. Without it `create` still reports
-  SUCCESS, and the Pods sit `Pending` on
+  storage rather than a download. **This one is not optional, and it has to be
+  the SAME claim the model servers read**: every pool Pod mounts a claim named
+  `model-pvc` unless `--cache-claim NAME` says otherwise.
+
+  `create` warns when the claim you name is not one the namespace's GPU
+  workloads mount — which is the mistake worth catching, because a plausible
+  wrong claim exists on most clusters. Where the models mount `model-pvc` *at
+  path* `/model-cache`, a `model-cache` claim holding the Hugging Face cache
+  usually exists too; pick that one and the Pod mounts something real, at the
+  right path, containing no models. The engine is then started on a `--model`
+  path that is not in the Pod, never answers, and the controller waits out its
+  full admission window before reporting only that the port did not respond.
+
+  It cannot check that the claim EXISTS, and it says nothing when no GPU
+  workload is deployed yet. Without one `create` still reports SUCCESS, and the
+  Pods sit `Pending` on
 
   ```
   0/3 nodes are available: persistentvolumeclaim "model-pvc" not found

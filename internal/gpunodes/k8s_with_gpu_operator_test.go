@@ -84,6 +84,98 @@ func TestDiscover_NvidiaOnly(t *testing.T) {
 	assert.Equal(t, 8, result["node-nvidia-2"]["NVIDIA-H100-SXM5-80GB"].Count)
 }
 
+// A cluster that publishes its GPU product under a provider key instead of GPU
+// Feature Discovery's is not a corner case -- it is CoreWeave, GKE, EKS Auto
+// Mode and Karpenter. Discovery read only nvidia.com/gpu.product, so on those
+// clusters it found NO GPU nodes at all: Discover returned an empty map about a
+// fleet of 8-GPU machines, every workload was attributed to no accelerator, and
+// the gpu-inventory limiter would bound scale-up against capacity it could not
+// see. Measured on CoreWeave, where no node carries the GFD key.
+func TestDiscover_ProviderProductLabelAlias(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	nodes := []runtime.Object{
+		// CoreWeave CKS: gpu.nvidia.com/model, and no GFD label anywhere.
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node-coreweave",
+				Labels: map[string]string{
+					"gpu.nvidia.com/model": "H200",
+				},
+			},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("8"),
+				},
+			},
+		},
+		// GKE spells it differently again.
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node-gke",
+				Labels: map[string]string{
+					"cloud.google.com/gke-accelerator": "nvidia-h100-80gb",
+				},
+			},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					"nvidia.com/gpu": resource.MustParse("2"),
+				},
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(nodes...).Build()
+	discoverer := NewK8sWithGpuOperator(client)
+
+	result, err := discoverer.Discover(context.Background())
+	require.NoError(t, err)
+
+	assert.Len(t, result, 2)
+	assert.Equal(t, 8, result["node-coreweave"]["H200"].Count)
+	assert.Equal(t, 2, result["node-gke"]["nvidia-h100-80gb"].Count)
+}
+
+// A node carrying BOTH the canonical key and a provider alias is ONE node with
+// one card, not two. The keys disagree about the spelling -- GFD writes
+// NVIDIA-H200, CoreWeave writes H200 -- so counting each key separately would
+// report 16 GPUs on an 8-GPU box, split across two accelerator names that both
+// look real.
+func TestDiscover_CanonicalWinsOverAlias(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-both",
+			Labels: map[string]string{
+				"nvidia.com/gpu.product": "NVIDIA-H200",
+				"gpu.nvidia.com/model":   "H200",
+			},
+		},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				"nvidia.com/gpu": resource.MustParse("8"),
+			},
+		},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(node).Build()
+	discoverer := NewK8sWithGpuOperator(client)
+
+	result, err := discoverer.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, result, 1)
+	assert.Len(t, result["node-both"], 1, "one card, one entry")
+	assert.Equal(t, 8, result["node-both"]["NVIDIA-H200"].Count)
+
+	types, err := discoverer.discoverNodeGPUTypes(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "NVIDIA-H200", types["node-both"])
+}
+
 func TestDiscover_AMDOnly(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))

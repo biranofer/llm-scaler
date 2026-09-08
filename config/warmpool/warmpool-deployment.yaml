@@ -59,8 +59,20 @@ spec:
       # enables -- so it needs no token, and the container that runs model code
       # should not be handed one.
       automountServiceAccountToken: false
+      # runAsNonRoot is NOT set here, and that is deliberate rather than an
+      # oversight. At Pod level it applies to both containers, and the launcher
+      # image is not ours: FMA publishes it running as root, so the kubelet
+      # refuses to create the container outright --
+      #
+      #   Error: container has runAsNonRoot and image will run as root
+      #
+      # which is a CreateContainerConfigError, not a crash: the pool holds no
+      # accelerators, reports nothing, and the image pulls successfully first,
+      # so the events read as a healthy start. The constraint is kept on the
+      # proxy, which is ours and does run unprivileged. Dropping it here buys
+      # nothing back for the launcher, because the alternative is not a
+      # non-root launcher -- it is no launcher at all.
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       # Spread across nodes, by preference rather than by requirement.
@@ -424,6 +436,9 @@ spec:
             failureThreshold: 1
             timeoutSeconds: 2
           securityContext:
+            # Kept here rather than at Pod level, where it would also bind the
+            # launcher and stop that container being created at all.
+            runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
               drop:

@@ -37,6 +37,10 @@ GPUS_PER_POD=1
 # Pod is described in exactly one place.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACCELERATOR=""
+# The node label key that carries ACCELERATOR on THIS cluster, resolved from the
+# cluster at create time. Empty until then; the Pod spec falls back to the GPU
+# Feature Discovery key, which is right wherever GFD runs.
+ACCELERATOR_LABEL=""
 GROUP_SIZE=1
 PROXY_IMAGE=""
 WVA_NAMESPACE=""
@@ -92,7 +96,12 @@ create options:
   --group-size N       Pods per warm unit. >1 builds a LeaderWorkerSet pool for
                        engines that span machines; the models it serves must
                        declare the same --nnodes. Default: 1
-  --accelerator PROD   the nvidia.com/gpu.product this pool must run on.
+  --accelerator PROD   the GPU product this pool must run on, as the node
+                       label spells it. The label KEY is resolved from the
+                       cluster: nvidia.com/gpu.product where GPU Feature
+                       Discovery runs, otherwise whichever provider key
+                       carries this value (CoreWeave gpu.nvidia.com/model,
+                       GKE cloud.google.com/gke-accelerator, and so on).
                        A pool named for one GPU that schedules on another is
                        the silent mismatch this whole design exists to avoid.
   --replicas N         starting Pod count, and minReplicaCount. Default: 2
@@ -313,8 +322,28 @@ cmd_create() {
     log_warning "Sizing needs BOTH --models and --model-size (got --models '${MODELS:-}' --model-size '${MODEL_SIZE:-}'); defaulting memory to ${memory}. That limit IS the warm-set budget: it decides how many models a Pod can hold, and changing it later rolls the pool and reloads every resident model."
   fi
 
+  # Checked against the workloads rather than against the API: a claim that
+  # EXISTS is not the test, because the wrong one usually exists too.
+  local claims
+  claims="$(workload_cache_claims)"
+  if [ -n "$claims" ] && ! printf '%s\n' "$claims" | grep -qx "$CACHE_CLAIM"; then
+    log_warning "No GPU workload in ${NAMESPACE} mounts ${CACHE_CLAIM}; they mount: $(printf '%s ' $claims)"
+    log_warning "  A pool on a claim the models do not use has nothing to load: the engine gets a --model path that is not in the Pod, never answers, and the controller waits out its whole admission timeout before reporting only that the port did not respond. Pass --cache-claim with one of the above unless this pool is for models that are not deployed yet."
+  fi
+
   if [ -z "$ACCELERATOR" ]; then
     log_warning "No --accelerator given, so these Pods may schedule on ANY GPU node. A warm copy is only reusable on the GPU it was loaded on: WVA will decline every model whose accelerator it can prove differs, and this pool will hold devices while warming nothing."
+  else
+    ACCELERATOR_LABEL="$(accelerator_label_key "$ACCELERATOR")"
+    if [ -n "$ACCELERATOR_LABEL" ]; then
+      local carriers
+      carriers="$(kubectl get nodes -l "${ACCELERATOR_LABEL}=${ACCELERATOR}" -o name 2>/dev/null | wc -l || true)"
+      log_info "Pinning on ${ACCELERATOR_LABEL}=${ACCELERATOR} (${carriers:-0} node(s) carry it)"
+    else
+      ACCELERATOR_LABEL="nvidia.com/gpu.product"
+      log_warning "No node carries ${ACCELERATOR} under any known GPU product label, so these Pods pin on ${ACCELERATOR_LABEL} and will stay PENDING until one does. The scheduler will only report that the Pod node affinity/selector did not match, which reads as a full cluster rather than a wrong key. List what this cluster actually calls its GPU labels:"
+      log_warning "    kubectl get nodes --show-labels | tr , '\\n' | grep -i gpu | sort -u"
+    fi
   fi
 
   if [ "$GROUP_SIZE" -gt 1 ] && [ -z "$LAUNCHER_IMAGE" ]; then
@@ -462,10 +491,15 @@ pool_pod_spec() {
 
   # Conditional: an accelerator nobody named adds no key, rather than an
   # empty one, which would pin the Pod to a GPU product called "".
+  #
+  # The KEY is whatever cmd_create resolved against this cluster, because
+  # nvidia.com/gpu.product is only the GPU Feature Discovery spelling and
+  # managed providers use their own. The fallback keeps that spelling, so
+  # a GFD cluster -- and an offline --dry-run -- renders as it always did.
   local WP_NODE_SELECTOR=""
   if [ -n "$ACCELERATOR" ]; then
     WP_NODE_SELECTOR="nodeSelector:
-  nvidia.com/gpu.product: ${ACCELERATOR}"
+  ${ACCELERATOR_LABEL:-nvidia.com/gpu.product}: ${ACCELERATOR}"
   fi
 
   # Conditional for the same reason and with more at stake: naming a
@@ -485,7 +519,6 @@ ${WP_NODE_SELECTOR}
 ${WP_RUNTIME_CLASS}
 automountServiceAccountToken: false
 securityContext:
-  runAsNonRoot: true
   seccompProfile:
     type: RuntimeDefault
 affinity:
@@ -511,15 +544,11 @@ containers:
   - /bin/bash
   - -c
   args:
-  - 'exec python3 /app/launcher.py \\
-
+  - |
+    exec python3 /app/launcher.py \\
     --host 0.0.0.0 \\
-
     --log-level info \\
-
     --port=8001
-
-    '
   ports:
   - name: supervisor
     containerPort: 8001
@@ -575,35 +604,52 @@ containers:
         command:
         - python3
         - -c
-        - "import json, time, urllib.request\\n# One deadline for the whole hook, not\\
-          \\ a timeout per call.\\n# Per-call timeouts SUM: listing plus one /is_sleeping\\
-          \\ per\\n# resident model plus the sleep itself came to 120s or more\\n# for\\
-          \\ a Pod holding several, which is the grace period, so\\n# SIGKILL landed\\
-          \\ mid-drain exactly when the engines were\\n# unhealthy and the drain mattered\\
-          \\ most. 100s leaves the\\n# interpreter room to start and the kubelet room\\
-          \\ to act.\\ndeadline = time.monotonic() + 100\\ndef left(cap):\\n    return\\
-          \\ max(1, min(cap, deadline - time.monotonic()))\\ndef post(url):\\n    try:\\n\\
-          \\        urllib.request.urlopen(urllib.request.Request(url, method=\\"POST\\"\\
-          ), timeout=left(110)).read()\\n    except Exception as err:\\n        print(\\"\\
-          drain:\\", url, err)\\ntry:\\n    raw = urllib.request.urlopen(\\"http://127.0.0.1:8001/v2/vllm/instances\\"\\
-          , timeout=left(5)).read()\\n    for inst in json.loads(raw).get(\\"instances\\"\\
-          , []):\\n        if time.monotonic() >= deadline:\\n            print(\\"drain:\\
-          \\ out of time before every instance was checked\\")\\n            break\\n\\
-          \\        opts = (inst.get(\\"options\\") or \\"\\").split()\\n        port =\\
-          \\ next((opts[i + 1] for i, f in enumerate(opts) if f == \\"--port\\"), None)\\n\\
-          \\        if not port:\\n            continue\\n        try:\\n            st\\
-          \\ = json.loads(urllib.request.urlopen(f\\"http://127.0.0.1:{port}/is_sleeping\\"\\
-          , timeout=left(5)).read())\\n        except Exception:\\n            continue\\n\\
-          \\        if not st.get(\\"is_sleeping\\", True):\\n            post(f\\"http://127.0.0.1:{port}/sleep?level=1&mode=wait\\"\\
-          )\\nexcept Exception as err:\\n    print(\\"drain: could not list instances:\\"\\
-          , err)\\n"
+        - |
+          import json, time, urllib.request
+          # One deadline for the whole hook, not a timeout per call.
+          # Per-call timeouts SUM: listing plus one /is_sleeping per
+          # resident model plus the sleep itself came to 120s or more
+          # for a Pod holding several, which is the grace period, so
+          # SIGKILL landed mid-drain exactly when the engines were
+          # unhealthy and the drain mattered most. 100s leaves the
+          # interpreter room to start and the kubelet room to act.
+          deadline = time.monotonic() + 100
+          def left(cap):
+              return max(1, min(cap, deadline - time.monotonic()))
+          def post(url):
+              try:
+                  urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=left(110)).read()
+              except Exception as err:
+                  print("drain:", url, err)
+          try:
+              raw = urllib.request.urlopen("http://127.0.0.1:8001/v2/vllm/instances", timeout=left(5)).read()
+              for inst in json.loads(raw).get("instances", []):
+                  if time.monotonic() >= deadline:
+                      print("drain: out of time before every instance was checked")
+                      break
+                  opts = (inst.get("options") or "").split()
+                  port = next((opts[i + 1] for i, f in enumerate(opts) if f == "--port"), None)
+                  if not port:
+                      continue
+                  try:
+                      st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/is_sleeping", timeout=left(5)).read())
+                  except Exception:
+                      continue
+                  if not st.get("is_sleeping", True):
+                      post(f"http://127.0.0.1:{port}/sleep?level=1&mode=wait")
+          except Exception as err:
+              print("drain: could not list instances:", err)
   readinessProbe:
     exec:
       command:
       - python3
       - -c
-      - "import sys, urllib.request\\ntry:\\n    urllib.request.urlopen(\\"http://127.0.0.1:8001/health\\"\\
-        , timeout=3)\\nexcept Exception as err:\\n    print(err); sys.exit(1)\\n"
+      - |
+        import sys, urllib.request
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8001/health", timeout=3)
+        except Exception as err:
+            print(err); sys.exit(1)
     initialDelaySeconds: 5
     periodSeconds: 10
   livenessProbe:
@@ -611,8 +657,12 @@ containers:
       command:
       - python3
       - -c
-      - "import sys, urllib.request\\ntry:\\n    urllib.request.urlopen(\\"http://127.0.0.1:8001/health\\"\\
-        , timeout=5)\\nexcept Exception as err:\\n    print(err); sys.exit(1)\\n"
+      - |
+        import sys, urllib.request
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8001/health", timeout=5)
+        except Exception as err:
+            print(err); sys.exit(1)
     initialDelaySeconds: 30
     periodSeconds: 30
     failureThreshold: 3
@@ -630,7 +680,6 @@ ${WP_NODE_SELECTOR}
 ${WP_RUNTIME_CLASS}
 automountServiceAccountToken: false
 securityContext:
-  runAsNonRoot: true
   seccompProfile:
     type: RuntimeDefault
 affinity:
@@ -656,15 +705,11 @@ containers:
   - /bin/bash
   - -c
   args:
-  - 'exec python3 /app/launcher.py \\
-
+  - |
+    exec python3 /app/launcher.py \\
     --host 0.0.0.0 \\
-
     --log-level info \\
-
     --port=8001
-
-    '
   ports:
   - name: supervisor
     containerPort: 8001
@@ -720,35 +765,52 @@ containers:
         command:
         - python3
         - -c
-        - "import json, time, urllib.request\\n# One deadline for the whole hook, not\\
-          \\ a timeout per call.\\n# Per-call timeouts SUM: listing plus one /is_sleeping\\
-          \\ per\\n# resident model plus the sleep itself came to 120s or more\\n# for\\
-          \\ a Pod holding several, which is the grace period, so\\n# SIGKILL landed\\
-          \\ mid-drain exactly when the engines were\\n# unhealthy and the drain mattered\\
-          \\ most. 100s leaves the\\n# interpreter room to start and the kubelet room\\
-          \\ to act.\\ndeadline = time.monotonic() + 100\\ndef left(cap):\\n    return\\
-          \\ max(1, min(cap, deadline - time.monotonic()))\\ndef post(url):\\n    try:\\n\\
-          \\        urllib.request.urlopen(urllib.request.Request(url, method=\\"POST\\"\\
-          ), timeout=left(110)).read()\\n    except Exception as err:\\n        print(\\"\\
-          drain:\\", url, err)\\ntry:\\n    raw = urllib.request.urlopen(\\"http://127.0.0.1:8001/v2/vllm/instances\\"\\
-          , timeout=left(5)).read()\\n    for inst in json.loads(raw).get(\\"instances\\"\\
-          , []):\\n        if time.monotonic() >= deadline:\\n            print(\\"drain:\\
-          \\ out of time before every instance was checked\\")\\n            break\\n\\
-          \\        opts = (inst.get(\\"options\\") or \\"\\").split()\\n        port =\\
-          \\ next((opts[i + 1] for i, f in enumerate(opts) if f == \\"--port\\"), None)\\n\\
-          \\        if not port:\\n            continue\\n        try:\\n            st\\
-          \\ = json.loads(urllib.request.urlopen(f\\"http://127.0.0.1:{port}/is_sleeping\\"\\
-          , timeout=left(5)).read())\\n        except Exception:\\n            continue\\n\\
-          \\        if not st.get(\\"is_sleeping\\", True):\\n            post(f\\"http://127.0.0.1:{port}/sleep?level=1&mode=wait\\"\\
-          )\\nexcept Exception as err:\\n    print(\\"drain: could not list instances:\\"\\
-          , err)\\n"
+        - |
+          import json, time, urllib.request
+          # One deadline for the whole hook, not a timeout per call.
+          # Per-call timeouts SUM: listing plus one /is_sleeping per
+          # resident model plus the sleep itself came to 120s or more
+          # for a Pod holding several, which is the grace period, so
+          # SIGKILL landed mid-drain exactly when the engines were
+          # unhealthy and the drain mattered most. 100s leaves the
+          # interpreter room to start and the kubelet room to act.
+          deadline = time.monotonic() + 100
+          def left(cap):
+              return max(1, min(cap, deadline - time.monotonic()))
+          def post(url):
+              try:
+                  urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=left(110)).read()
+              except Exception as err:
+                  print("drain:", url, err)
+          try:
+              raw = urllib.request.urlopen("http://127.0.0.1:8001/v2/vllm/instances", timeout=left(5)).read()
+              for inst in json.loads(raw).get("instances", []):
+                  if time.monotonic() >= deadline:
+                      print("drain: out of time before every instance was checked")
+                      break
+                  opts = (inst.get("options") or "").split()
+                  port = next((opts[i + 1] for i, f in enumerate(opts) if f == "--port"), None)
+                  if not port:
+                      continue
+                  try:
+                      st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/is_sleeping", timeout=left(5)).read())
+                  except Exception:
+                      continue
+                  if not st.get("is_sleeping", True):
+                      post(f"http://127.0.0.1:{port}/sleep?level=1&mode=wait")
+          except Exception as err:
+              print("drain: could not list instances:", err)
   readinessProbe:
     exec:
       command:
       - python3
       - -c
-      - "import sys, urllib.request\\ntry:\\n    urllib.request.urlopen(\\"http://127.0.0.1:8001/health\\"\\
-        , timeout=3)\\nexcept Exception as err:\\n    print(err); sys.exit(1)\\n"
+      - |
+        import sys, urllib.request
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8001/health", timeout=3)
+        except Exception as err:
+            print(err); sys.exit(1)
     initialDelaySeconds: 5
     periodSeconds: 10
   livenessProbe:
@@ -756,8 +818,12 @@ containers:
       command:
       - python3
       - -c
-      - "import sys, urllib.request\\ntry:\\n    urllib.request.urlopen(\\"http://127.0.0.1:8001/health\\"\\
-        , timeout=5)\\nexcept Exception as err:\\n    print(err); sys.exit(1)\\n"
+      - |
+        import sys, urllib.request
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8001/health", timeout=5)
+        except Exception as err:
+            print(err); sys.exit(1)
     initialDelaySeconds: 30
     periodSeconds: 30
     failureThreshold: 3
@@ -794,6 +860,7 @@ containers:
     failureThreshold: 1
     timeoutSeconds: 2
   securityContext:
+    runAsNonRoot: true
     allowPrivilegeEscalation: false
     capabilities:
       drop:
@@ -815,8 +882,12 @@ YAML
     )
   fi
 
-  # Blank lines go: an unset nodeSelector leaves one, and a stray blank
-  # line inside a Pod spec is harmless but reads as a mistake.
+  # Blank lines go: an unset nodeSelector or RuntimeClass leaves one,
+  # and there is no way here to tell those from a blank line that means
+  # something. It is safe only because the generator refuses to emit a
+  # meaningful one -- a blank line inside a quoted scalar IS a newline,
+  # and stripping it once folded the launcher command onto a single line
+  # of escaped spaces. See _literal_str in hack/render-warmpool-spec.py.
   printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | sed "s/^/${indent}/"
 }
 # END GENERATED POD SPEC
@@ -853,6 +924,75 @@ YAML
 # GPU workloads only. A namespace holds plenty of Pods that never touch an
 # accelerator and have no opinion worth copying; the ones that request
 # nvidia.com/gpu are the ones running under whatever runtime the pool will need.
+# accelerator_label_key names the node label that actually carries $1 here.
+#
+# NVIDIA GPU Feature Discovery writes nvidia.com/gpu.product, and pinning to
+# that key is correct wherever GFD runs. It is not universal. Managed providers
+# label their own way -- CoreWeave writes gpu.nvidia.com/model, GKE writes
+# cloud.google.com/gke-accelerator -- and on those clusters a Pod pinned to the
+# GFD key matches NOTHING. It stays Pending forever on a cluster with free GPUs,
+# and the only thing the scheduler says is "didn't match Pod's node
+# affinity/selector", which reads as a full cluster rather than a wrong key.
+#
+# The controller already resolves these: constants.VendorResources carries the
+# same list as ProductLabelAliases. This is that list applied to PLACEMENT, so
+# the key WVA reads a Pod accelerator FROM is the key the pool pins ON. Those
+# two disagreeing is worse than either being wrong alone.
+#
+# Resolved against the cluster, not assumed: whichever key actually holds this
+# value on some node wins. Prints nothing when none does -- including when no
+# cluster is reachable, which is what keeps --dry-run deterministic offline.
+accelerator_label_key() {
+  kubectl get nodes -o json 2>/dev/null |
+    jq -r --arg v "$1" '
+      ["nvidia.com/gpu.product",
+       "gpu.nvidia.com/model",
+       "gpu.nvidia.com/class",
+       "cloud.google.com/gke-accelerator",
+       "eks.amazonaws.com/instance-gpu-name",
+       "karpenter.k8s.aws/instance-gpu-name",
+       "karpenter.azure.com/sku-gpu-name",
+       "amd.com/gpu.product-name",
+       "beta.amd.com/gpu.product-name",
+       "habana.ai/product.name",
+       "gpu.intel.com/product"] as $keys
+      | [.items[].metadata.labels // {}] as $labels
+      | first($keys[] | select(. as $k | any($labels[]; .[$k] == $v))) // empty
+    ' 2>/dev/null | head -1 || true
+}
+
+# workload_cache_claims lists the PVCs the namespace's GPU workloads mount.
+#
+# A pool loads a warm copy from the same storage the model servers use, so it
+# must mount the same CLAIM. Getting this wrong is quiet and expensive: the
+# engine is created with a --model path that does not exist in the Pod, never
+# answers, and the controller waits its full admission timeout before saying
+#
+#   never served: engine at http://<ip>:9001 did not answer: context deadline
+#   exceeded
+#
+# which names a port rather than a missing file. Ten minutes, once per attempt.
+#
+# The names invite it. A cluster where the claim is `model-pvc` and the mount
+# path is `/model-cache` also tends to have a `model-cache` claim for the
+# Hugging Face cache, and picking that one produces a Pod that mounts something
+# real, at the right path, containing no models.
+# Pools are excluded from the survey. A pool Deployment holds GPUs and mounts a
+# cache like any model server, so counting them lets a pool vouch for its own
+# claim -- and the second pool created with the same wrong claim then agrees
+# with the first.
+workload_cache_claims() {
+  kubectl get deployments -n "$NAMESPACE" -o json 2>/dev/null |
+    jq -r '
+      .items[]
+      | select((.metadata.labels["app.kubernetes.io/component"] // "") != "warm-pool")
+      | .spec.template.spec as $pod
+      | select(any($pod.containers[]?; .resources.limits["nvidia.com/gpu"] // empty))
+      | $pod.volumes[]?
+      | .persistentVolumeClaim.claimName // empty
+    ' 2>/dev/null | sort -u || true
+}
+
 workload_runtime_classes() {
   kubectl get deployments -n "$NAMESPACE" -o json 2>/dev/null |
     jq -r '

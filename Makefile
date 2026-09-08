@@ -2121,6 +2121,22 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking the accelerator label keys agree..."
+	@# The controller (Go), the planning tools (Python) and the create path
+	@# (shell) each carry their own copy of the node label keys that name a GPU
+	@# product, and they cannot share one. Drift is invisible on a GFD cluster
+	@# and total on any other: a key missing from the create path pinned a pool
+	@# on a label no node carried, and one missing from the planning tools
+	@# reported five 8-GPU H200 nodes as `unknown  8x0 GiB GPU`.
+	@bash hack/check-accelerator-labels.sh
+	@echo "Checking the tenant Role still covers the generated ClusterRole..."
+	@# The ClusterRole is GENERATED from kubebuilder markers; the namespaced Role
+	@# the tenant overlay installs is maintained by hand, so it does not move when
+	@# the controller gains a permission. It already failed to: pods gained patch
+	@# for the warm pool and the Role did not, so every namespace-scoped install
+	@# started, saw it could never complete a borrow, and disabled the pool --
+	@# after it had been created and was holding accelerators.
+	@python3 hack/check-tenant-role.py
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,
