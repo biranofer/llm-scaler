@@ -336,7 +336,9 @@ cmd_create() {
   else
     ACCELERATOR_LABEL="$(accelerator_label_key "$ACCELERATOR")"
     if [ -n "$ACCELERATOR_LABEL" ]; then
-      log_info "Pinning on ${ACCELERATOR_LABEL}=${ACCELERATOR} ($(kubectl get nodes -l "${ACCELERATOR_LABEL}=${ACCELERATOR}" -o name 2>/dev/null | wc -l) node(s) carry it)"
+      local carriers
+      carriers="$(kubectl get nodes -l "${ACCELERATOR_LABEL}=${ACCELERATOR}" -o name 2>/dev/null | wc -l || true)"
+      log_info "Pinning on ${ACCELERATOR_LABEL}=${ACCELERATOR} (${carriers:-0} node(s) carry it)"
     else
       ACCELERATOR_LABEL="nvidia.com/gpu.product"
       log_warning "No node carries ${ACCELERATOR} under any known GPU product label, so these Pods pin on ${ACCELERATOR_LABEL} and will stay PENDING until one does. The scheduler will only report that the Pod node affinity/selector did not match, which reads as a full cluster rather than a wrong key. List what this cluster actually calls its GPU labels:"
@@ -956,7 +958,7 @@ accelerator_label_key() {
        "gpu.intel.com/product"] as $keys
       | [.items[].metadata.labels // {}] as $labels
       | first($keys[] | select(. as $k | any($labels[]; .[$k] == $v))) // empty
-    ' 2>/dev/null | head -1
+    ' 2>/dev/null | head -1 || true
 }
 
 # workload_cache_claims lists the PVCs the namespace's GPU workloads mount.
@@ -988,7 +990,7 @@ workload_cache_claims() {
       | select(any($pod.containers[]?; .resources.limits["nvidia.com/gpu"] // empty))
       | $pod.volumes[]?
       | .persistentVolumeClaim.claimName // empty
-    ' 2>/dev/null | sort -u
+    ' 2>/dev/null | sort -u || true
 }
 
 workload_runtime_classes() {
