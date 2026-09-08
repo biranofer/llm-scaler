@@ -45,3 +45,14 @@ func (r *rollingAverage) Average() float64 {
 func (r *rollingAverage) Len() int {
 	return len(r.values)
 }
+
+// Stale reports whether nothing has been added within the timeout.
+//
+// EvictStaleHistory sweeps whole entries on the same measure, but it has no
+// caller on the reconcile path, so a window can outlive the behaviour it
+// describes. Callers that fold a fresh observation in check this first: an
+// average carried over a long gap is worse than no average, because it looks
+// like data and is weighted like data.
+func (r *rollingAverage) Stale(timeout time.Duration) bool {
+	return time.Since(r.lastUpdated) > timeout
+}

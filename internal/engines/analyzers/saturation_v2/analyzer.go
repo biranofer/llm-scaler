@@ -505,7 +505,23 @@ func (a *SaturationAnalyzer) computeK2(
 	// the next cycle can correct it. Blending it into the same window P2-hist
 	// already reads gives a lone outlier 1/RollingAverageWindowSize weight
 	// instead of 100%, while a real, sustained shift still dominates the
-	// average within a few cycles.
+	// average once the window has turned over.
+	//
+	// The window is per VARIANT, not per replica -- historyKey carries no pod
+	// identity -- and computeK2 runs once per replica per cycle. So a variant
+	// with R replicas writes R samples per cycle and the window spans
+	// RollingAverageWindowSize/R cycles: a sustained shift converges in ~2-3
+	// cycles at R=4 and takes the full window at R=1. Damping is therefore
+	// deepest at one replica, which is where scale-up latency matters most.
+	// That is a property to keep in mind when tuning the window, not a bug:
+	// outlier weight is 1/N regardless of R, and it is only the time constant
+	// that moves.
+	//
+	// A window that has gone stale is reset rather than blended into. Without
+	// that, a variant returning after a quiet period would have its first
+	// genuine observation diluted to 1/N against samples describing behaviour
+	// from before the gap -- an exposure this smoothing creates and the raw
+	// return did not have.
 	if queueLen >= int(queueThreshold) && tokensInUse > 0 {
 		k2Observed := tokensInUse
 		if kvCeiling > 0 && k2Observed > kvCeiling {
@@ -518,7 +534,7 @@ func (a *SaturationAnalyzer) computeK2(
 		} else {
 			a.mu.Lock()
 			ra, ok := a.computeCapacityHistory[historyKey]
-			if !ok {
+			if !ok || ra.Stale(HistoryEvictionTimeout) {
 				ra = newRollingAverage(RollingAverageWindowSize)
 				a.computeCapacityHistory[historyKey] = ra
 			}

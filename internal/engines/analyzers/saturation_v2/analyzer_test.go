@@ -168,6 +168,104 @@ var _ = Describe("SaturationAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			// (9*8000 + 3000) / 10 = 7500, not the raw 3000 observation.
 			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(7500)))
+			// The number alone cannot show this came from P1: Add() has already
+			// run by the time Priority 2 would read the window, so a silent
+			// fall-through returns the same 7500. Only the reason distinguishes
+			// them, and the reason is the sole observable difference between the
+			// two paths now that both return the same average.
+			Expect(result.VariantCapacities[0].Reason).To(Equal(k2Labels[k2SrcObserved]))
+		})
+
+		It("should converge on a sustained shift once the window turns over", func() {
+			// The comment on Priority 1 justifies smoothing by claiming a real,
+			// sustained shift still dominates the average. That claim is what
+			// makes the 1/N outlier weight acceptable, so it is pinned here.
+			//
+			// One replica, so exactly one sample enters the window per cycle and
+			// the arithmetic is the window itself rather than a function of
+			// replica count.
+			steady := func(tokens int64) {
+				input := makeAnalyzerInput(
+					[]domain.ReplicaMetrics{
+						makeReplicaMetrics("pod-1", "variant-a",
+							tokens, 16000, 6, 100, 50),
+					},
+					[]domain.VariantReplicaState{
+						{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+					},
+				)
+				_, err := analyzer.Analyze(ctx, input)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Fill the window at 8000.
+			for i := 0; i < RollingAverageWindowSize; i++ {
+				steady(8000)
+			}
+
+			// Step down to 3000 and hold. Each cycle replaces one 8000 with a
+			// 3000, so the average walks down 500 per cycle: 7500, 7000, ...
+			for i := 1; i < RollingAverageWindowSize; i++ {
+				steady(3000)
+			}
+
+			// After N-1 post-step samples the window holds one 8000 and nine
+			// 3000s: (8000 + 9*3000) / 10 = 3500.
+			final := makeAnalyzerInput(
+				[]domain.ReplicaMetrics{
+					makeReplicaMetrics("pod-1", "variant-a",
+						3000, 16000, 6, 100, 50),
+				},
+				[]domain.VariantReplicaState{
+					{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+				},
+			)
+			result, err := analyzer.Analyze(ctx, final)
+			Expect(err).NotTo(HaveOccurred())
+			// The window is now entirely 3000: the shift has fully propagated,
+			// and it took a full window to do it.
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(3000)))
+			Expect(result.VariantCapacities[0].Reason).To(Equal(k2Labels[k2SrcObserved]))
+		})
+
+		It("should not dilute a fresh observation against a stale window", func() {
+			// A variant that goes quiet keeps its window: samples are evicted by
+			// count, never by age, and EvictStaleHistory has no caller on the
+			// reconcile path. Blending a first observation back into that window
+			// would size current capacity from behaviour before the gap, at 9/10
+			// weight -- an exposure the raw return did not have.
+			steady := func(tokens int64) *domain.AnalyzerResult {
+				input := makeAnalyzerInput(
+					[]domain.ReplicaMetrics{
+						makeReplicaMetrics("pod-1", "variant-a",
+							tokens, 16000, 6, 100, 50),
+					},
+					[]domain.VariantReplicaState{
+						{VariantName: "variant-a", AcceleratorName: "H100", CurrentReplicas: 1, GPUsPerReplica: 1},
+					},
+				)
+				res, err := analyzer.Analyze(ctx, input)
+				Expect(err).NotTo(HaveOccurred())
+				return res
+			}
+
+			for i := 0; i < RollingAverageWindowSize; i++ {
+				steady(8000)
+			}
+
+			// Age every window past the eviction timeout, as a quiet period would.
+			analyzer.mu.Lock()
+			Expect(analyzer.computeCapacityHistory).NotTo(BeEmpty())
+			for _, ra := range analyzer.computeCapacityHistory {
+				ra.lastUpdated = time.Now().Add(-2 * HistoryEvictionTimeout)
+			}
+			analyzer.mu.Unlock()
+
+			// The window is discarded, so this observation stands alone rather
+			// than being blended to (9*8000 + 3000)/10 = 7500.
+			result := steady(3000)
+			Expect(result.VariantCapacities[0].PerReplicaCapacity).To(Equal(float64(3000)))
+			Expect(result.VariantCapacities[0].Reason).To(Equal(k2Labels[k2SrcObserved]))
 		})
 
 		It("should keep an observation between k1 and the physical KV ceiling", func() {
