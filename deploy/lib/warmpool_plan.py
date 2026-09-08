@@ -15,13 +15,16 @@ Reads only. Prints a plan; creating anything is `warmpool.sh create`.
 
 import collections
 import json
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import accelerator_labels  # noqa: E402  (path set above; these run standalone)
 
 GPU_RESOURCE = "nvidia.com/gpu"
 # Column the plan's inline comments start at, so the block reads as a table.
 COMMENT_COLUMN = 26
-GPU_PRODUCT = "nvidia.com/gpu.product"
 
 
 # Where each kind keeps the pod template WVA would read. Mirrors
@@ -64,7 +67,7 @@ def shape_of(namespace, target, kind="Deployment"):
     # reading only the latter finds nothing on a real deployment. Read both, and
     # take a single-valued match expression only: a term listing three products
     # is a model that runs on any of them, which is not a pool requirement.
-    accelerator = (spec.get("nodeSelector") or {}).get(GPU_PRODUCT, "")
+    accelerator = accelerator_labels.product_of(spec.get("nodeSelector"), default="")
     if not accelerator:
         affinity = ((spec.get("affinity") or {}).get("nodeAffinity") or {}).get(
             "requiredDuringSchedulingIgnoredDuringExecution"
@@ -72,7 +75,7 @@ def shape_of(namespace, target, kind="Deployment"):
         for term in affinity.get("nodeSelectorTerms") or []:
             for expr in term.get("matchExpressions") or []:
                 values = expr.get("values") or []
-                if expr.get("key") == GPU_PRODUCT and len(values) == 1:
+                if expr.get("key") in accelerator_labels.PRODUCT_KEYS and len(values) == 1:
                     accelerator = values[0]
 
     gpus = 0
@@ -143,7 +146,8 @@ def cluster_accelerator():
             capacity = (node.get("status") or {}).get("capacity") or {}
             if not capacity.get(GPU_RESOURCE):
                 continue
-            product = ((node.get("metadata") or {}).get("labels") or {}).get(GPU_PRODUCT)
+            labels = (node.get("metadata") or {}).get("labels") or {}
+            product = accelerator_labels.product_of(labels, default=None)
             if product:
                 products.add(product)
     except (ValueError, KeyError, TypeError):
@@ -157,8 +161,9 @@ def cluster_accelerator():
         result = (only, "every GPU node on this cluster is %s, so a model that names "
                         "no accelerator can only mean that one" % only)
     elif not products:
-        result = (None, "no node advertises %s, so there is no accelerator to infer"
-                  % GPU_PRODUCT)
+        result = (None, "no node advertises its GPU product under any of %s, so there "
+                        "is no accelerator to infer"
+                  % ", ".join(accelerator_labels.PRODUCT_KEYS))
     else:
         result = (None, "this cluster has %d GPU products (%s), so it cannot answer for "
                         "a model that names none -- pick the one this model wants"

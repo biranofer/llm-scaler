@@ -10,7 +10,6 @@ import (
 	"github.com/llm-d/llm-d-workload-variant-autoscaler/internal/metrics"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -64,15 +63,25 @@ func (d *K8sWithGpuOperator) listGPUNodes(ctx context.Context) (map[string]NodeI
 	for _, res := range constants.VendorResources {
 		vendor := res.Vendor
 		memKey := res.MemoryLabel
-		prodKey := res.ProductLabel
 		resName := corev1.ResourceName(res.ResourceName)
 
-		req, reqErr := labels.NewRequirement(prodKey, selection.Exists, nil)
-		if reqErr != nil {
-			err = fmt.Errorf("failed to create label requirement for %s: %w", vendor, reqErr)
-			return nil, err
-		}
-		selector := labels.NewSelector().Add(*req)
+		// Every key this vendor's product can be published under, canonical
+		// first. Only ProductLabel was read here, which is the GPU Feature
+		// Discovery spelling: on a cluster that publishes an alias instead --
+		// CoreWeave, GKE, EKS Auto Mode, Karpenter -- this discovered NO GPU
+		// nodes at all, and the gpu-inventory limiter then bounds a fleet
+		// against capacity it cannot see. The aliases were already listed in
+		// constants for accelerator naming; this is the inventory reading the
+		// same list.
+		prodKeys := make([]string, 0, 1+len(res.ProductLabelAliases))
+		prodKeys = append(prodKeys, res.ProductLabel)
+		prodKeys = append(prodKeys, res.ProductLabelAliases...)
+
+		// The keys cannot be OR-ed in a LabelSelector, and selecting on the
+		// canonical one is what dropped the alias-only nodes, so the product
+		// filter moves into the loop below. Only the user's sharding
+		// requirements stay here.
+		selector := labels.NewSelector()
 
 		// Add user requirements for sharding
 		for _, userReq := range userRequirements {
@@ -88,8 +97,17 @@ func (d *K8sWithGpuOperator) listGPUNodes(ctx context.Context) (map[string]NodeI
 		// Process nodes for this vendor
 		accelerators := make(map[string]int)
 		for _, node := range nodeList.Items {
-			model, ok := node.Labels[prodKey]
-			if !ok {
+			// FIRST key the node carries wins, so a cluster publishing both the
+			// GFD key and its provider's is counted once rather than twice under
+			// two spellings of the same card.
+			model := ""
+			for _, prodKey := range prodKeys {
+				if v, ok := node.Labels[prodKey]; ok && v != "" {
+					model = v
+					break
+				}
+			}
+			if model == "" {
 				continue
 			}
 
@@ -267,8 +285,22 @@ func (d *K8sWithGpuOperator) discoverNodeGPUTypes(ctx context.Context) (map[stri
 		// Relies on the listGPUNodes invariant that n.Accelerators[model]
 		// exists whenever n.Labels[productLabel] == model.
 		for i := len(constants.VendorResources) - 1; i >= 0; i-- {
-			prodKey := constants.VendorResources[i].ProductLabel
-			if model, ok := n.Labels[prodKey]; ok {
+			res := constants.VendorResources[i]
+			// Same key precedence listGPUNodes uses, or this projection resolves
+			// nothing on a cluster that publishes only an alias -- and a node
+			// with no entry here is attributed to no accelerator at all.
+			prodKeys := make([]string, 0, 1+len(res.ProductLabelAliases))
+			prodKeys = append(prodKeys, res.ProductLabel)
+			prodKeys = append(prodKeys, res.ProductLabelAliases...)
+
+			model := ""
+			for _, prodKey := range prodKeys {
+				if v, ok := n.Labels[prodKey]; ok && v != "" {
+					model = v
+					break
+				}
+			}
+			if model != "" {
 				out[name] = model
 				break
 			}

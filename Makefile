@@ -2121,6 +2121,14 @@ lint-deploy-scripts: ## Run bash -n for deploy/install.sh, deploy/lib/*.sh, and 
 	@# name, a missing ScaledObject (so the pool is never discovered), a worker
 	@# template carrying the proxy (so the group never becomes Ready).
 	@bash hack/check-warmpool-manifests.sh
+	@echo "Checking the accelerator label keys agree..."
+	@# The controller (Go), the planning tools (Python) and the create path
+	@# (shell) each carry their own copy of the node label keys that name a GPU
+	@# product, and they cannot share one. Drift is invisible on a GFD cluster
+	@# and total on any other: a key missing from the create path pinned a pool
+	@# on a label no node carried, and one missing from the planning tools
+	@# reported five 8-GPU H200 nodes as `unknown  8x0 GiB GPU`.
+	@bash hack/check-accelerator-labels.sh
 	@echo "Checking for mangled line continuations..."
 	@# `bash -n` cannot catch this: `cmd \n | grep ...` is SYNTACTICALLY VALID —
 	@# the \n becomes a literal argument. It shipped once, in the limiter path,
