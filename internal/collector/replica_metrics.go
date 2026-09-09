@@ -1137,16 +1137,39 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 		// Track freshness for metrics in this pod
 		trackMetricFreshness(vaName, data, collectedAt, vaMetricsFreshnessStatus)
 		freshnessStatus, freshnessAge := worstFreshnessStatus(data, collectedAt)
+		// Read from the Pod, never inferred from the scrape. A row exists
+		// because something answered /metrics, which happens before the Pod
+		// is Ready; see domain.ReplicaMetrics.Ready.
+		ready := c.podReady(ctx, namespace, podName)
+		// Per-request timing (service time, ITL) is excluded for a pod that
+		// hasn't passed readiness -- unlike TokensInUse/KvCacheUsage below,
+		// which the Ready field's own doc comment explains are counted
+		// regardless, because a starting Pod's GPU and KV cache are real.
+		// Timing is different: it describes the cost of a REQUEST, not a
+		// resource the Pod holds, and a pod still failing its readiness probe
+		// is exactly the population most likely to report a startup artifact
+		// rather than a real one. Observed directly on a live run: a decode
+		// pod failing its readiness probe reported a batch of "completions"
+		// averaging ~145 hours of service time each, which was then averaged
+		// unweighted across the fleet by estimateArrivalDemand and inflated
+		// the demand floor ~590x for several minutes. Excluding it here is a
+		// second, independent layer under that call site's own median-based
+		// aggregation -- if a value like this shouldn't be trusted, the
+		// cleanest place to say so is where the Pod's own trust state is
+		// already known, not downstream in every consumer.
+		avgITL := data.avgITL
+		avgServiceTime := data.avgServiceTime
+		if !ready {
+			avgITL = 0
+			avgServiceTime = 0
+		}
 		metric := domain.ReplicaMetrics{
-			PodName:      podName,
-			ModelID:      modelID,
-			Namespace:    namespace,
-			VariantName:  vaName,
-			FromWarmPool: fromWarmPool,
-			// Read from the Pod, never inferred from the scrape. A row exists
-			// because something answered /metrics, which happens before the Pod
-			// is Ready; see domain.ReplicaMetrics.Ready.
-			Ready:                 c.podReady(ctx, namespace, podName),
+			PodName:               podName,
+			ModelID:               modelID,
+			Namespace:             namespace,
+			VariantName:           vaName,
+			FromWarmPool:          fromWarmPool,
+			Ready:                 ready,
 			KvCacheUsage:          kvUsage,
 			QueueLength:           queueLen,
 			NumGpuBlocks:          data.numGpuBlocks,
@@ -1156,8 +1179,8 @@ func (c *ReplicaMetricsCollector) collectReplicaMetrics(
 			AvgOutputTokens:       data.avgOutputTokens,
 			AvgInputTokens:        data.avgInputTokens,
 			PrefixCacheHitRate:    data.prefixCacheHitRate,
-			AvgITL:                data.avgITL,
-			AvgServiceTime:        data.avgServiceTime,
+			AvgITL:                avgITL,
+			AvgServiceTime:        avgServiceTime,
 			GenerationTokenRate:   data.generationTokenRate,
 			KvUsageInstant:        data.kvUsageInstant,
 			RequestRate:           data.requestRate,

@@ -2038,3 +2038,101 @@ func TestCollectReplicaMetrics_ServiceTimePopulated(t *testing.T) {
 			"and falls back to a decode-only estimate without it", results[0].AvgServiceTime)
 	}
 }
+
+// TestCollectReplicaMetrics_TimingExcludedWhenNotReady pins that a Pod which
+// has not passed its readiness probe reports zero for AvgServiceTime and
+// AvgITL, even when Prometheus has a real (or, as observed live, a wildly
+// implausible) value for it.
+//
+// Motivating incident: a decode Pod failing its readiness probe reported a
+// batch of completions averaging ~145 hours of service time each -- a vLLM-
+// side artifact, not a real duration. Unweighted-mean'd across the fleet (see
+// arrival_demand.go's medianOf, which independently guards the aggregation
+// side of this), it inflated the arrival-demand floor ~590x for several
+// minutes. This test pins the OTHER side of the fix: a Pod not yet in the
+// rotation is exactly the population most likely to report a timing artifact,
+// so its timing is excluded at the source rather than trusted and only
+// diluted downstream.
+//
+// TokensInUse/KvCacheUsage are deliberately NOT covered here: a starting
+// Pod's GPU and KV cache are real capacity, and the Ready field's own doc
+// comment explains why the analyzer must keep counting those regardless.
+func TestCollectReplicaMetrics_TimingExcludedWhenNotReady(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	if err := metrics.InitMetrics(registry); err != nil {
+		t.Fatalf("InitMetrics: %v", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := llmdVariantAutoscalingV1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	notReadyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-known", Namespace: "test-ns"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(notReadyPod).Build()
+
+	podLabels := map[string]string{
+		seriesModelLabel: "test-model",
+		"pod":            "pod-known",
+		"instance":       "10.0.0.1:8000",
+	}
+	ts := time.Now()
+
+	mockSource := &mockMetricsSource{
+		refreshFunc: func(_ context.Context, _ source.RefreshSpec) (map[string]*source.MetricResult, error) {
+			return map[string]*source.MetricResult{
+				"kv_cache_usage": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 0.5, Timestamp: ts}},
+				},
+				"avg_service_time": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 521368, Timestamp: ts}},
+				},
+				"avg_itl": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 0.02, Timestamp: ts}},
+				},
+			}, nil
+		},
+	}
+
+	// Same client plays both roles: k8sClient for VA-related lookups, apiReader
+	// for the Pod readiness check podReady consults -- both are satisfied by
+	// the fake client's corev1 + VA scheme.
+	collector := NewReplicaMetricsCollector(mockSource, k8sClient, k8sClient, nil, scalerLocator(map[string]string{"pod-known": "va-1"}))
+	results, err := collector.CollectReplicaMetrics(
+		context.Background(),
+		"test-model",
+		"test-ns",
+		make(map[string]scaletarget.ScaleTargetAccessor),
+		make(map[string]*llmdVariantAutoscalingV1alpha1.VariantAutoscaling),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("CollectReplicaMetrics: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected exactly 1 ReplicaMetrics entry, got %d", len(results))
+	}
+	if results[0].Ready {
+		t.Error("Ready should be false for a Pod failing its readiness probe")
+	}
+	if results[0].AvgServiceTime != 0 {
+		t.Errorf("AvgServiceTime is %v, want 0 — a not-Ready Pod's timing must be excluded, not trusted",
+			results[0].AvgServiceTime)
+	}
+	if results[0].AvgITL != 0 {
+		t.Errorf("AvgITL is %v, want 0 — a not-Ready Pod's timing must be excluded, not trusted",
+			results[0].AvgITL)
+	}
+	if results[0].KvCacheUsage != 0.5 {
+		t.Errorf("KvCacheUsage is %v, want 0.5 — capacity fields must NOT be gated on readiness",
+			results[0].KvCacheUsage)
+	}
+}
