@@ -110,18 +110,33 @@ var _ = Describe("estimateArrivalDemand", func() {
 		Expect(f.Reason).To(ContainSubstring("output length"))
 	})
 
-	It("averages a timing unweighted across the replicas that reported one", func() {
+	It("takes the median timing unweighted across the replicas that reported one", func() {
 		// These are per-request costs of the same hardware and model, so every
 		// serving replica measures the same quantity and none should count for
 		// more. A replica that has completed nothing reports zero and must not
-		// drag the mean down -- through it, the floor.
+		// drag the estimate down -- through it, the floor.
 		rm := []domain.ReplicaMetrics{
 			{AvgITL: 0.020, AvgOutputTokens: measuredAvgOut},
 			{AvgITL: 0.030, AvgOutputTokens: measuredAvgOut},
 			{AvgITL: 0, AvgOutputTokens: measuredAvgOut},
 		}
-		Expect(meanOf(rm, func(m domain.ReplicaMetrics) float64 { return m.AvgITL })).
+		Expect(medianOf(rm, func(m domain.ReplicaMetrics) float64 { return m.AvgITL })).
 			To(BeNumerically("~", 0.025, 1e-9))
+	})
+
+	It("ignores a single replica's wildly misreported timing entirely", func() {
+		// The motivating incident: one of ten decode replicas' own
+		// service-time metric implied ~145 hours per request (a vLLM-side
+		// artifact), which a mean would have handed 1/10 of the weight --
+		// enough to inflate the fleet estimate ~590x on its own. The median
+		// must not move at all for one outlier among ten sane values.
+		rm := make([]domain.ReplicaMetrics, 0, 10)
+		for i := 0; i < 9; i++ {
+			rm = append(rm, domain.ReplicaMetrics{AvgServiceTime: 24.6})
+		}
+		rm = append(rm, domain.ReplicaMetrics{AvgServiceTime: 521368})
+		Expect(medianOf(rm, func(m domain.ReplicaMetrics) float64 { return m.AvgServiceTime })).
+			To(BeNumerically("~", 24.6, 1e-9))
 	})
 
 	It("prefers the engine's measured service time over the reconstruction", func() {
