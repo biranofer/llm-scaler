@@ -25,8 +25,22 @@ The primary Deployment selector additionally requires:
 
 The secondary Deployment this script creates:
   - KEEPS  llm-d.ai/inferenceServing + llm-d.ai/model  → joins the pool
-  - OMITS  llm-d.ai/inference-serving (kebab)           → not claimed by primary
+  - OMITS  llm-d.ai/inference-serving (kebab)           → no selector overlap
   - ADDS   wva.llmd.ai/variant: <suffix>                → unique selector
+
+On that middle line: carrying the kebab label would NOT hand the secondary's
+pods to the primary. Ownership is by ownerReference, and a ReplicaSet adopts
+only pods whose controllerRef is nil -- each secondary pod already has one,
+pointing at its own ReplicaSet. What the omission avoids is an OVERLAPPING
+SELECTOR, which is a latent hazard rather than an active one: delete the
+secondary's ReplicaSet with --cascade=orphan and its pods lose that
+controllerRef, at which point the primary's ReplicaSet does adopt them and
+immediately deletes the surplus to honour its own replica count.
+
+The omission has a second consequence that is NOT optional to handle: the
+chart's PodMonitor selects on the kebab label too, so a secondary without it is
+never scraped. See make_secondary_podmonitor -- this script creates one, or the
+two variants cannot be told apart.
 
 Both ScaledObjects carry the same modelID so the WVA solver groups them.
 
@@ -465,6 +479,100 @@ def make_secondary_scaledobject(primary_so, sec_dep_name, cfg, namespace):
 # Main
 # ---------------------------------------------------------------------------
 
+def find_primary_podmonitor(namespace, deployment_name, model_hash=None):
+    """The PodMonitor scraping the primary, or None if nothing scrapes it.
+
+    A PodMonitor this script wrote for an EARLIER variant is never returned. Its
+    name also starts with the Deployment's, and cloning it would produce a
+    doubly-suffixed PodMonitor selecting on two variant labels at once -- which
+    matches no pod, so the new variant would go unscraped in precisely the way
+    this function exists to prevent. Today the chart's own name sorts first and
+    hides that; sorting is not a guarantee, so the variant label is excluded
+    explicitly.
+    """
+    out = kubectl("get", "podmonitor", "-n", namespace, "-o", "json", check=False)
+    if not out:
+        return None
+    try:
+        items = json.loads(out).get("items", [])
+    except ValueError:
+        return None
+
+    def _is_variant_copy(pm):
+        sel = ((pm.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+        return "wva.llmd.ai/variant" in sel
+
+    candidates = [pm for pm in items if not _is_variant_copy(pm)]
+
+    # The chart names it after the Deployment.
+    for pm in candidates:
+        if pm["metadata"]["name"].startswith(deployment_name):
+            return pm
+    # Renamed, or written by hand: take one whose selector names this model.
+    if model_hash:
+        for pm in candidates:
+            sel = ((pm.get("spec") or {}).get("selector") or {}).get("matchLabels") or {}
+            if sel.get("llm-d.ai/model") == model_hash:
+                return pm
+    return None
+
+
+def make_secondary_podmonitor(primary_pm, cfg, namespace):
+    """Clone the primary's PodMonitor onto the secondary's pods.
+
+    Without this the secondary is never scraped, and that is invisible rather
+    than loud. The chart's PodMonitor selects on five labels, one of them the
+    kebab-case `llm-d.ai/inference-serving` that the secondary deliberately does
+    not carry (see the label strategy in the module docstring). The secondary
+    then serves real traffic while emitting no metrics WVA can see, so the
+    analyzer finds no capacity rows for it, falls to its no-live-replicas branch
+    and reports `P0-store` -- borrowing the PRIMARY's per-replica capacity.
+
+    Measured on CoreWeave: for ten minutes both variants reported byte-identical
+    prc (138877, 138852, 138848, ...) while one held two GPUs and the other one.
+    A comparison between two variants is the entire point of this scenario, and
+    it cannot happen while one of them is a copy of the other.
+
+    Cloned rather than written fresh, for the same reason the ScaledObject is:
+    the port name, path and interval are the chart's choices and must not be
+    guessed. Guessing the port is its own silent failure -- a PodMonitor naming
+    a port no container declares produces NO target at all, which is how
+    config/modelserver-metrics (port `modelserver`) scrapes nothing here, where
+    the chart names the port `metrics`.
+    """
+    suffix = cfg["suffix"]
+    spec = primary_pm["spec"]
+    endpoints = spec.get("podMetricsEndpoints") or []
+    if not endpoints:
+        return None
+
+    selector = dict((spec.get("selector") or {}).get("matchLabels") or {})
+    # Drop the primary's own discriminator, add the secondary's.
+    selector.pop("llm-d.ai/inference-serving", None)
+    selector["wva.llmd.ai/variant"] = suffix
+
+    labels = {k: v for k, v in (primary_pm["metadata"].get("labels") or {}).items()
+              if not k.startswith("helm.sh/")
+              and k != "app.kubernetes.io/managed-by"}
+
+    pm = {
+        "apiVersion": "monitoring.coreos.com/v1",
+        "kind": "PodMonitor",
+        "metadata": {
+            "name": f"{primary_pm['metadata']['name']}-{suffix}",
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "selector": {"matchLabels": selector},
+            "podMetricsEndpoints": endpoints,
+        },
+    }
+    if "namespaceSelector" in spec:
+        pm["spec"]["namespaceSelector"] = spec["namespaceSelector"]
+    return pm
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Add a secondary WVA variant to an existing benchmark deployment."
@@ -551,6 +659,28 @@ def main():
 
     print(f"  Applying ScaledObject: {sec_so['metadata']['name']}")
     kubectl_apply(sec_so, dry_run=args.dry_run)
+
+    # Scraping. Without it the secondary is invisible to WVA and reports the
+    # PRIMARY's capacity back as its own -- see make_secondary_podmonitor.
+    primary_pm = find_primary_podmonitor(ns, dep_name, model_hash)
+    if primary_pm is None:
+        print("  WARNING: nothing scrapes the primary, so there is no PodMonitor to "
+              "clone. The secondary will emit no metrics WVA can see, and the "
+              "analyzer will report it as P0-store with the primary's per-replica "
+              "capacity. Scrape both before comparing them.")
+    else:
+        sec_pm = make_secondary_podmonitor(primary_pm, cfg, ns)
+        if sec_pm is None:
+            print(f"  WARNING: {primary_pm['metadata']['name']} declares no "
+                  f"podMetricsEndpoints, so there is nothing to inherit and the "
+                  f"secondary is left unscraped.")
+        else:
+            if not args.dry_run:
+                sec_pm.setdefault("metadata", {}).setdefault(
+                    "ownerReferences", []).append(owner_ref)
+            print(f"  Applying PodMonitor: {sec_pm['metadata']['name']}"
+                  f"  (port {sec_pm['spec']['podMetricsEndpoints'][0].get('port')})")
+            kubectl_apply(sec_pm, dry_run=args.dry_run)
 
     if args.dry_run:
         return

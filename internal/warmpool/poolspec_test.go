@@ -84,6 +84,43 @@ func TestTriggerMetadataOverridesTheFlagsPerPool(t *testing.T) {
 	}
 }
 
+// Retained was the one warm-pool knob the metadata test above did not cover, and
+// it is the knob that decides whether a lent Pod is EVER reclaimed: the policy
+// reads `expired := !cfg.Retained && ...MaxHold`. Unset, it is false and a Pod
+// goes back on the timer; a pool that meant to keep its Pod indefinitely gets it
+// taken away every MaxHold and immediately re-lent, paying a drain, a sleep and
+// a wake each time, with a gap in service. That is a config value silently not
+// arriving, which looks like the policy misbehaving.
+func TestRetainedReachesThePolicyFromTriggerMetadata(t *testing.T) {
+	got := pools(t, poolTrigger("a", "held", 4, map[string]string{
+		registry.WarmPoolRetainedKey: "true",
+		registry.WarmPoolMaxHoldKey:  "30s",
+	}))
+	if len(got) != 1 {
+		t.Fatalf("want one pool, got %+v", got)
+	}
+	if !got[0].Config.Retained {
+		t.Errorf("warmPoolRetained did not reach the policy: %+v", got[0].Config)
+	}
+	// Both, together: retained only means anything against a hold that would
+	// otherwise fire, so a test that let MaxHold fall back to its default would
+	// still pass with the two wired to each other's values.
+	if got[0].Config.MaxHold != 30*time.Second {
+		t.Errorf("maxHold not read alongside it: %+v", got[0].Config)
+	}
+}
+
+func TestAPoolIsABridgeUnlessItSaysOtherwise(t *testing.T) {
+	// The default has to be the safe one. A pool that is retained by accident
+	// holds a Pod out of the reserve forever and nothing reports it.
+	got := pools(t, poolTrigger("a", "bridge", 4, map[string]string{
+		registry.WarmPoolMaxHoldKey: "30s",
+	}))
+	if got[0].Config.Retained {
+		t.Errorf("a pool that never asked to be retained must not be: %+v", got[0].Config)
+	}
+}
+
 func TestAnUnsetKnobKeepsTheFlagValue(t *testing.T) {
 	// Layering, not replacement: a pool that tunes one knob must not silently
 	// zero the other three.
