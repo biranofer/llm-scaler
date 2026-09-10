@@ -105,7 +105,26 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 		return arrivalFloor{Reason: "no arrival rate (EPP absent and no completions)"}
 	}
 
-	avgIn, avgOut, _ := computeModelWorkloadAverages(input.ReplicaMetrics)
+	// Token shape gets the same outlier-resistant aggregation as the timing
+	// below, and for the same reason: it reaches the result through the same
+	// multiplication. A replica that can misreport its service time can
+	// misreport its output length, and lambda * W * (avgIn + avgOut) does not
+	// care which of the three factors was wrong.
+	//
+	// Deliberately NOT the collector's job, unlike the timing gate on
+	// readiness. Token shape is also read per-replica by waitingQueueDemand to
+	// price a pod's waiting queue, and a starting pod's queue is real work the
+	// fleet has already accepted -- zeroing its shape at the source would erase
+	// that demand and read as "idle". The floor is where an unreliable shape
+	// value has to be handled, because the floor is the only consumer that
+	// aggregates it ACROSS replicas and so is the only one an outlier can move.
+	//
+	// This does not use computeModelWorkloadAverages, which stays an unweighted
+	// mean for its other two callers: they are the zero-replica capacity
+	// estimate and the analyzer's own per-model workload log line, neither of
+	// which multiplies its result by an arrival rate.
+	avgIn := medianOf(input.ReplicaMetrics, func(rm domain.ReplicaMetrics) float64 { return rm.AvgInputTokens })
+	avgOut := medianOf(input.ReplicaMetrics, func(rm domain.ReplicaMetrics) float64 { return rm.AvgOutputTokens })
 	if avgOut <= 0 {
 		return arrivalFloor{Reason: "no average output length", HasArrivalSignal: true}
 	}
@@ -146,16 +165,16 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 	}
 }
 
-// medianOf takes the median per-replica timing over the replicas that
-// reported one, skipping those that reported nothing.
+// medianOf takes the median per-replica value over the replicas that reported
+// one, skipping those that reported nothing.
 //
-// Unweighted on purpose. Both timings it is used for — service time and ITL —
-// are per-request costs of the same hardware and model, so every serving replica
-// measures the same underlying quantity. Weighting by traffic would let the
-// busiest replica's contention stand in for the fleet's baseline, which is the
-// opposite of what this estimate wants. Skipping zeros matters as much: a
-// replica that has completed nothing yet would otherwise drag the estimate
-// toward zero and, through it, the floor.
+// Unweighted on purpose. Every value it is used for — service time, ITL, and
+// the two token averages — is a per-request property of the same hardware and
+// model, so every serving replica measures the same underlying quantity.
+// Weighting by traffic would let the busiest replica's contention stand in for
+// the fleet's baseline, which is the opposite of what this estimate wants.
+// Skipping zeros matters as much: a replica that has completed nothing yet
+// would otherwise drag the estimate toward zero and, through it, the floor.
 //
 // Median rather than mean, because a single replica's misreported value must
 // not move the estimate. Measured on a live run: one decode replica's own
@@ -169,6 +188,17 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 // zero, provided fewer than half the replicas are affected at once -- which
 // held even in the incident that motivated this, where exactly one of ten was.
 //
+// The LOWER median, not the midpoint of the two central values, and the case
+// that decides it is two replicas. Averaging the middle pair makes a two-
+// replica variant's median identical to its mean, so the one arrangement where
+// "fewer than half are affected" can never be satisfied is also the one where
+// the midpoint convention offers no protection at all: {24.6s, 521368s} would
+// return ~260,700s. The lower median returns 24.6s. The price is a mild low
+// bias on a healthy even-sized fleet -- {0.020, 0.030} reads 0.020 rather than
+// 0.025 -- which is the direction this file already accepts everywhere else,
+// since erring low means the floor holds back rather than over-provisions.
+// k2SourceLabel in analyzer.go picks its representative replica the same way.
+//
 // Skipping zeros only protects against an outright zero, though. A replica
 // that has just started serving and reports a small but non-zero timing still
 // sits at the low end of the sorted set and can shift the median by one slot.
@@ -176,6 +206,12 @@ func estimateArrivalDemand(input domain.AnalyzerInput) arrivalFloor {
 // its timing converges on the rest -- and erring low here means the floor
 // holds back rather than over-provisions, so it is not worth a warm-up filter
 // that would need its own state.
+//
+// Not to be confused with median() in analyzer.go, which is the int64 capacity
+// median and DOES average the central pair: it blends two learned per-replica
+// capacities, where the midpoint is the better estimate and no reading is
+// suspect. This one defends against a reading that should not be trusted, so
+// the two conventions differ on purpose.
 //
 // Note this differs from the collector's own merge helper, which falls back to a
 // mean that INCLUDES zeros when no request rate is available
@@ -195,11 +231,7 @@ func medianOf(replicaMetrics []domain.ReplicaMetrics, pick func(domain.ReplicaMe
 		return 0
 	}
 	sort.Float64s(vals)
-	mid := len(vals) / 2
-	if len(vals)%2 == 1 {
-		return vals[mid]
-	}
-	return (vals[mid-1] + vals[mid]) / 2
+	return vals[(len(vals)-1)/2]
 }
 
 // raiseRoleDemandTo scales each role's demand so the roles still sum to total.
