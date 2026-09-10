@@ -2098,6 +2098,12 @@ func TestCollectReplicaMetrics_TimingExcludedWhenNotReady(t *testing.T) {
 				"avg_itl": {
 					Values: []source.MetricValue{{Labels: podLabels, Value: 0.02, Timestamp: ts}},
 				},
+				"avg_output_tokens": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 1000, Timestamp: ts}},
+				},
+				"avg_input_tokens": {
+					Values: []source.MetricValue{{Labels: podLabels, Value: 4000, Timestamp: ts}},
+				},
 			}, nil
 		},
 	}
@@ -2134,5 +2140,20 @@ func TestCollectReplicaMetrics_TimingExcludedWhenNotReady(t *testing.T) {
 	if results[0].KvCacheUsage != 0.5 {
 		t.Errorf("KvCacheUsage is %v, want 0.5 — capacity fields must NOT be gated on readiness",
 			results[0].KvCacheUsage)
+	}
+	// Token shape is the same kind of per-request quantity as the timing above
+	// and was considered for the same gate, but waitingQueueDemand reads these
+	// two per-replica to price a pod's waiting queue: a starting pod's queue is
+	// work the fleet has already accepted, and zeroing its shape would erase
+	// that demand and read as "idle". Their outlier defence is in
+	// estimateArrivalDemand, the only consumer that aggregates them across
+	// replicas. Pinned so the symmetry is not "completed" later by accident.
+	if results[0].AvgOutputTokens != 1000 {
+		t.Errorf("AvgOutputTokens is %v, want 1000 — token shape must NOT be gated on readiness",
+			results[0].AvgOutputTokens)
+	}
+	if results[0].AvgInputTokens != 4000 {
+		t.Errorf("AvgInputTokens is %v, want 4000 — token shape must NOT be gated on readiness",
+			results[0].AvgInputTokens)
 	}
 }
